@@ -1719,8 +1719,13 @@ void G_ClearFIFO(void)
 {
     // [JM] Black-hole any leftover inputs.
     // Prevents being spun around at map start if you move the mouse while loading.
-    ControlInfo blackHole;
-    CONTROL_GetInput(&blackHole);
+    // Dedicated servers do not initialize CONTROL or its timer callback.
+    // They still need the shared FIFO reset when entering a map.
+    if (g_networkMode != NET_DEDICATED_SERVER)
+    {
+        ControlInfo blackHole;
+        CONTROL_GetInput(&blackHole);
+    }
 
     g_lastInputTicks = 0;
     localInput = {};
