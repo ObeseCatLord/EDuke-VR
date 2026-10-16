@@ -195,7 +195,9 @@ void G_XRTestCaptureNative()
     captured=true;
     std::string error;
     std::string path=std::string(prefix)+"-native.ppm";
-    if (!eduke_xr::captureFramebuffer(path.c_str(),xdim,ydim,error))
+    std::string depthPath=std::string(prefix)+"-native-depth.bin";
+    if (!eduke_xr::captureFramebuffer(path.c_str(),xdim,ydim,error)
+        || !eduke_xr::captureFramebufferDepth(depthPath.c_str(),xdim,ydim,error))
         LOG_F(ERROR,"XR native reference capture failed: %s",error.c_str());
     else
         LOG_F(INFO,"XR native reference captured at logical frame 12 (%s attachment).",nativeTestFbo ? "matched texture" : "window");
@@ -377,8 +379,9 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     if (!reported || g_frameCounter == 12)
                     {
                         auto const stats=polymost_xrOpaqueCollectionStats();
-                        LOG_F(INFO,"OpenXR opaque single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u",
-                              unsigned(g_frameCounter),stats.pairedCalls,stats.eyeOnlyCalls,stats.pairedVertices,stats.eyeOnlyVertices);
+                        LOG_F(INFO,"OpenXR opaque single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u flatSky=%u skyDepth=%u npot=%u",
+                              unsigned(g_frameCounter),stats.pairedCalls,stats.eyeOnlyCalls,stats.pairedVertices,stats.eyeOnlyVertices,
+                              stats.flatSkyCalls,stats.skyDepthCalls,stats.npotCalls);
                         reported=true;
                     }
                 }
@@ -387,11 +390,12 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         }
         if (!committed && good)
         {
-            static bool reported;
-            if (!reported)
+            static unsigned reported;
+            if (reported < 3)
             {
-                LOG_F(INFO,"OpenXR opaque candidate uses two-pass oracle: %s",polymost_xrOpaqueCollectionReason());
-                reported=true;
+                LOG_F(INFO,"OpenXR opaque candidate uses two-pass oracle: %s (frame=%u)",
+                      polymost_xrOpaqueCollectionReason(),unsigned(g_frameCounter));
+                ++reported;
             }
             polymost_xrDiscardOpaqueCollection();
             // Retry before animation in the same located/acquired XR frame.
@@ -481,7 +485,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         {
             if (auto prefix=std::getenv("EDUKE32_XR_TEST_CAPTURE"))
             {
-                good=runtime->captureFrame(prefix,false,error);
+                good=runtime->captureFrame(prefix,false,error,true);
                 if (good)
                     LOG_F(INFO,"XR %s eyes captured at logical frame 12 (offscreen, no projection submission).",zeroTest ? "zero-IPD" : "stereo-fixture");
             }

@@ -23,6 +23,7 @@ Ken Silverman's official web site: http://www.advsys.net/ken
 
 #ifdef USE_OPENXR
 # include <vector>
+# include <cmath>
 #endif
 
 #ifdef POLYMOST2
@@ -260,6 +261,7 @@ struct xr_opaque_packet_t
     vec4f_t texturePosSize, npot, color, correction;
     vec2f_t halfTexel, palswapPos, palswapSize, clamp, numShades;
     float shade, vis, fog, colorOnly, paletteEnabled, shadeInterpolate;
+    uint32_t skyKind;  // 0 ordinary, 1 native flat-sky color, 2 native sky-Z depth-only
     float projection[16], rotation[16];
 };
 
@@ -274,6 +276,7 @@ struct xr_opaque_collection_t
 {
     bool active = false;
     bool rejected = false;
+    bool flatSky = false, skyDepthRecursion = false;
     uint32_t eye = 0;
     char const *reason = "not collected";
     float projection[2][16]{};
@@ -318,6 +321,7 @@ void polymost_xrBeginOpaqueCollection(uint32_t const eye)
         xrOpaque.projectionValid[0] = xrOpaque.projectionValid[1] = false;
         xrOpaque.stats = {};
         xrOpaque.rejected = false;
+        xrOpaque.flatSky = xrOpaque.skyDepthRecursion = false;
         xrOpaque.reason = "collecting";
     }
     else if (!xrOpaque.active)
@@ -346,6 +350,7 @@ void polymost_xrDiscardOpaqueCollection()
 {
     xrOpaque.active = false;
     xrOpaque.rejected = false;
+    xrOpaque.flatSky = xrOpaque.skyDepthRecursion = false;
     xrOpaque.transport = {};
     xrOpaque.packets[0].clear();
     xrOpaque.packets[1].clear();
@@ -916,6 +921,8 @@ static void polymost_xrUploadOpaquePacket(xr_opaque_packet_t const &left, xr_opa
 #undef XR_OPAQUE_1I
 
     glColor4f(left.color.x, left.color.y, left.color.z, left.color.w);
+    GLboolean const writesColor = left.skyKind != 2;
+    glColorMask(writesColor,writesColor,writesColor,writesColor);
     glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, left.texture); glBindSampler(0, left.sampler);
     glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, left.palswap); glBindSampler(1, 0);
     glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, left.palette); glBindSampler(2, 0);
@@ -966,10 +973,11 @@ polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
 
     GLint program = 0, active = 0, clientActive = 0, arrayBuffer = 0, depthFunc = 0, vao = 0;
     GLint textures[3]{}; GLuint samplers[MAXTEXUNIT - GL_TEXTURE0]{};
-    GLboolean depthWrite = GL_FALSE;
+    GLboolean depthWrite = GL_FALSE, colorMask[4]{};
     GLfloat color[4]{};
     glGetIntegerv(GL_CURRENT_PROGRAM, &program); glGetIntegerv(GL_ACTIVE_TEXTURE, &active); glGetIntegerv(GL_CLIENT_ACTIVE_TEXTURE, &clientActive);
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer); glGetIntegerv(GL_DEPTH_FUNC, &depthFunc); glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite); glGetFloatv(GL_CURRENT_COLOR, color);
+    glGetBooleanv(GL_COLOR_WRITEMASK,colorMask);
 #ifdef GL_VERTEX_ARRAY_BINDING
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
 #endif
@@ -993,6 +1001,9 @@ polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
         if (left < xrOpaque.packets[0].size() && right < xrOpaque.packets[1].size() && polymost_xrCompatibleOpaque(xrOpaque.packets[0][left], xrOpaque.packets[1][right]))
         {
             polymost_xrReplayOpaqueDraw(xrOpaque.packets[0][left], 0, &xrOpaque.packets[1][right]);
+            xrOpaque.stats.flatSkyCalls += xrOpaque.packets[0][left].skyKind == 1;
+            xrOpaque.stats.skyDepthCalls += xrOpaque.packets[0][left].skyKind == 2;
+            xrOpaque.stats.npotCalls += xrOpaque.packets[0][left].npot.z != 0.f;
             ++xrOpaque.stats.pairedCalls; xrOpaque.stats.pairedVertices += xrOpaque.packets[0][left].count + xrOpaque.packets[1][right].count; ++left; ++right;
         }
         else
@@ -1001,12 +1012,16 @@ polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
             size_t &cursor = eye ? right : left;
             auto const &packet = xrOpaque.packets[eye][cursor++];
             polymost_xrReplayOpaqueDraw(packet,eye,nullptr);
+            xrOpaque.stats.flatSkyCalls += packet.skyKind == 1;
+            xrOpaque.stats.skyDepthCalls += packet.skyKind == 2;
+            xrOpaque.stats.npotCalls += packet.npot.z != 0.f;
             ++xrOpaque.stats.eyeOnlyCalls;
             xrOpaque.stats.eyeOnlyVertices += packet.count;
         }
     }
 
     glUseProgram(program); glDepthFunc(depthFunc); glDepthMask(depthWrite); glColor4fv(color);
+    glColorMask(colorMask[0],colorMask[1],colorMask[2],colorMask[3]);
     for (int i = 0; i < MAXTEXUNIT - GL_TEXTURE0; ++i) glBindSampler(i, samplers[i]);
     for (int i = 0; i < 3; ++i) { glActiveTexture(GL_TEXTURE0 + i); glBindTexture(GL_TEXTURE_2D, textures[i]); }
  #ifdef GL_VERTEX_ARRAY_BINDING
@@ -3758,7 +3773,7 @@ static bool polymost_xrIdentityMatrix(float const matrix[16])
     return Bmemcmp(matrix, identity, sizeof(identity)) == 0;
 }
 
-static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t const method, float const color[4])
+static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t const method, float const color[4], bool const skyDepth)
 {
     if (!xrOpaque.active || xrOpaque.rejected)
         return false;
@@ -3781,14 +3796,18 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
     if (videoGetRenderMode() != REND_POLYMOST || !buildgl_samplerObjectsEnabled() ||
         !(pth->flags & PTH_INDEXED) || (pth->flags & PTH_HIGHTILE) || pth->hicr ||
         polymost_usetileshades() != TS_SHADETABLE || !polymost_useindexedtextures() ||
-        (method & DAMETH_MASKPROPS) || program != (GLint)polymost1CurrentShaderProgramID ||
+        (!skyDepth && (method & DAMETH_MASKPROPS)) || program != (GLint)polymost1CurrentShaderProgramID ||
         !glIsEnabled(GL_DEPTH_TEST) || glIsEnabled(GL_BLEND) || glIsEnabled(GL_ALPHA_TEST) ||
-        depthFunc != GL_ALWAYS || !depthWrite || !colorMask[0] || !colorMask[1] || !colorMask[2] || !colorMask[3] ||
+        depthFunc != GL_ALWAYS || !depthWrite ||
+        (skyDepth ? (colorMask[0] || colorMask[1] || colorMask[2] || colorMask[3])
+                  : (!colorMask[0] || !colorMask[1] || !colorMask[2] || !colorMask[3])) ||
         !polymost_xrIdentityMatrix(modelview) || !polymost_xrIdentityMatrix(textureMatrix) ||
         polymost1FogEnabled != 0.f || polymost1UseColorOnly != 0.f || polymost1UsePalette != 1.f ||
         polymost1UseDetailMapping != 0.f || polymost1UseGlowMapping != 0.f ||
-        polymost1NPOTEmulation.x != 0.f || polymost1NPOTEmulation.y != 1.f ||
-        polymost1NPOTEmulation.z != 0.f || polymost1NPOTEmulation.w != 1.f ||
+        !std::isfinite(polymost1NPOTEmulation.x) || !std::isfinite(polymost1NPOTEmulation.y) ||
+        !std::isfinite(polymost1NPOTEmulation.z) || !std::isfinite(polymost1NPOTEmulation.w) ||
+        polymost1NPOTEmulation.y <= 0.f || polymost1NPOTEmulation.w <= 0.f ||
+        (polymost1NPOTEmulation.z != 0.f && polymost1NPOTEmulation.z != 1.f) ||
         sampler < SAMPLER_NONE || sampler >= NUM_SAMPLERS || !xrOpaque.projectionValid[xrOpaque.eye] ||
         !palswapTextureID || !paletteTextureIDs[curbasepal])
     {
@@ -3823,6 +3842,7 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
     packet.shadeInterpolate = polymost1ShadeInterpolate;
     packet.correction = polymost1UploadedColorCorrection;
     packet.color = { color[0], color[1], color[2], color[3] };
+    packet.skyKind = skyDepth ? 2 : (xrOpaque.flatSky ? 1 : 0);
     Bmemcpy(packet.projection, xrOpaque.projection[xrOpaque.eye], sizeof(packet.projection));
     Bmemcpy(packet.rotation, polymost1RotMatrix, sizeof(packet.rotation));
     xrOpaque.transport.pending = true;
@@ -3977,13 +3997,13 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
     if (flatskyrender && skyzbufferhack_pass == 0)
     {
 #ifdef USE_OPENXR
-        if (xrOpaque.active)
-        {
-            polymost_xrRejectOpaque("sky opaque draw");
-            return;
-        }
+        bool const oldFlatSky=xrOpaque.flatSky;
+        if (xrOpaque.active) xrOpaque.flatSky=true;
 #endif
         polymost_flatskyrender(dpxy, n, method);
+#ifdef USE_OPENXR
+        xrOpaque.flatSky=oldFlatSky;
+#endif
         return;
     }
 
@@ -4277,7 +4297,8 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
         collectOpaque = false;
     }
     if (collectOpaque)
-        collectOpaque = polymost_xrPrepareOpaquePacket(pth, method, pc);
+        collectOpaque = polymost_xrPrepareOpaquePacket(pth, method, pc,
+            xrOpaque.skyDepthRecursion && method_ == DAMETH_MASK);
 #endif
 
     //POGOTODO: remove this, replace it with a shader implementation
@@ -4522,7 +4543,15 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
         xtex = xtex2, ytex = ytex2, otex = otex2;
         skyzbufferhack_pass++;
         glColorMask(false, false, false, false);
+#ifdef USE_OPENXR
+        // Only this native recursion can qualify as a depth-only sky packet.
+        bool const oldSkyDepth=xrOpaque.skyDepthRecursion;
+        if (xrOpaque.active) xrOpaque.skyDepthRecursion=true;
+#endif
         polymost_drawpoly(dpxy, n, DAMETH_MASK);
+#ifdef USE_OPENXR
+        xrOpaque.skyDepthRecursion=oldSkyDepth;
+#endif
         glColorMask(true, true, true, true);
         xtex = bxtex, ytex = bytex, otex = botex;
         skyzbufferhack_pass--;

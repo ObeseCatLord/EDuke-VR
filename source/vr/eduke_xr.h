@@ -14,6 +14,8 @@ namespace eduke_xr
 // Save the currently drawn framebuffer without changing its rendering state.
 // Used for native-versus-stereo regression captures at the world boundary.
 bool captureFramebuffer(char const *path, uint32_t width, uint32_t height, std::string &error);
+// Raw GL_UNSIGNED_INT depth samples, bottom row first, for exact local fixtures.
+bool captureFramebufferDepth(char const *path, uint32_t width, uint32_t height, std::string &error);
 
 
 // Shared OpenXR frame lifecycle.  The caller owns the current SDL OpenGL
@@ -55,7 +57,7 @@ class Runtime
     FrameResult beginFrame(Frame &frame, std::string &error);
     bool        bindEye(uint32_t eye, std::string &error);
     bool        bindMultiview(std::string &error);
-    bool        captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error);
+    bool        captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error, bool captureDepth = false);
     bool        mirrorEye(uint32_t eye, std::string &error);
     bool        finishFrame(bool submit, std::string &error);
     TickResult  diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error);

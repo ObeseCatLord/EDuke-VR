@@ -99,3 +99,16 @@ A separate fresh reviewer explicitly selected `gpt-6-astra` at `xhigh`; its exac
 Main integration checks additionally required explicit texture-client unit zero, separate matrix-array locations, program/cache truth restoration without native uniform setters, and qualification of actual program/depth/blend/alpha/color-write/modelview/texture state. These were implemented before final fixture tests. The reviewer did not run tests or fully review the subsequently added asymmetric fixture; runtime evidence and final integration checks remain the main agent's responsibility. Main integration then removed the duplicated right-only draw body: paired and either-eye packets now share one upload/draw helper, with the unequal-coverage fixture exercising both unpaired branches.
 
 Results: zero-IPD uses 18 paired calls/216 vertices; nonzero symmetric-coverage stereo uses 30 paired calls/342 vertices. Unequal coverage deliberately leaves all 60 calls unpaired because shader-effective visibility differs. All three cases preserve exact reference pixels and CON counts. This qualifies the restricted adapter; it does not establish complete world single-pass, shared geometry work, lower frame time, or full CON/mod compatibility.
+
+## Native sky extension correctness review — 2026-10-16
+
+A fresh read-only reviewer explicitly used `gpt-6-astra` / `xhigh`; its own current-turn settings were verified before relying on its result. It inspected the final sky, NPOT, depth-capture and fixture changes and found no actionable correctness issue. Main integration separately checked native/XR builds and runtime results.
+
+| Investigated decision / recommendation | Disposition and evidence |
+|---|---|
+| Reuse native flat-sky panel/UV/material generation at the existing drawpoly seam | Adopted. Removed only the explicit sky rejection; native panel selection, panning and projection remain authoritative. |
+| Admit the existing sky-Z depth pass without admitting arbitrary masked geometry | Adopted. A scoped marker at the exact native `DAMETH_MASK` recursion qualifies all-false color writes; normal masks and alpha/blend cases retain their restrictions. Packet kind participates in pairing; replay restores incoming color mask. |
+| Real LA sky ART needs nonidentity NPOT uniforms | Adapted from the earlier restriction. Runtime showed tile91 using native NPOT values (.0078125,1.70667,1,.585938). The packet and unchanged fragment already carry the native calculation; admit finite valid native values, without copying material policy. |
+| Color-only equality does not establish depth correctness | Adopted. Compare complete nonconstant GL_UNSIGNED_INT depth readbacks for both actual layers as well as exact color. Native and two-pass references match the sky fixtures exactly. |
+
+The reviewer verified the first positive ceiling-sky/depth/panning result JSON (30 paired calls, including nine flat-sky, nine depth-only and nine NPOT calls). Main then passed rotated sky with panning/depth disabled, unequal-coverage floor sky with depth enabled, and the ordinary-room regression. These are bounded feature proofs; masks remain per-eye and full VR presentation/gameplay qualification remains open.

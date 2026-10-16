@@ -1,6 +1,6 @@
 # EDuke32 VR work in progress
 
-This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded opaque-world multiview path with exact differential fixtures. It is not yet a complete playable VR port: single-pass world rendering, full presentation coverage, headset/controller gameplay and multiplayer qualification remain open.
+This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded opaque-world multiview path including native ART skies, with exact color/depth differential fixtures. It is not yet a complete playable VR port: single-pass world rendering, full presentation coverage, headset/controller gameplay and multiplayer qualification remain open.
 
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
@@ -81,7 +81,7 @@ For bounded failure regression only, `EDUKE32_XR_TEST_FAIL=opaque` injects one f
 
 ## Bounded opaque single-pass prototype
 
-`EDUKE32_XR_SINGLE_PASS=1` alongside `EDUKE32_XR=1` opts into ordinary indexed-ART opaque multiview replay. Both native CPU eye traversals and clipping remain; compatible material heads become one GPU draw for both layers. Eye-owned triangles preserve each eye's native order and GL_ALWAYS depth semantics. Native fragment shading remains the sole material policy. Masks still use two native passes. Unsupported sky, hires/detail/glow, recursion, mutable textures, NPOT transforms and unknown state retry the two-pass opaque reference within the same XR frame, before animation. E1L1's sky currently requires that fallback. This prototype is not complete single-pass world rendering or a performance claim.
+`EDUKE32_XR_SINGLE_PASS=1` alongside `EDUKE32_XR=1` opts into ordinary indexed-ART opaque multiview replay. Both native CPU eye traversals and clipping remain; compatible material heads become one GPU draw for both layers. Eye-owned triangles preserve each eye's native order and GL_ALWAYS depth semantics. Native fragment shading remains the sole material policy. Masks still use two native passes. Native flat ceiling/floor skies, their depth-only companion pass and native indexed NPOT emulation are supported. Hires skyboxes/detail/glow, other recursion, mutable textures, nonidentity texture transforms and unknown state retry the two-pass opaque reference within the same XR frame, before animation. In the tested E1L1 startup, 59 of the first 60 opaque frames use multiview; one cold texture-upload frame uses the reference path. Mixed-client runs observed 58–59 of 60. New texture uploads can also trigger fallback later; this remains an incomplete coverage/performance gate. This prototype is not complete single-pass world rendering or a performance claim.
 
 The deterministic portal fixture includes alternating palette/shade walls and an ordinary sprite mask after opaque replay. It reads only the caller's owned GRP. Synthetic fixture poses finish empty XR frames and never submit projection layers:
 
@@ -92,9 +92,13 @@ python3 tools/vr/check_stereo_oracle.py --binary ./eduke32-xr --single-pass --di
 # Repeat with --pose stereo.
 # Unequal eye coverage exercises incompatible material/eye-only packets and init failure recovery:
 # Repeat with --pose unequal --inject-replay-init-failure.
+# Ceiling sky with its native depth-only pass and nonzero panning:
+# Repeat with --scene sky --sky-depth 1.
+# Floor sky and unequal coverage: --scene sky-floor --pose unequal --sky-depth 1.
+# Disable panning/depth explicitly with --sky-panning 0 --sky-depth 0.
 ```
 
-The default native reference executes its unchanged room/animation/mask path on a matching SRGB8_ALPHA8/depth24 array attachment, allowing strict byte-for-byte comparison. `--native-attachment window` preserves the window-system comparison, which currently differs at 344 of 576,000 pixels in this NVIDIA fixture despite identical matrices/cameras. The matched attachment comparison uses zero tolerance and checks CON counts. It also requires real replay statistics at the captured frame, preventing a fallback-only run from passing as paired multiview.
+The default native reference executes its unchanged room/animation/mask path on a matching SRGB8_ALPHA8/depth24 array attachment, allowing strict byte-for-byte comparison. `--native-attachment window` preserves the window-system comparison, which currently differs at 344 of 576,000 pixels in this NVIDIA fixture despite identical matrices/cameras. The matched attachment comparison uses zero tolerance for color and nonconstant raw depth samples. It checks native CON counts at identical zero-IPD views, and two-pass CON counts at the same synthetic pose otherwise. It also requires real replay statistics at the captured frame, preventing a fallback-only run from passing as paired multiview. Sky cases additionally require actual flat-sky/depth-pass draw counts. The world and multiplayer runners accept `--minimum-multiview-frames 59` to require measured opaque replay coverage among their first 60 frames; their JSON reports both multiview and reference counts.
 
 ## Dedicated-server regression
 

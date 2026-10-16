@@ -92,7 +92,7 @@ Sibling output files (outside the source Git repository to avoid committing game
 
 Final native/XR full builds, standalone 12-frame multiview/core-validation, world 60-frame and both opaque/masks abort regressions pass. With temporary source traces removed, the final mixed runner passed native dedicated/XR-client initial join and reconnect, with 60 actual world frames and distinct readbacks for each. The corresponding native listen/client run reached gameplay and responded to W input. The final native and XR gameplay images were inspected. The private Monado service and owned game/Xvfb processes were stopped after testing.
 
-## 2026-10-16 — bounded opaque multiview proof
+## 2026-10-16 — initial bounded opaque multiview proof (7044f12)
 
 A generated two-sector portal map uses owned indexed ART, alternating wall palette/shade inputs and an ordinary bottle sprite. A stock-CON wrapper fixes only the rendering camera and counts DISPLAYROOMS / ANIMATESPRITES / DISPLAYROOMSEND. Native and stereo paths each report 14/14/14; sprite animation remains one logical transaction. No owned game data is copied into the fixture source.
 
@@ -117,6 +117,36 @@ python3 tools/vr/check_stereo_oracle.py --binary ./eduke32-xr --single-pass --di
 # Add --pose unequal --inject-replay-init-failure for eye-only and recovery paths.
 ```
 
-The native-fragment shader proof linked unchanged GLSL120 directly; the generated GLSL410 version wrapper was not needed. Fresh Astra/xhigh correctness review found an initialization-error ownership/partial-object issue, now fixed and fault-injection tested. E1L1 with the prototype enabled rejects sky explicitly, uses the existing oracle and submits 60 frames with distinct actual eye images. The mixed native dedicated/XR-client runner repeated initial join and reconnect with the prototype enabled; both retain 60 frames/distinct eyes and the owned gameplay image responds to W input. This exercises the oracle fallback, not paired multiplayer sky rendering.
+The native-fragment shader proof linked unchanged GLSL120 directly; the generated GLSL410 version wrapper was not needed. Fresh Astra/xhigh correctness review found an initialization-error ownership/partial-object issue, now fixed and fault-injection tested. At that checkpoint, E1L1 with the prototype enabled rejects sky explicitly, uses the existing oracle and submits 60 frames with distinct actual eye images. The mixed native dedicated/XR-client runner repeated initial join and reconnect with the prototype enabled; both retain 60 frames/distinct eyes and the owned gameplay image responds to W input. This exercises the oracle fallback, not paired multiplayer sky rendering.
 
 Native and XR full builds pass, as do the 1000-case projection derivation and Python compilation/diff checks. Image `../../../evidence/bounded-opaque-stereo.png` shows the asymmetric portal fixture. Complete opaque sky/material coverage, mask/sprite multiview, real tracking/full pitch, controllers/headset UI, broad CON features and the full multiplayer action matrix remain open.
+
+## Native flat skies, NPOT and depth validation — 2026-10-16
+
+The opaque adapter now lets native flat-sky panel generation reach the same captured drawpoly fan seam. Native ART panel selection, UVs, panning, shade/palette and the fragment shader remain unchanged. The exact native sky-Z recursion has a scoped depth-only marker; its all-false color mask is captured as a packet kind and restored after replay. Ordinary masked geometry remains excluded from opaque collection.
+
+The first attempt reached a real material restriction: LA sky tile91 uses non-power-of-two height. Native NPOT shader uniforms were (.0078125,1.70667,1,.585938); the packet and unchanged fragment already carry all four. Admission now allows finite valid native NPOT state. No material-resolution or UV calculation was copied.
+
+Depth readback saves/restores actual GL state and reads each layer as raw GL_UNSIGNED_INT samples. The comparator requires complete, nonconstant depth data and exact equality, alongside exact RGB pixels. At zero IPD, native matched-array rendering is the reference. Other poses compare to the same-pose two-pass reference; their callback counts must match that reference, since the camera legitimately differs from native zero pose.
+
+| Scene / controls | Actual multiview calls at frame12 | Pixel / depth result |
+|---|---|---|
+| Ceiling sky, zero pose, depth and panning on | 30 paired; 9 flat sky, 9 depth-only, 9 NPOT | Both color and nonconstant depth exactly equal native and two-pass; CON14/14/14 |
+| Ceiling sky, rotated asymmetric stereo, depth and panning off | 33 paired; 15 flat sky, 0 depth-only, 15 NPOT | Both eyes exactly equal their two-pass color/depth references |
+| Floor sky, unequal eye coverage, depth and panning on | 6 paired +76 eye-only; 19 flat sky, 19 depth-only, 19 NPOT | Both eyes exactly equal their two-pass color/depth references |
+| Ordinary room zero pose regression | 18 paired; no sky/depth-only/NPOT | Native/two-pass color/depth exactly equal; callback counts match |
+
+Fresh explicitly verified Astra/xhigh correctness review found no actionable issue in the final sky/NPOT/readback diff and inspected the first positive sky result. Main executed the remaining matrix and inspected the actual E1L1 stereo capture. Native/XR full builds and Python/diff checks pass.
+
+With the prototype enabled, real E1L1 first60frames measured 59 opaque multiview +1 reference frame. Requiring60/60 correctly failed; the 59minimum test passed. Mixed native dedicated-server/XR-client initial join/reconnect each still render60actualworldframes with distinct eye readbacks and visible movement input. One run measured58/60 on initial join and59/60 on reconnect, failing its explicit59minimum; a diagnostic repeat measured59/60 on each and passed. Bounded fallback logs identify texture/palette mutation and also record a later frame79 mutation during gameplay. Coverage is therefore variable when assets stream; full steady/performance/multiplayer qualification is not closed by these startup checks. Masks still use two passes in all these tests.
+
+Reproduce the added cases with the existing runtime environment:
+
+```sh
+python3 tools/vr/check_stereo_oracle.py --binary ./eduke32-xr --single-pass --scene sky \
+  --sky-depth 1 --display :1 --grp /path/to/owned/DUKE3D.GRP --work-dir /path/to/test/labs
+# --pose stereo --sky-depth 0 --sky-panning 0 exercises rotated sky with those native switches off.
+# --scene sky-floor --pose unequal --sky-depth 1 exercises floor and eye-only packets.
+```
+
+World and mixed runners now report opaque multiview/reference frame counts independently of successful stereo submission; `--minimum-multiview-frames` can enforce a chosen threshold without concealing reference frames. `../../../evidence/sky-world-stereo.png` shows actual E1L1 eye layers with opaque multiview plus native per-eye masks. The synthetic differential fixtures still submit no projection layer.

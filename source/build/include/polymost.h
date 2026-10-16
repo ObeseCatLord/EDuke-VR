@@ -59,6 +59,7 @@ struct polymost_xr_collect_stats
 {
     uint32_t pairedCalls, eyeOnlyCalls;
     uint32_t pairedVertices, eyeOnlyVertices;
+    uint32_t flatSkyCalls, skyDepthCalls, npotCalls;
 };
 
 // Frame-local transport only: begin eye 0 resets both streams, eye 1 continues.

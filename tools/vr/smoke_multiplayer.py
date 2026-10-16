@@ -10,6 +10,7 @@ import argparse
 import ctypes as c
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -192,10 +193,13 @@ def main():
     parser.add_argument('--display', default=':95')
     parser.add_argument('--external-display', action='store_true', help='reuse --display; do not create or stop Xvfb')
     parser.add_argument('--xr-client', action='store_true', help='set EDUKE32_XR=1 and capture 60 client stereo frames')
+    parser.add_argument('--minimum-multiview-frames', type=int, default=0, choices=range(61))
     parser.add_argument('--direct-grp', action='store_true', help='pass the GRP via -g instead of creating a local symlink')
     parser.add_argument('--input', action='store_true', help='accepted for compatibility; the owned-window input check always runs')
     parser.add_argument('--reconnect', action='store_true', help='replace the client once while retaining the server')
     args = parser.parse_args()
+    if args.minimum_multiview_frames and not args.xr_client:
+        parser.error('--minimum-multiview-frames requires --xr-client')
 
     binary, grp = args.binary.resolve(), args.grp.resolve()
     client_binary = (args.client_binary or binary).resolve()
@@ -334,6 +338,15 @@ def main():
             changed_pixels = sum(any(pixels[i:i+3]) for i in range(0, len(pixels), 3))
         xr_world_frames = all('OpenXR world oracle: 60 frames' in path.read_text(errors='replace')
                               for path in client_log_paths) if args.xr_client else None
+        xr_coverage = []
+        if args.xr_client:
+            for path in client_log_paths:
+                coverage = re.findall(r'OpenXR world oracle: 60 frames, opaque multiview=(\d+) twoPass=(\d+)',
+                                      path.read_text(errors='replace'))
+                multiview, oracle = map(int, coverage[-1]) if coverage else (0, 0)
+                xr_coverage.append({'opaque_multiview': multiview, 'opaque_two_pass': oracle})
+        coverage_good = not args.xr_client or all(c['opaque_multiview']+c['opaque_two_pass'] == 60
+                          and c['opaque_multiview'] >= args.minimum_multiview_frames for c in xr_coverage)
         xr_eye_readbacks = all((path.parent / 'stereo-left.ppm').is_file()
                               and (path.parent / 'stereo-right.ppm').is_file()
                               and (path.parent / 'stereo-left.ppm').read_bytes() != (path.parent / 'stereo-right.ppm').read_bytes()
@@ -349,6 +362,7 @@ def main():
             'input_changed_pixels': changed_pixels,
             'xr_client': args.xr_client,
             'xr_world_60_frames_per_join': xr_world_frames,
+            'xr_opaque_coverage_per_join': xr_coverage,
             'xr_distinct_eye_readbacks_per_join': xr_eye_readbacks,
             'screenshot': str(screenshot),
             'evidence_directory': str(root),
@@ -358,7 +372,7 @@ def main():
         passed = (result['server_initialized'] and result['server_exit_before_cleanup'] is None
                   and result['client_exit_before_cleanup'] is None and result['owned_client_window']
                   and result['input_changed_pixels'] > 0 and not result['client_backtrace']
-                  and (not args.xr_client or (xr_world_frames and xr_eye_readbacks)))
+                  and (not args.xr_client or (xr_world_frames and xr_eye_readbacks and coverage_good)))
         return 0 if passed else 1
     finally:
         stop(client)

@@ -230,6 +230,20 @@ bool glSucceeded(char const *where, std::string &error)
     while (glGetError() != GL_NO_ERROR) { }
     return false;
 }
+
+// The caller owns the read FBO and pack state. No rendering or GL cache changes.
+bool writeDepthReadback(char const *path, uint32_t width, uint32_t height, std::string &error)
+{
+    std::vector<uint32_t> depth(size_t(width)*height);
+    glReadPixels(0,0,width,height,GL_DEPTH_COMPONENT,GL_UNSIGNED_INT,depth.data());
+    if (!glSucceeded("reading world depth",error)) return false;
+    FILE *file=std::fopen(path,"wb");
+    if (!file) { error="could not open depth capture"; return false; }
+    bool good=std::fwrite(depth.data(),sizeof(uint32_t),depth.size(),file) == depth.size();
+    if (std::fclose(file) != 0) good=false;
+    if (!good) error="could not write depth capture";
+    return good;
+}
 }  // namespace
 
 bool captureFramebuffer(char const *path, uint32_t width, uint32_t height, std::string &error)
@@ -256,6 +270,22 @@ bool captureFramebuffer(char const *path, uint32_t width, uint32_t height, std::
         error="could not write native world framebuffer capture";
         good=false;
     }
+    state.restore();
+    return good;
+}
+
+bool captureFramebufferDepth(char const *path, uint32_t width, uint32_t height, std::string &error)
+{
+    if (!path || !width || !height) { error="invalid depth capture parameters"; return false; }
+    GLState state;
+    state.save();
+    glBindFramebuffer(GL_READ_FRAMEBUFFER,state.drawFbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER,0);
+    glPixelStorei(GL_PACK_ALIGNMENT,1);
+    glPixelStorei(GL_PACK_ROW_LENGTH,0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS,0);
+    glPixelStorei(GL_PACK_SKIP_ROWS,0);
+    bool good=writeDepthReadback(path,width,height,error);
     state.restore();
     return good;
 }
@@ -846,7 +876,7 @@ bool Runtime::bindMultiview(std::string &error)
     return glSucceeded("binding OpenXR multiview", error);
 }
 
-bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error)
+bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error, bool captureDepth)
 {
     if (!m_impl->frameBegun || !m_impl->imageReady)
     {
@@ -871,6 +901,8 @@ bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::
         for (uint32_t layer = 0; layer < kViewCount; ++layer)
         {
             glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[imageIndex].image, 0, layer);
+            if (captureDepth)
+                glFramebufferTextureLayer(GL_READ_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,m_impl->depth,0,layer);
             glReadBuffer(GL_COLOR_ATTACHMENT0);
             if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE || !glSucceeded("setting up diagnostic readback", error))
             {
@@ -899,6 +931,15 @@ bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::
                     error    = "could not write diagnostic PPM";
                     pixelsOk = false;
                     break;
+                }
+                if (captureDepth)
+                {
+                    std::string depthPath=std::string(outputPrefix)+(layer ? "-right-depth.bin" : "-left-depth.bin");
+                    if (!writeDepthReadback(depthPath.c_str(),m_impl->width,m_impl->height,error))
+                    {
+                        pixelsOk=false;
+                        break;
+                    }
                 }
             }
             if (requireDistinct && !nonBackground)

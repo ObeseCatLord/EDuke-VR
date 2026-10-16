@@ -7,6 +7,7 @@ Generated test geometry is original; all art/scripts come from the supplied GRP.
 Synthetic fixtures end empty XR frames, never submit synthetic headset views.
 """
 import argparse
+import array
 import json
 import os
 from pathlib import Path
@@ -23,13 +24,13 @@ from smoke_world import CONFIG
 COUNTER = re.compile(r'addlog vrfixture_(displayrooms|animatesprites|displayroomsend) = (\d+)')
 
 
-def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_attachment, single_pass=False, pose="zero", inject_init=False):
+def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_attachment, single_pass=False, pose="zero", inject_init=False, scene="room", sky_depth=0, sky_panning=1):
     directory.mkdir()
-    generate(directory)
+    generate(directory, scene)
     shutil.copyfile(fixture_con, directory/'stereo_test.con')
     (directory/'DUKE3D.GRP').symlink_to(grp)
     (directory/'eduke32.cfg').write_text(CONFIG)
-    (directory/'autoexec.cfg').write_text('r_size 0\nr_projectionhack 0\nr_yshearing 0\n')
+    (directory/'autoexec.cfg').write_text(f'r_size 0\nr_projectionhack 0\nr_yshearing 0\nr_flatsky 1\nr_skyzbufferhack {sky_depth}\nr_parallaxskypanning {sky_panning}\n')
     prefix = directory/'world'
     env = dict(os.environ, DISPLAY=display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
                EDUKE32_XR_TEST_CAPTURE=str(prefix))
@@ -69,8 +70,8 @@ def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_
             good = process.poll() is None and len(counts) == 3 and all(p.is_file() for p in files)
             if not zero_ipd and native_attachment == 'array':
                 good = good and '(matched texture attachment)' in output
-            submissions = re.findall(r'OpenXR opaque single-pass: frame=12 paired=(\d+) eyeOnly=(\d+) pairedVertices=(\d+) eyeOnlyVertices=(\d+)', output)
-            submission = dict(zip(('paired_calls', 'eye_only_calls', 'paired_vertices', 'eye_only_vertices'),
+            submissions = re.findall(r'OpenXR opaque single-pass: frame=12 paired=(\d+) eyeOnly=(\d+) pairedVertices=(\d+) eyeOnlyVertices=(\d+) flatSky=(\d+) skyDepth=(\d+) npot=(\d+)', output)
+            submission = dict(zip(('paired_calls', 'eye_only_calls', 'paired_vertices', 'eye_only_vertices', 'flat_sky_calls', 'sky_depth_calls', 'npot_calls'),
                                   map(int, submissions[-1]))) if submissions else None
             return {'captured': good, 'counts': counts, 'single_pass_at_capture': submission,
                     'init_failure_recovered': 'injected opaque replay initialization' in output and submission is not None,
@@ -98,6 +99,9 @@ def main():
     parser.add_argument('--pose', choices=('zero', 'stereo', 'unequal'), default='zero',
                         help='identical eyes, or deterministic nonzero IPD, pitch/yaw/roll and asymmetric FOV')
     parser.add_argument('--inject-replay-init-failure', action='store_true')
+    parser.add_argument('--scene', choices=('room', 'sky', 'sky-floor'), default='room')
+    parser.add_argument('--sky-depth', choices=(0, 1), type=int, default=0, help='native sky depth-only companion pass')
+    parser.add_argument('--sky-panning', choices=(0, 1), type=int, default=1)
     args = parser.parse_args()
     if args.inject_replay_init_failure and not args.single_pass:
         parser.error('--inject-replay-init-failure requires --single-pass')
@@ -107,14 +111,14 @@ def main():
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='stereo-diff-', dir=args.work_dir.resolve()))
     fixture_con = Path(__file__).resolve().parent/'fixtures/stereo_test.con'
-    native, reference = run(binary, grp, lab/'native', fixture_con, args.display, False, args.timeout, args.native_attachment, pose=args.pose)
-    oracle, oracle_eyes = run(binary, grp, lab/'oracle', fixture_con, args.display, True, args.timeout, args.native_attachment, pose=args.pose)
+    native, reference = run(binary, grp, lab/'native', fixture_con, args.display, False, args.timeout, args.native_attachment, pose=args.pose, scene=args.scene, sky_depth=args.sky_depth, sky_panning=args.sky_panning)
+    oracle, oracle_eyes = run(binary, grp, lab/'oracle', fixture_con, args.display, True, args.timeout, args.native_attachment, pose=args.pose, scene=args.scene, sky_depth=args.sky_depth, sky_panning=args.sky_panning)
     if args.single_pass:
-        stereo, eyes = run(binary, grp, lab/'single-pass', fixture_con, args.display, True, args.timeout, args.native_attachment, True, args.pose, args.inject_replay_init_failure)
+        stereo, eyes = run(binary, grp, lab/'single-pass', fixture_con, args.display, True, args.timeout, args.native_attachment, True, args.pose, args.inject_replay_init_failure, args.scene, args.sky_depth, args.sky_panning)
     else:
         stereo, eyes = oracle, oracle_eyes
     pixel_results = []
-    if native['captured'] and stereo['captured']:
+    if native['captured'] and oracle['captured'] and stereo['captured']:
         for index, path in enumerate(eyes):
             target = Image.open(reference[0] if args.pose == 'zero' else oracle_eyes[index]).convert('RGB')
             image = Image.open(path).convert('RGB')
@@ -126,19 +130,39 @@ def main():
             pixel_results.append({'size_equal': True, 'exact': delta.getbbox() is None,
                                   'changed_pixels': sum(any(data[i:i+3]) for i in range(0,len(data),3)),
                                   'maximum_channel_error': max(data)})
-    counts_equal = native['counts'] == stereo['counts'] == oracle['counts'] and bool(native['counts'])
+    depth_results = []
+    if native['captured'] and oracle['captured'] and stereo['captured']:
+        for index, path in enumerate(eyes):
+            target = reference[0] if args.pose == 'zero' else oracle_eyes[index]
+            depth = path.with_name(path.stem+'-depth.bin')
+            target_depth = target.with_name(target.stem+'-depth.bin')
+            oracle_depth = oracle_eyes[index].with_name(oracle_eyes[index].stem+'-depth.bin')
+            expected = Image.open(path).width * Image.open(path).height * 4
+            complete = all(p.is_file() and p.stat().st_size == expected for p in (depth, target_depth, oracle_depth))
+            samples = array.array('I')
+            if complete:
+                samples.frombytes(depth.read_bytes())
+            depth_results.append({'complete': complete, 'nontrivial': complete and min(samples) != max(samples),
+                                  'exact_reference': complete and depth.read_bytes() == target_depth.read_bytes(),
+                                  'exact_two_pass': complete and depth.read_bytes() == oracle_depth.read_bytes()})
+    depth_good = len(depth_results) == 2 and all(d['exact_reference'] and d['exact_two_pass'] and d['nontrivial'] for d in depth_results)
+    counts_equal = stereo['counts'] == oracle['counts'] and bool(oracle['counts'])
+    if args.pose == 'zero':
+        counts_equal = counts_equal and native['counts'] == stereo['counts']
     oracle_equal = oracle['captured'] and stereo['captured'] and all(
         a.read_bytes() == b.read_bytes() for a, b in zip(oracle_eyes, eyes))
     submission = stereo['single_pass_at_capture']
     promoted = not args.single_pass or bool(submission and submission['eye_only_calls' if args.pose == 'unequal' else 'paired_calls'] > 0)
     distinct = stereo['captured'] and eyes[0].read_bytes() != eyes[1].read_bytes()
     pose_good = args.pose == 'zero' or distinct
+    sky_good = (not args.single_pass or args.scene == 'room' or bool(submission
+                and submission['flat_sky_calls'] > 0 and (not args.sky_depth or submission['sky_depth_calls'] > 0)))
     recovered = not args.inject_replay_init_failure or stereo['init_failure_recovered']
-    passed = (recovered and pose_good and native['captured'] and stereo['captured'] and counts_equal and oracle_equal and promoted
+    passed = (sky_good and depth_good and recovered and pose_good and native['captured'] and stereo['captured'] and counts_equal and oracle_equal and promoted
               and len(pixel_results) == 2 and all(p['exact'] for p in pixel_results))
     result = {'stereo_differential_passed': passed,
               'zero_ipd_native_equivalence': passed if args.pose == 'zero' else None,
-              'pose': args.pose, 'eyes_distinct': distinct, 'native': native, 'stereo': stereo,
+              'pose': args.pose, 'scene': args.scene, 'sky_depth': args.sky_depth, 'sky_panning': args.sky_panning, 'depth': depth_results, 'eyes_distinct': distinct, 'native': native, 'stereo': stereo,
               'counts_equal': counts_equal, 'eye_pixels': pixel_results,
               'native_attachment': args.native_attachment, 'pixel_reference': 'native' if args.pose == 'zero' else 'two-pass', 'oracle': oracle,
               'two_pass_pixels_equal': oracle_equal, 'single_pass_requested': args.single_pass,

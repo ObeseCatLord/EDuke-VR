@@ -44,6 +44,7 @@ def main():
     parser.add_argument('--runtime-dir', type=Path)
     parser.add_argument('--timeout', default=30, type=int)
     parser.add_argument('--failure-stage', choices=('opaque', 'masks'))
+    parser.add_argument('--minimum-multiview-frames', type=int, default=0, choices=range(61))
     args = parser.parse_args()
     binary, grp = args.binary.resolve(), args.grp.resolve()
     if not binary.is_file() or not grp.is_file() or not args.display or not 5 <= args.timeout <= 120:
@@ -81,8 +82,12 @@ def main():
             left, right = (lab/'stereo-left.ppm'), (lab/'stereo-right.ppm')
             captured = left.is_file() and right.is_file()
             distinct = captured and left.read_bytes() != right.read_bytes()
-            passed = ('OpenXR world oracle: 60 frames' in output and 'E1L1:' in output
+            coverage = re.findall(r'OpenXR world oracle: 60 frames, opaque multiview=(\d+) twoPass=(\d+)', output)
+            multiview, oracle = map(int, coverage[-1]) if coverage else (0, 0)
+            world_good = (multiview + oracle == 60 and 'OpenXR world oracle: 60 frames' in output and 'E1L1:' in output
                       and distinct and process.poll() is None)
+            coverage_good = multiview >= args.minimum_multiview_frames
+            passed = world_good and coverage_good
             if args.failure_stage:
                 samples = re.findall(r'XR failure test animation: frame=(\d+) input=(\d+) duplicateOwners=(\d+)', output)
                 per_frame = Counter(int(frame) for frame, _, _ in samples)
@@ -93,8 +98,12 @@ def main():
                 result = {'failure_stage': args.failure_stage, 'failure_recovery_counts_passed': passed,
                           'animation_input_samples': len(samples), 'evidence_directory': str(lab)}
             else:
-                result = {'world_stereo_60_frames': passed, 'eye_readbacks_distinct': distinct,
-                      'world_renderer': 'two-pass oracle', 'headset_visual_test': 'not tested',
+                result = {'world_stereo_60_frames': world_good,
+                      'minimum_multiview_coverage_passed': coverage_good,
+                      'minimum_multiview_frames': args.minimum_multiview_frames, 'eye_readbacks_distinct': distinct,
+                      'world_renderer': 'bounded opaque multiview + two-pass masks' if multiview else 'two-pass oracle',
+                      'opaque_multiview_frames': multiview, 'opaque_two_pass_frames': oracle,
+                      'headset_visual_test': 'not tested',
                       'multiplayer_gameplay': 'not tested', 'evidence_directory': str(lab)}
         finally:
             if process.poll() is None:

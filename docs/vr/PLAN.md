@@ -9,7 +9,8 @@ Status: native XR foundation and first ordinary-room stereo oracle implemented, 
 - The native world snapshot payload bug is corrected. A native dedicated server plus XR client passes join and replacement/reconnect, with 60 stereo frames/readbacks per join and visible gameplay input changes.
 - Independent Astra/xhigh design and code reviews completed; their concrete fixes and tests are recorded in SENIOR_REVIEW.md and VALIDATION.md.
 - Strict matched-target zero-IPD/native pixel and callback equivalence passes. A bounded indexed-ART opaque multiview path also matches the two-pass reference with deterministic nonzero IPD, asymmetric FOV and pitch/yaw/roll; unequal coverage and initialization-error recovery pass.
-- Next implementation work: extend the restricted opaque family to ordinary sky/material coverage, qualify real tracked motion/full-pitch and portal eye-only visibility, then promote masks/sprites and remaining draw families. Controllers, headset weapon/HUD/menu presentation and the full multiplayer/action/platform matrix remain required.
+- Native indexed-ART ceiling/floor sky, sky depth-only companions and NPOT shader emulation now pass exact color/depth fixtures. E1L1 uses multiview for 59 of its first 60 opaque frames; one cold texture upload safely retries the reference.
+- Next implementation work: promote indexed masks/sprites while preserving native transparency order, qualify real tracked motion/full-pitch and portal eye-only visibility, then extend remaining material/draw families. Controllers, headset weapon/HUD/menu presentation and the full multiplayer/action/platform matrix remain required.
 
 ## Source and behavioral reference
 
@@ -98,6 +99,8 @@ Prove one bounded opaque wall/floor draw family against the two-pass oracle. Nat
 Then extend masked walls, sprites, models, voxels, translucent geometry and material/detail/glow variants. Assess existing Polymost1 versus optional Polymost2 seams from actual proof; do not enable Polymost2 globally merely because it has explicit uniforms. Keep the correctness oracle available for differential capture while the optimized path develops.
 
 Gate: both eyes match the oracle at occluding portal edges and near geometry, no one-eye holes, exact layer indexing. Captures establish single-pass GPU behavior and honest CPU visibility cost. Report fallback modes explicitly. Final completion requires the selected production world path to satisfy single-pass, not only the diagnostic.
+
+Mask-phase implementation constraint: reuse the same typed transport/program and native per-eye partition/sort/interleave. Capture the native alpha/blend/depth/color state instead of adding a new sorter or material policy. Collection after CON animation must produce no committed mask pixels before qualification; direct model/voxel/alternate paths need explicit reject-and-skip coverage or isolated targets. After partial mask replay failure, consume the logical frame and submit empty as current post-animation failure handling does. Do not regenerate opaque geometry after CON as a generic recovery: scripts may have changed the world since its reference opaque pass. Reopen this boundary in a fresh Astra design review before implementing the phase.
 
 ### 4. Full engine/game presentation coverage
 
