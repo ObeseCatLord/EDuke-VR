@@ -15,6 +15,11 @@ Ken Silverman's official web site: http://www.advsys.net/ken
 #include "kplib.h"
 #include "mdsprite.h"
 #include "polymost.h"
+#include "polymost_color_correction.h"
+#ifdef USE_OPENXR
+#include "sdlayer.h"
+#endif
+#include <string>
 #include "microprofile.h"
 #include "tilepacker.h"
 #include "colmatch.h"
@@ -187,6 +192,19 @@ static int32_t lastbasepal = -1;
 static GLuint paletteTextureIDs[MAXBASEPALS];
 static GLuint palswapTextureID = 0;
 extern char const *polymost1Frag;
+
+static char const *polymost1FragmentSource()
+{
+    static std::string const source=[] {
+        std::string code(polymost1Frag);
+        // Keep version/extension directives first. Both native variants and
+        // multiview replay compile the same color-correction function.
+        code.insert(code.find("void main()"),eduke_native_glsl::ColorCorrection);
+        return code;
+    }();
+    return source.c_str();
+}
+
 extern char const *polymost1Vert;
 #ifdef USE_OPENXR
 extern char const *polymost1VertXR;
@@ -772,7 +790,7 @@ static void polymost_xrShaderProbe()
     if (!vertex)
         return;
 
-    char const * const nativeFragmentSources[] = { polymost1Frag };
+    char const * const nativeFragmentSources[] = { polymost1FragmentSource() };
     GLuint fragment = polymost_xrCompileShader(GL_FRAGMENT_SHADER, nativeFragmentSources, nullptr, "native GLSL 120 fragment");
     bool linked = fragment && polymost_xrLinkProbe(vertex, fragment, "native GLSL 120");
     if (fragment)
@@ -783,7 +801,7 @@ static void polymost_xrShaderProbe()
         // The body is the exact embedded native fragment source after its
         // #version line.  Compatibility profiles retain its fixed-function
         // inputs; only the version declaration changes for cross-stage link.
-        char const * const fragmentBody = Bstrchr(polymost1Frag, '\n');
+        char const * const fragmentBody = Bstrchr(polymost1FragmentSource(), '\n');
         if (fragmentBody)
         {
             char const * const compatFragmentSources[] = { "#version 410 compatibility\n", fragmentBody + 1 };
@@ -820,7 +838,7 @@ static bool polymost_xrInitOpaqueReplay()
     xrOpaque.program = xrOpaque.vbo = 0;
 
     char const * const vertexSource[] = { polymost1VertXR };
-    char const * const fragmentSource[] = { polymost1Frag };
+    char const * const fragmentSource[] = { polymost1FragmentSource() };
     GLuint const vertex = polymost_xrCompileShader(GL_VERTEX_SHADER, vertexSource, nullptr, "opaque replay vertex");
     GLuint const fragment = polymost_xrCompileShader(GL_FRAGMENT_SHADER, fragmentSource, nullptr, "opaque replay fragment");
     if (!vertex || !fragment)
@@ -1802,7 +1820,7 @@ void polymost_glinit()
         polymost1ExtendedShaderProgramID = glCreateProgram();
 
         polymost1BasicVertexShaderID = polymost2_compileShader(GL_VERTEX_SHADER, polymost1Vert);
-        polymost1ExtendedFragmentShaderID = polymost2_compileShader(GL_FRAGMENT_SHADER, polymost1Frag);
+        polymost1ExtendedFragmentShaderID = polymost2_compileShader(GL_FRAGMENT_SHADER, polymost1FragmentSource());
 
         glAttachShader(polymost1ExtendedShaderProgramID, polymost1BasicVertexShaderID);
         glAttachShader(polymost1ExtendedShaderProgramID, polymost1ExtendedFragmentShaderID);
@@ -1815,10 +1833,10 @@ void polymost_glinit()
 
     if (!glIsProgram(polymost1BasicShaderProgramID))
     {
-        int const polymost1BasicFragLen = Bstrlen(polymost1Frag);
+        int const polymost1BasicFragLen = Bstrlen(polymost1FragmentSource());
         auto      polymost1BasicFrag    = (char *)Xmalloc(polymost1BasicFragLen);
 
-        Bmemcpy(polymost1BasicFrag, polymost1Frag, polymost1BasicFragLen);
+        Bmemcpy(polymost1BasicFrag, polymost1FragmentSource(), polymost1BasicFragLen);
 
         char *extDefineSubstr = Bstrstr(polymost1BasicFrag, " #define POLYMOST1_EXTENDED");
 
@@ -4090,6 +4108,57 @@ void polymost_bufferVert(vec3f_t const v, vec2f_t const t)
     *(vec2f_t*)(&drawpolyVerts[off+3]) = t;
 }
 
+#ifdef USE_OPENXR
+// An opaque draw covers its pixels even when an ART texel carries zero alpha.
+// Preserve the native GREATER discard before writing capture coverage one.
+struct XROpaqueUICoverage
+{
+    GLint location=-1;
+    XROpaqueUICoverage()
+    {
+        if (!sdlayer_xr_overlayTargetBound() || glIsEnabled(GL_BLEND)) return;
+        GLint program=0; glGetIntegerv(GL_CURRENT_PROGRAM,&program);
+        GLint function=GL_ALWAYS; GLfloat reference=-1.f;
+        if (glIsEnabled(GL_ALPHA_TEST))
+        {
+            glGetIntegerv(GL_ALPHA_TEST_FUNC,&function);
+            glGetFloatv(GL_ALPHA_TEST_REF,&reference);
+        }
+        if ((GLuint(program)!=polymost1BasicShaderProgramID && GLuint(program)!=polymost1ExtendedShaderProgramID)
+            || (function!=GL_ALWAYS && function!=GL_GREATER))
+        {
+            LOG_F(WARNING,"OpenXR UI capture canceled: unsupported opaque shader/alpha test.");
+            sdlayer_xr_cancelMenuPresentation();
+            return;
+        }
+        if (function==GL_ALWAYS) reference=-1.f;
+        location=glGetUniformLocation(program,"u_xrCoverage");
+        glUniform2f(location,1.f,reference);
+    }
+    ~XROpaqueUICoverage() { if (location>=0) glUniform2f(location,0.f,0.f); }
+};
+
+bool polymost_xrBeginTint(uint8_t r, uint8_t g, uint8_t b, uint8_t f)
+{
+    if (!sdlayer_xr_overlayTargetBound()) return false;
+    GLint program=0; glGetIntegerv(GL_CURRENT_PROGRAM,&program);
+    if (GLuint(program)!=polymost1CurrentShaderProgramID || !program)
+    {
+        sdlayer_xr_cancelMenuPresentation(); return false;
+    }
+    float const rgba[]={r/255.f,g/255.f,b/255.f,f/255.f};
+    if (!sdlayer_xr_tintWorld(rgba,&polymost1UploadedColorCorrection.x)) return false;
+    glUniform2f(glGetUniformLocation(program,"u_xrCoverage"),2.f,0.f);
+    return true;
+}
+
+void polymost_xrEndTint()
+{
+    glUniform2f(glGetUniformLocation(polymost1CurrentShaderProgramID,"u_xrCoverage"),0.f,0.f);
+    glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+}
+#endif
+
 void polymost_finishBufferedDrawing(int mode)
 {
 #ifdef USE_OPENXR
@@ -4102,6 +4171,9 @@ void polymost_finishBufferedDrawing(int mode)
     if (!persistentStreamBuffer)
         glBufferSubData(GL_ARRAY_BUFFER, drawpolyVertsOffset * sizeof(float) * 5, drawpolyVertsCnt * sizeof(float) * 5, drawpolyVerts);
 
+#ifdef USE_OPENXR
+    XROpaqueUICoverage coverage;
+#endif
     glDrawArrays(mode, drawpolyVertsOffset, drawpolyVertsCnt);
     drawpolyVertsOffset += drawpolyVertsCnt;
     drawpolyVertsCnt = 0;
@@ -10182,6 +10254,9 @@ void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16
 {
     if (usemodels && tile2model[picnum].hudmem[(dastat&4)>>2])
     {
+#ifdef USE_OPENXR
+        if (sdlayer_xr_overlayTargetBound()) sdlayer_xr_cancelMenuPresentation();
+#endif
         polymost_dorotatespritemodel(sx, sy, z, a, picnum, dashade, dapalnum, dastat, daalpha, dablend, uniqid);
         return;
     }
@@ -10675,7 +10750,12 @@ void polymost_fillpolygon(int32_t npoints)
         glColor3f(f, f, f);
     }
 
-    tessectrap((float *)rx1,(float *)ry1,xb1,npoints);
+    {
+#ifdef USE_OPENXR
+        XROpaqueUICoverage coverage;
+#endif
+        tessectrap((float *)rx1,(float *)ry1,xb1,npoints);
+    }
 
     if (pth && !(pth->flags & PTH_INDEXED))
     {
@@ -10758,6 +10838,9 @@ int32_t polymost_drawtilescreen(int32_t tilex, int32_t tiley, int32_t tilenum, i
 #endif
 
     glColor3f(1,1,1);
+#ifdef USE_OPENXR
+    XROpaqueUICoverage coverage;
+#endif
     glBegin(GL_TRIANGLE_FAN);
     glTexCoord2f(0,              0); glVertex2f((float)tilex            ,(float)tiley);
     glTexCoord2f(xdimepad,       0); glVertex2f((float)tilex+(scx*ratio),(float)tiley);
@@ -10879,7 +10962,9 @@ int32_t polymost_printtext256(int32_t xpos, int32_t ypos, int16_t col, int16_t b
         int const c = Bstrlen(name);
 
         glColor4ub(b.r,b.g,b.b,255);
-
+#ifdef USE_OPENXR
+        XROpaqueUICoverage coverage;
+#endif
         glBegin(GL_QUADS);
 
         glVertex2i(xpos,ypos);

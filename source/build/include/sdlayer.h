@@ -16,6 +16,8 @@ namespace eduke_xr { class Runtime; }
 eduke_xr::Runtime *sdlayer_xr_worldRuntime();
 void sdlayer_xr_disableWorld(char const *reason);
 void sdlayer_xr_cancelMenuPresentation();
+bool sdlayer_xr_overlayTargetBound();
+bool sdlayer_xr_tintWorld(float const *rgba, float const *correction);
 #endif
 
 extern int32_t maxrefreshfreq;

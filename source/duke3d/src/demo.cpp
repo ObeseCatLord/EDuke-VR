@@ -854,6 +854,7 @@ nextdemo_nomenu:
 #endif
                     G_DrawRooms(screenpeek, j);
 #ifdef USE_OPENXR
+                    G_XRBeginMenuPresentation();
                     G_XREndFrame();
 #endif
                     G_DisplayRest(j);

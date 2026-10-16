@@ -41,6 +41,8 @@ void polymost_drawrooms(void);
 void polymost_prepareMirror(int32_t dax, int32_t day, int32_t daz, fix16_t daang, fix16_t dahoriz, int16_t mirrorWall);
 void polymost_completeMirror();
 #ifdef USE_OPENXR
+bool polymost_xrBeginTint(uint8_t r, uint8_t g, uint8_t b, uint8_t f);
+void polymost_xrEndTint();
 // Installs an asymmetric OpenXR tangent frustum for the next Polymost camera setup.
 // The Build CPU traversal remains on its covering symmetric frustum.
 void polymost_xrProjection(float leftTan, float rightTan, float downTan, float upTan);

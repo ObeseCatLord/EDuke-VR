@@ -71,6 +71,33 @@ static eduke_xr::Runtime *pendingRuntime, *inputRuntime;
 static eduke_xr::Runtime::Frame pendingFrame;
 static uint64_t pendingGeneration, inputGeneration;
 static bool worldDrawArmed;
+static eduke_xr::Runtime *presentationRuntime;
+static uint64_t presentationGeneration;
+struct WorldReceipt
+{
+    eduke_xr::Runtime *runtime=nullptr;
+    uint64_t generation=0, serial=0;
+    bool opaque=false, masks=false;
+};
+static WorldReceipt worldReceipt;
+
+static void accountWorldFrame(bool opaque, bool masks, bool fixture)
+{
+    ++worldFrames;
+    if (opaque) ++worldMultiviewFrames; else ++worldOracleFrames;
+    if (masks) ++worldMaskMultiviewFrames; else ++worldMaskOracleFrames;
+    if (opaque && masks) ++worldFullMultiviewFrames;
+    if (!fixture && worldFrames==60)
+        LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; masks multiview=%u twoPass=%u full multiview=%u; one animation transaction per frame.",
+              unsigned(worldMultiviewFrames),unsigned(worldOracleFrames),unsigned(worldMaskMultiviewFrames),
+              unsigned(worldMaskOracleFrames),unsigned(worldFullMultiviewFrames));
+}
+
+static bool overlayEnabled()
+{
+    auto enabled=std::getenv("EDUKE32_XR_UI");
+    return enabled && !Bstrcmp(enabled,"2");
+}
 static eduke_xr::Runtime *menuRuntime;
 static uint64_t menuGeneration, menuOwner;
 static eduke_xr::ActionInput rawInput;
@@ -236,6 +263,15 @@ bool G_XRConsumeWorldDraw()
 
 void G_XRCancelMenuPresentation()
 {
+    // A world may have finished before its outer display-end callback. Nested
+    // room draws must cancel that retained image too, before native callbacks.
+    auto *waiting=presentationRuntime;
+    presentationRuntime=nullptr;
+    if (waiting && waiting->generation()==presentationGeneration)
+    {
+        std::string error;
+        if (!waiting->finishFrame(false,error)) sdlayer_xr_disableWorld(error.c_str());
+    }
     auto *runtime=menuRuntime;
     menuRuntime=nullptr;
     if (!runtime || runtime->generation()!=menuGeneration || !runtime->menuPresentationActive()) return;
@@ -250,22 +286,25 @@ void G_XRCancelMenuPresentation()
 void G_XRBeginMenuPresentation()
 {
     char const *enabled=std::getenv("EDUKE32_XR_UI");
-    if (!enabled || Bstrcmp(enabled,"1") || (g_player[myconnectindex].ps->gm & MODE_GAME)
+    bool const overlay=overlayEnabled() && presentationRuntime;
+    if (!enabled || (Bstrcmp(enabled,"1") && Bstrcmp(enabled,"2"))
+        || (!overlay && (g_player[myconnectindex].ps->gm & MODE_GAME))
         || videoGetRenderMode()!=REND_POLYMOST) return;
-    auto *runtime=pendingRuntime;
-    if (!runtime || runtime->generation()!=pendingGeneration) return;
+    auto *runtime=overlay ? presentationRuntime : pendingRuntime;
+    if (!runtime || runtime->generation()!=(overlay ? presentationGeneration : pendingGeneration)) return;
     std::string error;
     uint64_t owner=0;
     if (auto test=std::getenv("EDUKE32_XR_TEST_MENU_VIEWPORT"))
         if (!Bstrcmp(test,"1")) buildgl_setViewport(13,17,xdim/2,ydim/2);
-    if (!runtime->beginMenuPresentation(xdim,ydim,owner,error))
+    if (!runtime->beginMenuPresentation(xdim,ydim,owner,error,overlay))
     {
         G_XREndFrame();
         G_XRClearInput();
         sdlayer_xr_disableWorld(error.c_str());
         return;
     }
-    pendingRuntime=nullptr; // Runtime now owns capture through the armed final swap.
+    if (overlay) presentationRuntime=nullptr;
+    else pendingRuntime=nullptr; // Runtime now owns capture through the armed final swap.
     menuRuntime=runtime; menuGeneration=runtime->generation(); menuOwner=owner;
     static bool injectedNestedSwap;
     if (auto test=std::getenv("EDUKE32_XR_TEST_MENU_NESTED"))
@@ -279,6 +318,31 @@ void G_XRBeginMenuPresentation()
 
 void G_XRArmMenuPresentation()
 {
+    if (auto test=std::getenv("EDUKE32_XR_TEST_HUD_MENU"))
+    {
+        static unsigned testFrames;
+        if (++testFrames==10 && (!Bstrcmp(test,"1") || !Bstrcmp(test,"2")))
+        {
+            Menu_Open(myconnectindex);
+            Menu_Change(!Bstrcmp(test,"2") ? MENU_SAVE : MENU_MAIN_INGAME);
+            LOG_F(INFO,"OpenXR HUD test: opened native %s menu.",!Bstrcmp(test,"2") ? "save" : "in-game");
+        }
+    }
+    if (auto test=std::getenv("EDUKE32_XR_TEST_HUD_TINT"))
+        if (!Bstrcmp(test,"1") || !Bstrcmp(test,"2") || !Bstrcmp(test,"3"))
+        {
+            if (worldFrames==59 && sdlayer_xr_overlayTargetBound())
+                if (auto prefix=std::getenv("EDUKE32_XR_HUD_OUTPUT"))
+                {
+                    std::string error, path=std::string(prefix)+"-untinted-ui.ppm";
+                    if (!eduke_xr::captureFramebuffer(path.c_str(),xdim,ydim,error))
+                        LOG_F(ERROR,"XR HUD test capture: %s",error.c_str());
+                }
+            vec4f_t const correction = !Bstrcmp(test,"3") ? vec4f_t{1.15f,1.4f,1.3f,0.f}
+                : !Bstrcmp(test,"2") ? vec4f_t{.9f,1.1f,.8f,0.f} : vec4f_t{1.f,1.f,1.f,0.f};
+            polymost_setColorCorrection(correction);
+            fullscreen_tint_gl(80,120,200,96);
+        }
     if (!menuRuntime || menuRuntime->generation()!=menuGeneration) return;
     if (videoGetRenderMode()!=REND_POLYMOST || !menuRuntime->armMenuPresentation(menuOwner,xdim,ydim))
         G_XRCancelMenuPresentation();
@@ -286,6 +350,7 @@ void G_XRArmMenuPresentation()
 
 void G_XREndFrame()
 {
+    if (presentationRuntime) G_XRCancelMenuPresentation();
     auto *runtime=pendingRuntime;
     pendingRuntime=nullptr;
     if (!runtime || runtime->generation() != pendingGeneration) return;
@@ -299,6 +364,12 @@ void G_XREndFrame()
 
 void G_XRBeginFrame()
 {
+    // Credit only the exact completed projection, never a rendered image that
+    // was later canceled by a nested native draw, resize, or early swap.
+    if (worldReceipt.runtime && worldReceipt.runtime->generation()==worldReceipt.generation
+        && worldReceipt.runtime->lastSubmittedSerial()==worldReceipt.serial)
+        accountWorldFrame(worldReceipt.opaque,worldReceipt.masks,false);
+    worldReceipt={};
     // Only the ordinary game/demo frame owners may acquire/synchronize input.
     G_XRCancelMenuPresentation();
     G_XREndFrame();
@@ -763,7 +834,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         if (good && !fixtureTest && worldFrames == 59)
         {
             if (auto prefix=std::getenv("EDUKE32_XR_WORLD_OUTPUT"))
-                good=runtime->captureFrame(prefix,false,error);
+                good=runtime->captureFrame(prefix,false,error,overlayEnabled());
         }
         if (good) good=runtime->mirrorEye(0,error);
     }
@@ -772,7 +843,13 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     videoSetViewableArea(oldStart.x,oldStart.y,oldEnd.x,oldEnd.y);
     renderSetAspect(oldRange,oldAspect);
     std::string endError;
-    if (!runtime->finishFrame(good && !fixtureTest,endError)) { good=false; error += " "+endError; }
+    bool const deferPresentation=good && !fixtureTest && overlayEnabled();
+    if (!deferPresentation && !runtime->finishFrame(good && !fixtureTest,endError)) { good=false; error += " "+endError; }
+    if (deferPresentation)
+    {
+        presentationRuntime=runtime; presentationGeneration=runtime->generation();
+        worldReceipt={runtime,runtime->generation(),frame.serial,usedMultiview,usedMaskMultiview};
+    }
     // Display-end callbacks must not observe the right eye's renderer globals.
     // Preserve script visibility mutations while rebuilding native derived fog.
     int const scriptVisibility=g_visibility, scriptParallax=parallaxvisibility;
@@ -784,16 +861,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         sdlayer_xr_disableWorld(error.c_str());
     else
     {
-        ++worldFrames;
-        if (usedMultiview) ++worldMultiviewFrames;
-        else ++worldOracleFrames;
-        if (usedMaskMultiview) ++worldMaskMultiviewFrames;
-        else ++worldMaskOracleFrames;
-        if (usedMultiview && usedMaskMultiview) ++worldFullMultiviewFrames;
-        if (!fixtureTest && worldFrames == 60)
-            LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; masks multiview=%u twoPass=%u full multiview=%u; one animation transaction per frame.",
-                  unsigned(worldMultiviewFrames),unsigned(worldOracleFrames),unsigned(worldMaskMultiviewFrames),
-                  unsigned(worldMaskOracleFrames),unsigned(worldFullMultiviewFrames));
+        if (!deferPresentation) accountWorldFrame(usedMultiview,usedMaskMultiview,fixtureTest);
     }
     // Native Polymost appends to these arrays rather than resetting the sprite
     // count. Also clear on an aborted pass before fallback/next-frame rendering.

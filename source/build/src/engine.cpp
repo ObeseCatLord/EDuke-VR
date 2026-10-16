@@ -13954,7 +13954,11 @@ void videoClearViewableArea(int32_t dacol)
         glClearColor((float)p.r * (1.f/255.f),
                       (float)p.g * (1.f/255.f),
                       (float)p.b * (1.f/255.f),
+#ifdef USE_OPENXR
+                      sdlayer_xr_overlayTargetBound() ? 1.f : 0.f);
+#else
                       0);
+#endif
         glClear(GL_COLOR_BUFFER_BIT);
         return;
     }
@@ -13993,7 +13997,11 @@ void videoClearScreen(int32_t dacol)
         glClearColor((float)p.r * (1.f/255.f),
                       (float)p.g * (1.f/255.f),
                       (float)p.b * (1.f/255.f),
+#ifdef USE_OPENXR
+                      sdlayer_xr_overlayTargetBound() ? 1.f : 0.f);
+#else
                       0);
+#endif
         glClear(GL_COLOR_BUFFER_BIT);
         return;
     }

@@ -30,6 +30,8 @@ uniform float u_visFactor;
 uniform float u_fogEnabled;
 
 uniform float u_useColorOnly;
+// Zero for every ordinary native/world draw; transient capture adaptation.
+uniform vec2 u_xrCoverage;
 uniform float u_usePalette;
 uniform vec4 u_npotEmulation;
 uniform float u_shadeInterpolate;
@@ -52,8 +54,6 @@ const vec4 c_vec4_one = vec4(c_one);
 const float c_wrapThreshold = 0.9;
 
 uniform vec4 u_colorCorrection;
-const vec2 c_vec2_zero_one = vec2(c_zero, c_one);
-const vec4 c_vec4_luma_709 = vec4(0.2126, 0.7152, 0.0722, 0.0);
 
 void main()
 {
@@ -111,12 +111,17 @@ void main()
 
     color.a *= v_color.a;
 
-    vec4 v_cc = vec4(u_colorCorrection.x - c_one, 0.5 * -(u_colorCorrection.y-c_one), -(u_colorCorrection.z-c_one), 1.0);
-    gl_FragData[0] = mat4(c_vec2_zero_one.yxxx, c_vec2_zero_one.xyxx, c_vec2_zero_one.xxyx, v_cc.xxxw)
-                   * mat4(u_colorCorrection.ywww, u_colorCorrection.wyww, u_colorCorrection.wwyw, v_cc.yyyw)
-                   * mat4((c_vec4_luma_709.xxxw * v_cc.z) + u_colorCorrection.zwww,
-                          (c_vec4_luma_709.yyyw * v_cc.z) + u_colorCorrection.wzww,
-                          (c_vec4_luma_709.zzzw * v_cc.z) + u_colorCorrection.wwzw,
-                          c_vec2_zero_one.xxxy)
-                   * color;
+    color = edukeColorCorrection(color, u_colorCorrection);
+    if (u_xrCoverage.x == 1.0)
+    {
+        if (color.a <= u_xrCoverage.y) discard;
+        color.a = 1.0;
+    }
+    if (u_xrCoverage.x == 2.0)
+    {
+        // Match native normalized-target clamping before premultiplication.
+        color = clamp(color, 0.0, 1.0);
+        color.rgb *= color.a;
+    }
+    gl_FragData[0] = color;
 }

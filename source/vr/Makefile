@@ -13,7 +13,7 @@ all: xr_smoke
 xr_smoke: eduke_xr.o xr_smoke.o
 	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-eduke_xr.o: eduke_xr.cpp eduke_xr.h
+eduke_xr.o: eduke_xr.cpp eduke_xr.h ../build/include/polymost_color_correction.h
 xr_smoke.o: xr_smoke.cpp eduke_xr.h
 
 clean:

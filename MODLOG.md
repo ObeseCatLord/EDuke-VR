@@ -86,3 +86,13 @@ Synthesize senior review into docs/vr/PLAN.md with dispositions and test gates; 
 - Fresh verified Astra code review caught fatal treatment of temporary pose invalidity, unwanted UI startup dependencies, and viewport/cache disagreement. Adopted nonfatal cancellation, lazy resources and native-final viewport preservation; removed unused saved GL state. Extra fresh review hit the agent-thread limit; main verified fixes and faults directly.
 - Actual cold menu60-frame, injected invalid-pose/partial-viewport/nested-swap, console/resize and native game transition checks pass under core validation. Desktop/native UI pixels match exactly; native flat and XR menu callback counts60/60 agree. Exact world RGB/depth/CON and native server-authority join/replacement regressions remain passing.
 - Full transparent headset HUD/weapons, full-eye effects, tracked aim/haptics, broad camera/material/platform and multiplayer matrices remain required. Full VR goal remains active.
+
+
+## 2026-10-16 — native ART headset weapon/HUD overlay
+
+- Extended the reviewed single capture path with UI=2 transparent native weapon/HUD/in-game-menu presentation over existing stereo eyes. Native UI and CON callbacks execute once; a single multiview plane serves both eyes. Desktop UI remains full size.
+- Preserved source-over coverage, opaque alpha-zero texels and native alpha-test visibility. Unsupported custom blend/model HUD paths cancel before native continuation. Shared native color correction and a named full-eye tint adapter retain dim/fade order and peripheral world effects.
+- Extended owner lifetime without another XR lifecycle; submission serial receipts exclude canceled world images. Native window extent changes recreate existing runtime at committed ordinary frame boundaries.
+- Actual GPU proof covers transparent overlaps, opaque index255 ART, unchanged world depth, corrected/clamped full-eye tint, in-game menu/save thumbnail, nested swaps, temporary pose loss and resize. Callback counts match separate native runs, including the extra native thumbnail room/readback on framebuffer0.
+- Exact animated-mask stereo, cold-menu/console and mixed native server/XR controller movement/fire/release/replacement regressions pass. Native/XR/standalone builds pass. Main follows prior verified Astra target-A design; a fresh implementation review remains unavailable due agent-thread capacity.
+- Native 2D weapon placement is provisional. Authoritative tracked aim, 3D weapon alignment/haptics/settings, broad camera/material/platform coverage, real hardware and the full multiplayer matrix remain required; full VR goal stays active.

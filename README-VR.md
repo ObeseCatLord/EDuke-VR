@@ -1,6 +1,6 @@
 # EDuke32 VR work in progress
 
-This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, tracked aiming, headset weapon/UI presentation and complete multiplayer qualification remain open. OpenXR controllers now feed native movement, turning, gameplay buttons and menus, with simulated runtime and native server authority tests.
+This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, tracked aiming, tracked weapon presentation and complete multiplayer qualification remain open. OpenXR controllers now feed native movement, turning, gameplay buttons and menus, with simulated runtime and native server authority tests.
 
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
@@ -59,7 +59,7 @@ EDUKE32_XR_WORLD_OUTPUT=/path/to/test/world \
 ./eduke32-xr -usecwd -nosetup -noautoload -g /path/to/owned/DUKE3D.GRP -v1 -l1 -s1
 ```
 
-This opts into the first ordinary-room **two-pass reference renderer**. It uses the located eye poses/FOVs, a recentered tracking-to-game transform and RazeXR's world scale. It draws both opaque views before running sprite animation/CON once, then draws each eye's masks using saved wall IDs and per-eye sprite membership. The desktop mirrors the left eye and retains native weapon/HUD drawing. Weapons/HUD are not yet in the headset.
+This opts into the first ordinary-room **two-pass reference renderer**. It uses the located eye poses/FOVs, a recentered tracking-to-game transform and RazeXR's world scale. It draws both opaque views before running sprite animation/CON once, then draws each eye's masks using saved wall IDs and per-eye sprite membership. The desktop mirrors the left eye and retains native weapon/HUD drawing. Set `EDUKE32_XR_UI=2` for the experimental native ART weapon/HUD and in-game-menu plane described below.
 
 The optional output prefix captures both actual eye layers on frame 60. The log reports that milestone. XR remains active afterward; errors stop the session and restore native rendering. Unsupported native half-space coverage or camera collision is reported rather than silently clamping the tracked pose. Full pitch, room-scale collision/fade, mirrors/YAX, other camera modes and tracked controller aiming remain required milestones.
 
@@ -215,8 +215,49 @@ Optional `EDUKE32_XR_MENU_OUTPUT=/path/to/prefix` saves actual `-left.ppm`,
 `-right.ppm`, `-ui.ppm` and `-desktop.ppm` on the 60th successful menu submission.
 The test requires the captured desktop and native UI pixels to match exactly.
 
-This first UI mode covers cold menus only. In-game menus, transparent native
-weapons/HUD, full-eye damage/menu fades, auxiliary save/depth/CON compatibility
-and real headset comfort still require the next presentation stage. Physical
-size/distance are provisional. It does not replace the stereo world with a
-cinema screen.
+This first UI mode covers cold menus only. UI=2 below adds bounded native ART
+weapons/HUD, in-game menus and full-eye effects. Broader native/CON compatibility
+and real headset comfort remain open. Physical size/distance are provisional.
+
+
+## Native headset weapons, HUD, and in-game menus
+
+`EDUKE32_XR_UI=2` extends the same cold-menu capture to native ART weapons/HUD,
+in-game menus, and console over the stereo world. Native UI runs once, then one
+multiview plane composites it into both existing eye layers at a provisional
+1.5 m distance. This preserves independent world parallax. These are the native
+2D weapon sprites; controller-tracked weapon models and authoritative tracked
+shot direction remain unfinished.
+
+```sh
+SDL_VIDEODRIVER=x11 EDUKE32_XR=1 EDUKE32_XR_SINGLE_PASS=1 EDUKE32_XR_UI=2 \
+./eduke32-xr -usecwd -nosetup -noautoload -g /path/to/owned/DUKE3D.GRP -v1 -l1 -s1
+```
+
+Source-over transparency, opaque zero-alpha ART texels, and native full-eye menu
+dimming/palette flashes are supported in this bounded path. Fades execute at
+their original boundary and affect peripheral world pixels too. The desktop
+retains full-size native UI over its left-world mirror. Custom destination-based
+blend factors or HUD models cancel the current headset presentation before
+native drawing continues; they are not yet qualified. Pre-world CON overlays,
+help/other no-world 2D modes, general materials and camera paths still need work.
+
+`EDUKE32_XR_HUD_OUTPUT=/path/to/test/hud` captures UI RGB/coverage and final eye
+color/depth on the 60th successful HUD projection. `EDUKE32_XR_WORLD_OUTPUT` also
+captures the same frame before composition, allowing exact depth comparison.
+Frame statistics credit actual matching projection submissions, including after
+cancellation and native window resizing.
+
+```sh
+python3 tools/vr/smoke_hud.py --binary ./eduke32-xr --display :1 \
+    --grp /path/to/owned/DUKE3D.GRP --work-dir /path/to/test/labs
+# Full-eye tint and native corrected/clamped tint: --tint 1, --tint 2, --tint 3.
+# Native menu ordering/thumbnail: --native-menu main, --native-menu save.
+# Recovery: --resize, or --invalid-pose-once --nested-swap-once.
+# Native console path: --console.
+# Dedicated server/input runner: add --reconnect --require-hud.
+```
+
+The fixture creates its own tiny ART tiles and observes native CON callbacks.
+It compares actual eye/depth/coverage readbacks and a separate native flat run.
+This is simulated-runtime evidence; real-headset comfort remains untested.

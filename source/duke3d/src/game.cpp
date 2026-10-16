@@ -756,6 +756,22 @@ static void G_ReadGLFrame(void)
 
     videoBeginDrawing();
     glReadPixels(0, 0, xdim, ydim, GL_RGBA, GL_UNSIGNED_BYTE, frame);
+#ifdef USE_OPENXR
+    if (auto path=Bgetenv("EDUKE32_XR_TEST_AUX_OUTPUT"))
+    {
+        GLint read=0,draw=0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read);
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
+        if (auto file=Bfopen(path,"wb"))
+        {
+            Bfprintf(file,"P6\n%d %d\n255\n",xdim,ydim);
+            for (int y=ydim-1;y>=0;--y)
+                for (int x=0;x<xdim;++x) Bfwrite(&frame[y*xdim+x],1,3,file);
+            Bfclose(file);
+            LOG_F(INFO,"OpenXR HUD auxiliary readback test: readFbo=%d drawFbo=%d extent=%dx%d.",read,draw,xdim,ydim);
+        }
+    }
+#endif
     videoEndDrawing();
 
     for (int y = 0; y < 200; y++)
@@ -6545,6 +6561,7 @@ void drawframe_do(void)
 #endif
     G_DrawRooms(screenpeek, smoothratio);
 #ifdef USE_OPENXR
+    G_XRBeginMenuPresentation();
     G_XREndFrame();
 #endif
 
@@ -6558,6 +6575,9 @@ void drawframe_do(void)
     g_lastFrameDuration = g_lastFrameEndTime - g_lastFrameStartTime;
     g_frameCounter++;
 
+#ifdef USE_OPENXR
+    G_XRArmMenuPresentation();
+#endif
     videoNextPage();
     S_Update();
     g_lastFrameEndTime2 = timerGetNanoTicks();

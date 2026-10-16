@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Native callback observations and controlled ART UI/weapon-animation fixture.
+include GAME.CON
+gamevar vrhud_rooms 0 0
+gamevar vrhud_roomend 0 0
+gamevar vrhud_weapon 0 0
+gamevar vrhud_rest 0 0
+onevent EVENT_DISPLAYROOMS
+    addvar vrhud_rooms 1
+endevent
+onevent EVENT_DISPLAYROOMSEND
+    addvar vrhud_roomend 1
+    // Remove the timed spawn knuckle animation so callback eligibility is identical
+    // at native and XR frame rates. This is a test fixture only.
+    setplayer[THISACTOR].knuckle_incs 0
+endevent
+onevent EVENT_DISPLAYWEAPON
+    addvar vrhud_weapon 1
+endevent
+onevent EVENT_DISPLAYREST
+    // Tile 30000 contains only index 255. Native NOMASK must still cover it.
+    rotatesprite 32 24 131072 0 30000 0 0 90 0 0 959 599
+    rotatesprite 80 24 131072 0 30000 0 0 26 0 0 959 599
+    // Separate and overlapping source-over rectangles, at 2/3 and 1/3 alpha.
+    rotatesprite 32 72 131072 0 30001 0 0 27 0 0 959 599
+    rotatesprite 48 88 131072 0 30001 0 0 59 0 0 959 599
+    addvar vrhud_rest 1
+    ifvare vrhud_rest 60
+    {
+        addlog vrhud_rooms
+        addlog vrhud_roomend
+        addlog vrhud_weapon
+        addlog vrhud_rest
+    }
+endevent

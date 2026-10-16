@@ -17,6 +17,9 @@
 #include "xxhash_config.h"
 
 #include "vfs.h"
+#ifdef USE_OPENXR
+#include "sdlayer.h"
+#endif
 
 uint8_t *basepaltable[MAXBASEPALS] = { palette };
 uint8_t basepalreset=1;
@@ -64,11 +67,18 @@ void fullscreen_tint_gl(uint8_t r, uint8_t g, uint8_t b, uint8_t f)
     glColor4ub(r, g, b, f);
 
     polymost_useColorOnly(true);
+#ifdef USE_OPENXR
+    bool const xrTint=polymost_xrBeginTint(r,g,b,f);
+    if (xrTint) glBlendFuncSeparate(GL_DST_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ZERO,GL_ONE);
+#endif
     glBegin(GL_TRIANGLES);
     glVertex2f(-2.5f, 1.f);
     glVertex2f(2.5f, 1.f);
     glVertex2f(.0f, -2.5f);
     glEnd();
+#ifdef USE_OPENXR
+    if (xrTint) polymost_xrEndTint();
+#endif
     polymost_useColorOnly(false);
 
     glPopMatrix();
@@ -510,14 +520,25 @@ void handle_blend(uint8_t enable, uint8_t blend, uint8_t def)
         GL_ONE_MINUS_DST_COLOR,
     };
 
-    if (!enable)
+    GLenum src=GL_SRC_ALPHA, dst=GL_ONE_MINUS_SRC_ALPHA;
+    if (enable)
     {
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        return;
+        glblenddef_t const * const glbdef = glblend[blend].def + def;
+        src=blendFuncTokens[glbdef->src]; dst=blendFuncTokens[glbdef->dst];
     }
-
-    glblenddef_t const * const glbdef = glblend[blend].def + def;
-    glBlendFunc(blendFuncTokens[glbdef->src], blendFuncTokens[glbdef->dst]);
+#ifdef USE_OPENXR
+    if (sdlayer_xr_overlayTargetBound())
+    {
+        if (src==GL_SRC_ALPHA && dst==GL_ONE_MINUS_SRC_ALPHA)
+        {
+            glBlendFuncSeparate(src,dst,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+            return;
+        }
+        LOG_F(WARNING,"OpenXR UI capture canceled: unsupported custom blend factors.");
+        sdlayer_xr_cancelMenuPresentation();
+    }
+#endif
+    glBlendFunc(src,dst);
 }
 #endif
 

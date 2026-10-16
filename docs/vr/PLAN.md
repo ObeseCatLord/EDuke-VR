@@ -1,6 +1,6 @@
 # EDuke32 VR port plan
 
-Status: experimental Linux OpenXR port with bounded ART multiview, native controller input and cold-menu presentation; **not a completed VR port**. Updated 2026-10-16. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
+Status: experimental Linux OpenXR port with bounded ART multiview, native controller input and bounded native weapon/HUD/menu presentation; **not a completed VR port**. Updated 2026-10-16. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
 
 ## Current implementation checkpoint
 
@@ -13,7 +13,8 @@ Status: experimental Linux OpenXR port with bounded ART multiview, native contro
 - Indexed ART masks/sprites now share the multiview transport while preserving native transparency and equal-depth group order. Exact RGB/depth, animated ART/alpha cutoff and recovery fixtures pass.
 - OpenXR actions now merge into native controls and menus once per logical frame, including the title/demo loop. Real Monado remote actions pass movement/fire/release, controller reactivation, focus and native video-reset checks. Native dedicated server observations confirm controller movement/fire/ammo/release on both original and replacement joins. Native `input_t` and network packets remain unchanged. Tracked aim, haptics, settings and actual headset ergonomics remain required.
 - Opt-in opaque cold-menu/console presentation now renders native UI once to its own target and submits a head-relative multiview plane. Actual 60-frame captures, desktop equality, temporary tracking recovery, viewport preservation, console/resize and transition to native stereo gameplay pass. This does not cover transparent HUD or in-game menu effects.
-- Next implementation work: headset weapon/HUD/in-game menu presentation, authoritative tracked aim, full-pitch/tracked visibility, remaining material/draw families and demonstrated texture-streaming fallback within the existing resource boundary. The full multiplayer/action/platform matrix remains required.
+- Native ART weapon/HUD/in-game-menu capture now extends that same target with premultiplied coverage over the existing stereo world (`EDUKE32_XR_UI=2`). Actual eye/color/depth/coverage, full-eye native tint/dim, save-thumbnail cancellation, native callback reference and resize tests pass. This is a provisional 2D weapon plane, not tracked weapon aim or full native UI/material coverage.
+- Next implementation work: authoritative tracked aim and weapon/shot alignment, full-pitch/tracked visibility, remaining material/draw families and demonstrated texture-streaming fallback within the existing resource boundary. The full multiplayer/action/platform matrix remains required.
 
 ## Source and behavioral reference
 

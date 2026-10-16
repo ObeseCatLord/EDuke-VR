@@ -68,6 +68,7 @@ class Runtime
     struct Frame
     {
         uint32_t width = 0, height = 0;
+        uint64_t serial = 0;
         XrTime   predictedDisplayTime = 0;
         XrView   views[2] {};
     };
@@ -82,12 +83,15 @@ class Runtime
     FrameResult beginFrame(Frame &frame, std::string &error);
     bool        bindEye(uint32_t eye, std::string &error);
     bool        bindMultiview(std::string &error);
-    // Redirect one opaque native title/menu/console draw into a private RGBA8
-    // target.  This is a logical owner within an already acquired XR frame.
-    bool        beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &owner, std::string &error);
+    // Redirect native UI into a reusable RGBA8/depth-stencil target. Opaque
+    // title menus clear black; overlay capture preserves the rendered stereo
+    // world. One logical owner retains the existing acquired XR frame.
+    bool        beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &owner, std::string &error, bool overlay = false);
     bool        armMenuPresentation(uint64_t owner, uint32_t width, uint32_t height);
     bool        menuPresentationActive() const;
     bool        menuPresentationArmed() const;
+    bool        menuOverlayTargetBound() const;
+    bool        tintMenuWorld(float const *rgba, float const *correction, std::string &error);
     bool        completeMenuPresentation(std::string &error, char const *capturePrefix = nullptr);
     bool        cancelMenuPresentation(std::string &error, bool mirror = true);
     bool        captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error, bool captureDepth = false);
@@ -96,6 +100,7 @@ class Runtime
     TickResult  diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error);
     bool        readInput(ActionInput &out, XrTime atTime, std::string &error);
     uint64_t    submittedFrames() const;
+    uint64_t    lastSubmittedSerial() const;
     uint64_t    generation() const;
 
   private:

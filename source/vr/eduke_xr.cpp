@@ -2,6 +2,7 @@
 // Copyright (C) 2026 EDuke32 VR contributors
 
 #include "eduke_xr.h"
+#include "../build/include/polymost_color_correction.h"
 
 #define XR_USE_PLATFORM_XLIB
 #define XR_USE_GRAPHICS_API_OPENGL
@@ -66,6 +67,7 @@ struct GLState
     GLint     viewport[4] = {}, scissor[4] = {}, packAlignment = 4, packRowLength = 0, packSkipPixels = 0, packSkipRows = 0;
     GLfloat   clearColor[4] = {}, clearDepth = 1;
     GLint     clearStencil = 0;
+    GLint srcRgb=GL_ONE, dstRgb=GL_ZERO, srcAlpha=GL_ONE, dstAlpha=GL_ZERO, equationRgb=GL_FUNC_ADD, equationAlpha=GL_FUNC_ADD;
     GLboolean depthMask = GL_TRUE, colorMask[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
     GLint     depthFunc = GL_LESS, stencilWriteMask = ~0, stencilBackWriteMask = ~0;
     GLboolean depthTest = GL_FALSE, scissorTest = GL_FALSE, blend = GL_FALSE, cull = GL_FALSE, alphaTest = GL_FALSE, rasterizerDiscard = GL_FALSE, srgb = GL_FALSE,
@@ -89,6 +91,9 @@ struct GLState
         glGetFloatv(GL_DEPTH_CLEAR_VALUE, &clearDepth);
         glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &clearStencil);
         glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+        glGetIntegerv(GL_BLEND_SRC_RGB,&srcRgb); glGetIntegerv(GL_BLEND_DST_RGB,&dstRgb);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA,&srcAlpha); glGetIntegerv(GL_BLEND_DST_ALPHA,&dstAlpha);
+        glGetIntegerv(GL_BLEND_EQUATION_RGB,&equationRgb); glGetIntegerv(GL_BLEND_EQUATION_ALPHA,&equationAlpha);
         glGetIntegerv(GL_STENCIL_WRITEMASK, &stencilWriteMask);
         glGetIntegerv(GL_STENCIL_BACK_WRITEMASK, &stencilBackWriteMask);
         glGetIntegerv(GL_PACK_ALIGNMENT, &packAlignment);
@@ -131,6 +136,8 @@ struct GLState
         glClearDepth(clearDepth);
         glClearStencil(clearStencil);
         glDepthFunc(depthFunc);
+        glBlendFuncSeparate(srcRgb,dstRgb,srcAlpha,dstAlpha);
+        glBlendEquationSeparate(equationRgb,equationAlpha);
         glStencilMaskSeparate(GL_FRONT, stencilWriteMask);
         glStencilMaskSeparate(GL_BACK, stencilBackWriteMask);
         glPixelStorei(GL_PACK_ALIGNMENT, packAlignment);
@@ -314,7 +321,7 @@ bool captureFramebufferDepth(char const *path, uint32_t width, uint32_t height, 
     return good;
 }
 
-bool writeTexturePpm(GLuint texture, uint32_t width, uint32_t height, char const *path, std::string &error)
+bool writeTexturePpm(GLuint texture, uint32_t width, uint32_t height, char const *path, std::string &error, char const *alphaPath = nullptr)
 {
     if (!texture || !width || !height || !path)
     {
@@ -345,6 +352,23 @@ bool writeTexturePpm(GLuint texture, uint32_t width, uint32_t height, char const
         error = "could not write menu capture PPM";
         good = false;
     }
+    if (good && alphaPath)
+    {
+        FILE *alpha=std::fopen(alphaPath,"wb");
+        if (!alpha) { good=false; error="could not open UI coverage capture"; }
+        else
+        {
+            std::fprintf(alpha,"P5\n%u %u\n255\n",width,height);
+            std::vector<unsigned char> row(width);
+            for (uint32_t y=0; y<height && good; ++y)
+            {
+                for (uint32_t x=0;x<width;++x) row[x]=pixels[((height-1-y)*width+x)*4+3];
+                good=std::fwrite(row.data(),1,width,alpha)==width;
+            }
+            if (std::fclose(alpha)) good=false;
+            if (!good) error="could not write UI coverage capture";
+        }
+    }
     glDeleteFramebuffers(1, &read);
     if (good)
         good = glSucceeded("cleaning up menu capture readback", error);
@@ -369,7 +393,7 @@ struct Runtime::Impl
     std::array<XrView, kViewCount>          views {};
     uint32_t                                width = 0, height = 0;
     GLuint                                  fbo = 0, depth = 0, program = 0, vao = 0, vbo = 0;
-    GLuint                                  menuFbo = 0, menuColor = 0, menuDepth = 0, menuProgram = 0, menuVao = 0, menuVbo = 0;
+    GLuint                                  menuFbo = 0, menuColor = 0, menuDepth = 0, menuProgram = 0, menuFlatProgram = 0, menuVao = 0, menuVbo = 0;
     PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC multiview = nullptr;
     bool                                    running = false, exiting = false;
     XrSessionState                          sessionState = XR_SESSION_STATE_UNKNOWN;
@@ -377,11 +401,11 @@ struct Runtime::Impl
     uint32_t                                imageIndex = 0;
     XrFrameState                            frameState { XR_TYPE_FRAME_STATE };
     GLint                                   previousReadFbo = 0, previousDrawFbo = 0;
-    uint64_t                                submitted = 0;
+    uint64_t                                submitted = 0, frameSerial = 0, submittedSerial = 0;
     uint64_t                                actionGeneration = 0;
     uint64_t                                nextMenuOwner = 0, menuOwner = 0;
     uint32_t                                menuWidth = 0, menuHeight = 0;
-    bool                                    menuActive = false, menuArmed = false;
+    bool                                    menuActive = false, menuArmed = false, menuOverlay = false;
     struct NativeTarget { GLint readFbo=0, drawFbo=0, readBuffer=GL_BACK, drawBuffer=GL_BACK; } menuNativeState;
 
     void restoreMenuTarget()
@@ -394,7 +418,7 @@ struct Runtime::Impl
 
     void clearMenuPresentation()
     {
-        menuActive = menuArmed = false;
+        menuActive = menuArmed = menuOverlay = false;
         menuOwner = 0;
     }
 
@@ -406,20 +430,21 @@ struct Runtime::Impl
             glDeleteVertexArrays(1, &menuVao);
         if (menuProgram)
             glDeleteProgram(menuProgram);
+        if (menuFlatProgram) glDeleteProgram(menuFlatProgram);
         if (menuDepth)
             glDeleteRenderbuffers(1, &menuDepth);
         if (menuColor)
             glDeleteTextures(1, &menuColor);
         if (menuFbo)
             glDeleteFramebuffers(1, &menuFbo);
-        menuFbo = menuColor = menuDepth = menuProgram = menuVao = menuVbo = 0;
+        menuFbo = menuColor = menuDepth = menuProgram = menuFlatProgram = menuVao = menuVbo = 0;
         menuWidth = menuHeight = 0;
         clearMenuPresentation();
     }
 
     bool ensureMenuProgram(std::string &error)
     {
-        if (menuProgram && menuVao && menuVbo && viewSpace != XR_NULL_HANDLE) return true;
+        if (menuProgram && menuFlatProgram && menuVao && menuVbo && viewSpace != XR_NULL_HANDLE) return true;
         auto fail = [&] {
             destroyMenuGl();
             if (viewSpace != XR_NULL_HANDLE) xrDestroySpace(viewSpace);
@@ -437,9 +462,11 @@ struct Runtime::Impl
         }
         std::string shaderError;
         char const *menuVert = "#version 410 compatibility\n#extension GL_OVR_multiview2 : require\nlayout(num_views=2) in; layout(location=0) in vec3 p; "
-                               "layout(location=1) in vec2 uv; uniform mat4 uViewProj[2]; out vec2 texcoord; void main(){ gl_Position=uViewProj[gl_ViewID_OVR]*vec4(p,1); texcoord=uv; }";
-        char const *menuFrag = "#version 410 compatibility\nin vec2 texcoord; uniform sampler2D uTexture; out vec4 outColor; "
-                               "void main(){ outColor=vec4(texture(uTexture,texcoord).rgb,1); }";
+                               "layout(location=1) in vec2 uv; uniform mat4 uViewProj[2]; uniform int uMode; out vec2 texcoord; void main(){ gl_Position=uMode==2 ? vec4(p,1) : uViewProj[gl_ViewID_OVR]*vec4(p,1); texcoord=uv; }";
+        std::string const fragment = std::string("#version 410 compatibility\nin vec2 texcoord; uniform sampler2D uTexture; uniform int uMode; uniform vec4 uTint, uCorrection; out vec4 outColor; ")
+            + eduke_native_glsl::ColorCorrection
+            + "void main(){ if(uMode==2) outColor=edukeColorCorrection(uTint,uCorrection); else { outColor=texture(uTexture,texcoord); if(uMode==0) outColor.a=1; } }";
+        char const *menuFrag=fragment.c_str();
         GLuint menuVs = compile(GL_VERTEX_SHADER, menuVert, shaderError), menuFs = menuVs ? compile(GL_FRAGMENT_SHADER, menuFrag, shaderError) : 0;
         if (menuVs && menuFs)
         {
@@ -454,6 +481,19 @@ struct Runtime::Impl
                 char log[2048] = {};
                 glGetProgramInfoLog(menuProgram, sizeof(log), nullptr, log);
                 shaderError = std::string("menu presentation shader link failed: ") + log;
+            }
+        }
+        if (menuFs && shaderError.empty())
+        {
+            char const *flatVert="#version 410 compatibility\nlayout(location=0) in vec3 p; layout(location=1) in vec2 uv; out vec2 texcoord; void main(){gl_Position=vec4(p,1);texcoord=uv;}";
+            GLuint flatVs=compile(GL_VERTEX_SHADER,flatVert,shaderError);
+            if (flatVs)
+            {
+                menuFlatProgram=glCreateProgram();
+                glAttachShader(menuFlatProgram,flatVs); glAttachShader(menuFlatProgram,menuFs); glLinkProgram(menuFlatProgram);
+                GLint linked=0; glGetProgramiv(menuFlatProgram,GL_LINK_STATUS,&linked);
+                if (!linked) shaderError="flat UI presentation shader link failed";
+                glDeleteShader(flatVs);
             }
         }
         if (menuVs)
@@ -533,7 +573,23 @@ struct Runtime::Impl
         glReadBuffer(GL_COLOR_ATTACHMENT0);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, menuNativeState.drawFbo);
         glDrawBuffer(menuNativeState.drawBuffer);
-        glBlitFramebuffer(0, 0, menuWidth, menuHeight, 0, 0, menuWidth, menuHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        if (!menuOverlay)
+            glBlitFramebuffer(0, 0, menuWidth, menuHeight, 0, 0, menuWidth, menuHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        else
+        {
+            glViewport(0,0,menuWidth,menuHeight);
+            glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE);
+            glDisable(GL_ALPHA_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_CULL_FACE);
+            glDisable(GL_RASTERIZER_DISCARD); glDisable(GL_FRAMEBUFFER_SRGB); glDisable(GL_DITHER);
+            glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+            glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD);
+            glBlendFuncSeparate(GL_ONE,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+            glUseProgram(menuFlatProgram);
+            glUniform1i(glGetUniformLocation(menuFlatProgram,"uMode"),1);
+            glUniform1i(glGetUniformLocation(menuFlatProgram,"uTexture"),0);
+            glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D,menuColor); glBindSampler(0,0);
+            glBindVertexArray(menuVao); glDrawArrays(GL_TRIANGLES,0,6);
+        }
         bool good = glSucceeded("mirroring menu presentation", error);
         state.restore();
         restoreMenuTarget();
@@ -1163,6 +1219,7 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
         return FrameResult::Error;
     }
     m_impl->frameBegun = true;
+    frame.serial=++m_impl->frameSerial;
     if (!frameState.shouldRender)
         return finishFrame(false, error) ? FrameResult::Idle : FrameResult::Error;
     XrViewLocateInfo locate { XR_TYPE_VIEW_LOCATE_INFO };
@@ -1252,7 +1309,7 @@ bool Runtime::bindMultiview(std::string &error)
     return glSucceeded("binding OpenXR multiview", error);
 }
 
-bool Runtime::beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &owner, std::string &error)
+bool Runtime::beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &owner, std::string &error, bool overlay)
 {
     owner = 0;
     error.clear();
@@ -1285,7 +1342,7 @@ bool Runtime::beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &o
     glDepthMask(GL_TRUE);
     glStencilMaskSeparate(GL_FRONT, ~0u);
     glStencilMaskSeparate(GL_BACK, ~0u);
-    glClearColor(0, 0, 0, 1);
+    glClearColor(0, 0, 0, overlay ? 0 : 1);
     glClearDepth(1);
     glClearStencil(0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -1309,7 +1366,9 @@ bool Runtime::beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &o
         owner = ++m_impl->nextMenuOwner;
     m_impl->menuOwner = owner;
     m_impl->menuActive = true;
+    m_impl->menuOverlay = overlay;
     m_impl->menuArmed = false;
+    if (overlay) glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
     return true;
 }
 
@@ -1327,6 +1386,56 @@ bool Runtime::menuPresentationActive() const
 
 bool Runtime::menuPresentationArmed() const
 { return m_impl && m_impl->menuActive && m_impl->menuArmed; }
+
+bool Runtime::menuOverlayTargetBound() const
+{
+    if (!m_impl || !m_impl->menuActive || !m_impl->menuOverlay) return false;
+    GLint draw=0; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
+    return GLuint(draw)==m_impl->menuFbo;
+}
+
+bool Runtime::tintMenuWorld(float const *rgba, float const *correction, std::string &error)
+{
+    if (!menuOverlayTargetBound()) { error="full-eye tint requires the active UI target"; return false; }
+    GLState state; state.save();
+    bool good=bindMultiview(error);
+    if (good)
+    {
+        glViewport(0,0,m_impl->width,m_impl->height); glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE);
+        glDisable(GL_ALPHA_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_CULL_FACE);
+        glDisable(GL_RASTERIZER_DISCARD); glDisable(GL_FRAMEBUFFER_SRGB); glDisable(GL_DITHER);
+        glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+        glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+        glUseProgram(m_impl->menuProgram);
+        glUniform1i(glGetUniformLocation(m_impl->menuProgram,"uMode"),2);
+        glUniform4fv(glGetUniformLocation(m_impl->menuProgram,"uTint"),1,rgba);
+        glUniform4fv(glGetUniformLocation(m_impl->menuProgram,"uCorrection"),1,correction);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D,0); glBindSampler(0,0);
+        glBindVertexArray(m_impl->menuVao); glDrawArrays(GL_TRIANGLES,0,6);
+        good=glSucceeded("full-eye native palette tint",error);
+    }
+    state.restore();
+    if (!good) return false;
+    // Keep the native desktop world under its flat UI capture in sync too.
+    state.save();
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,m_impl->menuNativeState.drawFbo);
+    glDrawBuffer(m_impl->menuNativeState.drawBuffer);
+    glViewport(0,0,m_impl->menuWidth,m_impl->menuHeight); glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); glDisable(GL_ALPHA_TEST); glDisable(GL_STENCIL_TEST);
+    glDisable(GL_CULL_FACE); glDisable(GL_RASTERIZER_DISCARD); glDisable(GL_FRAMEBUFFER_SRGB); glDisable(GL_DITHER);
+    glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    glUseProgram(m_impl->menuFlatProgram);
+    glUniform1i(glGetUniformLocation(m_impl->menuFlatProgram,"uMode"),2);
+    glUniform4fv(glGetUniformLocation(m_impl->menuFlatProgram,"uTint"),1,rgba);
+    glUniform4fv(glGetUniformLocation(m_impl->menuFlatProgram,"uCorrection"),1,correction);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D,0); glBindSampler(0,0);
+    glBindVertexArray(m_impl->menuVao); glDrawArrays(GL_TRIANGLES,0,6);
+    good=glSucceeded("desktop native palette tint",error);
+    state.restore();
+    return good;
+}
 
 bool Runtime::cancelMenuPresentation(std::string &error, bool mirror)
 {
@@ -1404,7 +1513,8 @@ bool Runtime::completeMenuPresentation(std::string &error, char const *capturePr
         glClearColor(0, 0, 0, 1);
         glClearDepth(1);
         glClearStencil(0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        if (!m_impl->menuOverlay) glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        else { glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD); glBlendFuncSeparate(GL_ONE,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA); }
         glDepthMask(GL_FALSE);
         float headMatrix[16], translate[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1.5f, 1 };
         float scale[16] = { .9f, 0, 0, 0, 0, .9f * float(m_impl->menuHeight) / m_impl->menuWidth, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
@@ -1421,6 +1531,7 @@ bool Runtime::completeMenuPresentation(std::string &error, char const *capturePr
             multiply(matrices[i], viewProjection, model);
         }
         glUseProgram(m_impl->menuProgram);
+        glUniform1i(glGetUniformLocation(m_impl->menuProgram,"uMode"),m_impl->menuOverlay ? 1 : 0);
         glUniformMatrix4fv(glGetUniformLocation(m_impl->menuProgram, "uViewProj[0]"), kViewCount, GL_FALSE, &matrices[0][0]);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, m_impl->menuColor);
@@ -1442,9 +1553,11 @@ bool Runtime::completeMenuPresentation(std::string &error, char const *capturePr
     if (capturePrefix)
     {
         std::string path = std::string(capturePrefix) + "-ui.ppm";
-        captureOk = writeTexturePpm(m_impl->menuColor, m_impl->menuWidth, m_impl->menuHeight, path.c_str(), error);
+        std::string const alphaPath=std::string(capturePrefix)+"-coverage.pgm";
+        captureOk = writeTexturePpm(m_impl->menuColor, m_impl->menuWidth, m_impl->menuHeight, path.c_str(), error,
+                                    m_impl->menuOverlay ? alphaPath.c_str() : nullptr);
         if (captureOk)
-            captureOk = captureFrame(capturePrefix, false, error);
+            captureOk = captureFrame(capturePrefix, false, error, m_impl->menuOverlay);
     }
     std::string mirrorError;
     bool mirrored = m_impl->mirrorMenuToNative(mirrorError);
@@ -1652,6 +1765,7 @@ bool Runtime::finishFrame(bool submit, std::string &error)
         return false;
     }
     m_impl->frameBegun = false;
+    m_impl->submittedSerial=m_impl->frameSerial;
     ++m_impl->submitted;
     return true;
 }
@@ -1832,6 +1946,8 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
     }
     return finishFrame(true, error) ? TickResult::Submitted : TickResult::Error;
 }
+
+uint64_t Runtime::lastSubmittedSerial() const { return m_impl ? m_impl->submittedSerial : 0; }
 
 uint64_t Runtime::submittedFrames() const
 { return m_impl ? m_impl->submitted : 0; }

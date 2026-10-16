@@ -106,6 +106,7 @@ static bool sdl_xr_attempted;
 static bool sdl_xr_active;
 static unsigned long sdl_xr_frameLimit;
 static bool sdl_xr_worldAttempted, sdl_xr_worldActive;
+static int sdl_xr_worldWidth, sdl_xr_worldHeight;
 
 static void sdlayer_xr_shutdown()
 {
@@ -113,11 +114,22 @@ static void sdlayer_xr_shutdown()
     sdl_xr_active = false;
     sdl_xr_attempted = false;
     sdl_xr_worldAttempted = sdl_xr_worldActive = false;
+    sdl_xr_worldWidth=sdl_xr_worldHeight=0;
 }
 
 // The game owns room rendering; SDL owns the session/context lifetime.
 eduke_xr::Runtime *sdlayer_xr_worldRuntime()
 {
+    int width=0,height=0;
+    SDL_GetWindowSize(sdl_window,&width,&height);
+    // The native mode must have committed before rebuilding XR at this ordinary
+    // frame boundary. Same-context SDL resize does not change our generation.
+    if (width!=xdim || height!=ydim || !width || !height) return nullptr;
+    if (sdl_xr_worldActive && (width!=sdl_xr_worldWidth || height!=sdl_xr_worldHeight))
+    {
+        sdlayer_xr_shutdown();
+        LOG_F(INFO,"OpenXR world extent changed at native frame boundary: %dx%d.",width,height);
+    }
     if (!sdl_xr_worldAttempted)
     {
         sdl_xr_worldAttempted = true;
@@ -125,14 +137,14 @@ eduke_xr::Runtime *sdlayer_xr_worldRuntime()
         if (!enabled || std::strcmp(enabled, "1"))
             return nullptr;
         std::string error;
-        int width, height;
-        SDL_GetWindowSize(sdl_window, &width, &height);
+
         if (!sdl_xr.initialize(sdl_window, error, width, height))
         {
             LOG_F(ERROR, "OpenXR world initialization failed: %s", error.c_str());
             return nullptr;
         }
         sdl_xr_worldActive = true;
+        sdl_xr_worldWidth=width; sdl_xr_worldHeight=height;
         LOG_F(INFO, "OpenXR experimental Polymost world session started (two-pass stereo oracle).");
     }
     return sdl_xr_worldActive ? &sdl_xr : nullptr;
@@ -153,6 +165,20 @@ void sdlayer_xr_cancelMenuPresentation()
         sdlayer_xr_disableWorld(error.c_str());
 }
 
+bool sdlayer_xr_overlayTargetBound()
+{ return sdl_xr_worldActive && sdl_xr.menuOverlayTargetBound(); }
+
+bool sdlayer_xr_tintWorld(float const *rgba, float const *correction)
+{
+    std::string error;
+    if (sdl_xr.tintMenuWorld(rgba,correction,error)) return true;
+    // A submitted draw may already have touched the eye layers: consume this
+    // logical frame, never repeat native display callbacks after failure.
+    sdlayer_xr_cancelMenuPresentation();
+    sdlayer_xr_disableWorld(error.c_str());
+    return false;
+}
+
 static void sdlayer_xr_presentMenu()
 {
     // Never acquire or initialize from a swap: only the logical owner can arm
@@ -165,11 +191,13 @@ static void sdlayer_xr_presentMenu()
         sdlayer_xr_cancelMenuPresentation();
         return;
     }
-    static uint64_t generation, submitted;
+    static uint64_t generation, counts[2];
+    bool const overlay=sdl_xr.menuOverlayTargetBound();
+    auto &submitted=counts[overlay ? 1 : 0];
     if (generation!=sdl_xr.generation())
-    { generation=sdl_xr.generation(); submitted=0; }
+    { generation=sdl_xr.generation(); counts[0]=counts[1]=0; }
     bool const armed=sdl_xr.menuPresentationArmed();
-    char const *capture=armed && submitted==59 ? std::getenv("EDUKE32_XR_MENU_OUTPUT") : nullptr;
+    char const *capture=armed && submitted==59 ? std::getenv(overlay ? "EDUKE32_XR_HUD_OUTPUT" : "EDUKE32_XR_MENU_OUTPUT") : nullptr;
     uint64_t const before=sdl_xr.submittedFrames();
     std::string error;
     if (!sdl_xr.completeMenuPresentation(error,capture))
@@ -188,7 +216,7 @@ static void sdlayer_xr_presentMenu()
                 }
             }
         if (++submitted==60)
-            LOG_F(INFO,"OpenXR menu presentation: 60 frames; native UI extent=%dx%d; osdRows=%d; one multiview plane per frame.",xdim,ydim,OSD_GetRowsCur());
+            LOG_F(INFO,"OpenXR %s presentation: 60 frames; native UI extent=%dx%d; osdRows=%d; one multiview plane per frame.",overlay ? "HUD" : "menu",xdim,ydim,OSD_GetRowsCur());
     }
 }
 

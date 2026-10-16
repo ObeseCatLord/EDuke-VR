@@ -274,3 +274,54 @@ an800x600 capture and exact desktop/UI equality. A first native-quit check also
 mistook expected window destruction between key down/up for failure; the runner
 now accepts that only after verifying clean exit0, never retargeting another
 window or sending global input.
+
+
+## Native ART headset weapon/HUD overlay — 2026-10-16
+
+`EDUKE32_XR_UI=2` implements the previously reviewed transparent target A on the
+same reusable capture and acquired projection array. Native ART weapon/HUD,
+in-game menus and console draw once, then one head-relative multiview plane
+composites them over distinct eye worlds. The desktop uses a flat GPU composite
+over its left-world mirror. No UI callbacks are replayed.
+
+| Case | Actual result |
+|---|---|
+| Ordinary E1L1 |60 actual HUD/world projections; native pistol/health/ammo visible over distinct stereo worlds. Final first60: opaque59, mask/full57 multiview; texture-loading frames retain the reference path. |
+| Coverage |Generated local ART with opaque index255, masked index255 and overlapping 2/3 and 1/3 translucent rectangles passes actual RGBA8 coverage readback. Measured alpha includes0,85,170,198,255. Zero-coverage RGB remains zero. |
+| Depth and peripheral world |Both entire raw world-depth layers are byte-identical before/after HUD composition. Peripheral world RGB is unchanged exactly without an effect. |
+| Full-eye tint |Actual native fullscreen tint reaches peripheral world pixels. Default correction matches independent encoded-value blend arithmetic exactly; nondefault and over-range corrected/clamped cases differ by at most one RGB byte. UI tint arithmetic also stays within one byte while preserving coverage. World differential tolerance remains zero. |
+| Native callback reference |Separate flat runs match rooms/room-end61/61, weapon/rest60/60. The fixture normalizes only the timed cosmetic spawn knuckle animation so weapon callback eligibility does not depend on frame rate. |
+| In-game menus |Actual native in-game menu ordering/full-eye168-alpha black dim passes. Native save menu invokes its extra room/readback, cancels capture before auxiliary entry, then recovers to60 world/HUD submissions. Counts62/62/60/60 match flat; the actual auxiliary read uses native read/draw framebuffer0 and contains nonconstant world pixels. The opaque save panel intentionally covers the transparency fixture. |
+| Console |Owned-window console activation is visible at the captured frame (`osdRows` positive), with actual UI coverage and stereo layers. This tests the native font/background submission path too. |
+| Tracking/nested swap |One invalid VIEW pose and one real unarmed nested videoNextPage cancel without crediting an unsubmitted world. The session subsequently reaches60 projections, with native callback counts unchanged. A non-full cached capture-entry viewport is also injected and the final native viewport sentinel passes. |
+| Resize |Owned native window960x600→800x600 commits before the existing XR runtime recreates at the next ordinary frame boundary. New generation reaches60 world/HUD submissions with matching world/UI extent; depth remains unchanged. |
+| Existing renderer/UI regression |Animated-mask asymmetric stereo still matches native two-pass RGB and nonconstant depth exactly, with equal CON counts14/112/14. Cold-menu/console resize retains exact native-UI/desktop equality. |
+| Multiplayer |Native dedicated server plus XR client, original and replacement joins, each pass authoritative movement/position, fire/ammo and stable release. Each now also requires60 world/HUD projections and distinct final eye captures. No protocol change. |
+| Builds and validation |Native, OpenXR and standalone builds pass. Flat executable does not link OpenXR. Python syntax/diff checks pass. Core layer is active with no validation warning/error in HUD faults, save, tint, resize, console, both network clients and standalone12-frame submission. |
+
+`tools/vr/smoke_hud.py` runs these scenarios against an already-running private
+runtime. Flags are `--tint 1/2/3`, `--native-menu main/save`, `--console`,
+`--resize`, and `--invalid-pose-once --nested-swap-once`. Use
+`EDUKE32_XR_TEST_MENU_VIEWPORT=1` with the last case for the cache sentinel.
+`smoke_actions_multiplayer.py --reconnect --require-hud` adds actual presentation
+and eye-readback gates to the existing server observations. All input targets
+only owned processes/windows; game assets are read-only links in isolated labs.
+
+Two failed experiments are retained locally: the initial nondefault tint test
+assumed ordinary brightness/contrast offsets instead of native alpha-scaled
+matrix translation; the stronger over-range test then caught a real missing
+pre-premultiplication clamp, which was fixed. The first60-submission network
+extension also exposed a fixed .55-second release-observation window containing
+an in-flight fire sample followed by two released samples. The runner now waits
+at most3 seconds for **three consecutive authoritative released samples**; it
+does not relax release correctness or inject packets.
+
+Bounded retained results are `../../../evidence/hud-validation.json`; actual
+ordinary headset layer readbacks are shown in `../../../evidence/hud-stereo.png`.
+Null-compositor simulation proves texture/submission behavior, not actual headset
+optics, comfort or performance. No fresh independent implementation review was
+available for this slice; it follows the preceding verified Astra target-A
+design and main source/GPU verification. Tracked aim/3D weapon alignment,
+haptics/settings, full pitch/room-scale/camera families, general materials and
+HUD models/custom blends, pre-world CON drawing/help, real context loss/platform
+ports and full multiplayer combat/host/map-change coverage remain open.

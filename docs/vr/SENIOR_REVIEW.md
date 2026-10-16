@@ -215,3 +215,32 @@ ran injected invalid-pose, non-full cached viewport, unarmed nested native swap,
 desktop pixel equality, console/resize, native-game transition and regression
 checks. Real minimize/render-mode transitions, actual context recreation,
 in-game save rendering and broader mod/native presentation remain separate gaps.
+
+
+### Transparent HUD implementation of the reviewed target A
+
+The target-A design above is now implemented experimentally with UI=2, using
+its same capture/resource/owner boundary. No extra scene target, swapchain,
+command recorder, protocol, rendering thread or simulation was introduced.
+
+| Reviewed recommendation | Implementation/disposition |
+|---|---|
+| Extend the existing projection-array owner through final native presentation | Adopted. Successful world rendering retains the acquired frame; outer game/demo owners begin UI capture after rooms return, then arm the intended final swap. A retained world is also canceled before auxiliary room entry. |
+| Preserve actual submission identity | Adapted. A runtime frame serial and last successful submitted serial qualify one pending statistics receipt. Canceled images cannot count as submitted world frames. Runtime lifecycle state remains authoritative. |
+| Factor conventional source-over coverage; preserve opaque writes | Adopted. Capture-target-aware separate alpha blending, native opaque clears, and transient native-shader coverage preserve GREATER alpha discard before opaque coverage one. Unsupported custom factors/model HUD cancel before entry. |
+| Adapt full-eye effects at their original native boundary | Adopted. Shared unchanged native correction GLSL tints both world eyes; native captured UI uses premultiplied corrected tint and destination coverage without changing coverage. Native dim-before-menu and final palette-tint ordering remain. |
+| Preserve native desktop output without executing UI twice | Adopted. One flat GPU composite puts captured UI over the left-world desktop base; partial capture cancellation uses the same composite. |
+| Reconcile same-context extent changes | Adopted. Existing runtime shuts down/reinitializes only at the ordinary frame boundary after the native extent commits; subsequent owner/input generation checks use that new runtime identity. |
+
+Main source/GPU verification caught a real corrected-color edge case: native
+normalized-target clamping must occur before tint premultiplication. The test
+also corrected its own initial assumption about native brightness/contrast
+translation: native matrices scale those offsets by source alpha. Actual
+nondefault and over-range correction tests now stay within one RGB byte of
+independent blend arithmetic; unchanged-world fixtures still use zero tolerance.
+
+A fresh model-selected Astra follow-up could not start because retained agent
+threads exhausted capacity. The supported app messaging route also rejects
+model-selected input to these subagents. No substitute or unverified resumed
+review was used. This slice has the preceding verified Astra design review and
+main source/GPU verification, not a fresh independent implementation review.

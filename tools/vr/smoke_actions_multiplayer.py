@@ -143,7 +143,16 @@ def exercise_server(observer, remote, player):
 
     ammo_before = after_move['ammo']
     fire_samples = stage('fire', fire, .80)
-    release_fire_samples = stage('release_fire', remote.neutral, .55)
+    release_offset=len(observer.text())
+    stage('release_fire', remote.neutral, .55)
+    def stable_release(text):
+        recent=player_samples(text[release_offset:],player)[-3:]
+        return len(recent)==3 and all(not (sample['bits'] & 4) for sample in recent)
+    # Observe actual server acknowledgement; the native transport can still
+    # deliver an in-flight firing input inside a fixed half-second window.
+    observer.wait(stable_release,timeout=3)
+    release_fire_samples=player_samples(observer.text()[release_offset:],player)
+    stages['release_fire']=bounded(release_fire_samples)
     after_fire = player_samples(observer.text(), player)[-1]
     remote.neutral()
 
@@ -152,7 +161,7 @@ def exercise_server(observer, remote, player):
     fired = (any(sample['bits'] & 4 for sample in fire_samples)
              and after_fire['ammo'] < ammo_before)
     last_release = release_fire_samples[-3:]
-    released = bool(last_release) and all(not (sample['bits'] & 4) for sample in last_release)
+    released = len(last_release)==3 and all(not (sample['bits'] & 4) for sample in last_release)
     checks = {
         'server_assigned_player_observed': bool(player_samples(observer.text(), player)),
         'server_authoritative_movement': moved,
@@ -181,6 +190,7 @@ def main():
     parser.add_argument('--port', type=int, default=24586)
     parser.add_argument('--remote-port', required=True, type=int)
     parser.add_argument('--reconnect', action='store_true', help='replace the XR client and repeat the proof')
+    parser.add_argument('--require-hud', action='store_true', help='require 60 actual native HUD/world projections and distinct final eye captures per join')
     args = parser.parse_args()
 
     binary, client_binary, grp = (args.binary.resolve(), args.client_binary.resolve(), args.grp.resolve())
@@ -216,15 +226,29 @@ def main():
                 client_log = client_log_path.open('w')
                 client_command = [str(client_binary), '-usecwd', '-nosetup', '-noautoload', '-nologo',
                                   '-ns', '-nm', '-connect', f'127.0.0.1:{args.port}', '-x', WRAPPER.name]
-                client = subprocess.Popen(client_command, cwd=client_lab, env=runtime_env(args.display),
+                client_env=runtime_env(args.display)
+                if args.require_hud:
+                    client_env.update(EDUKE32_XR_UI='2',EDUKE32_XR_SINGLE_PASS='1',EDUKE32_XR_HUD_OUTPUT=str(client_lab/'hud'))
+                client = subprocess.Popen(client_command, cwd=client_lab, env=client_env,
                                           stdin=subprocess.DEVNULL, stdout=client_log, stderr=subprocess.STDOUT)
                 try:
                     join = {'join': join_number}
                     join['barrier'] = wait_for_join_barrier(x11, client, client_log_path, server_observer)
                     join['server_player'] = join['barrier']['server_player']
                     join['server_authority'] = exercise_server(server_observer, remote, join['server_player'])
+                    if args.require_hud:
+                        observer=Observer(client,client_log_path)
+                        observer.wait(lambda text: 'OpenXR HUD presentation: 60 frames;' in text
+                                      and 'OpenXR world oracle: 60 frames,' in text,timeout=15)
+                        text=observer.text()
+                        left,right=client_lab/'hud-left.ppm',client_lab/'hud-right.ppm'
+                        join['presentation']={'HUD_and_world_60_submissions':True,
+                            'distinct_final_eye_captures':left.is_file() and right.is_file() and left.read_bytes()!=right.read_bytes(),
+                            'runtime_not_stopped':'OpenXR world stopped:' not in text,
+                            'core_validation_no_warning_or_error':not bool(re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',text))}
                     join['client_exit_before_cleanup'] = client.poll()
-                    join['passed'] = join['server_authority']['passed'] and join['client_exit_before_cleanup'] is None
+                    join['passed'] = (join['server_authority']['passed'] and join['client_exit_before_cleanup'] is None
+                                      and (not args.require_hud or all(join['presentation'].values())))
                 except Exception as error:
                     join = {'join': join_number, 'passed': False, 'error': str(error),
                             'client_exit_before_cleanup': client.poll()}
