@@ -775,6 +775,12 @@ static void G_ReadGLFrame(void)
 
 void G_DrawRooms(int32_t playerNum, int32_t smoothRatio)
 {
+#ifdef USE_OPENXR
+    // Menu callbacks can draw a save thumbnail or enter a level. Neither may
+    // draw into the menu capture or consume the outer display owner's frame.
+    G_XRCancelMenuPresentation();
+    bool const xrWorldOwner=G_XRConsumeWorldDraw();
+#endif
     MICROPROFILE_SCOPEI("Game", EDUKE32_FUNCTION, MP_YELLOWGREEN);
 
     auto const &thisPlayer = g_player[playerNum];
@@ -1140,7 +1146,7 @@ void G_DrawRooms(int32_t playerNum, int32_t smoothRatio)
             bitmap_set(gotpic, MIRROR);
 #else
 #ifdef USE_OPENXR
-            if (!G_XRDrawRooms(smoothRatio))
+            if (!xrWorldOwner || !G_XRDrawRooms(smoothRatio))
 #endif
             {
 #ifdef USE_OPENXR
@@ -6534,6 +6540,9 @@ void drawframe_do(void)
 
     int const smoothratio = calc_smoothratio(totalclock, ototalclock);
 
+#ifdef USE_OPENXR
+    G_XRArmWorldDraw();
+#endif
     G_DrawRooms(screenpeek, smoothratio);
 #ifdef USE_OPENXR
     G_XREndFrame();

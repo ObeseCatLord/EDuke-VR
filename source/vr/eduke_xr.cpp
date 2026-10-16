@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -59,14 +60,16 @@ bool hasExtension(char const *wanted)
 
 struct GLState
 {
-    GLint     readFbo = 0, drawFbo = 0, readBuffer = GL_BACK, drawBuffer = GL_BACK, program = 0, vao = 0, arrayBuffer = 0, pixelPackBuffer = 0;
-    GLint     activeTexture = GL_TEXTURE0, active2d = 0, activeArray = 0, unit02d = 0, unit0Array = 0;
+    GLint     readFbo = 0, drawFbo = 0, readBuffer = GL_BACK, drawBuffer = GL_BACK, program = 0, vao = 0, arrayBuffer = 0, pixelPackBuffer = 0,
+              renderbuffer = 0;
+    GLint     activeTexture = GL_TEXTURE0, active2d = 0, activeArray = 0, unit02d = 0, unit0Array = 0, unit0Sampler = 0;
     GLint     viewport[4] = {}, scissor[4] = {}, packAlignment = 4, packRowLength = 0, packSkipPixels = 0, packSkipRows = 0;
     GLfloat   clearColor[4] = {}, clearDepth = 1;
+    GLint     clearStencil = 0;
     GLboolean depthMask = GL_TRUE, colorMask[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
-    GLint     depthFunc = GL_LESS;
+    GLint     depthFunc = GL_LESS, stencilWriteMask = ~0, stencilBackWriteMask = ~0;
     GLboolean depthTest = GL_FALSE, scissorTest = GL_FALSE, blend = GL_FALSE, cull = GL_FALSE, alphaTest = GL_FALSE, rasterizerDiscard = GL_FALSE, srgb = GL_FALSE,
-              dither = GL_FALSE;
+              dither = GL_FALSE, stencilTest = GL_FALSE;
 
     void save()
     {
@@ -78,12 +81,16 @@ struct GLState
         glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer);
         glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pixelPackBuffer);
+        glGetIntegerv(GL_RENDERBUFFER_BINDING, &renderbuffer);
         glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
         glGetIntegerv(GL_VIEWPORT, viewport);
         glGetIntegerv(GL_SCISSOR_BOX, scissor);
         glGetFloatv(GL_COLOR_CLEAR_VALUE, clearColor);
         glGetFloatv(GL_DEPTH_CLEAR_VALUE, &clearDepth);
+        glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &clearStencil);
         glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+        glGetIntegerv(GL_STENCIL_WRITEMASK, &stencilWriteMask);
+        glGetIntegerv(GL_STENCIL_BACK_WRITEMASK, &stencilBackWriteMask);
         glGetIntegerv(GL_PACK_ALIGNMENT, &packAlignment);
         glGetIntegerv(GL_PACK_ROW_LENGTH, &packRowLength);
         glGetIntegerv(GL_PACK_SKIP_PIXELS, &packSkipPixels);
@@ -98,9 +105,11 @@ struct GLState
         rasterizerDiscard = glIsEnabled(GL_RASTERIZER_DISCARD);
         srgb              = glIsEnabled(GL_FRAMEBUFFER_SRGB);
         dither            = glIsEnabled(GL_DITHER);
+        stencilTest       = glIsEnabled(GL_STENCIL_TEST);
         glActiveTexture(GL_TEXTURE0);
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &unit02d);
         glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &unit0Array);
+        glGetIntegerv(GL_SAMPLER_BINDING, &unit0Sampler);
         glActiveTexture(activeTexture);
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &active2d);
         glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &activeArray);
@@ -115,11 +124,15 @@ struct GLState
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, pixelPackBuffer);
+        glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         glScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
         glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
         glClearDepth(clearDepth);
+        glClearStencil(clearStencil);
         glDepthFunc(depthFunc);
+        glStencilMaskSeparate(GL_FRONT, stencilWriteMask);
+        glStencilMaskSeparate(GL_BACK, stencilBackWriteMask);
         glPixelStorei(GL_PACK_ALIGNMENT, packAlignment);
         glPixelStorei(GL_PACK_ROW_LENGTH, packRowLength);
         glPixelStorei(GL_PACK_SKIP_PIXELS, packSkipPixels);
@@ -134,9 +147,11 @@ struct GLState
         (rasterizerDiscard ? glEnable : glDisable)(GL_RASTERIZER_DISCARD);
         (srgb ? glEnable : glDisable)(GL_FRAMEBUFFER_SRGB);
         (dither ? glEnable : glDisable)(GL_DITHER);
+        (stencilTest ? glEnable : glDisable)(GL_STENCIL_TEST);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, unit02d);
         glBindTexture(GL_TEXTURE_2D_ARRAY, unit0Array);
+        glBindSampler(0, unit0Sampler);
         glActiveTexture(activeTexture);
         glBindTexture(GL_TEXTURE_2D, active2d);
         glBindTexture(GL_TEXTURE_2D_ARRAY, activeArray);
@@ -184,6 +199,15 @@ void viewMatrix(XrPosef const &pose, float *out)
     out[13] = -(r[0][1] * pose.position.x + r[1][1] * pose.position.y + r[2][1] * pose.position.z);
     out[14] = -(r[0][2] * pose.position.x + r[1][2] * pose.position.y + r[2][2] * pose.position.z);
     out[15] = 1;
+}
+
+void poseMatrix(XrPosef const &pose, float *out)
+{
+    float const x = pose.orientation.x, y = pose.orientation.y, z = pose.orientation.z, w = pose.orientation.w;
+    out[0] = 1 - 2 * y * y - 2 * z * z; out[1] = 2 * x * y + 2 * z * w;     out[2] = 2 * x * z - 2 * y * w;     out[3] = 0;
+    out[4] = 2 * x * y - 2 * z * w;     out[5] = 1 - 2 * x * x - 2 * z * z; out[6] = 2 * y * z + 2 * x * w;     out[7] = 0;
+    out[8] = 2 * x * z + 2 * y * w;     out[9] = 2 * y * z - 2 * x * w;     out[10] = 1 - 2 * x * x - 2 * y * y; out[11] = 0;
+    out[12] = pose.position.x; out[13] = pose.position.y; out[14] = pose.position.z; out[15] = 1;
 }
 
 void projectionMatrix(XrFovf const &fov, float *out)
@@ -290,12 +314,51 @@ bool captureFramebufferDepth(char const *path, uint32_t width, uint32_t height, 
     return good;
 }
 
+bool writeTexturePpm(GLuint texture, uint32_t width, uint32_t height, char const *path, std::string &error)
+{
+    if (!texture || !width || !height || !path)
+    {
+        error = "invalid menu capture parameters";
+        return false;
+    }
+    GLState state;
+    state.save();
+    GLuint read = 0;
+    glGenFramebuffers(1, &read);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, read);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+    std::vector<unsigned char> pixels(size_t(width) * height * 4);
+    bool good = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    if (good)
+    {
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        good = glSucceeded("reading menu capture", error);
+    }
+    if (good && !writePpm(path, pixels, width, height))
+    {
+        error = "could not write menu capture PPM";
+        good = false;
+    }
+    glDeleteFramebuffers(1, &read);
+    if (good)
+        good = glSucceeded("cleaning up menu capture readback", error);
+    state.restore();
+    return good;
+}
+
 struct Runtime::Impl
 {
     XrInstance                              instance = XR_NULL_HANDLE;
     XrSystemId                              system   = XR_NULL_SYSTEM_ID;
     XrSession                               session  = XR_NULL_HANDLE;
     XrSpace                                 space    = XR_NULL_HANDLE;
+    XrSpace                                 viewSpace = XR_NULL_HANDLE;
     XrActionSet                             actionSet = XR_NULL_HANDLE;
     std::array<XrAction, 6>                 buttonActions {};
     XrAction                                stickAction = XR_NULL_HANDLE, gripPoseAction = XR_NULL_HANDLE, aimPoseAction = XR_NULL_HANDLE;
@@ -306,6 +369,7 @@ struct Runtime::Impl
     std::array<XrView, kViewCount>          views {};
     uint32_t                                width = 0, height = 0;
     GLuint                                  fbo = 0, depth = 0, program = 0, vao = 0, vbo = 0;
+    GLuint                                  menuFbo = 0, menuColor = 0, menuDepth = 0, menuProgram = 0, menuVao = 0, menuVbo = 0;
     PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC multiview = nullptr;
     bool                                    running = false, exiting = false;
     XrSessionState                          sessionState = XR_SESSION_STATE_UNKNOWN;
@@ -315,6 +379,166 @@ struct Runtime::Impl
     GLint                                   previousReadFbo = 0, previousDrawFbo = 0;
     uint64_t                                submitted = 0;
     uint64_t                                actionGeneration = 0;
+    uint64_t                                nextMenuOwner = 0, menuOwner = 0;
+    uint32_t                                menuWidth = 0, menuHeight = 0;
+    bool                                    menuActive = false, menuArmed = false;
+    struct NativeTarget { GLint readFbo=0, drawFbo=0, readBuffer=GL_BACK, drawBuffer=GL_BACK; } menuNativeState;
+
+    void restoreMenuTarget()
+    {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, menuNativeState.readFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, menuNativeState.drawFbo);
+        glReadBuffer(menuNativeState.readBuffer);
+        glDrawBuffer(menuNativeState.drawBuffer);
+    }
+
+    void clearMenuPresentation()
+    {
+        menuActive = menuArmed = false;
+        menuOwner = 0;
+    }
+
+    void destroyMenuGl()
+    {
+        if (menuVbo)
+            glDeleteBuffers(1, &menuVbo);
+        if (menuVao)
+            glDeleteVertexArrays(1, &menuVao);
+        if (menuProgram)
+            glDeleteProgram(menuProgram);
+        if (menuDepth)
+            glDeleteRenderbuffers(1, &menuDepth);
+        if (menuColor)
+            glDeleteTextures(1, &menuColor);
+        if (menuFbo)
+            glDeleteFramebuffers(1, &menuFbo);
+        menuFbo = menuColor = menuDepth = menuProgram = menuVao = menuVbo = 0;
+        menuWidth = menuHeight = 0;
+        clearMenuPresentation();
+    }
+
+    bool ensureMenuProgram(std::string &error)
+    {
+        if (menuProgram && menuVao && menuVbo && viewSpace != XR_NULL_HANDLE) return true;
+        auto fail = [&] {
+            destroyMenuGl();
+            if (viewSpace != XR_NULL_HANDLE) xrDestroySpace(viewSpace);
+            viewSpace=XR_NULL_HANDLE;
+            return false;
+        };
+        XrReferenceSpaceCreateInfo info { XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
+        info.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;
+        info.poseInReferenceSpace.orientation.w=1;
+        XrResult const result=xrCreateReferenceSpace(session,&info,&viewSpace);
+        if (XR_FAILED(result))
+        {
+            error=xrError(instance,result,"xrCreateReferenceSpace view");
+            return fail();
+        }
+        std::string shaderError;
+        char const *menuVert = "#version 410 compatibility\n#extension GL_OVR_multiview2 : require\nlayout(num_views=2) in; layout(location=0) in vec3 p; "
+                               "layout(location=1) in vec2 uv; uniform mat4 uViewProj[2]; out vec2 texcoord; void main(){ gl_Position=uViewProj[gl_ViewID_OVR]*vec4(p,1); texcoord=uv; }";
+        char const *menuFrag = "#version 410 compatibility\nin vec2 texcoord; uniform sampler2D uTexture; out vec4 outColor; "
+                               "void main(){ outColor=vec4(texture(uTexture,texcoord).rgb,1); }";
+        GLuint menuVs = compile(GL_VERTEX_SHADER, menuVert, shaderError), menuFs = menuVs ? compile(GL_FRAGMENT_SHADER, menuFrag, shaderError) : 0;
+        if (menuVs && menuFs)
+        {
+            menuProgram = glCreateProgram();
+            glAttachShader(menuProgram, menuVs);
+            glAttachShader(menuProgram, menuFs);
+            glLinkProgram(menuProgram);
+            GLint linked = 0;
+            glGetProgramiv(menuProgram, GL_LINK_STATUS, &linked);
+            if (!linked)
+            {
+                char log[2048] = {};
+                glGetProgramInfoLog(menuProgram, sizeof(log), nullptr, log);
+                shaderError = std::string("menu presentation shader link failed: ") + log;
+            }
+        }
+        if (menuVs)
+            glDeleteShader(menuVs);
+        if (menuFs)
+            glDeleteShader(menuFs);
+        if (!shaderError.empty()) { error=shaderError; return fail(); }
+        float menuVertices[] = { -1, -1, 0, 0, 0, 1, -1, 0, 1, 0, 1, 1, 0, 1, 1, -1, -1, 0, 0, 0, 1, 1, 0, 1, 1, -1, 1, 0, 0, 1 };
+        glGenVertexArrays(1, &menuVao);
+        glBindVertexArray(menuVao);
+        glGenBuffers(1, &menuVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, menuVbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(menuVertices), menuVertices, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), nullptr);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), reinterpret_cast<void *>(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        if (!menuProgram || !menuVao || !menuVbo || !glSucceeded("initializing menu presentation", shaderError))
+            shaderError = shaderError.empty() ? "could not initialize menu presentation resources" : shaderError;
+        if (!shaderError.empty()) { error=shaderError; return fail(); }
+        return true;
+    }
+
+    bool ensureMenuCapture(uint32_t width, uint32_t height, std::string &error)
+    {
+        if (!width || !height)
+        {
+            error = "menu presentation requires a nonzero native extent";
+            return false;
+        }
+        if (!ensureMenuProgram(error)) return false;
+        if (menuFbo && menuWidth == width && menuHeight == height)
+            return true;
+        if (!menuFbo)
+            glGenFramebuffers(1, &menuFbo);
+        if (!menuColor)
+            glGenTextures(1, &menuColor);
+        if (!menuDepth)
+            glGenRenderbuffers(1, &menuDepth);
+        if (!menuFbo || !menuColor || !menuDepth)
+        {
+            error = "could not allocate menu presentation GL objects";
+            destroyMenuGl();
+            return false;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, menuFbo);
+        glBindTexture(GL_TEXTURE_2D, menuColor);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, menuColor, 0);
+        glBindRenderbuffer(GL_RENDERBUFFER, menuDepth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, menuDepth);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE || !glSucceeded("setting up menu presentation framebuffer", error))
+        {
+            if (status != GL_FRAMEBUFFER_COMPLETE)
+                error = "menu presentation framebuffer incomplete: " + std::to_string(status);
+            destroyMenuGl();
+            return false;
+        }
+        menuWidth = width;
+        menuHeight = height;
+        return true;
+    }
+
+    bool mirrorMenuToNative(std::string &error)
+    {
+        GLState state;
+        state.save();
+        glDisable(GL_SCISSOR_TEST);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, menuFbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, menuNativeState.drawFbo);
+        glDrawBuffer(menuNativeState.drawBuffer);
+        glBlitFramebuffer(0, 0, menuWidth, menuHeight, 0, 0, menuWidth, menuHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        bool good = glSucceeded("mirroring menu presentation", error);
+        state.restore();
+        restoreMenuTarget();
+        return good;
+    }
 
     bool createActions(std::string &error)
     {
@@ -428,6 +652,7 @@ struct Runtime::Impl
 
     void destroyGl()
     {
+        destroyMenuGl();
         if (vbo)
             glDeleteBuffers(1, &vbo);
         if (vao)
@@ -450,6 +675,8 @@ struct Runtime::Impl
             if (actionSpace != XR_NULL_HANDLE) xrDestroySpace(actionSpace);
         if (space != XR_NULL_HANDLE)
             xrDestroySpace(space);
+        if (viewSpace != XR_NULL_HANDLE)
+            xrDestroySpace(viewSpace);
         if (session != XR_NULL_HANDLE)
             xrDestroySession(session);
         if (actionSet != XR_NULL_HANDLE)
@@ -460,6 +687,7 @@ struct Runtime::Impl
         system   = XR_NULL_SYSTEM_ID;
         session  = XR_NULL_HANDLE;
         space    = XR_NULL_HANDLE;
+        viewSpace = XR_NULL_HANDLE;
         actionSet = XR_NULL_HANDLE;
         buttonActions = {};
         stickAction = gripPoseAction = aimPoseAction = XR_NULL_HANDLE;
@@ -473,6 +701,7 @@ struct Runtime::Impl
         running = exiting = false;
         sessionState = XR_SESSION_STATE_UNKNOWN;
         frameBegun = imageAcquired = imageReady = false;
+        clearMenuPresentation();
     }
 };
 
@@ -814,11 +1043,18 @@ void Runtime::shutdown()
     if (!m_impl)
         return;
     ++m_impl->actionGeneration;
-    bool hasGlResources = m_impl->fbo || m_impl->depth || m_impl->program || m_impl->vao || m_impl->vbo;
+    bool hasGlResources = m_impl->fbo || m_impl->depth || m_impl->program || m_impl->vao || m_impl->vbo || m_impl->menuFbo || m_impl->menuColor
+                       || m_impl->menuDepth || m_impl->menuProgram || m_impl->menuVao || m_impl->menuVbo;
     bool hasXrResources
-    = m_impl->instance != XR_NULL_HANDLE || m_impl->session != XR_NULL_HANDLE || m_impl->space != XR_NULL_HANDLE || m_impl->color != XR_NULL_HANDLE;
+    = m_impl->instance != XR_NULL_HANDLE || m_impl->session != XR_NULL_HANDLE || m_impl->space != XR_NULL_HANDLE || m_impl->viewSpace != XR_NULL_HANDLE
+      || m_impl->color != XR_NULL_HANDLE;
     bool    hasContext = hasGlResources && SDL_GL_GetCurrentContext() != nullptr;
     GLState state;
+    if (hasContext && m_impl->menuActive)
+    {
+        m_impl->restoreMenuTarget();
+        m_impl->clearMenuPresentation();
+    }
     if (hasContext)
         state.save();
     if (hasContext)
@@ -1016,6 +1252,219 @@ bool Runtime::bindMultiview(std::string &error)
     return glSucceeded("binding OpenXR multiview", error);
 }
 
+bool Runtime::beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &owner, std::string &error)
+{
+    owner = 0;
+    error.clear();
+    if (!m_impl || !m_impl->frameBegun || !m_impl->imageReady)
+    {
+        error = "menu presentation requires a ready OpenXR frame";
+        return false;
+    }
+    if (m_impl->menuActive)
+    {
+        error = "a menu presentation is already active";
+        return false;
+    }
+    GLState state;
+    state.save();
+    if (!m_impl->ensureMenuCapture(width, height, error))
+    {
+        state.restore();
+        return false;
+    }
+    m_impl->menuNativeState = { state.readFbo, state.drawFbo, state.readBuffer, state.drawBuffer };
+    state.restore();
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_impl->menuFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_impl->menuFbo);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glStencilMaskSeparate(GL_FRONT, ~0u);
+    glStencilMaskSeparate(GL_BACK, ~0u);
+    glClearColor(0, 0, 0, 1);
+    glClearDepth(1);
+    glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glClearColor(state.clearColor[0], state.clearColor[1], state.clearColor[2], state.clearColor[3]);
+    glClearDepth(state.clearDepth);
+    glClearStencil(state.clearStencil);
+    glColorMask(state.colorMask[0], state.colorMask[1], state.colorMask[2], state.colorMask[3]);
+    glDepthMask(state.depthMask);
+    glStencilMaskSeparate(GL_FRONT, state.stencilWriteMask);
+    glStencilMaskSeparate(GL_BACK, state.stencilBackWriteMask);
+    if (state.scissorTest)
+        glEnable(GL_SCISSOR_TEST);
+    if (!glSucceeded("clearing menu presentation", error))
+    {
+        m_impl->restoreMenuTarget();
+        m_impl->clearMenuPresentation();
+        return false;
+    }
+    owner = ++m_impl->nextMenuOwner;
+    if (!owner)
+        owner = ++m_impl->nextMenuOwner;
+    m_impl->menuOwner = owner;
+    m_impl->menuActive = true;
+    m_impl->menuArmed = false;
+    return true;
+}
+
+bool Runtime::armMenuPresentation(uint64_t owner, uint32_t width, uint32_t height)
+{
+    if (!m_impl || !m_impl->menuActive || !m_impl->frameBegun || !m_impl->imageReady || !owner || owner != m_impl->menuOwner
+        || width != m_impl->menuWidth || height != m_impl->menuHeight)
+        return false;
+    m_impl->menuArmed = true;
+    return true;
+}
+
+bool Runtime::menuPresentationActive() const
+{ return m_impl && m_impl->menuActive; }
+
+bool Runtime::menuPresentationArmed() const
+{ return m_impl && m_impl->menuActive && m_impl->menuArmed; }
+
+bool Runtime::cancelMenuPresentation(std::string &error, bool mirror)
+{
+    error.clear();
+    if (!m_impl || !m_impl->menuActive)
+    {
+        error = "no menu presentation is active";
+        return false;
+    }
+    bool good = true;
+    if (mirror)
+        good = m_impl->mirrorMenuToNative(error);
+    else
+        m_impl->restoreMenuTarget();
+    m_impl->clearMenuPresentation();
+    std::string finishError;
+    if (m_impl->frameBegun && !finishFrame(false, finishError))
+    {
+        if (error.empty())
+            error = finishError;
+        good = false;
+    }
+    return good;
+}
+
+bool Runtime::completeMenuPresentation(std::string &error, char const *capturePrefix)
+{
+    error.clear();
+    if (!m_impl || !m_impl->menuActive)
+    {
+        error = "no menu presentation is active";
+        return false;
+    }
+    if (!m_impl->menuArmed)
+        return cancelMenuPresentation(error, true);
+
+    XrSpaceLocation head { XR_TYPE_SPACE_LOCATION };
+    XrResult result = xrLocateSpace(m_impl->viewSpace, m_impl->space, m_impl->frameState.predictedDisplayTime, &head);
+    if (XR_FAILED(result))
+    {
+        error=xrError(m_impl->instance,result,"xrLocateSpace view");
+        std::string cleanup;
+        cancelMenuPresentation(cleanup,true);
+        return false;
+    }
+    static bool injectedPoseLoss;
+    if (auto test=std::getenv("EDUKE32_XR_TEST_MENU_POSE"))
+        if (!injectedPoseLoss && !std::strcmp(test,"1"))
+        {
+            injectedPoseLoss=true;
+            head.locationFlags=0;
+            std::fprintf(stderr,"OpenXR menu pose test: injected temporary invalidity.\n");
+        }
+    if ((head.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+        != (XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+        return cancelMenuPresentation(error,true);
+
+    GLState state;
+    state.save();
+    bool rendered = bindMultiview(error);
+    if (rendered)
+    {
+        glViewport(0, 0, m_impl->width, m_impl->height);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_ALPHA_TEST);
+        glDisable(GL_STENCIL_TEST);
+        glDisable(GL_RASTERIZER_DISCARD);
+        glDisable(GL_FRAMEBUFFER_SRGB);
+        glDisable(GL_DITHER);
+        glClearColor(0, 0, 0, 1);
+        glClearDepth(1);
+        glClearStencil(0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        glDepthMask(GL_FALSE);
+        float headMatrix[16], translate[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1.5f, 1 };
+        float scale[16] = { .9f, 0, 0, 0, 0, .9f * float(m_impl->menuHeight) / m_impl->menuWidth, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        float world[16], model[16], matrices[kViewCount][16];
+        poseMatrix(head.pose, headMatrix);
+        multiply(world, headMatrix, translate);
+        multiply(model, world, scale);
+        for (uint32_t i = 0; i < kViewCount; ++i)
+        {
+            float projection[16], view[16], viewProjection[16];
+            projectionMatrix(m_impl->views[i].fov, projection);
+            viewMatrix(m_impl->views[i].pose, view);
+            multiply(viewProjection, projection, view);
+            multiply(matrices[i], viewProjection, model);
+        }
+        glUseProgram(m_impl->menuProgram);
+        glUniformMatrix4fv(glGetUniformLocation(m_impl->menuProgram, "uViewProj[0]"), kViewCount, GL_FALSE, &matrices[0][0]);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_impl->menuColor);
+        glBindSampler(0, 0);
+        glUniform1i(glGetUniformLocation(m_impl->menuProgram, "uTexture"), 0);
+        glBindVertexArray(m_impl->menuVao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        rendered = glSucceeded("drawing menu presentation", error);
+    }
+    state.restore();
+    if (!rendered)
+    {
+        std::string cleanup;
+        cancelMenuPresentation(cleanup, true);
+        return false;
+    }
+
+    bool captureOk = true;
+    if (capturePrefix)
+    {
+        std::string path = std::string(capturePrefix) + "-ui.ppm";
+        captureOk = writeTexturePpm(m_impl->menuColor, m_impl->menuWidth, m_impl->menuHeight, path.c_str(), error);
+        if (captureOk)
+            captureOk = captureFrame(capturePrefix, false, error);
+    }
+    std::string mirrorError;
+    bool mirrored = m_impl->mirrorMenuToNative(mirrorError);
+    if (capturePrefix && captureOk && mirrored)
+    {
+        std::string path=std::string(capturePrefix)+"-desktop.ppm";
+        captureOk=captureFramebuffer(path.c_str(),m_impl->menuWidth,m_impl->menuHeight,error);
+    }
+    m_impl->clearMenuPresentation();
+    std::string finishError;
+    bool submitted = finishFrame(mirrored, finishError);
+    if (!captureOk || !mirrored || !submitted)
+    {
+        if (error.empty())
+            error = !mirrored ? mirrorError : finishError;
+        return false;
+    }
+    return true;
+}
+
 bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error, bool captureDepth)
 {
     if (!m_impl->frameBegun || !m_impl->imageReady)
@@ -1123,6 +1572,14 @@ bool Runtime::mirrorEye(uint32_t eye, std::string &error)
 
 bool Runtime::finishFrame(bool submit, std::string &error)
 {
+    if (m_impl->menuActive)
+    {
+        // An early caller must not retain the private target or submit an
+        // incomplete logical presentation frame.
+        m_impl->restoreMenuTarget();
+        m_impl->clearMenuPresentation();
+        submit = false;
+    }
     if (!m_impl->frameBegun)
     {
         error = "no OpenXR frame is open";

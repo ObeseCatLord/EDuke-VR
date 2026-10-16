@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Observe native title-menu callbacks without changing menu/game state.
+include GAME.CON
+
+gamevar vrmenu_draw 0 0
+gamevar vrmenu_rest 0 0
+
+onevent EVENT_DISPLAYMENU
+    addvar vrmenu_draw 1
+endevent
+
+onevent EVENT_DISPLAYMENUREST
+    addvar vrmenu_rest 1
+    ifvare vrmenu_rest 60
+    {
+        addlog vrmenu_draw
+        addlog vrmenu_rest
+    }
+    ifvare vrmenu_rest 120
+    {
+        addlog vrmenu_draw
+        addlog vrmenu_rest
+    }
+endevent

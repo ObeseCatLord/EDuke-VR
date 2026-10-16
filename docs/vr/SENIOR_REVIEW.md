@@ -166,3 +166,52 @@ input and explicit `shouldRender=false` input proof remain narrower gaps; native
 SDL2 `restartvid` reuses its existing GL context and must not be labeled recreation.
 Haptics, tracked weapon aim/origin, headset UI and full multiplayer qualification
 were outside this bounded slice and remain required for the requested full port.
+
+## Headset presentation architecture — 2026-10-16
+
+A fresh explicit `gpt-6-astra` / `xhigh` review verified the actual source before
+critique; current effective metadata was independently checked. Main separately
+traced the save-thumbnail, menu dimming and native final-swap call sites. The
+review changed the first implementation boundary and supplied concrete ordering
+and cancellation requirements.
+
+| Recommendation | Disposition |
+|---|---|
+| Keep the existing projection-array world; avoid copying composed desktop world into both eyes | Adopted. Target is one native UI capture and one GPU plane into the existing array. A compositor quad would retain the capture/effect problems and add a resource/color boundary. |
+| Prove opaque cold-menu presentation before transparent HUD | Adopted as first checkpoint, under EDUKE32_XR_UI=1. This stages the full UI adapter; world/weapon/HUD completion is still required. |
+| A swap does not identify the logical owner's final presentation | Adopted. The owner explicitly arms immediately before its intended videoNextPage; unarmed nested swaps cancel/mirror/end empty. No lazy XR initialization from a swap. |
+| Generation alone does not catch mode/extent changes with a retained SDL context | Adopted. Capture extent is checked at arming; resize/minimize/video-mode/renderer changes cancel before native operations. Next owner begin also drains skipped presentation. |
+| Auxiliary save/premap room draws can contaminate UI capture | Adopted. Cancellation covers whole G_DrawRooms entry, before background/CON/readback. Main also found an existing frame-permission gap: only intended world owners may arm a draw, and permission is consumed at entry so nested draws cannot steal it. |
+| Native full-eye tint cannot become a rectangular finite-panel effect | Adopted for the later HUD stage. Adapt the named full-eye effect at its original boundary: tint world, transform premultiplied UI RGB with coverage preserved, then compose. Do not reorder menu dimming relative to menu text. Cold no-world menu proof does not close this gate. |
+| Source-over alpha needs separate coverage; arbitrary custom blends do not fit the same rule | Adopted. Initial opaque capture ignores stored alpha; future transparent capture is bounded to verified conventional blending/opaque writes. Unsupported destination-dependent factors need explicit handling, not an invented material resolver. |
+| Compare native reference callback counts, not an absolute global one | Adopted. Native thumbnails and duplicate native background draws remain intentional; no callbacks are rerun merely to recover pre-world UI pixels. |
+
+A scratch actual-GPU GLX probe confirms the conventional alpha issue and one
+raw-RGBA8 route: native red alpha.5 stores RGBA127,0,0,63 on transparent clear;
+separate alpha ONE stores127,0,0,127. Two overlays captured and then composed over
+blue exactly match direct native RGB95,64,96, with no GL error. This is not a
+native shader/compositor/headset proof. Panel distance1.5m remains provisional.
+
+### Cold-menu implementation review and fixes
+
+A fresh explicitly selected Astra/xhigh implementation review, with effective
+settings verified, found three conditional issues. All were adopted:
+
+- Successful `xrLocateSpace` with missing validity now cancels/mirrors/ends empty;
+  it does not disable XR. Actual submitted-frame deltas drive the SDL counter.
+- Menu VIEW space, shaders and geometry now initialize lazily on first capture;
+  UI-disabled world/diagnostic initialization has no menu-resource dependency.
+- Capture preserves native UI's final viewport/cache and mirrors to the full
+  native extent. Begin no longer changes the viewport; target restoration keeps
+  only framebuffer/buffer fields instead of an entire persistent GL snapshot.
+
+Removed unused blend-function/equation and stencil-function/operation state from
+this opaque adapter; kept the masks/enables/clear/sampler/renderbuffer state it
+actually changes. Same-size captures reuse their texture/depth allocation.
+
+A further fresh Astra follow-up could not start because of the agent-thread
+limit. No substitute reviewer was used. Main verified the fixes directly and
+ran injected invalid-pose, non-full cached viewport, unarmed nested native swap,
+desktop pixel equality, console/resize, native-game transition and regression
+checks. Real minimize/render-mode transitions, actual context recreation,
+in-game save rendering and broader mod/native presentation remain separate gaps.

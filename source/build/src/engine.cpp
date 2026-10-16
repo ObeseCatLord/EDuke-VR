@@ -10,6 +10,9 @@
 
 #include "a.h"
 #include "baselayer.h"
+#ifdef USE_OPENXR
+#include "sdlayer.h"
+#endif
 #include "build.h"
 #include "cache1d.h"
 #include "colmatch.h"
@@ -14980,6 +14983,9 @@ static void PolymerProcessModels(void)
 //
 int32_t videoSetRenderMode(int32_t renderer)
 {
+#ifdef USE_OPENXR
+    sdlayer_xr_cancelMenuPresentation();
+#endif
 #ifdef USE_OPENGL
     buildgl_resetStateAccounting();
 

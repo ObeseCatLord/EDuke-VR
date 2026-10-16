@@ -1,6 +1,6 @@
 # EDuke32 VR port plan
 
-Status: native XR foundation and first ordinary-room stereo oracle implemented, **not a completed VR port**. Updated 2026-10-16. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
+Status: experimental Linux OpenXR port with bounded ART multiview, native controller input and cold-menu presentation; **not a completed VR port**. Updated 2026-10-16. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
 
 ## Current implementation checkpoint
 
@@ -12,7 +12,8 @@ Status: native XR foundation and first ordinary-room stereo oracle implemented, 
 - Native indexed-ART ceiling/floor sky, sky depth-only companions and NPOT shader emulation now pass exact color/depth fixtures. E1L1 uses multiview for 59 of its first 60 opaque frames; one cold texture upload safely retries the reference.
 - Indexed ART masks/sprites now share the multiview transport while preserving native transparency and equal-depth group order. Exact RGB/depth, animated ART/alpha cutoff and recovery fixtures pass.
 - OpenXR actions now merge into native controls and menus once per logical frame, including the title/demo loop. Real Monado remote actions pass movement/fire/release, controller reactivation, focus and native video-reset checks. Native dedicated server observations confirm controller movement/fire/ammo/release on both original and replacement joins. Native `input_t` and network packets remain unchanged. Tracked aim, haptics, settings and actual headset ergonomics remain required.
-- Next implementation work: headset weapon/HUD/menu presentation, authoritative tracked aim, full-pitch/tracked visibility, remaining material/draw families and demonstrated texture-streaming fallback within the existing resource boundary. The full multiplayer/action/platform matrix remains required.
+- Opt-in opaque cold-menu/console presentation now renders native UI once to its own target and submits a head-relative multiview plane. Actual 60-frame captures, desktop equality, temporary tracking recovery, viewport preservation, console/resize and transition to native stereo gameplay pass. This does not cover transparent HUD or in-game menu effects.
+- Next implementation work: headset weapon/HUD/in-game menu presentation, authoritative tracked aim, full-pitch/tracked visibility, remaining material/draw families and demonstrated texture-streaming fallback within the existing resource boundary. The full multiplayer/action/platform matrix remains required.
 
 ## Source and behavioral reference
 
@@ -135,3 +136,20 @@ Gate: target headset visual/comfort/performance tests, real multiplayer with two
 7. Real hardware on each supported platform before release claims.
 
 A build, a green counter or a diagnostic triangle is not game-world VR proof. If a failure repeats three times, retain evidence and change the experiment. If the adapter grows into adjacent-system replacements, duplicate state/policy, or repeated cross-layer fixes, reopen the design and seek simplification before expanding. No completion claim until the user's full VR, single-pass and multiplayer behavior gates pass.
+
+### Next presentation checkpoint (senior-reviewed)
+
+Use the existing projection array and native UI, beginning with opaque cold
+menus/console under an opt-in flag. Capture native content once, arm only the
+logical owner's final swap, draw one head-relative multiview plane, mirror the
+native capture and end that same acquired frame. Cancel before auxiliary room
+draws, mode/extent changes, nested swaps, skipped presentation or shutdown.
+Current world submission remains unchanged during this first checkpoint.
+
+Then extend to native weapon/HUD over the stereo world. That extension requires
+source-over coverage alpha, full-eye tint/dimming at its original order, save
+thumbnail isolation, distinct-right-world and depth preservation, and native
+callback reference comparisons. A finite panel alone cannot reproduce a full-eye
+damage flash. Custom destination-dependent UI blending and pre-world script
+overlays remain explicit compatibility decisions. Do not grow a general command
+recorder, material resolver or second XR lifecycle to hide those gaps.

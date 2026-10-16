@@ -145,6 +145,53 @@ void sdlayer_xr_disableWorld(char const *reason)
     sdl_xr_worldActive = false;
 }
 
+void sdlayer_xr_cancelMenuPresentation()
+{
+    if (!sdl_xr_worldActive || !sdl_xr.menuPresentationActive()) return;
+    std::string error;
+    if (!sdl_xr.cancelMenuPresentation(error,true))
+        sdlayer_xr_disableWorld(error.c_str());
+}
+
+static void sdlayer_xr_presentMenu()
+{
+    // Never acquire or initialize from a swap: only the logical owner can arm
+    // final presentation. A nested native fade/swap cancels the capture safely.
+    if (!sdl_xr_worldActive || !sdl_xr.menuPresentationActive()) return;
+    int width=0,height=0;
+    SDL_GetWindowSize(sdl_window,&width,&height);
+    if (bpp<=8 || videoGetRenderMode()!=REND_POLYMOST || width!=xdim || height!=ydim)
+    {
+        sdlayer_xr_cancelMenuPresentation();
+        return;
+    }
+    static uint64_t generation, submitted;
+    if (generation!=sdl_xr.generation())
+    { generation=sdl_xr.generation(); submitted=0; }
+    bool const armed=sdl_xr.menuPresentationArmed();
+    char const *capture=armed && submitted==59 ? std::getenv("EDUKE32_XR_MENU_OUTPUT") : nullptr;
+    uint64_t const before=sdl_xr.submittedFrames();
+    std::string error;
+    if (!sdl_xr.completeMenuPresentation(error,capture))
+        sdlayer_xr_disableWorld(error.c_str());
+    else if (sdl_xr.submittedFrames()>before)
+    {
+        if (auto test=std::getenv("EDUKE32_XR_TEST_MENU_VIEWPORT"))
+            if (!std::strcmp(test,"1"))
+            {
+                GLint viewport[4];
+                glGetIntegerv(GL_VIEWPORT,viewport);
+                if (viewport[0] || viewport[1] || viewport[2]!=xdim || viewport[3]!=ydim)
+                {
+                    sdlayer_xr_disableWorld("menu viewport test: native viewport was not preserved");
+                    return;
+                }
+            }
+        if (++submitted==60)
+            LOG_F(INFO,"OpenXR menu presentation: 60 frames; native UI extent=%dx%d; osdRows=%d; one multiview plane per frame.",xdim,ydim,OSD_GetRowsCur());
+    }
+}
+
 static void sdlayer_xr_diagnostic()
 {
     char const *world = std::getenv("EDUKE32_XR");
@@ -1916,6 +1963,9 @@ int setvideomode_sdlcommonpost(int32_t x, int32_t y, int32_t c, int32_t fs, int3
 #if SDL_MAJOR_VERSION >= 2
 int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
 {
+#ifdef USE_OPENXR
+    sdlayer_xr_cancelMenuPresentation();
+#endif
     int32_t regrab = 0, ret;
 
     ret = setvideomode_sdlcommon(&x, &y, c, fs, &regrab);
@@ -2160,7 +2210,12 @@ void videoShowFrame(int32_t w)
 
     // if we're minimized or about to resize, just throw away the frame
     if (sdl_resize.x || sdl_minimized)
+    {
+#ifdef USE_OPENXR
+        sdlayer_xr_cancelMenuPresentation();
+#endif
         return;
+    }
 
 #ifdef __ANDROID__
     if (mobile_halted) return;
@@ -2220,6 +2275,7 @@ void videoShowFrame(int32_t w)
             MICROPROFILE_SCOPEI("Engine", "SDL_GL_SwapWindow", MP_GREEN3);
 #if SDL_MAJOR_VERSION >= 2
 # ifdef USE_OPENXR
+            sdlayer_xr_presentMenu();
             sdlayer_xr_diagnostic();
 # endif
             SDL_GL_SwapWindow(sdl_window);

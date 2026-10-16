@@ -82,6 +82,14 @@ class Runtime
     FrameResult beginFrame(Frame &frame, std::string &error);
     bool        bindEye(uint32_t eye, std::string &error);
     bool        bindMultiview(std::string &error);
+    // Redirect one opaque native title/menu/console draw into a private RGBA8
+    // target.  This is a logical owner within an already acquired XR frame.
+    bool        beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &owner, std::string &error);
+    bool        armMenuPresentation(uint64_t owner, uint32_t width, uint32_t height);
+    bool        menuPresentationActive() const;
+    bool        menuPresentationArmed() const;
+    bool        completeMenuPresentation(std::string &error, char const *capturePrefix = nullptr);
+    bool        cancelMenuPresentation(std::string &error, bool mirror = true);
     bool        captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error, bool captureDepth = false);
     bool        mirrorEye(uint32_t eye, std::string &error);
     bool        finishFrame(bool submit, std::string &error);

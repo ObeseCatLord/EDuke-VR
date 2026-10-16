@@ -230,3 +230,47 @@ tracked gameplay aim. Haptics, tracked weapon/shot alignment, user bindings,
 headset UI, real hardware ergonomics, captured-input context recreation,
 explicit shouldRender=false observation and the full multiplayer action matrix
 remain open. Null compositor tests do not establish headset comfort or visuals.
+
+## Opaque cold-menu headset presentation — 2026-10-16
+
+`EDUKE32_XR_UI=1` opts into native startup-menu/console capture on an opaque
+head-relative plane, using the existing acquired projection array. One native
+UI draw and one multiview plane draw serve both eyes. World submission remains
+on its previous path; this checkpoint does not qualify transparent HUD or
+in-game menu/fade handling.
+
+| Case | Actual result |
+|---|---|
+| Cold menu |60 actual successful submissions, nonconstant and distinct eye layers, native UI/desktop captures exactly equal. Both menu callbacks report60/60, matching the native flat reference fixture. |
+| Temporary invalid head pose |One successful real location query is deliberately marked invalid. That frame cancels; the session recovers to60 actual submissions without XR shutdown. |
+| Non-full capture-entry viewport |The test sets native cached/actual viewport to13,17,half-size. Native UI changes it to full; final actual viewport remains full and desktop pixels exactly equal the native UI capture. |
+| Nested native swap |One real videoNextPage is injected before the owner arms final presentation. It cancels/mirrors/ends empty; later owners reach60 submissions, with exact desktop/UI equality and no double menu callbacks. |
+| Console and resize |Owned window changes960x600→800x600; console appears in actual eye captures. Capture is800x600, both eye images remain nonconstant/distinct and desktop/native UI pixels match exactly. |
+| Menu→game |Native keyboard menu selections enter E1L1. World then submits60 frames with distinct eye readbacks: opaque59, mask/full57 multiview; the remaining frames use the existing reference. |
+| Rendering regression |Animated-mask asymmetric stereo still matches two-pass RGB and complete nonconstant depth exactly. Native/oracle callback counts14/112/14 remain equal; capture writes no eye pixels before replay. |
+| Multiplayer regression |Flat dedicated server + XR client, original and replacement joins, each pass server-authoritative movement/position/fire/ammo/release. |
+| Native quit |Quit through the owned menu exits0; the XR instance is destroyed without core-validation warnings/errors. The input helper allows expected window destruction only when the process exits cleanly. |
+| Builds/API validation |Native/XR builds and Python/diff checks pass. Cold-menu, faults, resize and game transition report no core-validation warning/error. UI-disabled standalone submits12 validated multiview frames. |
+
+`tools/vr/smoke_menu.py` retains bounded checks and actual UI/desktop/eye readbacks.
+Flags `--invalid-pose-once --partial-viewport --nested-swap-once` exercise the
+specific recovery/cache cases; `--console --resize` exercises cold console
+resizing; `--enter-game` exercises native level entry. The fixture itself only
+observes native menu callback counts. A native flat run with the same wrapper
+reports60/60. No simulation state, packets or global desktop input are injected.
+
+Opaque UI alpha is intentionally ignored. Standard source-over coverage, custom
+blends, full-eye tint/dimming, pre-world script overlays, depth/model HUD,
+in-game menus/save captures, actual minimize/render-mode/context recreation,
+world rendering across window resizing and real headset optics/comfort still
+need qualification. Captured XR layers are runtime texture evidence under a
+null compositor, not a real-headset visual test.
+
+Visual QA caught an initially weak console assertion: the harness recorded key
+delivery before startup/resize input clearing had settled. The corrected runner
+waits for stable menu input, requires positive `osdRows` at the captured frame,
+and the final eye image was inspected. It reports36 visible console rows with
+an800x600 capture and exact desktop/UI equality. A first native-quit check also
+mistook expected window destruction between key down/up for failure; the runner
+now accepts that only after verifying clean exit0, never retargeting another
+window or sending global input.

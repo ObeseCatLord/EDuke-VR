@@ -795,6 +795,9 @@ nextdemo_nomenu:
 
             if (foundemo == 0)
             {
+#ifdef USE_OPENXR
+                G_XRBeginMenuPresentation();
+#endif
                 G_DrawBackground();
 #ifdef USE_OPENXR
                 G_XREndFrame();
@@ -846,6 +849,9 @@ nextdemo_nomenu:
                 else
                 {
                     j = calc_smoothratio(g_demo_paused ? lockclock : totalclock, ototalclock, REALGAMETICSPERSEC);
+#ifdef USE_OPENXR
+                    G_XRArmWorldDraw();
+#endif
                     G_DrawRooms(screenpeek, j);
 #ifdef USE_OPENXR
                     G_XREndFrame();
@@ -900,6 +906,9 @@ nextdemo_nomenu:
             if ((g_player[myconnectindex].ps->gm&MODE_MENU) && (g_player[myconnectindex].ps->gm&MODE_EOL))
             {
                 Demo_FinishProfile();
+#ifdef USE_OPENXR
+                G_XRCancelMenuPresentation();
+#endif
                 videoNextPage();
                 goto RECHECK;
             }
@@ -960,6 +969,9 @@ nextdemo_nomenu:
                     rotatesprite_fs((320-50)<<16, 9<<16, 65536L, 0, BETAVERSION, 0, 0, 2+8+16+128);
             }
 
+#ifdef USE_OPENXR
+            G_XRArmMenuPresentation();
+#endif
             videoNextPage();
         }
 

@@ -184,3 +184,39 @@ The lifecycle tool requires exclusive use of the private runtime. It changes
 only the owned clients' Monado focus/IO state and restores that state on exit.
 Its native `restartvid` check retains the SDL2 context; actual in-game context
 loss/recreation remains an unclosed test gap.
+
+
+## Experimental headset cold menus
+
+`EDUKE32_XR_UI=1` alongside `EDUKE32_XR=1` enables the first headset UI
+checkpoint: opaque startup menus and console on a head-relative plane 1.5 m away.
+Native menu content is drawn once into a separate RGBA8 target, then one
+multiview draw places it into both existing XR eye layers over black. The
+complete native capture is also mirrored to the desktop. Menu resources are
+created only when this mode is used.
+
+The logical title-menu owner explicitly arms its final native presentation.
+Unarmed nested swaps, auxiliary room draws, mode/extent changes, skipped
+presentation and shutdown cancel safely. Temporary invalid head poses cancel a
+frame and allow recovery. Controller menu navigation remains native.
+
+```sh
+SDL_VIDEODRIVER=x11 EDUKE32_XR=1 EDUKE32_XR_UI=1 \
+./eduke32-xr -usecwd -nosetup -noautoload -nologo -g /path/to/DUKE3D.GRP
+python3 tools/vr/smoke_menu.py --binary ./eduke32-xr --display :1 \
+  --grp /path/to/DUKE3D.GRP --work-dir work/menus \
+  --invalid-pose-once --partial-viewport --nested-swap-once
+# Add --console --resize for console and capture resizing.
+# Add --enter-game to verify transition into actual stereo gameplay.
+# Use --quit-native separately to verify normal menu exit/cleanup.
+```
+
+Optional `EDUKE32_XR_MENU_OUTPUT=/path/to/prefix` saves actual `-left.ppm`,
+`-right.ppm`, `-ui.ppm` and `-desktop.ppm` on the 60th successful menu submission.
+The test requires the captured desktop and native UI pixels to match exactly.
+
+This first UI mode covers cold menus only. In-game menus, transparent native
+weapons/HUD, full-eye damage/menu fades, auxiliary save/depth/CON compatibility
+and real headset comfort still require the next presentation stage. Physical
+size/distance are provisional. It does not replace the stereo world with a
+cinema screen.

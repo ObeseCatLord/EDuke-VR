@@ -7,6 +7,11 @@
 void G_XRBeginFrame();
 void G_XREndFrame();
 void G_XRClearInput();
+void G_XRArmWorldDraw();
+bool G_XRConsumeWorldDraw();
+void G_XRBeginMenuPresentation();
+void G_XRArmMenuPresentation();
+void G_XRCancelMenuPresentation();
 
 // Experimental ordinary-room stereo oracle. True means the logical room pass
 // was consumed, including failures after animation (never repeat CON effects).

@@ -70,6 +70,9 @@ static uint64_t worldGeneration;
 static eduke_xr::Runtime *pendingRuntime, *inputRuntime;
 static eduke_xr::Runtime::Frame pendingFrame;
 static uint64_t pendingGeneration, inputGeneration;
+static bool worldDrawArmed;
+static eduke_xr::Runtime *menuRuntime;
+static uint64_t menuGeneration, menuOwner;
 static eduke_xr::ActionInput rawInput;
 static std::array<uint32_t,2> activeInputButtons{}, blockedInputButtons{};
 
@@ -222,6 +225,65 @@ void G_XRClearInput()
     CONTROL_SetExternalInput(nullptr,0,nullptr);
 }
 
+void G_XRArmWorldDraw() { worldDrawArmed=true; }
+
+bool G_XRConsumeWorldDraw()
+{
+    bool const armed=worldDrawArmed;
+    worldDrawArmed=false;
+    return armed;
+}
+
+void G_XRCancelMenuPresentation()
+{
+    auto *runtime=menuRuntime;
+    menuRuntime=nullptr;
+    if (!runtime || runtime->generation()!=menuGeneration || !runtime->menuPresentationActive()) return;
+    std::string error;
+    if (!runtime->cancelMenuPresentation(error,true))
+    {
+        G_XRClearInput();
+        sdlayer_xr_disableWorld(error.c_str());
+    }
+}
+
+void G_XRBeginMenuPresentation()
+{
+    char const *enabled=std::getenv("EDUKE32_XR_UI");
+    if (!enabled || Bstrcmp(enabled,"1") || (g_player[myconnectindex].ps->gm & MODE_GAME)
+        || videoGetRenderMode()!=REND_POLYMOST) return;
+    auto *runtime=pendingRuntime;
+    if (!runtime || runtime->generation()!=pendingGeneration) return;
+    std::string error;
+    uint64_t owner=0;
+    if (auto test=std::getenv("EDUKE32_XR_TEST_MENU_VIEWPORT"))
+        if (!Bstrcmp(test,"1")) buildgl_setViewport(13,17,xdim/2,ydim/2);
+    if (!runtime->beginMenuPresentation(xdim,ydim,owner,error))
+    {
+        G_XREndFrame();
+        G_XRClearInput();
+        sdlayer_xr_disableWorld(error.c_str());
+        return;
+    }
+    pendingRuntime=nullptr; // Runtime now owns capture through the armed final swap.
+    menuRuntime=runtime; menuGeneration=runtime->generation(); menuOwner=owner;
+    static bool injectedNestedSwap;
+    if (auto test=std::getenv("EDUKE32_XR_TEST_MENU_NESTED"))
+        if (!injectedNestedSwap && !Bstrcmp(test,"1"))
+        {
+            injectedNestedSwap=true;
+            LOG_F(INFO,"OpenXR menu test: injected unarmed native presentation.");
+            videoNextPage();
+        }
+}
+
+void G_XRArmMenuPresentation()
+{
+    if (!menuRuntime || menuRuntime->generation()!=menuGeneration) return;
+    if (videoGetRenderMode()!=REND_POLYMOST || !menuRuntime->armMenuPresentation(menuOwner,xdim,ydim))
+        G_XRCancelMenuPresentation();
+}
+
 void G_XREndFrame()
 {
     auto *runtime=pendingRuntime;
@@ -238,7 +300,9 @@ void G_XREndFrame()
 void G_XRBeginFrame()
 {
     // Only the ordinary game/demo frame owners may acquire/synchronize input.
+    G_XRCancelMenuPresentation();
     G_XREndFrame();
+    worldDrawArmed=false;
     auto const neutral=[] {
         rawInput={}; inputRuntime=nullptr;
         activeInputButtons={}; blockedInputButtons={};
