@@ -202,6 +202,7 @@ def main():
                     so.wait(lambda t:bool(impacts(t[off:])),timeout=6)
                     impact=impacts(so.text()[off:])[0]
                     hitrow=None
+                    vertical_impact=None
                     if a.case in ('wall','glancing'):checks['actual_RPG_hits_intervening_wall']=impact['x']<1152 and impact['x']>1080
                     elif a.case in ('damage','autoaim'):
                         hitrow={k:int(v) for k,v in re.findall(r'addlog vrhit_(player|kind|sector|ceiling|oldx|oldy|x|y|z)[^=\n]*= (-?\d+)',so.text()[off:])}
@@ -217,6 +218,11 @@ def main():
                         hitrow={k:int(v) for k,v in hitfields}
                         checks['native_collision_is_ceiling_not_a_wall']=(hitrow.get('kind',0)&49152)==16384 and shot['zvel']<0
                         checks['actual_RPG_reaches_ceiling_from_hand']=abs(impact['z']+32768)<=abs(shot['zvel'])/2+512 and (a.case!='vertical' or (hitrow['oldx']==shot['x'] and hitrow['oldy']==shot['y']))
+                        if a.case=='vertical':
+                            so.wait(lambda t:'VR vertical RPG impact:' in t[off:])
+                            coords=list(map(int,re.findall(r'VR vertical RPG impact: projectile=(-?\d+),(-?\d+),(-?\d+) effect=(-?\d+),(-?\d+),(-?\d+)',so.text()[off:])[0]))
+                            vertical_impact={'projectile':coords[:3],'effect':coords[3:]}
+                            checks['vertical_impact_and_explosion_keep_axis']=coords[:2]==coords[3:5]==[shot['x'],shot['y']] and [hitrow['x'],hitrow['y']]==coords[:2]
                     else:checks['actual_RPG_reaches_far_wall_from_neighbor_sector']=impact['x']>8000
                     card_errors=None
                     if a.case not in ('steep','vertical'):
@@ -256,7 +262,7 @@ def main():
                         _,second,_,_=fire();checks['new_press_after_invalid_reach_fires']=True
                     result={'passed':all(checks.values()),'case':a.case,'checks':checks,'actual_RPG':shot,'player_at_spawn':meta,
                             'server_resolved_origin':authority[1:4],'server_resolved_sector':authority[4],'server_clamped':bool(authority[5]),
-                            'independent_unclamped_origin':predicted,'actual_impact':impact,'native_collision':hitrow,'second_RPG':second,'replicated_RPG':replicated,'card_projection_max_channel_error':card_errors}
+                            'independent_unclamped_origin':predicted,'actual_impact':impact,'native_collision':hitrow,'vertical_impact':vertical_impact,'second_RPG':second,'replicated_RPG':replicated,'card_projection_max_channel_error':card_errors}
     except Exception as error:result={'passed':False,'phase':phase,'case':a.case,'error':str(error)}
     finally:
         if client_stopped and client and client.poll() is None:os.kill(client.pid,signal.SIGCONT)

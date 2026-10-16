@@ -65,3 +65,10 @@ readiness-counter fixes address reproduced native networking failures without
 copying a Raze protocol or adding a second simulation. Owned GAME.CON was read
 locally to verify native grow's health threshold; no proprietary script is
 redistributed with these test wrappers.
+
+Freezer/shrinker support is original adapter code at EDuke32's existing native
+projectile boundary. Native bounce/freeze/shrink/ammo/ownership/CON/actor policies
+remain the implementation. The pure vertical backoff repair is a narrow native
+zero-horizontal-speed correction demonstrated against retained before evidence.
+Test wrappers include the caller's owned GAME.CON locally; they redistribute no
+proprietary game scripts/assets. No new RazeXR source is copied in this slice.

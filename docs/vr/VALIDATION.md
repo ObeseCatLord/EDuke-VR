@@ -602,3 +602,36 @@ underwater tracer qualification, broader CON/switch/material policies, full-pitc
 world rendering, full single-pass coverage, PvP frag/respawn, map/late-join/loss,
 save/demo/camera behavior, comfort/haptics and hardware/platform qualification.
 The full port remains active and unfinished.
+
+## Freezer/shrinker native authority — 2026-10-16
+
+Native and XR builds pass. Twelve current-build cases pass: each weapon's open,
+closed-wall, glancing, steep, vertical and target-effect fixture. Every case
+requires actual native join, 60 stereo world/HUD submissions and clean active
+OpenXR core validation. Open cases require live client projectile fields matching
+the server. Native speed644/768 is normalized physically, with freezer's native
+-32 post-spawn Z bias retained. Portal origins resolve to1216,4173,-8109 in
+sector1; blocked origins remain before the wall in sector0. Both-eye ART card
+projection differs by at most1 channel value and leaves world depth unchanged.
+
+Native freezer bounces decrement the bounce budget, reverse Z at the ceiling,
+and a pure vertical bounce keeps X/Y1216,4173 and horizontal speed0. Actual enemy
+freeze palette1 and shrink size below40 occur on server/client; snapshots are
+captured after received state has reached rendered frames. Four historical
+mask3 peer cases also passed before the user clarified that older-peer
+compatibility is not required. These are optional evidence, not further gates.
+
+Seven current-build regressions pass: RPG open/wall/vertical/expiry recovery,
+steep-target hitscan, two sparse-slot joins with controller/inventory agreement,
+and exact animated-mask single-pass color/depth/callback oracle. The retained
+vertical RPG before-result shifted X1216→1104 at ceiling contact. The corrected
+projectile and explosion both retain X/Y1216,4173 at the actual radius-damage
+boundary. Other pitched native impact offsets are unchanged.
+
+Bounded results/images are in sibling evidence/freeze-shrink-validation.json,
+freeze-native-effect.png and shrink-native-effect.png. No raw operational logs
+or owned game assets are included. Python syntax/diff checks pass; native build
+retains existing compiler warnings. Fresh independent review was unavailable at
+the retained thread limit; this is main source/runtime verification. Full-pitch
+world coverage, remaining weapons and full current-build multiplayer combat,
+respawn, map/late-join/loss and remote hand presentation remain unqualified.

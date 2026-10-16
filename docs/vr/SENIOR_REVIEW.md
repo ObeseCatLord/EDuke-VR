@@ -374,3 +374,18 @@ RPG-only server tests require hand RPG success plus hitscan suppression/movement
 new peers require explicit hitscan acknowledgement. This is a bounded extension
 of the existing capability field, not a separate protocol/service. It is main
 verification, outside the fresh Astra design review.
+
+## Freezer/shrinker extension — main verification, fresh review unavailable
+
+A verified scratch brief compared the existing projectile boundary adapter with
+a generic weapon layer, temporary body replacement and new per-projectile VR
+flags. Fresh explicitly selected Astra/xhigh creation hit the retained thread
+limit. No substitute review ran. Main kept the existing native resolver,
+velocity boundary, damage/bounce/effect logic and actor replication. A shared
+velocity helper replaces the RPG's literal code and handles freezer/shrinker;
+tracked shrinker network creation uses native server authority. Actual native
+client projectile, freeze/shrink state, bounce and regressions qualify this
+bounded slice. The narrow zero-xvel backoff repair removes a reproduced sideways
+vertical impact, without a new projectile state machine. It does not redesign
+all native impact policy. User subsequently removed older-peer compatibility as
+a requirement; additional work should focus on current-build behavior.

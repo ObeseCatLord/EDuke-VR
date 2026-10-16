@@ -135,3 +135,15 @@ Synthesize senior review into docs/vr/PLAN.md with dispositions and test gates; 
 - Final compatibility audit separated RPG mask1 from optional hitscan mask3. Actual RPG-only server retains RPG firing and movement while unsupported new-client hitscan is suppressed; core-only prototype client cannot gain server hand-hitscan merely by sending a valid tail.
 - 22 hitscan cases and14 regression/capability groups pass: native impacts/events/ammo/damage/growth/switch/decal, analytic spread, real native reference, sparse inventory/inputs, old native peers, RPG expiry and exact stereo RGB/depth/callbacks. Native/XR builds and Python/diff checks pass; private runtime stopped. Actual eye images and before/after native growth are visually inspected and bounded evidence saved.
 - Other weapon families, remote muzzle presentation, full-pitch world/full single-pass coverage and complete multiplayer/camera/platform/comfort qualification remain required; full goal remains active.
+
+### Freezer/shrinker native hand authority
+- Reused native EDuke32 projectile/bounce/freeze/shrink and actor replication;
+  common constrained hand origin plus speed644/768 full-vector velocity, native
+  freezer -32 Z bias and bounce budget retained. Tracked shrinker spawns on server.
+- Removed arbitrary XY backoff for zero-horizontal-speed ceiling/floor impacts
+  and the vertical RPG explosion; actual retained before/after evidence agrees.
+- 12 current-build projectile cases plus7 RPG/hitscan/sparse/SPS regressions pass.
+  Four historical peer cases passed but are no longer a user requirement.
+- Fresh review unavailable at retained thread capacity; main verification only.
+- User clarified built-in multiplayer is the foundation, older peers not required,
+  and requested a proper projected world-space aiming crosshair as the next slice.

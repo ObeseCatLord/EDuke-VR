@@ -475,6 +475,27 @@ static int A_GetShootZvel(int defaultZvel)
     return g_overrideShootZvel ? g_shootZvel : defaultZvel;
 }
 
+// Physical velocity at existing projectile boundaries; target choice/CON and
+// weapon-specific postinsert policies remain in their original native paths.
+static void P_HandProjectileVelocity(int player, int target, int speed, int &angle, int &horizontalVelocity, int32_t &zVelocity)
+{
+    if (target<0)
+    {
+        auto const shot=G_VRGetShotInput(player);
+        double const horizontal=std::hypot(double(shot.direction[0]),double(shot.direction[1]));
+        double const length=std::hypot(horizontal,double(shot.direction[2]));
+        if (horizontal>1.) angle=getangle(shot.direction[0],shot.direction[1]);
+        horizontalVelocity=int(std::lround(speed*horizontal/length));
+        zVelocity=int(std::lround(speed*16.*shot.direction[2]/length));
+    }
+    else
+    {
+        double const factor=speed/std::hypot(double(speed),double(zVelocity)/16.);
+        horizontalVelocity=int(std::lround(speed*factor)); zVelocity=int(std::lround(zVelocity*factor));
+    }
+    if (g_overrideShootZvel) horizontalVelocity=speed;
+}
+
 // One optional resolved sector/effective Build ray, private to native hitscan.
 // No extra per-player state or alternative weapon simulation.
 struct HandHitscan { int16_t sector; vec3_t ray; };
@@ -1464,8 +1485,8 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             vel = 644;
 
             int j = -1;
-            bool const tracked=projecTile==RPG && playerNum>=0 && G_VRShotEnabled(playerNum)
-                && G_VRHandShotFeature(playerNum,projecTile) && Net_VRShotAvailable(playerNum,VRShotFeatureRPG);
+            uint8_t const feature=playerNum>=0 ? G_VRHandShotFeature(playerNum,projecTile) : 0;
+            bool const tracked=feature && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,feature);
             int16_t originSector=spriteSectnum;
             bool clamped=false;
             if (tracked && (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,originSector,clamped))) return -1;
@@ -1503,30 +1524,11 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             if (numplayers > 1 && g_netClient)
                 return -1;
 
-            if (tracked)
-            {
-                if (j<0)
-                {
-                    auto const shot=G_VRGetShotInput(playerNum);
-                    double const horizontal=std::hypot(double(shot.direction[0]),double(shot.direction[1]));
-                    double const length=std::hypot(horizontal,double(shot.direction[2]));
-                    if (horizontal>1.) shootAng=getangle(shot.direction[0],shot.direction[1]);
-                    vel=int(std::lround(644.*horizontal/length));
-                    Zvel=int(std::lround(644.*16.*shot.direction[2]/length));
-                }
-                else
-                {
-                    // Keep native autoaim callback/selection, normalizing its
-                    // selected 3D velocity rather than replacing weapon policy.
-                    double const factor=644./std::hypot(644.,double(Zvel)/16.);
-                    vel=int(std::lround(644.*factor)); Zvel=int(std::lround(Zvel*factor));
-                }
-                if (g_overrideShootZvel) vel=644; // explicit CON zvel remains authoritative
-            }
+            if (tracked) P_HandProjectileVelocity(playerNum,j,644,shootAng,vel,Zvel);
             Zvel=A_GetShootZvel(Zvel);
             vec3_t const spawn=tracked ? startPos : vec3_t{startPos.x+(sintable[(348+shootAng+512)&2047]/448),
                                                           startPos.y+(sintable[(shootAng+348)&2047]/448),startPos.z-(1<<8)};
-            if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+            if (tracked && projecTile==RPG && std::getenv("EDUKE32_XR_TEST_SHOTS"))
                 LOG_F(INFO,"VR authoritative RPG: player=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d.",
                       playerNum,spawn.x,spawn.y,spawn.z,originSector,clamped,shootAng,vel,Zvel);
             int const returnSprite = A_InsertSprite(originSector,spawn.x,spawn.y,spawn.z,
@@ -1601,6 +1603,10 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             pReturn->cstat    = 128;
             pReturn->clipdist = (projecTile == RPG) ? 4 : 40;
 
+            if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR native projectile: player=%d tile=%d index=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d policy=%d.",
+                      playerNum,projecTile,returnSprite,pReturn->x,pReturn->y,pReturn->z,originSector,clamped,
+                      pReturn->ang,pReturn->xvel,int16_t(pReturn->zvel),pReturn->yvel);
             return returnSprite;
         }
 
@@ -1701,9 +1707,14 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             if (pSprite->extra >= 0)
                 pSprite->shade = -96;
 
+            uint8_t const feature=playerNum>=0 ? G_VRHandShotFeature(playerNum,projecTile) : 0;
+            bool const tracked=feature && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,feature);
+            int16_t originSector=spriteSectnum; bool clamped=false;
+            if (tracked && (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,originSector,clamped))) return -1;
+            int target=-1;
             if (playerNum >= 0)
             {
-                if (NAM_WW2GI || GetAutoAimAng(spriteNum, playerNum, projecTile, ZOFFSET6, 0, &startPos, 768, &Zvel, &shootAng) < 0)
+                if (NAM_WW2GI || (target=GetAutoAimAng(spriteNum, playerNum, projecTile, ZOFFSET6, 0, &startPos, 768, &Zvel, &shootAng)) < 0)
                     Zvel = fix16_to_int(F16(100) - pPlayer->q16horiz - pPlayer->q16horizoff) * 98;
             }
             else if (pSprite->statnum != STAT_EFFECTOR)
@@ -1715,13 +1726,20 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             else
                 Zvel = 0;
 
-            Zvel                   = A_GetShootZvel(Zvel);
-            int const returnSprite = A_InsertSprite(spriteSectnum, startPos.x + (sintable[(512 + shootAng + 512) & 2047] >> 12),
-                                                    startPos.y + (sintable[(shootAng + 512) & 2047] >> 12), startPos.z + (2 << 8),
-                                                    SHRINKSPARK, -16, 28, 28, shootAng, 768, Zvel, spriteNum, 4);
+            if (tracked && numplayers>1 && g_netClient) return -1;
+            vel=768;
+            if (tracked) P_HandProjectileVelocity(playerNum,target,768,shootAng,vel,Zvel);
+            Zvel=A_GetShootZvel(Zvel);
+            vec3_t const spawn=tracked ? startPos : vec3_t{startPos.x+(sintable[(512+shootAng+512)&2047]>>12),
+                                                          startPos.y+(sintable[(shootAng+512)&2047]>>12),startPos.z+(2<<8)};
+            int const returnSprite=A_InsertSprite(originSector,spawn.x,spawn.y,spawn.z,
+                                                  SHRINKSPARK,-16,28,28,shootAng,vel,Zvel,spriteNum,4);
             sprite[returnSprite].cstat    = 128;
             sprite[returnSprite].clipdist = 32;
 
+            if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR native projectile: player=%d tile=%d index=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d policy=%d.",
+                      playerNum,SHRINKSPARK,returnSprite,spawn.x,spawn.y,spawn.z,originSector,clamped,shootAng,vel,Zvel,0);
             return returnSprite;
         }
         case FLAMETHROWERFLAME__:

@@ -82,6 +82,8 @@ uint8_t G_VRHandShotFeature(int player, int tile)
         case CHAINGUN__: return works==CHAINGUN_WEAPON ? VRShotFeatureHitscan : 0;
         case GROWSPARK__: return works==GROW_WEAPON ? VRShotFeatureHitscan : 0;
         case RPG__: return works==RPG_WEAPON ? VRShotFeatureRPG : 0;
+        case FREEZEBLAST__: return works==FREEZE_WEAPON ? VRShotFeatureFreezeShrink : 0;
+        case SHRINKER__: return works==SHRINKER_WEAPON ? VRShotFeatureFreezeShrink : 0;
     }
 #endif
     return false;

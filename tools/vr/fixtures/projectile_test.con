@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Equip through the included fixture; observe native projectile/target state.
+include hitscan_test.con
+gamevar vrproj_index 0 0
+gamevar vrproj_match 0 0
+gamevar vrproj_tile 0 0
+gamevar vrproj_stat 0 0
+gamevar vrproj_sector 0 0
+gamevar vrproj_owner 0 0
+gamevar vrproj_player 0 0
+gamevar vrproj_x 0 0
+gamevar vrproj_y 0 0
+gamevar vrproj_z 0 0
+gamevar vrproj_angle 0 0
+gamevar vrproj_speed 0 0
+gamevar vrproj_zvel 0 0
+gamevar vrproj_policy 0 0
+gamevar vrproj_hit 0 0
+defstate vrproj_observe
+    getactor[THISACTOR].picnum vrproj_tile
+    setvar vrproj_match 0
+    ifvare vrproj_tile FREEZEBLAST setvar vrproj_match 1
+    ifvare vrproj_tile SHRINKSPARK setvar vrproj_match 1
+    ifvare vrproj_match 1
+    {
+        getactor[THISACTOR].sectnum vrproj_sector
+        getactor[THISACTOR].statnum vrproj_stat
+        ifvarl vrproj_sector 2
+        ifvare vrproj_stat 4
+        {
+            setvarvar vrproj_index THISACTOR
+            getactor[THISACTOR].owner vrproj_owner
+            getactor[vrproj_owner].yvel vrproj_player
+            getactor[THISACTOR].x vrproj_x
+            getactor[THISACTOR].y vrproj_y
+            getactor[THISACTOR].z vrproj_z
+            getactor[THISACTOR].ang vrproj_angle
+            getactor[THISACTOR].xvel vrproj_speed
+            getactor[THISACTOR].zvel vrproj_zvel
+            getactor[THISACTOR].yvel vrproj_policy
+            getactor[THISACTOR].htmovflag vrproj_hit
+            addlog vrproj_index
+            addlog vrproj_tile
+            addlog vrproj_player
+            addlog vrproj_sector
+            addlog vrproj_x
+            addlog vrproj_y
+            addlog vrproj_z
+            addlog vrproj_angle
+            addlog vrproj_speed
+            addlog vrproj_zvel
+            addlog vrproj_policy
+            addlog vrproj_hit
+        }
+    }
+ends
+onevent EVENT_EGS
+    state vrproj_observe
+endevent
+onevent EVENT_GAME
+    state vrproj_observe
+endevent
+gamevar vrproj_target_pal 0 0
+gamevar vrproj_target_size 0 0
+onevent EVENT_PROCESSINPUT
+    getactor[vrtarget_index].pal vrproj_target_pal
+    getactor[vrtarget_index].xrepeat vrproj_target_size
+    addlog vrproj_target_pal
+    addlog vrproj_target_size
+endevent

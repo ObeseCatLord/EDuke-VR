@@ -1794,7 +1794,7 @@ static void Net_ReceiveVRCapability(ENetEvent *event, bool server)
 {
     if (event->channelID!=CHAN_MISC || event->packet->dataLength!=9 || (!server && event->peer!=g_netClientPeer)) return;
     auto const bytes=event->packet->data;
-    if (Bmemcmp(bytes+1,"EDVR",4) || bytes[5]!=1 || !(bytes[6]&VRShotFeatureRPG) || (bytes[6]&~(VRShotFeatureRPG|VRShotFeatureHitscan)) || bytes[7]!=(server ? 0 : 1)) return;
+    if (Bmemcmp(bytes+1,"EDVR",4) || bytes[5]!=1 || !(bytes[6]&VRShotFeatureRPG) || (bytes[6]&~(VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink)) || bytes[7]!=(server ? 0 : 1)) return;
     int const player=server ? int(intptr_t(event->peer->data)) : myconnectindex;
     if (player<=0 || player>=MAXPLAYERS || bytes[8]!=player || !g_player[player].playerquitflag) return;
     if (server)
@@ -1804,12 +1804,17 @@ static void Net_ReceiveVRCapability(ENetEvent *event, bool server)
     }
     else
     {
-        bool const first=!vrServerCapability;
+        uint8_t const previous=vrServerCapability;
         vrServerCapability|=bytes[6];
         // Preserve the original RPG-only request/ack for old peers. Upgrade
         // only after that exchange; old servers safely ignore the new mask.
-        if (first && !(vrServerCapability&VRShotFeatureHitscan))
-            Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan);
+        if (previous!=vrServerCapability)
+        {
+            if (!(vrServerCapability&VRShotFeatureHitscan))
+                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan);
+            else if (!(vrServerCapability&VRShotFeatureFreezeShrink))
+                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink);
+        }
     }
     LOG_F(INFO,"VR native hand-shot capability: %s player=%d version=1 features=%u.",server ? "accepted" : "acknowledged",player,unsigned(bytes[6]));
 }

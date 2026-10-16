@@ -3669,7 +3669,10 @@ ACTOR_STATIC void G_MoveWeapons(void)
                             break;
 
                         case 16384:
-                            pSprite->xy -= Proj_GetOffset(spriteNum);
+                            // A vertical projectile has no horizontal approach
+                            // to back away along. Do not shift its impact/damage
+                            // centre sideways by an arbitrary retained yaw.
+                            if (pSprite->xvel) pSprite->xy -= Proj_GetOffset(spriteNum);
 
                             if (Proj_MaybeDamageCF(spriteNum))
                                 DELETE_SPRITE_AND_CONTINUE(spriteNum);
@@ -3724,7 +3727,7 @@ ACTOR_STATIC void G_MoveWeapons(void)
                                 sprite[newSprite].yrepeat = 6;
                             }
 
-                            sprite[newSprite].xy -= Proj_GetOffset(newSprite);
+                            if (pSprite->xvel) sprite[newSprite].xy -= Proj_GetOffset(newSprite);
 
                             if (pSprite->xrepeat >= 10 && (moveSprite & 49152) == 16384)
                             {
@@ -3740,6 +3743,9 @@ ACTOR_STATIC void G_MoveWeapons(void)
                                 }
                             }
 
+                            if (!pSprite->xvel && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                                LOG_F(INFO,"VR vertical RPG impact: projectile=%d,%d,%d effect=%d,%d,%d.",
+                                      pSprite->x,pSprite->y,pSprite->z,sprite[newSprite].x,sprite[newSprite].y,sprite[newSprite].z);
                             if (pSprite->xrepeat >= 10)
                             {
                                 int const x = pSprite->extra;

@@ -25,7 +25,7 @@ existing CHAN_MISC after authentication/player-index assignment:
 | 0 | Packet ID 200, appended explicitly without renumbering native IDs |
 | 1–4 | ASCII EDVR |
 | 5 | Version 1 |
-| 6 | Feature mask: RPG/tail 1, hitscan 2; root bit 1 required |
+| 6 | Feature mask: RPG/tail 1, hitscan 2, freezer/shrinker 4; root bit 1 required |
 | 7 | Kind 0 request,1 acknowledgement |
 | 8 | Native assigned player ID |
 
@@ -40,7 +40,10 @@ The original request/ack uses mask1. A new client then requests mask3 on the
 same reliable channel; a new server echoes that mask, while an RPG-only server
 ignores the unsupported upgrade and retains mask1. Old clients request only1
 and receive the original acknowledgement. Capabilities never downgrade within
-a connection. Server firing gates hitscan by the authenticated peer's mask;
+a connection. After mask3 acknowledgement, a current client requests mask7
+for freezer/shrinker. A mask3 server ignores that request and retains3;
+its supported RPG/hitscan still work. Bit4 promises only those two native
+families, not every projectile. Server firing gates each family by the authenticated peer's mask;
 client input/card availability uses the required selected-weapon feature.
 Against an RPG-only hand server, a new client can still fire hand-origin RPGs,
 but suppresses unsupported hand hitscan while movement continues. A valid tail
@@ -92,8 +95,19 @@ This intentionally differs from native constant-horizontal-speed firing.
 Native autoaim selection and events remain, and its chosen velocity is likewise
 normalized; explicit CON z-velocity override retains precedence and native
 horizontal speed. Native ownership, ammo, damage, impact and actor replication
-remain in their original paths. Custom projectile and other weapon families
+remain in their original paths. The same native velocity boundary handles freezer at644 and shrinker at768.
+Freezer retains its post-spawn zvel-=32, half-size and native bounce budget;
+shrinker retains SHRINKSPARK insertion and native shrink damage/effect logic.
+Only tracked multiplayer shrinker prediction is suppressed; the native server
+spawns and replicates the real actor. Classic body/actor/custom paths retain
+their prior firing policy. Custom projectile and remaining weapon families
 are not redirected by this adapter.
+
+A demonstrated pure vertical impact bug shifted RPG X/Y along an arbitrary
+retained yaw even with xvel0. Native ceiling/floor backoff now requires nonzero
+xvel, as does the RPG explosion's additional horizontal shift. This removes
+sideways jumps for pure vertical shots without per-projectile VR state.
+It does not generalize all native pitched impact offsets to a new 3D policy.
 
 The ART card uses the client's collision-constrained origin with its provisional
 pivot and raw aim orientation; actual GPU fixtures compare it with independently
@@ -184,3 +198,12 @@ The growth test therefore uses repeated actual trigger presses, leaving native
 health/action/scale untouched. Dead-state replication compares the native final
 dead state rather than requiring the client to capture a short-lived negative
 health value between snapshots.
+
+
+`tools/vr/smoke_projectiles.py --weapon freeze|shrink` exercises native server
+projectile replication, closed/glancing origins, steep/vertical velocity, freezer
+bounce budgets and native target effects. `--case unsupported-server` requires
+an actual pre-feature4 server; `--case older-client` requires an actual mask3
+client. Those pinned binaries establish capability boundaries with real peers.
+All test maps/scripts are generated wrappers around the caller's owned data;
+no game assets or proprietary CON files are included.

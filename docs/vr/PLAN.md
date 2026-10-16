@@ -118,7 +118,7 @@ Gate: a recorded matrix for every logical camera/draw family and regression maps
 
 ### 5. Multiplayer qualification — carried through every milestone
 
-Keep NETCODE=1. Retain existing `input_t`, packet layout, NETVERSION/BYTEVERSION and snapshot authority initially. No new connection layer. Test native native, native server/VR client, VR host/native client and two VR clients. Dedicated server must run without an XR runtime. Cosmetic remote head/hand poses, if added later, need optional negotiated capability, bounded update rate/payload and legacy peer behavior; they must not silently change gameplay origin/aim.
+Keep NETCODE=1 and reuse EDuke32's built-in ENet server, input simulation and snapshot authority. No new connection layer. Test current-build flat/flat, dedicated/VR, VR host/flat and two VR clients. Dedicated server must run without an XR runtime. User clarification on 2026-10-16: older-peer compatibility is not required; historical peer testing is optional evidence, not a release gate. Existing packet sizes/capability exchange remain where already implemented, but future work need not preserve old-build interoperability. Cosmetic remote head/hand poses need bounded update rate/payload and must not silently change gameplay origin/aim.
 
 Matrix: join/initial snapshot, spawn/movement/jump/crouch/use, weapon switch/fire/damage/frag, chat, death/respawn, level vote/change, late join, reconnect, password rejection; multiple peers, loss/latency, XR focus/STOPPING/loss while connected. Verify authoritative position/aim/action convergence, tick progress and protocol acceptance, not just UDP counters. Keep save/load/demo compatibility tests where the native mode supports them.
 
@@ -212,3 +212,21 @@ Reopen the design if native helpers require duplicated simulation or temporary
 absolute body replacement. Physical muzzle calibration, per-weapon/two-hand
 placement, dynamic collision reconciliation and real hardware remain separate
 qualification gates.
+
+
+## Freezer/shrinker authority and current scope
+
+Ordinary freezer and shrinker now reuse the RPG's physical velocity helper and
+common constrained hand resolver. Native freeze bounce/target logic and native
+shrink effects remain authoritative, with server-created tracked shrinkers
+replicated through existing actors. No generic projectile engine or parallel
+multiplayer implementation was introduced. Pure vertical native projectile
+impacts no longer back away in X/Y using an arbitrary yaw; the RPG explosion
+retains that axis too. Other pitched impact offsets remain native.
+
+User clarified that EDuke32's existing multiplayer is the foundation and older
+peers are not required. Focus further qualification on current-build combat,
+frag/respawn, map changes/late joins, loss and independent VR peers. Retain
+existing bounded protocol work without spending further milestones on legacy
+compatibility. Remaining weapon families include Devastator (real native
+twin-barrel/spread policy), thrown explosives, tripmine, melee and flames.

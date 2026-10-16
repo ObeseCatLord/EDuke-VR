@@ -348,12 +348,13 @@ weapon/face-action families and physical-headset ergonomics remain required.
 
 `EDUKE32_XR_HAND_SHOTS=1` with `EDUKE32_XR_AIM=right` or `left` enables
 independent hand-origin/full-vector firing for ordinary hardcoded pistol,
-shotgun, chaingun, grow and RPG weapons.
+shotgun, chaingun, grow, RPG, freezer and shrinker weapons.
 The existing native server creates projectiles, applies damage and replicates
 actors. Other weapons and custom projectile replacements retain native origins. This flag
 is optional and requires the corresponding server capability. RPG-only hand
 servers retain RPG support; unsupported hand hitscan is suppressed while native
-movement continues. A separate optional feature upgrade qualifies hitscan.
+movement continues. Optional feature upgrades separately qualify hitscan and
+freezer/shrinker, so hitscan-capable older servers retain that support.
 
 ```sh
 EDUKE32_XR=1 EDUKE32_XR_SINGLE_PASS=1 EDUKE32_XR_UI=2 \
@@ -379,8 +380,14 @@ physical interpretation of native ranges at pitched rays. An accurate free-aim
 pistol hit still suppresses spread without replacing its hand ray. CON forced
 slopes retain precedence, including postfire ceiling/floor classification.
 
-Tracked RPG velocity has constant physical 3D speed 644, so steep shots have less
-horizontal speed than native body firing. Native autoaim selection/events remain;
+Tracked RPG/freezer velocity uses physical 3D speed 644 and shrinker uses 768,
+so steep shots have less horizontal speed than native body firing. Freezer keeps
+its native post-spawn vertical bias of -32, bounce count and freeze effects;
+shrinker keeps native shrink effects. Tracked network shrinkers spawn on the
+server and reach clients through native actor replication. Pure vertical
+projectile ceiling/floor impacts skip the arbitrary yaw-based horizontal
+backoff; vertical RPG explosions also keep the impact X/Y. Other native impact
+offsets remain. Native autoaim selection/events remain;
 its velocity is normalized in this mode, while explicit CON z-velocity overrides
 retain native precedence. Vertical projectiles work, but full-pitch **world
 rendering** remains incomplete. This is an aim-pose origin with provisional ART
