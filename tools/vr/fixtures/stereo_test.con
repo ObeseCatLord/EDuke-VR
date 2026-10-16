@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // This is a test wrapper. GAME.CON is resolved from the caller-provided GRP.
 include GAME.CON
+include stereo_map.con
 
 // The counters intentionally have no per-player/per-actor flags.  A regular
 // G_DrawRooms call must execute DISPLAYROOMS and DISPLAYROOMSEND once, while
@@ -13,11 +14,16 @@ gamevar vrfixture_displayroomsend 0 0
 gamevar vrfixture_reported 0 0
 gamevar vrfixture_sprite 0 0
 
-// The generated map has exactly one map sprite at index zero. TSPRACCESS is
+// The generator declares the original map sprite count. TSPRACCESS is
 // spriteext's bit 16 (build.h); it permits EVENT_ANIMATESPRITES to observe the
 // decoration without changing its position or gameplay state.
 onevent EVENT_ENTERLEVEL
-    setactor[vrfixture_sprite].mdflags 16
+    setvar vrfixture_sprite 0
+    whilevarl vrfixture_sprite VRFIXTURE_SPRITES
+    {
+        setactor[vrfixture_sprite].mdflags 16
+        addvar vrfixture_sprite 1
+    }
 endevent
 
 onevent EVENT_DISPLAYROOMS

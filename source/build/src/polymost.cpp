@@ -262,6 +262,10 @@ struct xr_opaque_packet_t
     vec2f_t halfTexel, palswapPos, palswapSize, clamp, numShades;
     float shade, vis, fog, colorOnly, paletteEnabled, shadeInterpolate;
     uint32_t skyKind;  // 0 ordinary, 1 native flat-sky color, 2 native sky-Z depth-only
+    uint32_t phase;
+    GLenum alphaFunc, blendSrc, blendDst;
+    float alphaRef;
+    bool depthWrite, colorWrite, translucent;
     float projection[16], rotation[16];
 };
 
@@ -278,6 +282,9 @@ struct xr_opaque_collection_t
     bool rejected = false;
     bool flatSky = false, skyDepthRecursion = false;
     uint32_t eye = 0;
+    polymost_xr_collect_phase phase = POLYMOST_XR_OPAQUE;
+    bool replaySubmitted = false;
+    char const *injectedFault = nullptr;
     char const *reason = "not collected";
     float projection[2][16]{};
     bool projectionValid[2]{};
@@ -306,10 +313,22 @@ static void polymost_xrTextureMutation()
     polymost_xrRejectOpaque("texture or palette mutation");
 }
 
-void polymost_xrBeginOpaqueCollection(uint32_t const eye)
+static bool polymost_xrCollectingMasks()
 {
-    if (eye > 1)
-        return;
+    return xrOpaque.active && xrOpaque.phase == POLYMOST_XR_MASKS;
+}
+
+static bool polymost_xrMaskFaultArmed(char const * const name)
+{
+    char const * const armed = Bgetenv("EDUKE32_XR_TEST_MASK_ARMED");
+    char const * const failure = Bgetenv("EDUKE32_XR_TEST_FAIL");
+    return armed && !Bstrcmp(armed, "1") && failure && !Bstrcmp(failure, name);
+}
+
+bool polymost_xrBeginCollection(polymost_xr_collect_phase const phase, uint32_t const eye)
+{
+    if (eye > 1 || phase > POLYMOST_XR_MASKS)
+        return false;
 
     if (eye == 0)
     {
@@ -322,31 +341,56 @@ void polymost_xrBeginOpaqueCollection(uint32_t const eye)
         xrOpaque.stats = {};
         xrOpaque.rejected = false;
         xrOpaque.flatSky = xrOpaque.skyDepthRecursion = false;
+        xrOpaque.phase = phase;
+        xrOpaque.replaySubmitted = false;
+        xrOpaque.injectedFault = nullptr;
         xrOpaque.reason = "collecting";
+        xrOpaque.active = true;
+        xrOpaque.eye = eye;
+        GLenum priorError = GL_NO_ERROR;
+        while (GLenum const error = glGetError()) priorError = error;
+        if (priorError != GL_NO_ERROR)
+            polymost_xrRejectOpaque("preexisting GL error before collection");
+        if (phase == POLYMOST_XR_MASKS && (editstatus || r_polygonmode))
+            polymost_xrRejectOpaque("unsupported mask editor or polygon mode");
     }
     else if (!xrOpaque.active)
     {
         xrOpaque.active = true;
         xrOpaque.rejected = true;
-        xrOpaque.reason = "missing left opaque collection";
+        xrOpaque.reason = "missing left collection";
     }
+    else if (xrOpaque.phase != phase)
+        polymost_xrRejectOpaque("collection phase changed between eyes");
 
     xrOpaque.active = true;
     xrOpaque.eye = eye;
+    return !xrOpaque.rejected;
 }
 
-polymost_xr_collect_result polymost_xrEndOpaqueCollection(uint32_t const eye)
+polymost_xr_collect_result polymost_xrEndCollection(uint32_t const eye)
 {
     if (!xrOpaque.active || eye != xrOpaque.eye)
         return POLYMOST_XR_COLLECT_ERROR;
     if (xrOpaque.transport.pending)
-        polymost_xrRejectOpaque("incomplete opaque transport");
+        polymost_xrRejectOpaque("incomplete collection transport");
+    static bool injectedRight;
+    if (xrOpaque.phase == POLYMOST_XR_MASKS && eye == 1 && !injectedRight && polymost_xrMaskFaultArmed("mask-collect-right"))
+    {
+        injectedRight = true;
+        polymost_xrRejectOpaque("injected mask-collect-right");
+        glBindBuffer(GL_TEXTURE_2D, 0);
+    }
+    GLenum collectionError = GL_NO_ERROR;
+    while (GLenum const error = glGetError()) collectionError = error;
+    if (collectionError != GL_NO_ERROR)
+        polymost_xrRejectOpaque("collection GL error");
     if (xrOpaque.rejected)
         return !Bstrcmp(xrOpaque.reason, "opaque collection capacity") ? POLYMOST_XR_COLLECT_CAPACITY : POLYMOST_XR_COLLECT_REJECTED;
     return POLYMOST_XR_COLLECT_OK;
 }
 
-void polymost_xrDiscardOpaqueCollection()
+void polymost_xrDiscardCollection()
 {
     xrOpaque.active = false;
     xrOpaque.rejected = false;
@@ -359,14 +403,19 @@ void polymost_xrDiscardOpaqueCollection()
     xrOpaque.reason = "discarded";
 }
 
-polymost_xr_collect_stats polymost_xrOpaqueCollectionStats()
+polymost_xr_collect_stats polymost_xrCollectionStats()
 {
     return xrOpaque.stats;
 }
 
-char const *polymost_xrOpaqueCollectionReason()
+char const *polymost_xrCollectionReason()
 {
     return xrOpaque.reason;
+}
+
+bool polymost_xrReplaySubmitted()
+{
+    return xrOpaque.replaySubmitted;
 }
 #endif
 
@@ -921,7 +970,25 @@ static void polymost_xrUploadOpaquePacket(xr_opaque_packet_t const &left, xr_opa
 #undef XR_OPAQUE_1I
 
     glColor4f(left.color.x, left.color.y, left.color.z, left.color.w);
-    GLboolean const writesColor = left.skyKind != 2;
+    bool const opaque = left.phase == POLYMOST_XR_OPAQUE;
+    if (opaque)
+    {
+        glDisable(GL_BLEND);
+        glDisable(GL_ALPHA_TEST);
+        glDepthFunc(GL_ALWAYS);
+        glDepthMask(GL_TRUE);
+    }
+    else
+    {
+        glEnable(GL_BLEND);
+        glEnable(GL_ALPHA_TEST);
+        glAlphaFunc(left.alphaFunc, left.alphaRef);
+        glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+        glBlendFuncSeparate(left.blendSrc, left.blendDst, left.blendSrc, left.blendDst);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(left.depthWrite);
+    }
+    GLboolean const writesColor = opaque ? left.skyKind != 2 : left.colorWrite;
     glColorMask(writesColor,writesColor,writesColor,writesColor);
     glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, left.texture); glBindSampler(0, left.sampler);
     glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, left.palswap); glBindSampler(1, 0);
@@ -943,16 +1010,31 @@ static void polymost_xrReplayOpaqueDraw(xr_opaque_packet_t const &left, uint32_t
     glEnableClientState(GL_VERTEX_ARRAY);
     glEnableClientState(GL_TEXTURE_COORD_ARRAY);
     glEnableVertexAttribArray(7);
+    xrOpaque.replaySubmitted = true;
     glDrawArrays(GL_TRIANGLES, 0, replayVertices.size());
+    static bool injectedAfter;
+    if (left.phase == POLYMOST_XR_MASKS && !injectedAfter && polymost_xrMaskFaultArmed("mask-replay-after"))
+    {
+        injectedAfter = true;
+        xrOpaque.injectedFault = "injected mask-replay-after";
+        glBindBuffer(GL_TEXTURE_2D, 0);
+    }
 }
 
-polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
+polymost_xr_collect_result polymost_xrReplayCollection()
 {
+    xrOpaque.replaySubmitted = false;
     if (!xrOpaque.active || xrOpaque.rejected || !polymost_xrValidateOpaqueStream(0) || !polymost_xrValidateOpaqueStream(1))
         return xrOpaque.rejected ? POLYMOST_XR_COLLECT_REJECTED : POLYMOST_XR_COLLECT_ERROR;
-    // The replay objects belong to this error interval.  An initialization
-    // failure must not leave a stale GL error for the native fallback.
-    while (glGetError() != GL_NO_ERROR) {}
+    // Do not mistake a prior native error for a successful replay.  It is
+    // drained so the same-frame native fallback begins with a clean interval.
+    GLenum priorError = GL_NO_ERROR;
+    while (GLenum const error = glGetError()) priorError = error;
+    if (priorError != GL_NO_ERROR)
+    {
+        xrOpaque.reason = "preexisting GL error before replay";
+        return POLYMOST_XR_COLLECT_ERROR;
+    }
     xrOpaque.reason = "opaque replay initialization";
     if (!polymost_xrInitOpaqueReplay())
     {
@@ -971,13 +1053,19 @@ polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
         return POLYMOST_XR_COLLECT_ERROR;
     }
 
-    GLint program = 0, active = 0, clientActive = 0, arrayBuffer = 0, depthFunc = 0, vao = 0;
+    GLint program = 0, active = 0, clientActive = 0, arrayBuffer = 0, depthFunc = 0, vao = 0, alphaFunc = 0;
+    GLint blendSrcRgb = 0, blendDstRgb = 0, blendSrcAlpha = 0, blendDstAlpha = 0, blendEquationRgb = 0, blendEquationAlpha = 0;
     GLint textures[3]{}; GLuint samplers[MAXTEXUNIT - GL_TEXTURE0]{};
-    GLboolean depthWrite = GL_FALSE, colorMask[4]{};
-    GLfloat color[4]{};
+    GLboolean depthWrite = GL_FALSE, colorMask[4]{}, blend = GL_FALSE, alphaTest = GL_FALSE;
+    GLfloat color[4]{}, alphaRef = 0.f;
     glGetIntegerv(GL_CURRENT_PROGRAM, &program); glGetIntegerv(GL_ACTIVE_TEXTURE, &active); glGetIntegerv(GL_CLIENT_ACTIVE_TEXTURE, &clientActive);
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer); glGetIntegerv(GL_DEPTH_FUNC, &depthFunc); glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite); glGetFloatv(GL_CURRENT_COLOR, color);
     glGetBooleanv(GL_COLOR_WRITEMASK,colorMask);
+    glGetIntegerv(GL_ALPHA_TEST_FUNC, &alphaFunc); glGetFloatv(GL_ALPHA_TEST_REF, &alphaRef);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb); glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha); glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb); glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
+    blend = glIsEnabled(GL_BLEND); alphaTest = glIsEnabled(GL_ALPHA_TEST);
 #ifdef GL_VERTEX_ARRAY_BINDING
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
 #endif
@@ -993,10 +1081,27 @@ polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
     for (int i = 0; i < MAXTEXUNIT - GL_TEXTURE0; ++i) { GLint sampler = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, i, &sampler); samplers[i] = sampler; }
 
     buildgl_resetStateAccounting();
-    glUseProgram(xrOpaque.program); glBindBuffer(GL_ARRAY_BUFFER, xrOpaque.vbo); glClientActiveTexture(GL_TEXTURE0); glDepthFunc(GL_ALWAYS); glDepthMask(GL_TRUE);
+    glUseProgram(xrOpaque.program); glBindBuffer(GL_ARRAY_BUFFER, xrOpaque.vbo); glClientActiveTexture(GL_TEXTURE0);
     size_t left = 0, right = 0;
     xrOpaque.stats = {};
-    while (left < xrOpaque.packets[0].size() || right < xrOpaque.packets[1].size())
+    static bool injectedBefore;
+    bool const skipReplay = xrOpaque.phase == POLYMOST_XR_MASKS && !injectedBefore && polymost_xrMaskFaultArmed("mask-replay-before");
+    if (skipReplay)
+    {
+        injectedBefore = true;
+        xrOpaque.injectedFault = "injected mask-replay-before";
+        glBindBuffer(GL_TEXTURE_2D, 0);
+    }
+    auto const recordPacket = [](xr_opaque_packet_t const &packet)
+    {
+        if (packet.phase != POLYMOST_XR_MASKS)
+            return;
+        ++xrOpaque.stats.maskCalls;
+        xrOpaque.stats.translucentCalls += packet.translucent;
+        xrOpaque.stats.depthOnlyCalls += !packet.colorWrite;
+        xrOpaque.stats.depthWriteOffCalls += !packet.depthWrite;
+    };
+    while (!skipReplay && !xrOpaque.injectedFault && (left < xrOpaque.packets[0].size() || right < xrOpaque.packets[1].size()))
     {
         if (left < xrOpaque.packets[0].size() && right < xrOpaque.packets[1].size() && polymost_xrCompatibleOpaque(xrOpaque.packets[0][left], xrOpaque.packets[1][right]))
         {
@@ -1004,6 +1109,7 @@ polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
             xrOpaque.stats.flatSkyCalls += xrOpaque.packets[0][left].skyKind == 1;
             xrOpaque.stats.skyDepthCalls += xrOpaque.packets[0][left].skyKind == 2;
             xrOpaque.stats.npotCalls += xrOpaque.packets[0][left].npot.z != 0.f;
+            recordPacket(xrOpaque.packets[0][left]);
             ++xrOpaque.stats.pairedCalls; xrOpaque.stats.pairedVertices += xrOpaque.packets[0][left].count + xrOpaque.packets[1][right].count; ++left; ++right;
         }
         else
@@ -1015,12 +1121,17 @@ polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
             xrOpaque.stats.flatSkyCalls += packet.skyKind == 1;
             xrOpaque.stats.skyDepthCalls += packet.skyKind == 2;
             xrOpaque.stats.npotCalls += packet.npot.z != 0.f;
+            recordPacket(packet);
             ++xrOpaque.stats.eyeOnlyCalls;
             xrOpaque.stats.eyeOnlyVertices += packet.count;
         }
     }
 
-    glUseProgram(program); glDepthFunc(depthFunc); glDepthMask(depthWrite); glColor4fv(color);
+    glUseProgram(program); glDepthFunc(depthFunc); glDepthMask(depthWrite); glColor4fv(color); glAlphaFunc(alphaFunc, alphaRef);
+    glBlendEquationSeparate(blendEquationRgb, blendEquationAlpha);
+    glBlendFuncSeparate(blendSrcRgb, blendDstRgb, blendSrcAlpha, blendDstAlpha);
+    if (blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    if (alphaTest) glEnable(GL_ALPHA_TEST); else glDisable(GL_ALPHA_TEST);
     glColorMask(colorMask[0],colorMask[1],colorMask[2],colorMask[3]);
     for (int i = 0; i < MAXTEXUNIT - GL_TEXTURE0; ++i) glBindSampler(i, samplers[i]);
     for (int i = 0; i < 3; ++i) { glActiveTexture(GL_TEXTURE0 + i); glBindTexture(GL_TEXTURE_2D, textures[i]); }
@@ -1031,14 +1142,16 @@ polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
     polymost_xrRestoreFixedArray(GL_VERTEX_ARRAY, vertex, false);
     glBindBuffer(GL_ARRAY_BUFFER, eyeBuffer); glVertexAttribPointer(7, eyeSize, eyeType, eyeNormalized, eyeStride, eyePointer); if (eyeEnabled) glEnableVertexAttribArray(7); else glDisableVertexAttribArray(7);
     glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer); glClientActiveTexture(clientActive);
-    // Keep Build's program/active-unit bookkeeping truthful without calling
-    // polymost_resetState() or any native uniform uploader.
+    // Entry invalidated accounting; only raw GL was used since. A second
+    // reset here would unbind the restored samplers. Reconcile program/unit
+    // without calling polymost_resetState() or a native uniform uploader.
     buildgl_useShaderProgram(program); glActiveTexture(active); buildgl_activeTexture(active);
     GLenum replayError = GL_NO_ERROR;
     while (GLenum const error = glGetError()) replayError = error;
     if (replayError != GL_NO_ERROR)
     {
-        xrOpaque.reason = "opaque replay GL error";
+        xrOpaque.reason = xrOpaque.injectedFault ? xrOpaque.injectedFault
+                                                : (xrOpaque.phase == POLYMOST_XR_MASKS ? "mask replay GL error" : "opaque replay GL error");
         return POLYMOST_XR_COLLECT_ERROR;
     }
     xrOpaque.reason = "replayed";
@@ -3778,29 +3891,53 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
     if (!xrOpaque.active || xrOpaque.rejected)
         return false;
 
-    GLint depthFunc = 0, program = 0, activeTexture = 0;
+    GLint depthFunc = 0, program = 0, activeTexture = 0, alphaFunc = 0;
+    GLint blendSrcRgb = 0, blendDstRgb = 0, blendSrcAlpha = 0, blendDstAlpha = 0, blendEquationRgb = 0, blendEquationAlpha = 0;
     GLboolean depthWrite = GL_FALSE;
     GLboolean colorMask[4]{};
-    GLfloat modelview[16], textureMatrix[16];
+    GLfloat alphaRef = 0.f, modelview[16], textureMatrix[16];
     glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
     glGetIntegerv(GL_CURRENT_PROGRAM, &program);
     glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
     glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
     glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+    glGetIntegerv(GL_ALPHA_TEST_FUNC, &alphaFunc);
+    glGetFloatv(GL_ALPHA_TEST_REF, &alphaRef);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb); glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha); glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb); glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
     glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
     glActiveTexture(GL_TEXTURE0);
     glGetFloatv(GL_TEXTURE_MATRIX, textureMatrix);
     glActiveTexture(activeTexture);
 
     int const sampler = gl.currentBoundSampler[0];
+    bool const opaque = xrOpaque.phase == POLYMOST_XR_OPAQUE;
+    bool const maskColorWrite = colorMask[0] && colorMask[1] && colorMask[2] && colorMask[3];
+    bool const maskDepthOnly = !colorMask[0] && !colorMask[1] && !colorMask[2] && !colorMask[3];
+    auto const nativeBlendFactor = [](GLint const factor)
+    {
+        switch ((GLenum)factor)
+        {
+        case GL_ZERO: case GL_ONE: case GL_SRC_COLOR: case GL_ONE_MINUS_SRC_COLOR:
+        case GL_SRC_ALPHA: case GL_ONE_MINUS_SRC_ALPHA: case GL_DST_ALPHA: case GL_ONE_MINUS_DST_ALPHA:
+        case GL_DST_COLOR: case GL_ONE_MINUS_DST_COLOR: return true;
+        default: return false;
+        }
+    };
     if (videoGetRenderMode() != REND_POLYMOST || !buildgl_samplerObjectsEnabled() ||
         !(pth->flags & PTH_INDEXED) || (pth->flags & PTH_HIGHTILE) || pth->hicr ||
         polymost_usetileshades() != TS_SHADETABLE || !polymost_useindexedtextures() ||
-        (!skyDepth && (method & DAMETH_MASKPROPS)) || program != (GLint)polymost1CurrentShaderProgramID ||
-        !glIsEnabled(GL_DEPTH_TEST) || glIsEnabled(GL_BLEND) || glIsEnabled(GL_ALPHA_TEST) ||
-        depthFunc != GL_ALWAYS || !depthWrite ||
-        (skyDepth ? (colorMask[0] || colorMask[1] || colorMask[2] || colorMask[3])
-                  : (!colorMask[0] || !colorMask[1] || !colorMask[2] || !colorMask[3])) ||
+        (opaque && (!skyDepth && (method & DAMETH_MASKPROPS))) || program != (GLint)polymost1CurrentShaderProgramID ||
+        !glIsEnabled(GL_DEPTH_TEST) ||
+        (opaque && (glIsEnabled(GL_BLEND) || glIsEnabled(GL_ALPHA_TEST) || depthFunc != GL_ALWAYS || !depthWrite ||
+                    (skyDepth ? (colorMask[0] || colorMask[1] || colorMask[2] || colorMask[3]) : !maskColorWrite))) ||
+        (!opaque && (!glIsEnabled(GL_BLEND) || !glIsEnabled(GL_ALPHA_TEST) || depthFunc != GL_LEQUAL ||
+                     alphaFunc != GL_GREATER || !std::isfinite(alphaRef) || alphaRef < 0.f || alphaRef > 1.f ||
+                     blendEquationRgb != GL_FUNC_ADD || blendEquationAlpha != GL_FUNC_ADD ||
+                     blendSrcRgb != blendSrcAlpha || blendDstRgb != blendDstAlpha ||
+                     !nativeBlendFactor(blendSrcRgb) || !nativeBlendFactor(blendDstRgb) ||
+                     (!maskColorWrite && !maskDepthOnly))) ||
         !polymost_xrIdentityMatrix(modelview) || !polymost_xrIdentityMatrix(textureMatrix) ||
         polymost1FogEnabled != 0.f || polymost1UseColorOnly != 0.f || polymost1UsePalette != 1.f ||
         polymost1UseDetailMapping != 0.f || polymost1UseGlowMapping != 0.f ||
@@ -3811,7 +3948,7 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
         sampler < SAMPLER_NONE || sampler >= NUM_SAMPLERS || !xrOpaque.projectionValid[xrOpaque.eye] ||
         !palswapTextureID || !paletteTextureIDs[curbasepal])
     {
-        polymost_xrRejectOpaque("unsupported opaque material or state");
+        polymost_xrRejectOpaque(opaque ? "unsupported opaque material or state" : "unsupported mask material or state");
         return false;
     }
 
@@ -3842,7 +3979,15 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
     packet.shadeInterpolate = polymost1ShadeInterpolate;
     packet.correction = polymost1UploadedColorCorrection;
     packet.color = { color[0], color[1], color[2], color[3] };
-    packet.skyKind = skyDepth ? 2 : (xrOpaque.flatSky ? 1 : 0);
+    packet.skyKind = opaque ? (skyDepth ? 2 : (xrOpaque.flatSky ? 1 : 0)) : 0;
+    packet.phase = xrOpaque.phase;
+    packet.alphaFunc = opaque ? 0 : alphaFunc;
+    packet.alphaRef = opaque ? 0.f : alphaRef;
+    packet.blendSrc = opaque ? 0 : blendSrcRgb;
+    packet.blendDst = opaque ? 0 : blendDstRgb;
+    packet.depthWrite = depthWrite;
+    packet.colorWrite = opaque ? !skyDepth : maskColorWrite;
+    packet.translucent = !opaque && (method & DAMETH_MASKPROPS) > DAMETH_MASK;
     Bmemcpy(packet.projection, xrOpaque.projection[xrOpaque.eye], sizeof(packet.projection));
     Bmemcpy(packet.rotation, polymost1RotMatrix, sizeof(packet.rotation));
     xrOpaque.transport.pending = true;
@@ -9018,6 +9163,15 @@ void polymost_drawsprite(int32_t snum)
 #ifdef POLYMOST2
     if (r_enablepolymost2)
     {
+#ifdef USE_OPENXR
+        // Polymost2 has its own direct submission path.  During MASK capture
+        // it must not touch the eye target, even after a prior rejection.
+        if (polymost_xrCollectingMasks())
+        {
+            polymost_xrRejectOpaque("unsupported Polymost2 mask sprite");
+            return;
+        }
+#endif
         polymost2_drawsprite(snum);
         return;
     }
@@ -9038,6 +9192,19 @@ void polymost_drawsprite(int32_t snum)
 
     if (!(tsprflags & TSPR_FLAGS_SLAB))
         tileUpdatePicnum(&tspr->picnum, spritenum + 32768);
+
+#ifdef USE_OPENXR
+    // tileUpdatePicnum can select a model or voxel dynamically, so this
+    // guard is deliberately after it and before their CPU/GPU entry points.
+    if (polymost_xrCollectingMasks() && !(spriteext[spritenum].flags & SPREXT_NOTMD) &&
+        ((usemodels && tile2model[Ptile2tile(tspr->picnum, tspr->pal)].modelid >= 0 &&
+                      tile2model[Ptile2tile(tspr->picnum, tspr->pal)].framenum >= 0) ||
+         polymost_spriteIsModernVoxel(tspr) || polymost_spriteIsLegacyVoxel(tspr)))
+    {
+        polymost_xrRejectOpaque("unsupported model or voxel mask sprite");
+        return;
+    }
+#endif
 
     globalpicnum = tspr->picnum;
     globalshade = tspr->shade;

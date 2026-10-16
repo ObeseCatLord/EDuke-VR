@@ -55,22 +55,32 @@ enum polymost_xr_collect_result
     POLYMOST_XR_COLLECT_ERROR,
 };
 
+enum polymost_xr_collect_phase
+{
+    POLYMOST_XR_OPAQUE,
+    POLYMOST_XR_MASKS,
+};
+
 struct polymost_xr_collect_stats
 {
     uint32_t pairedCalls, eyeOnlyCalls;
     uint32_t pairedVertices, eyeOnlyVertices;
     uint32_t flatSkyCalls, skyDepthCalls, npotCalls;
+    uint32_t maskCalls, translucentCalls, depthOnlyCalls, depthWriteOffCalls;
 };
 
 // Frame-local transport only: begin eye 0 resets both streams, eye 1 continues.
 // End leaves interception active until discard. Replay requires an already
-// bound two-view framebuffer; reject/retry before any logical sprite animation.
-void polymost_xrBeginOpaqueCollection(uint32_t eye);
-polymost_xr_collect_result polymost_xrEndOpaqueCollection(uint32_t eye);
-polymost_xr_collect_result polymost_xrReplayOpaqueCollection();
-void polymost_xrDiscardOpaqueCollection();
-polymost_xr_collect_stats polymost_xrOpaqueCollectionStats();
-char const *polymost_xrOpaqueCollectionReason();
+// bound two-view framebuffer. MASK collection makes no eye color/depth writes;
+// OPAQUE traversal may clear/direct-draw and must be cleared before replay.
+// A false begin result must skip MASK traversal (unsupported preflight state).
+bool polymost_xrBeginCollection(polymost_xr_collect_phase phase, uint32_t eye);
+polymost_xr_collect_result polymost_xrEndCollection(uint32_t eye);
+polymost_xr_collect_result polymost_xrReplayCollection();
+void polymost_xrDiscardCollection();
+polymost_xr_collect_stats polymost_xrCollectionStats();
+char const *polymost_xrCollectionReason();
+bool polymost_xrReplaySubmitted();
 #endif
 void polymost_startBufferedDrawing(int nn);
 void polymost_bufferVert(vec3f_t const v, vec2f_t const t);

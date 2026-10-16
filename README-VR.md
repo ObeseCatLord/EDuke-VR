@@ -1,6 +1,6 @@
 # EDuke32 VR work in progress
 
-This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded opaque-world multiview path including native ART skies, with exact color/depth differential fixtures. It is not yet a complete playable VR port: single-pass world rendering, full presentation coverage, headset/controller gameplay and multiplayer qualification remain open.
+This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, headset/controller presentation and gameplay, and multiplayer qualification remain open.
 
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
@@ -79,9 +79,13 @@ The numeric test checks the rigid-pose/native-camera/asymmetric-projection deriv
 
 For bounded failure regression only, `EDUKE32_XR_TEST_FAIL=opaque` injects one failure after left opaque collection; `masks` injects after the once-only animation and before masks. Both stop XR. Up to ten native animation input counts/provenance checks are logged to verify that fallback/next-frame rendering receives no stale sprite entries. This flag is for testing, not ordinary gameplay.
 
-## Bounded opaque single-pass prototype
+## Bounded world single-pass prototype
 
-`EDUKE32_XR_SINGLE_PASS=1` alongside `EDUKE32_XR=1` opts into ordinary indexed-ART opaque multiview replay. Both native CPU eye traversals and clipping remain; compatible material heads become one GPU draw for both layers. Eye-owned triangles preserve each eye's native order and GL_ALWAYS depth semantics. Native fragment shading remains the sole material policy. Masks still use two native passes. Native flat ceiling/floor skies, their depth-only companion pass and native indexed NPOT emulation are supported. Hires skyboxes/detail/glow, other recursion, mutable textures, nonidentity texture transforms and unknown state retry the two-pass opaque reference within the same XR frame, before animation. In the tested E1L1 startup, 59 of the first 60 opaque frames use multiview; one cold texture-upload frame uses the reference path. Mixed-client runs observed 58–59 of 60. New texture uploads can also trigger fallback later; this remains an incomplete coverage/performance gate. This prototype is not complete single-pass world rendering or a performance claim.
+`EDUKE32_XR_SINGLE_PASS=1` alongside `EDUKE32_XR=1` opts into indexed-ART opaque and mask multiview replay. Both native CPU eye traversals and clipping remain; compatible material heads become one GPU draw for both layers. Eye-owned triangles preserve native ordering and depth semantics. Native flat ceiling/floor skies, their depth-only companion pass and NPOT shader emulation are supported. The same phased transport now captures masked walls and face/wall/floor sprites, native alpha/blend state, transparency order and equal-depth color/depth-only groups. One logical CON animation pass supplies both eyes.
+
+Unsupported materials, models/voxels, alternate renderer paths and texture/palette mutation safely use the native two-pass reference for the affected phase. A failed mask collection has made no eye color/depth writes. Replay failure before its first draw can retry masks; failure after any draw ends empty and disables XR, consuming the already animated logical pass. Opaque geometry is never regenerated after arbitrary CON as mask recovery.
+
+Streaming can still cause reference frames after startup. Coverage counters report opaque, masks and complete multiview frames separately; the world and mixed-client runners can enforce `--minimum-full-multiview-frames`. This remains an incomplete coverage/performance gate, with two CPU traversals and duplicated geometry. It is not a performance claim or complete single-pass renderer.
 
 The deterministic portal fixture includes alternating palette/shade walls and an ordinary sprite mask after opaque replay. It reads only the caller's owned GRP. Synthetic fixture poses finish empty XR frames and never submit projection layers:
 
@@ -93,6 +97,8 @@ python3 tools/vr/check_stereo_oracle.py --binary ./eduke32-xr --single-pass --di
 # Unequal eye coverage exercises incompatible material/eye-only packets and init failure recovery:
 # Repeat with --pose unequal --inject-replay-init-failure.
 # Ceiling sky with its native depth-only pass and nonzero panning:
+# Repeat with --scene masks-animated for animated ART, transparency and native depth-only sprite groups.
+# --mask-failure collect-right or replay-before tests same-frame recovery without another CON pass.
 # Repeat with --scene sky --sky-depth 1.
 # Floor sky and unequal coverage: --scene sky-floor --pose unequal --sky-depth 1.
 # Disable panning/depth explicitly with --sky-panning 0 --sky-depth 0.

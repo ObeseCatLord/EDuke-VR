@@ -150,3 +150,39 @@ python3 tools/vr/check_stereo_oracle.py --binary ./eduke32-xr --single-pass --sc
 ```
 
 World and mixed runners now report opaque multiview/reference frame counts independently of successful stereo submission; `--minimum-multiview-frames` can enforce a chosen threshold without concealing reference frames. `../../../evidence/sky-world-stereo.png` shows actual E1L1 eye layers with opaque multiview plus native per-eye masks. The synthetic differential fixtures still submit no projection layer.
+
+## Native indexed ART masks/sprites in multiview — 2026-10-16
+
+The MASK phase reuses the opaque packet transport/program/VBO and native fragment shader. Native partition/sort/interleave still determines each eye's packet stream. It captures actual native cutoff/blend factors and depth/color-write variants, retaining equal-depth sprite color/depth-only passes. Direct Polymost2/model/voxel branches reject before their draw entry even after earlier rejection. Failed preflight now skips traversal before editor diagnostic paths. Texture uploads can complete but reject collection. No second geometry/material/sort implementation was added.
+
+A fresh Astra/xhigh senior design review established the explicit submission boundary and projection-capture ordering. A fresh correctness review caught redundant cache invalidation overwriting restored samplers; deleting that reset fixed it. Another verified Astra/xhigh follow-up found no issue in the final preflight skip and animated fixture. See SENIOR_REVIEW.md for dispositions and remaining test gaps.
+
+The richer generated fixture has eight stationary sprites, a masked portal, face/wall/floor orientations, translucent overlaps and an equal-depth group. `masks-animated` adds a translucent portal, native DEF animation bases 285→286→287 across the group's two passes, and alpha cutoff .25. An explicit fixture-only input fixes `totalclocklock=1` for native and XR mask rendering; simulation time is untouched. It does not establish a production clock-drift bug or change the native renderer ABI.
+
+| Final case | Mask replay at frame12 | Exact result |
+|---|---|---|
+| Animated masks, zero IPD | 11 paired, 132 vertices; 3 translucent, 2 depth-only, 5 depth-write-off calls | Both RGB images and raw nonconstant depth match native and two-pass; CON14/112/14 |
+| Animated masks, asymmetric stereo with pitch/yaw/roll | Same call counts; eye images distinct | Both RGB/depth match same-pose two-pass; callback counts match |
+| Animated masks, unequal eye coverage | 22 eye-only calls, 132 vertices; 6 translucent, 4 depth-only, 10 depth-write-off | Both RGB/depth match two-pass; distinct eye images and matching callbacks |
+| Late right-eye collection rejection plus queued GL error | No MASK replay at captured frame; native masks retry | Exact native/two-pass RGB/depth and CON counts; no leaked GL error |
+| Replay error before first mask draw | No MASK replay at captured frame; native masks retry | Exact native/two-pass RGB/depth and CON counts |
+| Sky with depth companion regression | 30 opaque paired calls including 9 sky/9 sky-depth/9 NPOT; one paired bottle-mask call | Native/two-pass RGB/depth and CON counts exact |
+
+For every final differential case, readbacks immediately before and after collection prove **zero changes to both eyes' RGB/depth before replay or fallback**. These observations include the injected late rejection; they do not substitute for real model/voxel, unsupported-material or capacity-triggered fixtures. Post-first-draw injected replay failure takes the other branch: XR stops after ending an empty frame, the logical animated pass is consumed, and ten bounded animation-input samples retain correct counts/provenance. No opaque retry after CON occurs.
+
+Real E1L1 final first60frames measured opaque59/reference1, masks58/reference2, with **58 complete opaque+mask multiview world frames** and distinct layer readbacks. Native dedicated-server/XR-client initial join and replacement/reconnect each measured opaque59/reference1 and masks59/reference1, with **59 complete multiview world frames per join**. Both joins rendered60 world frames with distinct eye images; owned W input changed188,585 desktop pixels and its weapon/HUD/world screenshot was visually inspected. This is startup/reconnect/input evidence, not combat/map-change/authority convergence or headset presentation qualification. The eye layers still contain world geometry; the desktop weapon/HUD screenshot is not a claim that those appear in the headset.
+
+Texture/palette mutation still causes reference phases, including during streaming. Two CPU traversals and duplicate vertices remain; no GPU/CPU timing benefit is claimed. Native/XR full builds, Python compilation and diff checks pass. Existing allocator compiler warnings persist in the baseline code. Full-pitch/collision/real tracking, controllers, headset weapon/HUD/menu presentation, other camera/material families and full multiplayer/platform matrices remain required.
+
+Reproduce with private runtime environment and owned GRP:
+
+```sh
+python3 tools/vr/check_stereo_oracle.py --binary ./eduke32-xr --single-pass \
+  --scene masks-animated --display :1 --grp /path/to/owned/DUKE3D.GRP --work-dir /path/to/labs
+# Add --pose stereo or --pose unequal.
+# Add --mask-failure collect-right or --mask-failure replay-before.
+EDUKE32_XR_SINGLE_PASS=1 python3 tools/vr/smoke_world.py --binary ./eduke32-xr \
+  --failure-stage mask-replay-after --display :1 --grp /path/to/owned/DUKE3D.GRP --work-dir /path/to/labs
+```
+
+World and mixed runners additionally accept `--minimum-full-multiview-frames`; this is a separate gate from successful stereo submission and opaque-only coverage. Evidence: `../../../evidence/mask-world-stereo.png`, `../../../evidence/mask-multiplayer-gameplay.png` and compact `../../../evidence/mask-validation.json`.

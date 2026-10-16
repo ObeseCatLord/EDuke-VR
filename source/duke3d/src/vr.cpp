@@ -63,6 +63,7 @@ struct Eye
 static std::array<uint8_t, MAXSPRITESONSCREEN> membership;
 static bool animating, generationSaturated;
 static uint64_t worldFrames, worldMultiviewFrames, worldOracleFrames;
+static uint64_t worldMaskMultiviewFrames, worldMaskOracleFrames, worldFullMultiviewFrames;
 static eduke_xr::Runtime *previousRuntime;
 static XrVector3f origin;
 static XrQuaternionf inverseYaw;
@@ -137,10 +138,19 @@ void eyeState(Eye const &eye)
 }
 } // namespace
 
-// Bounded opt-in evidence for the two injected failure paths. It records input
-// provenance before native animation creates intentional parent/child duplicates.
+static bool testArtClock()
+{
+    char const *value=std::getenv("EDUKE32_XR_TEST_ART_CLOCK");
+    return value && !Bstrcmp(value,"1") && std::getenv("EDUKE32_XR_TEST_CAPTURE");
+}
+
+// Opt-in input provenance for failure tests, before intentional native children.
 void G_XRTestAnimationInputs()
 {
+    // Fixture input only: animated ART must see the same deterministic tick
+    // in the native reference and each synthetic XR traversal. totalclock
+    // and the simulation are untouched.
+    if (testArtClock()) totalclocklock=1;
     static bool const enabled = std::getenv("EDUKE32_XR_TEST_FAIL") != nullptr;
     static unsigned samples;
     if (!enabled || samples++ >= 10)
@@ -245,6 +255,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         recentered = false;
         worldFrames = 0;
         worldMultiviewFrames = worldOracleFrames = 0;
+        worldMaskMultiviewFrames = worldMaskOracleFrames = worldFullMultiviewFrames = 0;
     }
     eduke_xr::Runtime::Frame frame;
     std::string error;
@@ -321,7 +332,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     vec2_t const oldStart=windowxy1, oldEnd=windowxy2;
     int const oldRange=viewingrange, oldAspect=yxaspect;
     int const frozenVisibility=g_visibility, frozenParallax=parallaxvisibility;
-    bool animated=false, good=true, usedMultiview=false;
+    bool animated=false, good=true, usedMultiview=false, usedMaskMultiview=false;
     videoSetViewableArea(0,0,xdim-1,ydim-1);
     auto const drawOpaque = [&](bool collect) {
         for (unsigned i=0;i<2 && good;++i)
@@ -335,11 +346,11 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             glClearColor(0,0,0,1);
             glClear(GL_COLOR_BUFFER_BIT);
             spritesortcnt=0;
-            if (collect) polymost_xrBeginOpaqueCollection(i);
+            if (collect) polymost_xrBeginCollection(POLYMOST_XR_OPAQUE,i);
             yax_preparedrawrooms();
             renderDrawRoomsQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,
                               eye.camera.angle,eye.camera.horizon,eye.camera.sector);
-            if (collect && polymost_xrEndOpaqueCollection(i) != POLYMOST_XR_COLLECT_OK)
+            if (collect && polymost_xrEndCollection(i) != POLYMOST_XR_COLLECT_OK)
                 return false;
             if (spritesortcnt >= maxspritesonscreen || maskwallcnt >= MAXWALLSB)
             {
@@ -371,14 +382,14 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 // Collection can execute unsupported native draw families on
                 // the individual eye targets. Commit only the accepted replay.
                 glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-                committed=polymost_xrReplayOpaqueCollection() == POLYMOST_XR_COLLECT_OK;
+                committed=polymost_xrReplayCollection() == POLYMOST_XR_COLLECT_OK;
                 if (committed)
                 {
                     usedMultiview=true;
                     static bool reported;
                     if (!reported || g_frameCounter == 12)
                     {
-                        auto const stats=polymost_xrOpaqueCollectionStats();
+                        auto const stats=polymost_xrCollectionStats();
                         LOG_F(INFO,"OpenXR opaque single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u flatSky=%u skyDepth=%u npot=%u",
                               unsigned(g_frameCounter),stats.pairedCalls,stats.eyeOnlyCalls,stats.pairedVertices,stats.eyeOnlyVertices,
                               stats.flatSkyCalls,stats.skyDepthCalls,stats.npotCalls);
@@ -394,15 +405,15 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             if (reported < 3)
             {
                 LOG_F(INFO,"OpenXR opaque candidate uses two-pass oracle: %s (frame=%u)",
-                      polymost_xrOpaqueCollectionReason(),unsigned(g_frameCounter));
+                      polymost_xrCollectionReason(),unsigned(g_frameCounter));
                 ++reported;
             }
-            polymost_xrDiscardOpaqueCollection();
+            polymost_xrDiscardCollection();
             // Retry before animation in the same located/acquired XR frame.
             // No CON callback or simulation/input tick is repeated here.
             drawOpaque(false);
         }
-        polymost_xrDiscardOpaqueCollection();
+        polymost_xrDiscardCollection();
     }
     else drawOpaque(false);
     if (good)
@@ -461,26 +472,97 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             error="injected failure after animation, before first masks";
         }
         std::vector<tspritetype> pristine(tsprite,tsprite+spritesortcnt);
-        for (unsigned i=0;i<2 && good;++i)
+        auto const drawMasks = [&](bool collect) {
+            bool accepted=true;
+            for (unsigned i=0;i<2 && good;++i)
+            {
+                auto const &eye=eyes[i];
+                good=runtime->bindEye(i,error);
+                if (!good) return false;
+                videoSetViewableArea(0,0,xdim-1,ydim-1);
+                eyeState(eye);
+                // Begin before camera preparation, which captures this eye's
+                // projection. Native sorting/animation of tiles stays intact.
+                if (collect && !polymost_xrBeginCollection(POLYMOST_XR_MASKS,i))
+                    return false; // Preflight rejection must skip editor/direct paths.
+                int const scriptVisibility=g_visibility, scriptParallax=parallaxvisibility;
+                g_visibility=frozenVisibility; parallaxvisibility=frozenParallax;
+                renderPrepareMasksQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,
+                                     eye.camera.angle,eye.camera.horizon,eye.camera.sector);
+                g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
+                if (testArtClock()) totalclocklock=1;
+                spritesortcnt=pristine.size();
+                std::copy(pristine.begin(),pristine.end(),tsprite);
+                for (int j=0;j<spritesortcnt;++j)
+                    if (!(membership[j] & (1u<<i))) tsprite[j].xrepeat=tsprite[j].yrepeat=0;
+                maskwallcnt=eye.walls.size();
+                for (int j=0;j<maskwallcnt;++j) { maskwall[j]=j; thewall[j]=eye.walls[j]; }
+                renderDrawMasks();
+                // Remaining draws in a rejected traversal stay suppressed.
+                // A rejected begin for the next eye skips that traversal.
+                if (collect && polymost_xrEndCollection(i) != POLYMOST_XR_COLLECT_OK)
+                    accepted=false;
+            }
+            return good && accepted;
+        };
+        if (singlePass && good)
         {
-            auto const &eye=eyes[i];
-            good=runtime->bindEye(i,error);
-            if (!good) break;
-            videoSetViewableArea(0,0,xdim-1,ydim-1);
-            eyeState(eye);
-            int const scriptVisibility=g_visibility, scriptParallax=parallaxvisibility;
-            g_visibility=frozenVisibility; parallaxvisibility=frozenParallax;
-            renderPrepareMasksQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,
-                                 eye.camera.angle,eye.camera.horizon,eye.camera.sector);
-            g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
-            spritesortcnt=pristine.size();
-            std::copy(pristine.begin(),pristine.end(),tsprite);
-            for (int j=0;j<spritesortcnt;++j)
-                if (!(membership[j] & (1u<<i))) tsprite[j].xrepeat=tsprite[j].yrepeat=0;
-            maskwallcnt=eye.walls.size();
-            for (int j=0;j<maskwallcnt;++j) { maskwall[j]=j; thewall[j]=eye.walls[j]; }
-            renderDrawMasks();
+            char const *failure=std::getenv("EDUKE32_XR_TEST_FAIL");
+            bool const maskFault=failure && !Bstrncmp(failure,"mask-",5);
+            if (maskFault)
+                SDL_setenv("EDUKE32_XR_TEST_MASK_ARMED",(!fixtureTest || g_frameCounter == 12) ? "1" : "0",1);
+            auto const captureCollection = [&](char const *suffix) {
+                auto const prefix=std::getenv("EDUKE32_XR_TEST_CAPTURE");
+                return !prefix || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
+            };
+            bool const snapshot=fixtureTest && g_frameCounter == 12 && std::getenv("EDUKE32_XR_TEST_MASK_SNAPSHOT");
+            if (snapshot) good=captureCollection("-mask-before");
+            bool committed=good && drawMasks(true);
+            // Read both layers before fallback/replay can hide a capture leak.
+            if (snapshot && good) good=captureCollection("-mask-after");
+            if (committed && good)
+            {
+                good=runtime->bindMultiview(error);
+                if (good)
+                {
+                    committed=polymost_xrReplayCollection() == POLYMOST_XR_COLLECT_OK;
+                    if (committed)
+                    {
+                        usedMaskMultiview=true;
+                        static bool reported;
+                        if (!reported || g_frameCounter == 12)
+                        {
+                            auto const stats=polymost_xrCollectionStats();
+                            LOG_F(INFO,"OpenXR masks single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u masks=%u translucent=%u depthOnly=%u depthWriteOff=%u",
+                                  unsigned(g_frameCounter),stats.pairedCalls,stats.eyeOnlyCalls,stats.pairedVertices,stats.eyeOnlyVertices,
+                                  stats.maskCalls,stats.translucentCalls,stats.depthOnlyCalls,stats.depthWriteOffCalls);
+                            reported=true;
+                        }
+                    }
+                    else if (polymost_xrReplaySubmitted())
+                    {
+                        error=std::string("mask replay failed after draw submission: ")+polymost_xrCollectionReason();
+                        good=false;
+                    }
+                }
+            }
+            if (!committed && good)
+            {
+                static unsigned reported;
+                if (reported < 3 || (fixtureTest && g_frameCounter == 12))
+                {
+                    LOG_F(INFO,"OpenXR masks candidate uses two-pass oracle: %s (frame=%u)",
+                          polymost_xrCollectionReason(),unsigned(g_frameCounter));
+                    ++reported;
+                }
+                polymost_xrDiscardCollection();
+                // Opaque pixels and once-animated pristine sprites are still
+                // authoritative. Never regenerate rooms after arbitrary CON.
+                drawMasks(false);
+            }
+            polymost_xrDiscardCollection();
         }
+        else if (good) drawMasks(false);
         if (good && fixtureTest && g_frameCounter == 12)
         {
             if (auto prefix=std::getenv("EDUKE32_XR_TEST_CAPTURE"))
@@ -517,9 +599,13 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         ++worldFrames;
         if (usedMultiview) ++worldMultiviewFrames;
         else ++worldOracleFrames;
+        if (usedMaskMultiview) ++worldMaskMultiviewFrames;
+        else ++worldMaskOracleFrames;
+        if (usedMultiview && usedMaskMultiview) ++worldFullMultiviewFrames;
         if (!fixtureTest && worldFrames == 60)
-            LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; per-eye masks and one animation transaction per frame.",
-                  unsigned(worldMultiviewFrames),unsigned(worldOracleFrames));
+            LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; masks multiview=%u twoPass=%u full multiview=%u; one animation transaction per frame.",
+                  unsigned(worldMultiviewFrames),unsigned(worldOracleFrames),unsigned(worldMaskMultiviewFrames),
+                  unsigned(worldMaskOracleFrames),unsigned(worldFullMultiviewFrames));
     }
     // Native Polymost appends to these arrays rather than resetting the sprite
     // count. Also clear on an aborted pass before fallback/next-frame rendering.

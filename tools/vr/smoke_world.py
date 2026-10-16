@@ -43,8 +43,9 @@ def main():
     parser.add_argument('--display', default=os.environ.get('DISPLAY'))
     parser.add_argument('--runtime-dir', type=Path)
     parser.add_argument('--timeout', default=30, type=int)
-    parser.add_argument('--failure-stage', choices=('opaque', 'masks'))
+    parser.add_argument('--failure-stage', choices=('opaque', 'masks', 'mask-replay-after'))
     parser.add_argument('--minimum-multiview-frames', type=int, default=0, choices=range(61))
+    parser.add_argument('--minimum-full-multiview-frames', type=int, default=0, choices=range(61))
     args = parser.parse_args()
     binary, grp = args.binary.resolve(), args.grp.resolve()
     if not binary.is_file() or not grp.is_file() or not args.display or not 5 <= args.timeout <= 120:
@@ -58,6 +59,8 @@ def main():
                EDUKE32_XR='1', EDUKE32_XR_WORLD_OUTPUT=str(prefix))
     env.pop('EDUKE32_XR_DIAGNOSTIC_FRAMES', None)
     env.pop('EDUKE32_XR_TEST_FAIL', None)
+    env.pop('EDUKE32_XR_TEST_MASK_ARMED', None)
+    env.pop('EDUKE32_XR_TEST_MASK_SNAPSHOT', None)
     if args.failure_stage:
         env['EDUKE32_XR_TEST_FAIL'] = args.failure_stage
     if args.runtime_dir:
@@ -86,13 +89,17 @@ def main():
             multiview, oracle = map(int, coverage[-1]) if coverage else (0, 0)
             world_good = (multiview + oracle == 60 and 'OpenXR world oracle: 60 frames' in output and 'E1L1:' in output
                       and distinct and process.poll() is None)
-            coverage_good = multiview >= args.minimum_multiview_frames
+            mask_coverage = re.findall(r'; masks multiview=(\d+) twoPass=(\d+) full multiview=(\d+);', output)
+            masks_mv, masks_oracle, full_mv = map(int, mask_coverage[-1]) if mask_coverage else (0, 0, 0)
+            coverage_good = (multiview >= args.minimum_multiview_frames
+                             and full_mv >= args.minimum_full_multiview_frames)
             passed = world_good and coverage_good
             if args.failure_stage:
                 samples = re.findall(r'XR failure test animation: frame=(\d+) input=(\d+) duplicateOwners=(\d+)', output)
                 per_frame = Counter(int(frame) for frame, _, _ in samples)
                 passed = (process.poll() is None and len(samples) == 10
-                          and 'OpenXR world stopped: injected failure' in output
+                          and ('OpenXR world stopped: mask replay failed after draw submission: injected mask-replay-after' in output
+                               if args.failure_stage == 'mask-replay-after' else 'OpenXR world stopped: injected failure' in output)
                           and all(int(duplicates) == 0 for _, _, duplicates in samples)
                           and all(count <= (2 if frame == 0 else 1) for frame, count in per_frame.items()))
                 result = {'failure_stage': args.failure_stage, 'failure_recovery_counts_passed': passed,
@@ -100,8 +107,11 @@ def main():
             else:
                 result = {'world_stereo_60_frames': world_good,
                       'minimum_multiview_coverage_passed': coverage_good,
-                      'minimum_multiview_frames': args.minimum_multiview_frames, 'eye_readbacks_distinct': distinct,
-                      'world_renderer': 'bounded opaque multiview + two-pass masks' if multiview else 'two-pass oracle',
+                      'minimum_multiview_frames': args.minimum_multiview_frames,
+                      'minimum_full_multiview_frames': args.minimum_full_multiview_frames, 'eye_readbacks_distinct': distinct,
+                      'world_renderer': 'bounded opaque and mask multiview' if full_mv else 'mixed native multiview/oracle',
+                      'masks_multiview_frames': masks_mv, 'masks_two_pass_frames': masks_oracle,
+                      'full_multiview_frames': full_mv,
                       'opaque_multiview_frames': multiview, 'opaque_two_pass_frames': oracle,
                       'headset_visual_test': 'not tested',
                       'multiplayer_gameplay': 'not tested', 'evidence_directory': str(lab)}

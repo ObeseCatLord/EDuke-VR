@@ -197,8 +197,9 @@ def main():
     parser.add_argument('--direct-grp', action='store_true', help='pass the GRP via -g instead of creating a local symlink')
     parser.add_argument('--input', action='store_true', help='accepted for compatibility; the owned-window input check always runs')
     parser.add_argument('--reconnect', action='store_true', help='replace the client once while retaining the server')
+    parser.add_argument('--minimum-full-multiview-frames', type=int, default=0, choices=range(61))
     args = parser.parse_args()
-    if args.minimum_multiview_frames and not args.xr_client:
+    if (args.minimum_multiview_frames or args.minimum_full_multiview_frames) and not args.xr_client:
         parser.error('--minimum-multiview-frames requires --xr-client')
 
     binary, grp = args.binary.resolve(), args.grp.resolve()
@@ -344,9 +345,14 @@ def main():
                 coverage = re.findall(r'OpenXR world oracle: 60 frames, opaque multiview=(\d+) twoPass=(\d+)',
                                       path.read_text(errors='replace'))
                 multiview, oracle = map(int, coverage[-1]) if coverage else (0, 0)
-                xr_coverage.append({'opaque_multiview': multiview, 'opaque_two_pass': oracle})
+                mask_coverage = re.findall(r'; masks multiview=(\d+) twoPass=(\d+) full multiview=(\d+);',
+                                           path.read_text(errors='replace'))
+                masks_mv, masks_oracle, full_mv = map(int, mask_coverage[-1]) if mask_coverage else (0, 0, 0)
+                xr_coverage.append({'opaque_multiview': multiview, 'opaque_two_pass': oracle,
+                                    'masks_multiview': masks_mv, 'masks_two_pass': masks_oracle, 'full_multiview': full_mv})
         coverage_good = not args.xr_client or all(c['opaque_multiview']+c['opaque_two_pass'] == 60
-                          and c['opaque_multiview'] >= args.minimum_multiview_frames for c in xr_coverage)
+                          and c['opaque_multiview'] >= args.minimum_multiview_frames
+                          and c['full_multiview'] >= args.minimum_full_multiview_frames for c in xr_coverage)
         xr_eye_readbacks = all((path.parent / 'stereo-left.ppm').is_file()
                               and (path.parent / 'stereo-right.ppm').is_file()
                               and (path.parent / 'stereo-left.ppm').read_bytes() != (path.parent / 'stereo-right.ppm').read_bytes()
@@ -362,7 +368,8 @@ def main():
             'input_changed_pixels': changed_pixels,
             'xr_client': args.xr_client,
             'xr_world_60_frames_per_join': xr_world_frames,
-            'xr_opaque_coverage_per_join': xr_coverage,
+            'xr_coverage_per_join': xr_coverage,
+            'minimum_full_multiview_frames': args.minimum_full_multiview_frames,
             'xr_distinct_eye_readbacks_per_join': xr_eye_readbacks,
             'screenshot': str(screenshot),
             'evidence_directory': str(root),

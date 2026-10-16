@@ -24,7 +24,7 @@ from smoke_world import CONFIG
 COUNTER = re.compile(r'addlog vrfixture_(displayrooms|animatesprites|displayroomsend) = (\d+)')
 
 
-def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_attachment, single_pass=False, pose="zero", inject_init=False, scene="room", sky_depth=0, sky_panning=1):
+def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_attachment, single_pass=False, pose="zero", inject_init=False, scene="room", sky_depth=0, sky_panning=1, mask_failure=None):
     directory.mkdir()
     generate(directory, scene)
     shutil.copyfile(fixture_con, directory/'stereo_test.con')
@@ -36,19 +36,25 @@ def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_
                EDUKE32_XR_TEST_CAPTURE=str(prefix))
     for key in ('EDUKE32_XR', 'EDUKE32_XR_TEST_ZERO_IPD', 'EDUKE32_XR_WORLD_OUTPUT',
                 'EDUKE32_XR_DIAGNOSTIC_FRAMES', 'EDUKE32_XR_TEST_FAIL', 'EDUKE32_XR_SINGLE_PASS',
-                'EDUKE32_XR_TEST_NATIVE_TARGET', 'EDUKE32_XR_TEST_STEREO_POSE'):
+                'EDUKE32_XR_TEST_NATIVE_TARGET', 'EDUKE32_XR_TEST_STEREO_POSE',
+                'EDUKE32_XR_TEST_MASK_ARMED', 'EDUKE32_XR_TEST_MASK_SNAPSHOT', 'EDUKE32_XR_TEST_ART_CLOCK'):
         env.pop(key, None)
+    if scene == 'masks-animated':
+        env['EDUKE32_XR_TEST_ART_CLOCK'] = '1'
     if zero_ipd:
         env['EDUKE32_XR'] = '1'
         env['EDUKE32_XR_TEST_ZERO_IPD' if pose == 'zero' else 'EDUKE32_XR_TEST_STEREO_POSE'] = '2' if pose == 'unequal' else '1'
         if single_pass:
             env['EDUKE32_XR_SINGLE_PASS'] = '1'
+            env['EDUKE32_XR_TEST_MASK_SNAPSHOT'] = '1'
+            if mask_failure:
+                env['EDUKE32_XR_TEST_FAIL'] = 'mask-'+mask_failure
             if inject_init:
                 env['EDUKE32_XR_TEST_FAIL'] = 'replay-init'
     elif native_attachment == 'array':
         env['EDUKE32_XR_TEST_NATIVE_TARGET'] = '1'
     command = [str(binary), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
-               '-map', 'stereo_fixture.map', '-x', 'stereo_test.con']
+               '-map', 'stereo_fixture.map', '-x', 'stereo_test.con', '-h', 'stereo_fixture.def']
     log_path = directory/'test.log'
     with log_path.open('w') as log:
         process = subprocess.Popen(command, cwd=directory, env=env, stdin=subprocess.DEVNULL,
@@ -73,7 +79,20 @@ def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_
             submissions = re.findall(r'OpenXR opaque single-pass: frame=12 paired=(\d+) eyeOnly=(\d+) pairedVertices=(\d+) eyeOnlyVertices=(\d+) flatSky=(\d+) skyDepth=(\d+) npot=(\d+)', output)
             submission = dict(zip(('paired_calls', 'eye_only_calls', 'paired_vertices', 'eye_only_vertices', 'flat_sky_calls', 'sky_depth_calls', 'npot_calls'),
                                   map(int, submissions[-1]))) if submissions else None
-            return {'captured': good, 'counts': counts, 'single_pass_at_capture': submission,
+            masks = re.findall(r'OpenXR masks single-pass: frame=12 paired=(\d+) eyeOnly=(\d+) pairedVertices=(\d+) eyeOnlyVertices=(\d+) masks=(\d+) translucent=(\d+) depthOnly=(\d+) depthWriteOff=(\d+)', output)
+            mask_submission = dict(zip(('paired_calls', 'eye_only_calls', 'paired_vertices', 'eye_only_vertices',
+                                        'mask_calls', 'translucent_calls', 'depth_only_calls', 'depth_write_off_calls'),
+                                       map(int, masks[-1]))) if masks else None
+            snapshots = [(directory/f'world-mask-{stage}-{eye}{suffix}')
+                         for stage in ('before', 'after') for eye in ('left', 'right')
+                         for suffix in ('.ppm', '-depth.bin')]
+            untouched = (all(p.is_file() for p in snapshots)
+                         and all(a.read_bytes() == b.read_bytes() for a, b in zip(snapshots[:4], snapshots[4:])))
+            fault_observed = bool(mask_failure and re.search(
+                r'OpenXR masks candidate uses two-pass oracle: .*injected.*mask-'+re.escape(mask_failure)+r'.*\(frame=12\)', output))
+            return {'captured': good, 'masks_at_capture': mask_submission,
+                    'mask_collection_untouched': untouched if single_pass else None, 'mask_fault_observed': fault_observed,
+                    'counts': counts, 'single_pass_at_capture': submission,
                     'init_failure_recovered': 'injected opaque replay initialization' in output and submission is not None,
                     'exit_before_cleanup': process.poll()}, files
         finally:
@@ -99,10 +118,13 @@ def main():
     parser.add_argument('--pose', choices=('zero', 'stereo', 'unequal'), default='zero',
                         help='identical eyes, or deterministic nonzero IPD, pitch/yaw/roll and asymmetric FOV')
     parser.add_argument('--inject-replay-init-failure', action='store_true')
-    parser.add_argument('--scene', choices=('room', 'sky', 'sky-floor'), default='room')
+    parser.add_argument('--mask-failure', choices=('collect-right', 'replay-before'))
+    parser.add_argument('--scene', choices=('room', 'sky', 'sky-floor', 'masks', 'masks-animated'), default='room')
     parser.add_argument('--sky-depth', choices=(0, 1), type=int, default=0, help='native sky depth-only companion pass')
     parser.add_argument('--sky-panning', choices=(0, 1), type=int, default=1)
     args = parser.parse_args()
+    if args.mask_failure and (not args.single_pass or args.inject_replay_init_failure):
+        parser.error('--mask-failure requires --single-pass and cannot combine with opaque init failure')
     if args.inject_replay_init_failure and not args.single_pass:
         parser.error('--inject-replay-init-failure requires --single-pass')
     binary, grp = args.binary.resolve(), args.grp.resolve()
@@ -114,7 +136,7 @@ def main():
     native, reference = run(binary, grp, lab/'native', fixture_con, args.display, False, args.timeout, args.native_attachment, pose=args.pose, scene=args.scene, sky_depth=args.sky_depth, sky_panning=args.sky_panning)
     oracle, oracle_eyes = run(binary, grp, lab/'oracle', fixture_con, args.display, True, args.timeout, args.native_attachment, pose=args.pose, scene=args.scene, sky_depth=args.sky_depth, sky_panning=args.sky_panning)
     if args.single_pass:
-        stereo, eyes = run(binary, grp, lab/'single-pass', fixture_con, args.display, True, args.timeout, args.native_attachment, True, args.pose, args.inject_replay_init_failure, args.scene, args.sky_depth, args.sky_panning)
+        stereo, eyes = run(binary, grp, lab/'single-pass', fixture_con, args.display, True, args.timeout, args.native_attachment, True, args.pose, args.inject_replay_init_failure, args.scene, args.sky_depth, args.sky_panning, args.mask_failure)
     else:
         stereo, eyes = oracle, oracle_eyes
     pixel_results = []
@@ -155,10 +177,18 @@ def main():
     promoted = not args.single_pass or bool(submission and submission['eye_only_calls' if args.pose == 'unequal' else 'paired_calls'] > 0)
     distinct = stereo['captured'] and eyes[0].read_bytes() != eyes[1].read_bytes()
     pose_good = args.pose == 'zero' or distinct
-    sky_good = (not args.single_pass or args.scene == 'room' or bool(submission
+    sky_good = (not args.single_pass or args.scene not in ('sky', 'sky-floor') or bool(submission
                 and submission['flat_sky_calls'] > 0 and (not args.sky_depth or submission['sky_depth_calls'] > 0)))
+    masks = stereo['masks_at_capture']
+    masks_good = (not args.single_pass or bool(masks and masks['paired_calls'] + masks['eye_only_calls'] > 0))
+    if args.single_pass and args.scene.startswith('masks'):
+        masks_good = bool(masks and masks['translucent_calls'] > 0 and masks['depth_only_calls'] > 0
+                          and masks['depth_write_off_calls'] > 0)
+    if args.mask_failure:
+        masks_good = stereo['mask_fault_observed'] and masks is None
+    untouched = not args.single_pass or stereo['mask_collection_untouched']
     recovered = not args.inject_replay_init_failure or stereo['init_failure_recovered']
-    passed = (sky_good and depth_good and recovered and pose_good and native['captured'] and stereo['captured'] and counts_equal and oracle_equal and promoted
+    passed = (masks_good and untouched and sky_good and depth_good and recovered and pose_good and native['captured'] and stereo['captured'] and counts_equal and oracle_equal and promoted
               and len(pixel_results) == 2 and all(p['exact'] for p in pixel_results))
     result = {'stereo_differential_passed': passed,
               'zero_ipd_native_equivalence': passed if args.pose == 'zero' else None,
@@ -168,6 +198,10 @@ def main():
               'two_pass_pixels_equal': oracle_equal, 'single_pass_requested': args.single_pass,
               'replayed_at_capture': promoted if args.single_pass else None,
               'init_failure_injected': args.inject_replay_init_failure,
+              'mask_failure_injected': args.mask_failure,
+              'art_animation_test_clock': 1 if args.scene == 'masks-animated' else None,
+              'mask_replayed_at_capture': bool(masks),
+              'mask_collection_zero_color_depth_writes': untouched,
               'projection_submission': 'none: synthetic offscreen fixture', 'evidence_directory': str(lab)}
     (lab/'result.json').write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps(result, indent=2))

@@ -112,3 +112,29 @@ A fresh read-only reviewer explicitly used `gpt-6-astra` / `xhigh`; its own curr
 | Color-only equality does not establish depth correctness | Adopted. Compare complete nonconstant GL_UNSIGNED_INT depth readbacks for both actual layers as well as exact color. Native and two-pass references match the sky fixtures exactly. |
 
 The reviewer verified the first positive ceiling-sky/depth/panning result JSON (30 paired calls, including nine flat-sky, nine depth-only and nine NPOT calls). Main then passed rotated sky with panning/depth disabled, unequal-coverage floor sky with depth enabled, and the ordinary-room regression. These are bounded feature proofs; masks remain per-eye and full VR presentation/gameplay qualification remains open.
+
+## Indexed ART mask phase design checkpoint — 2026-10-16
+
+Fresh `gpt-6-astra` / `xhigh` design review, with effective settings verified for this turn. The reviewer inspected the actual native mask traversal and collector before critique. Main spot-checked replay error returns, projection capture timing, native equal-depth groups, and direct sprite bypasses.
+
+| Recommendation | Disposition / implementation |
+|---|---|
+| Distinguish rejection/pre-draw failure from partially committed mask pixels | Adopted. Sticky replay-submitted bit is set immediately before `glDrawArrays`. Pre-draw rejection can restore pristine native mask inputs; an error after submission ends empty, disables XR and consumes the animated logical pass. |
+| Begin collection before camera preparation | Adopted. Shared mask helper begins before `renderPrepareMasksQ16`, which captures the current eye projection. |
+| Keep one phased collector and existing native sort | Adopted. Generic public API, same packet vectors/program/VBO/native fragment, no new sorter or material resolver. |
+| Require zero eye color/depth writes during mask collection | Adopted. Active MASK guards stop Polymost2, models and modern/legacy voxels before direct entry, even after rejection. Native fan transport stays intercepted. Editor/polygon modes reject. Texture mutations remain allowed to complete but reject the candidate. |
+| Validate both blend equations and restore actual incoming state | Adopted. RGB/alpha equations and factors checked separately; replay preserves alpha test, separate blend state, depth and color writes and reconciles Build accounting. Packet variation remains limited to actual native inputs. |
+| Restore pristine sprite lists between complete native traversals, not between equal-depth subpasses | Adopted. The common helper installs post-CON sprites and original wall IDs per eye and retry; native tile animation and two-pass sprite group behavior remain intact. |
+| Add scratch framebuffer or general GL recorder | Rejected for this bounded phase. Inspected ordinary paths can suppress target writes directly; scratch targets do not solve texture mutation or native CPU animation side effects. Reopen if a new reachable draw path cannot be isolated. |
+| Fault and equivalence proofs must establish actual mask replay | Adopted. Harness now requires frame-12 mask replay counts, exact RGB/depth and CON counts; snapshots compare color/depth immediately before/after capture. Separate late-right collection, pre-draw replay and post-draw replay faults exercise recovery boundaries. |
+
+No additional user preference or approval was required for these correctness choices. Full headset presentation, controllers, arbitrary CON/mod compatibility and multiplayer qualification remain separate incomplete gates.
+
+
+### Mask implementation and follow-up reviews
+
+Fresh Astra/xhigh correctness review caught a redundant exit `buildgl_resetStateAccounting()` after raw sampler restoration: the helper actively unbinds samplers. Adopted the smaller fix—delete the exit reset, because replay entry already invalidates accounting and subsequent operations use raw GL. The reviewer verified this call graph and found no remaining actionable issue in that slice.
+
+A further explicitly selected/verified Astra/xhigh follow-up checked the final bool-returning begin/preflight skip and animated ART fixture. Failed MASK begin now skips traversal before editor diagnostic paths; direct guards still protect later rejection in a traversal. Consecutive DEF animation bases exercise 285→286→287 within the native equal-depth group, with a nonzero cutoff and deterministic test-only `totalclocklock`. No simulation timer or engine C ABI change was introduced. The reviewer found no actionable issue in these scoped changes.
+
+A proposed production clock-freeze API was deferred: source investigation found no actual timer/event pumping in these traversals, so repeated camera preparation alone did not establish animation-clock drift. Model/voxel, unsupported-material and capacity-triggered no-write fixtures remain gaps; source guards and an injected late rejection are not equivalent runtime coverage of those assets.
