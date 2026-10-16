@@ -2,6 +2,12 @@
 #pragma once
 #include <cstdint>
 #ifdef USE_OPENXR
+// Called once by each ordinary native display loop, before controls and after
+// its intended world draw. Auxiliary room draws never acquire another XR frame.
+void G_XRBeginFrame();
+void G_XREndFrame();
+void G_XRClearInput();
+
 // Experimental ordinary-room stereo oracle. True means the logical room pass
 // was consumed, including failures after animation (never repeat CON effects).
 bool G_XRDrawRooms(int32_t smoothRatio);

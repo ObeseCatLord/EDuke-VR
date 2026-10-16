@@ -296,6 +296,11 @@ struct Runtime::Impl
     XrSystemId                              system   = XR_NULL_SYSTEM_ID;
     XrSession                               session  = XR_NULL_HANDLE;
     XrSpace                                 space    = XR_NULL_HANDLE;
+    XrActionSet                             actionSet = XR_NULL_HANDLE;
+    std::array<XrAction, 6>                 buttonActions {};
+    XrAction                                stickAction = XR_NULL_HANDLE, gripPoseAction = XR_NULL_HANDLE, aimPoseAction = XR_NULL_HANDLE;
+    std::array<XrPath, kViewCount>          handPaths {};
+    std::array<XrSpace, kViewCount>         gripSpaces {}, aimSpaces {};
     XrSwapchain                             color    = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageOpenGLKHR>  colorImages;
     std::array<XrView, kViewCount>          views {};
@@ -303,11 +308,123 @@ struct Runtime::Impl
     GLuint                                  fbo = 0, depth = 0, program = 0, vao = 0, vbo = 0;
     PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC multiview = nullptr;
     bool                                    running = false, exiting = false;
+    XrSessionState                          sessionState = XR_SESSION_STATE_UNKNOWN;
     bool                                    frameBegun = false, imageAcquired = false, imageReady = false;
     uint32_t                                imageIndex = 0;
     XrFrameState                            frameState { XR_TYPE_FRAME_STATE };
     GLint                                   previousReadFbo = 0, previousDrawFbo = 0;
     uint64_t                                submitted = 0;
+    uint64_t                                actionGeneration = 0;
+
+    bool createActions(std::string &error)
+    {
+        auto fail = [&](XrResult result, char const *where) { error = xrError(instance, result, where); return false; };
+        auto path = [&](char const *name, XrPath &out) { return XR_SUCCEEDED(xrStringToPath(instance, name, &out)); };
+        if (!path("/user/hand/left", handPaths[0]) || !path("/user/hand/right", handPaths[1]))
+        {
+            error = "OpenXR runtime rejected hand subaction paths";
+            return false;
+        }
+        XrActionSetCreateInfo setInfo { XR_TYPE_ACTION_SET_CREATE_INFO };
+        std::snprintf(setInfo.actionSetName, sizeof(setInfo.actionSetName), "eduke32_physical_input");
+        std::snprintf(setInfo.localizedActionSetName, sizeof(setInfo.localizedActionSetName), "EDuke32 physical input");
+        XrResult result = xrCreateActionSet(instance, &setInfo, &actionSet);
+        if (XR_FAILED(result)) return fail(result, "xrCreateActionSet");
+        auto create = [&](XrAction &action, XrActionType type, char const *name, char const *localized)
+        {
+            XrActionCreateInfo info { XR_TYPE_ACTION_CREATE_INFO };
+            info.actionType = type;
+            info.countSubactionPaths = handPaths.size();
+            info.subactionPaths = handPaths.data();
+            std::snprintf(info.actionName, sizeof(info.actionName), "%s", name);
+            std::snprintf(info.localizedActionName, sizeof(info.localizedActionName), "%s", localized);
+            result = xrCreateAction(actionSet, &info, &action);
+            return XR_SUCCEEDED(result);
+        };
+        char const * const names[] = { "select", "grip", "primary", "secondary", "menu", "stickclick" };
+        char const * const labels[] = { "Select", "Grip", "Primary", "Secondary", "Menu", "Stick click" };
+        for (size_t i = 0; i < buttonActions.size(); ++i)
+            if (!create(buttonActions[i], XR_ACTION_TYPE_BOOLEAN_INPUT, names[i], labels[i])) return fail(result, "xrCreateAction button");
+        if (!create(stickAction, XR_ACTION_TYPE_VECTOR2F_INPUT, "stick", "Stick")) return fail(result, "xrCreateAction stick");
+        if (!create(gripPoseAction, XR_ACTION_TYPE_POSE_INPUT, "grip_pose", "Grip pose")) return fail(result, "xrCreateAction grip pose");
+        if (!create(aimPoseAction, XR_ACTION_TYPE_POSE_INPUT, "aim_pose", "Aim pose")) return fail(result, "xrCreateAction aim pose");
+
+        struct Binding { XrAction action; char const *path; };
+        auto suggest = [&](char const *profile, std::initializer_list<Binding> bindings)
+        {
+            XrPath profilePath = XR_NULL_PATH;
+            result = xrStringToPath(instance, profile, &profilePath);
+            if (XR_FAILED(result)) return false;
+            std::vector<XrActionSuggestedBinding> suggested;
+            suggested.reserve(bindings.size());
+            for (Binding const &binding : bindings)
+            {
+                XrPath bindingPath = XR_NULL_PATH;
+                result = xrStringToPath(instance, binding.path, &bindingPath);
+                if (XR_FAILED(result)) return false;
+                suggested.push_back({ binding.action, bindingPath });
+            }
+            XrInteractionProfileSuggestedBinding info { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+            info.interactionProfile = profilePath;
+            info.countSuggestedBindings = suggested.size();
+            info.suggestedBindings = suggested.data();
+            result = xrSuggestInteractionProfileBindings(instance, &info);
+            return XR_SUCCEEDED(result);
+        };
+        auto const select = buttonActions[0], grip = buttonActions[1], primary = buttonActions[2], secondary = buttonActions[3], menu = buttonActions[4], click = buttonActions[5];
+        if (!suggest("/interaction_profiles/khr/simple_controller", {
+                { select, "/user/hand/left/input/select/click" }, { select, "/user/hand/right/input/select/click" },
+                { menu, "/user/hand/left/input/menu/click" }, { menu, "/user/hand/right/input/menu/click" },
+                { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" }})) return fail(result, "xrSuggestInteractionProfileBindings simple");
+        if (!suggest("/interaction_profiles/oculus/touch_controller", {
+                { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
+                { grip, "/user/hand/left/input/squeeze/value" }, { grip, "/user/hand/right/input/squeeze/value" },
+                { primary, "/user/hand/left/input/x/click" }, { secondary, "/user/hand/left/input/y/click" },
+                { primary, "/user/hand/right/input/a/click" }, { secondary, "/user/hand/right/input/b/click" },
+                { menu, "/user/hand/left/input/menu/click" },
+                { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
+                { click, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
+                { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" }})) return fail(result, "xrSuggestInteractionProfileBindings touch");
+        if (!suggest("/interaction_profiles/valve/index_controller", {
+                { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
+                { grip, "/user/hand/left/input/squeeze/value" }, { grip, "/user/hand/right/input/squeeze/value" },
+                { primary, "/user/hand/left/input/a/click" }, { secondary, "/user/hand/left/input/b/click" },
+                { primary, "/user/hand/right/input/a/click" }, { secondary, "/user/hand/right/input/b/click" },
+                { menu, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
+                { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
+                { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" }})) return fail(result, "xrSuggestInteractionProfileBindings index");
+        if (!suggest("/interaction_profiles/microsoft/motion_controller", {
+                { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
+                { grip, "/user/hand/left/input/squeeze/click" }, { grip, "/user/hand/right/input/squeeze/click" },
+                { menu, "/user/hand/left/input/menu/click" }, { menu, "/user/hand/right/input/menu/click" },
+                { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
+                { click, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
+                { primary, "/user/hand/right/input/thumbstick/click" }, { primary, "/user/hand/left/input/trackpad/click" },
+                { secondary, "/user/hand/right/input/trackpad/click" }, { secondary, "/user/hand/left/input/thumbstick/click" },
+                { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" }})) return fail(result, "xrSuggestInteractionProfileBindings motion");
+
+        for (size_t hand = 0; hand < handPaths.size(); ++hand)
+        {
+            XrActionSpaceCreateInfo info { XR_TYPE_ACTION_SPACE_CREATE_INFO };
+            info.action = gripPoseAction;
+            info.subactionPath = handPaths[hand];
+            info.poseInActionSpace.orientation.w = 1.f;
+            result = xrCreateActionSpace(session, &info, &gripSpaces[hand]);
+            if (XR_FAILED(result)) return fail(result, "xrCreateActionSpace grip");
+            info.action = aimPoseAction;
+            result = xrCreateActionSpace(session, &info, &aimSpaces[hand]);
+            if (XR_FAILED(result)) return fail(result, "xrCreateActionSpace aim");
+        }
+        XrSessionActionSetsAttachInfo attach { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
+        attach.countActionSets = 1;
+        attach.actionSets = &actionSet;
+        result = xrAttachSessionActionSets(session, &attach);
+        return XR_SUCCEEDED(result) ? true : fail(result, "xrAttachSessionActionSets");
+    }
 
     void destroyGl()
     {
@@ -327,21 +444,34 @@ struct Runtime::Impl
     {
         if (color != XR_NULL_HANDLE)
             xrDestroySwapchain(color);
+        for (XrSpace &actionSpace : gripSpaces)
+            if (actionSpace != XR_NULL_HANDLE) xrDestroySpace(actionSpace);
+        for (XrSpace &actionSpace : aimSpaces)
+            if (actionSpace != XR_NULL_HANDLE) xrDestroySpace(actionSpace);
         if (space != XR_NULL_HANDLE)
             xrDestroySpace(space);
         if (session != XR_NULL_HANDLE)
             xrDestroySession(session);
+        if (actionSet != XR_NULL_HANDLE)
+            xrDestroyActionSet(actionSet);
         if (instance != XR_NULL_HANDLE)
             xrDestroyInstance(instance);
         instance = XR_NULL_HANDLE;
         system   = XR_NULL_SYSTEM_ID;
         session  = XR_NULL_HANDLE;
         space    = XR_NULL_HANDLE;
+        actionSet = XR_NULL_HANDLE;
+        buttonActions = {};
+        stickAction = gripPoseAction = aimPoseAction = XR_NULL_HANDLE;
+        handPaths = {};
+        gripSpaces = {};
+        aimSpaces = {};
         color    = XR_NULL_HANDLE;
         colorImages.clear();
         width = height = 0;
         multiview      = nullptr;
         running = exiting = false;
+        sessionState = XR_SESSION_STATE_UNKNOWN;
         frameBegun = imageAcquired = imageReady = false;
     }
 };
@@ -507,6 +637,11 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
     if (XR_FAILED(result))
     {
         error = xrError(m_impl->instance, result, "xrCreateReferenceSpace");
+        shutdown();
+        return false;
+    }
+    if (!m_impl->createActions(error))
+    {
         shutdown();
         return false;
     }
@@ -678,6 +813,7 @@ void Runtime::shutdown()
 {
     if (!m_impl)
         return;
+    ++m_impl->actionGeneration;
     bool hasGlResources = m_impl->fbo || m_impl->depth || m_impl->program || m_impl->vao || m_impl->vbo;
     bool hasXrResources
     = m_impl->instance != XR_NULL_HANDLE || m_impl->session != XR_NULL_HANDLE || m_impl->space != XR_NULL_HANDLE || m_impl->color != XR_NULL_HANDLE;
@@ -733,6 +869,7 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
         else if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
         {
             auto const *changed = reinterpret_cast<XrEventDataSessionStateChanged const *>(&event);
+            m_impl->sessionState = changed->state;
             if (changed->state == XR_SESSION_STATE_READY)
             {
                 XrSessionBeginInfo begin { XR_TYPE_SESSION_BEGIN_INFO };
@@ -779,6 +916,9 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
         error = xrError(m_impl->instance, result, "xrWaitFrame");
         return FrameResult::Error;
     }
+    // Input uses this timestamp even when the frame will not render or view
+    // tracking is temporarily unavailable.
+    frame.predictedDisplayTime = frameState.predictedDisplayTime;
     XrFrameBeginInfo beginInfo { XR_TYPE_FRAME_BEGIN_INFO };
     result = xrBeginFrame(m_impl->session, &beginInfo);
     if (XR_FAILED(result))
@@ -1059,6 +1199,125 @@ bool Runtime::finishFrame(bool submit, std::string &error)
     return true;
 }
 
+bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &error)
+{
+    out = {};
+    error.clear();
+    if (!m_impl || !m_impl->running)
+        return true;
+    if (m_impl->sessionState != XR_SESSION_STATE_FOCUSED)
+        return true;
+    if (m_impl->actionSet == XR_NULL_HANDLE)
+    {
+        error = "OpenXR input action set is unavailable";
+        return false;
+    }
+    XrActiveActionSet activeSet {};
+    activeSet.actionSet = m_impl->actionSet;
+    XrActionsSyncInfo sync { XR_TYPE_ACTIONS_SYNC_INFO };
+    sync.countActiveActionSets = 1;
+    sync.activeActionSets = &activeSet;
+    XrResult result = xrSyncActions(m_impl->session, &sync);
+    if (result == XR_SESSION_NOT_FOCUSED)
+        return true;
+    if (XR_FAILED(result))
+    {
+        error = xrError(m_impl->instance, result, "xrSyncActions");
+        return false;
+    }
+
+    ActionInput sample {};
+    sample.focused = true;
+    auto boolean = [&](XrAction action, XrPath hand, XrActionStateBoolean &state)
+    {
+        XrActionStateGetInfo info { XR_TYPE_ACTION_STATE_GET_INFO };
+        info.action = action;
+        info.subactionPath = hand;
+        state = { XR_TYPE_ACTION_STATE_BOOLEAN };
+        result = xrGetActionStateBoolean(m_impl->session, &info, &state);
+        return XR_SUCCEEDED(result);
+    };
+    auto neutralIfUnfocused = [&]()
+    {
+        if (result == XR_SESSION_NOT_FOCUSED)
+        {
+            out = {};
+            return true;
+        }
+        return false;
+    };
+    for (size_t hand = 0; hand < m_impl->handPaths.size(); ++hand)
+    {
+        HandInput &target = sample.hands[hand];
+        for (size_t button = 0; button < m_impl->buttonActions.size(); ++button)
+        {
+            XrActionStateBoolean state { XR_TYPE_ACTION_STATE_BOOLEAN };
+            if (!boolean(m_impl->buttonActions[button], m_impl->handPaths[hand], state))
+            {
+                if (neutralIfUnfocused()) return true;
+                error = xrError(m_impl->instance, result, "xrGetActionStateBoolean");
+                return false;
+            }
+            uint32_t const bit = 1u << button;
+            if (state.isActive)
+            {
+                target.activeButtons |= bit;
+                if (state.currentState) target.buttons |= bit;
+            }
+        }
+        XrActionStateGetInfo stickInfo { XR_TYPE_ACTION_STATE_GET_INFO };
+        stickInfo.action = m_impl->stickAction;
+        stickInfo.subactionPath = m_impl->handPaths[hand];
+        XrActionStateVector2f stick { XR_TYPE_ACTION_STATE_VECTOR2F };
+        result = xrGetActionStateVector2f(m_impl->session, &stickInfo, &stick);
+        if (XR_FAILED(result))
+        {
+            if (neutralIfUnfocused()) return true;
+            error = xrError(m_impl->instance, result, "xrGetActionStateVector2f");
+            return false;
+        }
+        if (stick.isActive)
+        {
+            target.stickActive = true;
+            target.stick = stick.currentState;
+        }
+        auto pose = [&](XrAction action, XrSpace actionSpace, XrPosef &value, bool &valid)
+        {
+            XrActionStateGetInfo info { XR_TYPE_ACTION_STATE_GET_INFO };
+            info.action = action;
+            info.subactionPath = m_impl->handPaths[hand];
+            XrActionStatePose state { XR_TYPE_ACTION_STATE_POSE };
+            result = xrGetActionStatePose(m_impl->session, &info, &state);
+            if (XR_FAILED(result)) return false;
+            if (!state.isActive || !atTime) return true;
+            XrSpaceLocation location { XR_TYPE_SPACE_LOCATION };
+            result = xrLocateSpace(actionSpace, m_impl->space, atTime, &location);
+            if (XR_FAILED(result)) return false;
+            if ((location.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+                == (XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+            {
+                value = location.pose;
+                valid = true;
+            }
+            return true;
+        };
+        if (!pose(m_impl->gripPoseAction, m_impl->gripSpaces[hand], target.gripPose, target.gripValid))
+        {
+            if (neutralIfUnfocused()) return true;
+            error = xrError(m_impl->instance, result, "OpenXR grip pose query");
+            return false;
+        }
+        if (!pose(m_impl->aimPoseAction, m_impl->aimSpaces[hand], target.aimPose, target.aimValid))
+        {
+            if (neutralIfUnfocused()) return true;
+            error = xrError(m_impl->instance, result, "OpenXR aim pose query");
+            return false;
+        }
+    }
+    out = sample;
+    return true;
+}
+
 Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error)
 {
     Frame       frame;
@@ -1119,4 +1378,7 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
 
 uint64_t Runtime::submittedFrames() const
 { return m_impl ? m_impl->submitted : 0; }
+
+uint64_t Runtime::generation() const
+{ return m_impl ? m_impl->actionGeneration : 0; }
 }  // namespace eduke_xr

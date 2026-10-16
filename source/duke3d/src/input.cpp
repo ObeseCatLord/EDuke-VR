@@ -29,10 +29,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "control.h"
 #include "input.h"
 #include "menus.h"
+#ifdef USE_OPENXR
+#include "vr.h"
+#endif
 
 int32_t I_CheckAllInput(void)
 {
-    return KB_KeyWaiting() || MOUSE_GetButtons() || JOYSTICK_GetButtons()
+    return KB_KeyWaiting() || MOUSE_GetButtons() || JOYSTICK_GetButtons() || CONTROL_ExternalInputWaiting()
 #if defined EDUKE32_IOS
         || g_mouseClickState == MOUSE_PRESSED
 #endif
@@ -41,6 +44,9 @@ int32_t I_CheckAllInput(void)
 
 void I_ClearAllInput(void)
 {
+#ifdef USE_OPENXR
+    G_XRClearInput();
+#endif
     KB_FlushKeyboardQueue();
     KB_ClearKeysDown();
     MOUSE_ClearAllButtons();

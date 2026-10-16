@@ -186,6 +186,12 @@ void CONTROL_MapButton(int whichfunction, int whichbutton, int doubleclicked, co
 void CONTROL_DefineFlag( int which, int toggle );
 void CONTROL_ClearAssignments( void );
 // void CONTROL_GetFunctionInput( void );
+// One optional source of already-mapped controls. The validity callback must
+// be side-effect free; it is checked after native event polling and on menu reads.
+void CONTROL_SetExternalInput(ControlInfo const *analog, uint64_t buttons,
+                              UserInput const *menu, bool (*valid)() = nullptr);
+bool CONTROL_ExternalInputWaiting();
+
 void CONTROL_GetInput( ControlInfo *info );
 void CONTROL_ClearButton( int whichbutton );
 void CONTROL_ClearAllButtons( void );

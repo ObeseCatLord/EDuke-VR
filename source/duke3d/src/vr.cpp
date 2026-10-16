@@ -4,6 +4,7 @@
 #include "duke3d.h"
 #include "sdlayer.h"
 #include "vr.h"
+#include "menus.h"
 #include "../../vr/eduke_xr.h"
 #include <algorithm>
 #include <array>
@@ -65,6 +66,82 @@ static bool animating, generationSaturated;
 static uint64_t worldFrames, worldMultiviewFrames, worldOracleFrames;
 static uint64_t worldMaskMultiviewFrames, worldMaskOracleFrames, worldFullMultiviewFrames;
 static eduke_xr::Runtime *previousRuntime;
+static uint64_t worldGeneration;
+static eduke_xr::Runtime *pendingRuntime, *inputRuntime;
+static eduke_xr::Runtime::Frame pendingFrame;
+static uint64_t pendingGeneration, inputGeneration;
+static eduke_xr::ActionInput rawInput;
+static std::array<uint32_t,2> activeInputButtons{}, blockedInputButtons{};
+
+static bool inputValid()
+{
+    // Native polling may recreate the SDL context after this sample was taken.
+    // This callback reads identity only; it never polls or initializes XR.
+    return inputRuntime && inputRuntime->generation() == inputGeneration && rawInput.focused;
+}
+
+static XrVector2f inputStick(eduke_xr::HandInput const &hand)
+{
+    if (!hand.stickActive || !std::isfinite(hand.stick.x) || !std::isfinite(hand.stick.y)) return {};
+    float const length=std::hypot(hand.stick.x,hand.stick.y);
+    if (length <= .2f) return {};
+    float const scale=(std::min(length,1.f)-.2f)/(.8f*length);
+    return {hand.stick.x*scale,hand.stick.y*scale};
+}
+
+static void publishInput()
+{
+    using namespace eduke_xr;
+    uint32_t down[2]{};
+    for (unsigned hand=0;hand<2;++hand)
+    {
+        uint32_t const active=rawInput.hands[hand].activeButtons;
+        uint32_t const held=rawInput.hands[hand].buttons & active;
+        blockedInputButtons[hand] |= held & ~activeInputButtons[hand];
+        blockedInputButtons[hand] &= held;
+        activeInputButtons[hand]=active;
+        down[hand]=held & ~blockedInputButtons[hand];
+    }
+    auto const move=inputStick(rawInput.hands[0]), turn=inputStick(rawInput.hands[1]);
+    ControlInfo analog{};
+    analog.dx=std::lround(move.x*32767.f); analog.dz=std::lround(-move.y*32767.f);
+    // These are native joystick units, retaining native Strafe/AimWeight/locks.
+    analog.dyaw=std::lround(turn.x*16383.f); analog.dpitch=std::lround(-turn.y*16383.f);
+    uint64_t buttons=0;
+    auto const button=[&](bool pressed, unsigned gamefunc) { if (pressed) buttons |= uint64_t(1)<<gamefunc; };
+    button(down[1]&ButtonSelect,gamefunc_Fire); button(down[0]&ButtonSelect,gamefunc_Open);
+    button(down[1]&ButtonPrimary,gamefunc_Jump); button(down[1]&ButtonSecondary,gamefunc_Crouch);
+    button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(down[0]&ButtonSecondary,gamefunc_Next_Weapon);
+    button((down[0]|down[1])&ButtonGrip,gamefunc_Run);
+    UserInput menu{false,false,false,dir_None};
+    menu.b_advance=(down[0]|down[1])&(ButtonSelect|ButtonPrimary);
+    menu.b_return=(down[0]|down[1])&ButtonSecondary;
+    menu.b_escape=(down[0]|down[1])&ButtonMenu;
+    auto const nav=std::hypot(move.x,move.y) > .6f ? move : turn;
+    if (std::max(std::fabs(nav.x),std::fabs(nav.y)) > .6f)
+        menu.dir=std::fabs(nav.y) >= std::fabs(nav.x) ? (nav.y > 0 ? dir_Up : dir_Down) : (nav.x > 0 ? dir_Right : dir_Left);
+    CONTROL_SetExternalInput(&analog,buttons,&menu,inputValid);
+
+    if (auto trace=std::getenv("EDUKE32_XR_TEST_INPUT"))
+        if (!Bstrcmp(trace,"1"))
+        {
+            static std::string previous;
+            static uint32_t sample;
+            char state[384];
+            Bsnprintf(state,sizeof(state),"focus=%u active=%u,%u buttons=%u,%u funcs=%llu axes=%d,%d,%d,%d menu=%u,%u,%u,%d gm=%u screen=%d aim=%u,%u gen=%llu",
+                      rawInput.focused,rawInput.hands[0].activeButtons,rawInput.hands[1].activeButtons,down[0],down[1],
+                      (unsigned long long)buttons,analog.dx,analog.dz,analog.dyaw,analog.dpitch,
+                      menu.b_advance,menu.b_return,menu.b_escape,int(menu.dir),unsigned(g_player[myconnectindex].ps->gm),int(g_currentMenu),
+                      rawInput.hands[0].aimValid,rawInput.hands[1].aimValid,(unsigned long long)inputGeneration);
+            if (previous != state || sample%60 == 0)
+            {
+                LOG_F(INFO,"OpenXR input: sample=%u %s",sample,state);
+                previous=state;
+            }
+            ++sample;
+        }
+}
+
 static XrVector3f origin;
 static XrQuaternionf inverseYaw;
 static bool recentered;
@@ -137,6 +214,62 @@ void eyeState(Eye const &eye)
     polymost_xrProjection(eye.left,eye.right,eye.down,eye.up);
 }
 } // namespace
+
+void G_XRClearInput()
+{
+    for (unsigned hand=0;hand<2;++hand)
+        blockedInputButtons[hand] |= rawInput.hands[hand].buttons;
+    CONTROL_SetExternalInput(nullptr,0,nullptr);
+}
+
+void G_XREndFrame()
+{
+    auto *runtime=pendingRuntime;
+    pendingRuntime=nullptr;
+    if (!runtime || runtime->generation() != pendingGeneration) return;
+    std::string error;
+    if (!runtime->finishFrame(false,error))
+    {
+        G_XRClearInput();
+        sdlayer_xr_disableWorld(error.c_str());
+    }
+}
+
+void G_XRBeginFrame()
+{
+    // Only the ordinary game/demo frame owners may acquire/synchronize input.
+    G_XREndFrame();
+    auto const neutral=[] {
+        rawInput={}; inputRuntime=nullptr;
+        activeInputButtons={}; blockedInputButtons={};
+        CONTROL_SetExternalInput(nullptr,0,nullptr);
+    };
+    if (g_networkMode == NET_DEDICATED_SERVER || videoGetRenderMode() != REND_POLYMOST)
+    { neutral(); return; }
+    auto *runtime=sdlayer_xr_worldRuntime();
+    if (!runtime) { neutral(); return; }
+    std::string error;
+    auto const status=runtime->beginFrame(pendingFrame,error);
+    if (status == eduke_xr::Runtime::FrameResult::Error || status == eduke_xr::Runtime::FrameResult::Exit)
+    {
+        std::string ignored;
+        runtime->finishFrame(false,ignored);
+        neutral();
+        sdlayer_xr_disableWorld(error.empty() ? "session exit requested" : error.c_str());
+        return;
+    }
+    pendingGeneration=runtime->generation();
+    if (status == eduke_xr::Runtime::FrameResult::Ready) pendingRuntime=runtime;
+    eduke_xr::ActionInput sample;
+    if (!runtime->readInput(sample,pendingFrame.predictedDisplayTime,error))
+    {
+        G_XREndFrame(); neutral(); sdlayer_xr_disableWorld(error.c_str()); return;
+    }
+    if (inputRuntime != runtime || inputGeneration != pendingGeneration)
+    { activeInputButtons={}; blockedInputButtons={}; }
+    inputRuntime=runtime; inputGeneration=pendingGeneration; rawInput=sample;
+    publishInput();
+}
 
 static bool testArtClock()
 {
@@ -246,26 +379,17 @@ bool G_XRDrawRooms(int32_t smoothRatio)
 #endif
         )
         return false;
-    auto *runtime = sdlayer_xr_worldRuntime();
-    if (!runtime)
-        return false;
-    if (runtime != previousRuntime || runtime->submittedFrames() == 0)
-    {
-        previousRuntime = runtime;
-        recentered = false;
-        worldFrames = 0;
-        worldMultiviewFrames = worldOracleFrames = 0;
-        worldMaskMultiviewFrames = worldMaskOracleFrames = worldFullMultiviewFrames = 0;
-    }
-    eduke_xr::Runtime::Frame frame;
+    auto *runtime=pendingRuntime;
+    if (!runtime || runtime->generation() != pendingGeneration) return false;
+    pendingRuntime=nullptr; // Transfer this acquired frame; auxiliary draws cannot take another.
+    auto frame=pendingFrame;
     std::string error;
-    auto status = runtime->beginFrame(frame,error);
-    if (status == eduke_xr::Runtime::FrameResult::Idle)
-        return false;
-    if (status != eduke_xr::Runtime::FrameResult::Ready)
+    if (runtime != previousRuntime || worldGeneration != runtime->generation())
     {
-        sdlayer_xr_disableWorld(error.empty() ? "session exit requested" : error.c_str());
-        return false;
+        previousRuntime=runtime; worldGeneration=runtime->generation();
+        recentered=false; worldFrames=0;
+        worldMultiviewFrames=worldOracleFrames=0;
+        worldMaskMultiviewFrames=worldMaskOracleFrames=worldFullMultiviewFrames=0;
     }
     if (!recentered)
     {

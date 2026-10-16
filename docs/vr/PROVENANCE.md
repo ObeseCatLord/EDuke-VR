@@ -4,3 +4,21 @@
 - [RazeXR](https://github.com/Team-Beef-Studios/RazeXR): `caa96be6d80f2ab74fce4b945d54eeda39c3fc20`; cloned with Git history. Current branch removes its Raze engine integration in `b9fb2bf`; examine the parent of that commit for historical engine reference.
 
 New runtime code follows the OpenXR API and RazeXR's session/two-layer swapchain concepts. Direct source reuse, if introduced, must retain each original file's notices. EDuke32 includes GPLv2 code and the separate Build source license; see package/common/gpl-2.0.txt and package/common/buildlic.txt. Historical Raze files also have individual BSD/LGPL notices. Keep those distinctions when preparing a release. No proprietary GRP, map, texture, CON or audio data belongs in this repository.
+
+
+Controller integration follows the pinned RazeXR
+`Projects/Android/jni/RazeXR/OpenXrInput.cpp` action/subaction/space concepts and
+`VrInputDefault.cpp` native-game mapping approach. The new backend checks action
+activity/focus and keeps EDuke32 controls/networking authoritative. No Raze game
+renderer or input protocol was transplanted.
+
+The test-only native remote-device layout is based on Monado's
+`src/xrt/drivers/remote/r_interface.h` (`mndrmt3`, BSL-1.0); no Monado source file
+is copied. `smoke_action_lifecycle.py` uses the installed libmonado public API
+from `/usr/include/monado/monado.h`. Runtime tests use isolated configuration and
+runtime directories. Test profiles reference the user's owned GRP read-only.
+
+Primary API references:
+[xrSyncActions](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrSyncActions.html),
+[xrSuggestInteractionProfileBindings](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrSuggestInteractionProfileBindings.html),
+[xrGetActionStateBoolean](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrGetActionStateBoolean.html).

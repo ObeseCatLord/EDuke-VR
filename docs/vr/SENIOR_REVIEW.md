@@ -138,3 +138,31 @@ Fresh Astra/xhigh correctness review caught a redundant exit `buildgl_resetState
 A further explicitly selected/verified Astra/xhigh follow-up checked the final bool-returning begin/preflight skip and animated ART fixture. Failed MASK begin now skips traversal before editor diagnostic paths; direct guards still protect later rejection in a traversal. Consecutive DEF animation bases exercise 285→286→287 within the native equal-depth group, with a nonzero cutoff and deterministic test-only `totalclocklock`. No simulation timer or engine C ABI change was introduced. The reviewer found no actionable issue in these scoped changes.
 
 A proposed production clock-freeze API was deferred: source investigation found no actual timer/event pumping in these traversals, so repeated camera preparation alone did not establish animation-clock drift. Model/voxel, unsupported-material and capacity-triggered no-write fixtures remain gaps; source guards and an injected late rejection are not equivalent runtime coverage of those assets.
+
+
+## Controller actions and native input integration — 2026-10-16
+
+Fresh controller design and implementation reviewers explicitly used
+`gpt-6-astra` / `xhigh`; effective settings were verified for each review turn.
+Terra separately investigated the native input seam and implemented the bounded
+runtime action backend. Main owns mapping, integration and runtime conclusions.
+
+| Recommendation / finding | Disposition |
+|---|---|
+| Title/menu and demo playback have their own loop | Adopted. Both ordinary game and non-profiling demo owners acquire/sync once before native input. Auxiliary room draws cannot acquire frames. |
+| Snap-turn through mouse input inherits MouseBias and Strafe behavior | Adopted the smaller first slice: native joystick smooth yaw/pitch. A dedicated snap angular seam remains future work. |
+| SDL event handling can invalidate a captured runtime/session | Adopted. Runtime generation increments on shutdown; captured frame/input identity is checked without a lazy getter or XR call from CONTROL. |
+| Poll even when world rendering is ineligible | Adopted. Predicted time is published after wait, including Idle returns; focused actions are queried regardless of frame rendering. Real blocked-view-tracking test retains native firing. |
+| Desktop app focus must not suppress headset input | Adopted. Runtime/action focus is authoritative; native keyboard/device gates stay native. |
+| Do not duplicate native menu repeat or cleared-until-release state | Adopted. One raw semantic snapshot enters existing CONTROL filtering. Physical action activation only adds release-before-use protection on source activation. |
+| A demo early RECHECK exit could leave an unclaimed frame open | Fixed after review: close the unconsumed frame immediately after background/rooms, before UI/menu callbacks and the early exit. |
+| External activity did not update LastSeenInput | Fixed after review. Actual analog/button/menu activity selects native Joystick input semantics, including native aim-assist behavior. A neutral connected controller does not select it. |
+| Profile allowlist and scalar-to-Boolean conversion | Follow core OpenXR action binding rules, with runtime conversion; no duplicated trigger threshold/hysteresis. Only Index has runtime-device proof here. |
+
+The implementation review found no remaining blocking source issue in its
+reviewed slice. Main fixed the two integration gaps above and ran the actual
+controller/title/lifecycle/native-server tests. Context recreation with captured
+input and explicit `shouldRender=false` input proof remain narrower gaps; native
+SDL2 `restartvid` reuses its existing GL context and must not be labeled recreation.
+Haptics, tracked weapon aim/origin, headset UI and full multiplayer qualification
+were outside this bounded slice and remain required for the requested full port.

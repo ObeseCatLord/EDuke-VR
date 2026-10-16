@@ -11,6 +11,31 @@ struct SDL_Window;
 
 namespace eduke_xr
 {
+enum HandButton : uint32_t
+{
+    ButtonSelect     = 1u << 0,
+    ButtonGrip       = 1u << 1,
+    ButtonPrimary    = 1u << 2,
+    ButtonSecondary  = 1u << 3,
+    ButtonMenu       = 1u << 4,
+    ButtonStickClick = 1u << 5,
+};
+
+struct HandInput
+{
+    uint32_t   buttons = 0, activeButtons = 0;
+    XrVector2f stick {};
+    bool       stickActive = false;
+    XrPosef    aimPose {}, gripPose {};
+    bool       aimValid = false, gripValid = false;
+};
+
+struct ActionInput
+{
+    bool      focused = false;
+    HandInput hands[2] {};
+};
+
 // Save the currently drawn framebuffer without changing its rendering state.
 // Used for native-versus-stereo regression captures at the world boundary.
 bool captureFramebuffer(char const *path, uint32_t width, uint32_t height, std::string &error);
@@ -61,7 +86,9 @@ class Runtime
     bool        mirrorEye(uint32_t eye, std::string &error);
     bool        finishFrame(bool submit, std::string &error);
     TickResult  diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error);
+    bool        readInput(ActionInput &out, XrTime atTime, std::string &error);
     uint64_t    submittedFrames() const;
+    uint64_t    generation() const;
 
   private:
     struct Impl;

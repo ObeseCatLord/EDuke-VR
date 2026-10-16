@@ -186,3 +186,47 @@ EDUKE32_XR_SINGLE_PASS=1 python3 tools/vr/smoke_world.py --binary ./eduke32-xr \
 ```
 
 World and mixed runners additionally accept `--minimum-full-multiview-frames`; this is a separate gate from successful stereo submission and opaque-only coverage. Evidence: `../../../evidence/mask-world-stereo.png`, `../../../evidence/mask-multiplayer-gameplay.png` and compact `../../../evidence/mask-validation.json`.
+
+## OpenXR actions through native controls — 2026-10-16
+
+One physical action set now samples Boolean actions, sticks and valid grip/aim
+poses at the located frame's predicted time. Both ordinary game and title/demo
+loops own one sample. CONTROL merges the mapped snapshot before its existing
+button/analog processing; native input_t, CON, ENet and authority are unchanged.
+The dedicated executable is the flat build without an OpenXR dependency.
+
+Actual tests use the installed Monado remote driver, an exclusive private
+runtime/config directory, Index device inputs and the NVIDIA GLX context. The
+remote helper sends actual Monado device state; it never substitutes game
+input or network packets. Owned profiles reference the GRP read-only. XSendEvent
+is restricted to the exact owned SDL window; desktop focus is not changed.
+
+| Test | Observed result |
+|---|---|
+| Single-player actions | 12 checks pass: valid real OpenXR aim poses, native movement, fire/ammo/release, controller inactivation, held reconnect suppression/repress, menu open/hold/back, held-button clearing on close, keyboard coexistence. Position (-31243,7160)→(-30718,9229); pistol ammo48→44. |
+| Title/demo-loop menu | Four checks pass: focused actions in the startup loop, primary advances to episode menu100, holding does not choose an episode, secondary returns to main menu0. |
+| Tracking/action availability | Real libmonado POSES block invalidates tracked poses while native firing continues. INPUTS block neutralizes actions; unblocking a held trigger requires release/repress. |
+| Real XR focus transition | A second owned hidden OpenXR application becomes primary. First game loses action focus, emits neutral controls and continues native ticks. Returning primary focus suppresses the held trigger until release/repress. |
+| Native video reset | `restartvid` executes through the owned window's OSD. SDL2 retains its GL context/session, held input continues, and release/repress works. This is not context-recreation evidence. |
+| Native dedicated + XR client | Both original join (assigned slot1) and replacement join (assigned slot2) pass authoritative server position/input/fire/ammo/release checks. Each spends pistol ammo48→43. First position(-31243,7160)→(-33260,8536); replacement→(-32389,9875). |
+| Stereo regression | Animated-mask asymmetric stereo remains exact in both RGB and complete, nonconstant raw depth against the two-pass reference; once-only CON counts remain equal; mask collection changes no eye color/depth pixels. |
+| Real world frame ownership regression | E1L1 submits60 actual world frames with distinct eye readbacks: opaque59 multiview/1 reference; masks and complete world57 multiview/3 reference. Streaming fallback remains visible. |
+| Runtime validation | Rebuilt shared standalone backend submits12 multiview frames with Khronos core validation enabled; no validation warning/error reported. |
+| Builds | Native and optional XR full builds pass. Flat binary does not link OpenXR; XR binary links its loader. Python compilation and diff checks pass. Existing smmalloc warnings remain. |
+
+The replacement test terminates the first owned process and reconnects a new
+client; the old ENet peer can remain until its native timeout, so the new client
+may receive a different slot. The harness reads the actual native read-only
+`myconnectindex` log and matches that exact player on the server. Initial harness
+runs failed because they assumed slot1 and then waited for client CON input while
+the startup menu was still open. The corrected barrier waits for native network
+synchronization, finishes the finite menu fade, dismisses that menu, then waits
+for the assigned native index and corresponding server observations. No game
+protocol or connection behavior was changed to make the test pass.
+
+Retained bounded evidence is `../../../evidence/controller-validation.json`.
+The individual test labs/logs remain local under work/. Pose validity is not yet
+tracked gameplay aim. Haptics, tracked weapon/shot alignment, user bindings,
+headset UI, real hardware ergonomics, captured-input context recreation,
+explicit shouldRender=false observation and the full multiplayer action matrix
+remain open. Null compositor tests do not establish headset comfort or visuals.

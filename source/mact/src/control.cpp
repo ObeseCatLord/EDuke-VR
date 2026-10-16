@@ -36,6 +36,27 @@ bool CONTROL_JoystickEnabled = false;
 uint64_t CONTROL_ButtonState     = 0;
 uint64_t CONTROL_ButtonHeldState = 0;
 
+static ControlInfo externalAnalog{};
+static uint64_t externalButtons;
+static bool externalPresent;
+static UserInput externalMenu{false, false, false, dir_None};
+static bool (*externalValid)();
+
+void CONTROL_SetExternalInput(ControlInfo const *analog, uint64_t buttons,
+                              UserInput const *menu, bool (*valid)())
+{
+    externalPresent=analog || menu || buttons;
+    externalAnalog = analog ? *analog : ControlInfo{};
+    externalButtons = buttons;
+    externalMenu = menu ? *menu : UserInput{false, false, false, dir_None};
+    externalValid = valid;
+}
+
+static bool controlExternalValid()
+{
+    return externalPresent && (!externalValid || externalValid());
+}
+
 LastSeenInput CONTROL_LastSeenInput;
 
 float CONTROL_MouseAxesSensitivity[2] = { DEFAULTMOUSESENSITIVITY, DEFAULTMOUSESENSITIVITY };
@@ -701,6 +722,20 @@ void CONTROL_GetInput(ControlInfo *info)
     CONTROL_Android_PollDevices(info);
 #endif
     controlPollDevices(info);
+    if (controlExternalValid())
+    {
+        auto const add = [](int32_t a, int32_t b) { return int32_t(clamp<int64_t>(int64_t(a)+b, INT32_MIN, INT32_MAX)); };
+        info->dx=add(info->dx,externalAnalog.dx); info->dy=add(info->dy,externalAnalog.dy);
+        info->dz=add(info->dz,externalAnalog.dz); info->dyaw=add(info->dyaw,externalAnalog.dyaw);
+        info->dpitch=add(info->dpitch,externalAnalog.dpitch); info->droll=add(info->droll,externalAnalog.droll);
+        info->mousex=add(info->mousex,externalAnalog.mousex); info->mousey=add(info->mousey,externalAnalog.mousey);
+        if (externalButtons || externalAnalog.dx || externalAnalog.dy || externalAnalog.dz
+            || externalAnalog.dyaw || externalAnalog.dpitch || externalAnalog.droll
+            || externalAnalog.mousex || externalAnalog.mousey)
+            CONTROL_LastSeenInput=LastSeenInput::Joystick;
+        for (int i=0;i<CONTROL_NUM_FLAGS;++i)
+            CONTROL_ButtonFlags[i] |= (externalButtons >> i) & 1;
+    }
     controlUpdateGameFunctions();
     inputchecked = 1;
 }
@@ -776,6 +811,7 @@ bool CONTROL_Startup(controltype which, int32_t(*TimeFunction)(void), int32_t ti
 
 void CONTROL_Shutdown(void)
 {
+    CONTROL_SetExternalInput(nullptr,0,nullptr);
     if (!CONTROL_Started)
         return;
 
@@ -812,6 +848,10 @@ UserInput *CONTROL_GetUserInput(UserInput *info)
                 || (JOYSTICK_GetControllerButtons() & (1 << CONTROLLER_BUTTON_DPAD_RIGHT)))
         newdir = dir_Right;
 
+    bool const external=controlExternalValid();
+    if (newdir == dir_None && external)
+        newdir=externalMenu.dir;
+
     // allow the user to press the dpad as fast as they like without being rate limited
     if (newdir == dir_None)
     {
@@ -846,6 +886,15 @@ UserInput *CONTROL_GetUserInput(UserInput *info)
         info->b_escape = true;
 #endif
 
+    if (external)
+    {
+        if (externalMenu.b_advance || externalMenu.b_return || externalMenu.b_escape || externalMenu.dir != dir_None)
+            CONTROL_LastSeenInput=LastSeenInput::Joystick;
+        info->b_advance |= externalMenu.b_advance;
+        info->b_return |= externalMenu.b_return;
+        info->b_escape |= externalMenu.b_escape;
+    }
+
     if (userInput.buttonCleared[1])
     {
         if (!info->b_advance)
@@ -871,6 +920,14 @@ UserInput *CONTROL_GetUserInput(UserInput *info)
     }
 
     return info;
+}
+
+bool CONTROL_ExternalInputWaiting()
+{
+    if (!controlExternalValid()) return false;
+    auto const info=CONTROL_GetUserInput(nullptr);
+    return (externalMenu.b_advance && info->b_advance) || (externalMenu.b_return && info->b_return)
+        || (externalMenu.b_escape && info->b_escape) || (externalMenu.dir != dir_None && info->dir != dir_None);
 }
 
 #undef SCALEAXIS

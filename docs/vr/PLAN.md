@@ -11,7 +11,8 @@ Status: native XR foundation and first ordinary-room stereo oracle implemented, 
 - Strict matched-target zero-IPD/native pixel and callback equivalence passes. A bounded indexed-ART opaque multiview path also matches the two-pass reference with deterministic nonzero IPD, asymmetric FOV and pitch/yaw/roll; unequal coverage and initialization-error recovery pass.
 - Native indexed-ART ceiling/floor sky, sky depth-only companions and NPOT shader emulation now pass exact color/depth fixtures. E1L1 uses multiview for 59 of its first 60 opaque frames; one cold texture upload safely retries the reference.
 - Indexed ART masks/sprites now share the multiview transport while preserving native transparency and equal-depth group order. Exact RGB/depth, animated ART/alpha cutoff and recovery fixtures pass.
-- Next implementation work: qualify full-pitch/tracked visibility and controller gameplay, extend remaining material/draw families and reduce demonstrated texture-streaming fallback within the existing resource boundary. Controllers, headset weapon/HUD/menu presentation and the full multiplayer/action/platform matrix remain required.
+- OpenXR actions now merge into native controls and menus once per logical frame, including the title/demo loop. Real Monado remote actions pass movement/fire/release, controller reactivation, focus and native video-reset checks. Native dedicated server observations confirm controller movement/fire/ammo/release on both original and replacement joins. Native `input_t` and network packets remain unchanged. Tracked aim, haptics, settings and actual headset ergonomics remain required.
+- Next implementation work: headset weapon/HUD/menu presentation, authoritative tracked aim, full-pitch/tracked visibility, remaining material/draw families and demonstrated texture-streaming fallback within the existing resource boundary. The full multiplayer/action/platform matrix remains required.
 
 ## Source and behavioral reference
 

@@ -6512,6 +6512,9 @@ void drawframe_do(void)
     MICROPROFILE_SCOPEI("Game", EDUKE32_FUNCTION, MP_YELLOWGREEN);
 
     g_lastFrameStartTime = timerGetNanoTicks();
+#ifdef USE_OPENXR
+    G_XRBeginFrame();
+#endif
 
     if (!g_saveRequested)
     {
@@ -6532,6 +6535,9 @@ void drawframe_do(void)
     int const smoothratio = calc_smoothratio(totalclock, ototalclock);
 
     G_DrawRooms(screenpeek, smoothratio);
+#ifdef USE_OPENXR
+    G_XREndFrame();
+#endif
 
     if (videoGetRenderMode() >= REND_POLYMOST)
         G_DrawBackground();

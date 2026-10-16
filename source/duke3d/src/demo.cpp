@@ -26,6 +26,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "menus.h"
 #include "savegame.h"
 #include "screens.h"
+#ifdef USE_OPENXR
+#include "vr.h"
+#endif
 
 #include "vfs.h"
 
@@ -784,11 +787,18 @@ nextdemo_nomenu:
 
         if (engineFPSLimit((g_player[myconnectindex].ps->gm & MODE_MENU) == MODE_MENU))
         {
+#ifdef USE_OPENXR
+            // Profiling intentionally performs multiple flat renders per tick.
+            if (!Demo_IsProfiling()) G_XRBeginFrame();
+#endif
             G_HandleLocalKeys();
 
             if (foundemo == 0)
             {
                 G_DrawBackground();
+#ifdef USE_OPENXR
+                G_XREndFrame();
+#endif
             }
             else
             {
@@ -837,6 +847,9 @@ nextdemo_nomenu:
                 {
                     j = calc_smoothratio(g_demo_paused ? lockclock : totalclock, ototalclock, REALGAMETICSPERSEC);
                     G_DrawRooms(screenpeek, j);
+#ifdef USE_OPENXR
+                    G_XREndFrame();
+#endif
                     G_DisplayRest(j);
 
                 }

@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Test-only observation of native server/client input and player state.
+include GAME.CON
+
+gamevar vrinput_tick 0 1
+gamevar vrinput_player 0 1
+gamevar vrinput_bits 0 1
+gamevar vrinput_fvel 0 1
+gamevar vrinput_svel 0 1
+gamevar vrinput_x 0 1
+gamevar vrinput_y 0 1
+gamevar vrinput_z 0 1
+gamevar vrinput_weapon 0 1
+gamevar vrinput_ammo 0 1
+gamevar vrinput_sample 0 1
+
+onevent EVENT_PROCESSINPUT
+    addvar vrinput_tick 1
+    addvar vrinput_sample 1
+    ifvare vrinput_sample 5
+    {
+        setvar vrinput_sample 0
+        getactor[THISACTOR].yvel vrinput_player
+        getinput[THISACTOR].bits vrinput_bits
+        getinput[THISACTOR].fvel vrinput_fvel
+        getinput[THISACTOR].svel vrinput_svel
+        getplayer[THISACTOR].posx vrinput_x
+        getplayer[THISACTOR].posy vrinput_y
+        getplayer[THISACTOR].posz vrinput_z
+        getplayer[THISACTOR].curr_weapon vrinput_weapon
+        getplayer[THISACTOR].ammo_amount 1 vrinput_ammo
+        addlog vrinput_tick
+        addlog vrinput_player
+        addlog vrinput_bits
+        addlog vrinput_fvel
+        addlog vrinput_svel
+        addlog vrinput_x
+        addlog vrinput_y
+        addlog vrinput_z
+        addlog vrinput_weapon
+        addlog vrinput_ammo
+        addlog myconnectindex
+    }
+endevent

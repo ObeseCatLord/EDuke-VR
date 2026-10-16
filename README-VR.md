@@ -1,6 +1,6 @@
 # EDuke32 VR work in progress
 
-This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, headset/controller presentation and gameplay, and multiplayer qualification remain open.
+This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, tracked aiming, headset weapon/UI presentation and complete multiplayer qualification remain open. OpenXR controllers now feed native movement, turning, gameplay buttons and menus, with simulated runtime and native server authority tests.
 
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
@@ -61,7 +61,7 @@ EDUKE32_XR_WORLD_OUTPUT=/path/to/test/world \
 
 This opts into the first ordinary-room **two-pass reference renderer**. It uses the located eye poses/FOVs, a recentered tracking-to-game transform and RazeXR's world scale. It draws both opaque views before running sprite animation/CON once, then draws each eye's masks using saved wall IDs and per-eye sprite membership. The desktop mirrors the left eye and retains native weapon/HUD drawing. Weapons/HUD are not yet in the headset.
 
-The optional output prefix captures both actual eye layers on frame 60. The log reports that milestone. XR remains active afterward; errors stop the session and restore native rendering. Unsupported native half-space coverage or camera collision is reported rather than silently clamping the tracked pose. Full pitch, room-scale collision/fade, mirrors/YAX, other camera modes and controller input remain required milestones.
+The optional output prefix captures both actual eye layers on frame 60. The log reports that milestone. XR remains active afterward; errors stop the session and restore native rendering. Unsupported native half-space coverage or camera collision is reported rather than silently clamping the tracked pose. Full pitch, room-scale collision/fade, mirrors/YAX, other camera modes and tracked controller aiming remain required milestones.
 
 A repeatable isolated test, using your already-running runtime:
 
@@ -129,3 +129,58 @@ python3 tools/vr/smoke_multiplayer.py --binary ./eduke32 --client-binary ./eduke
 The multiplayer runner requires Python Pillow, X11/XTest libraries and ImageMagick `import`; private-display runs also require Xvfb. External-display input/capture targets only a window whose PID matches the spawned client. The caller supplies its runtime manifest/private runtime directory environment.
 
 Do not put proprietary GRP/maps/CON/audio, private configs, or raw session logs in this repository. Existing source licenses are preserved under `package/common`.
+
+
+## OpenXR controller input
+
+World mode (`EDUKE32_XR=1`) creates one action set with simple-controller, Touch,
+Index and Microsoft motion-controller profiles. The Index profile is exercised
+through a private Monado remote driver; the other profiles have not been tested
+on hardware. Inputs use EDuke32's existing control, menu, CON and network paths.
+Keyboard and mouse remain available.
+
+| Control | Native action |
+|---|---|
+| Left stick | Move / strafe; radial 20% dead zone |
+| Right stick | Native smooth turn / look |
+| Right trigger / select | Fire |
+| Left trigger / select | Open / use |
+| Right primary / secondary face button | Jump / crouch |
+| Left primary / secondary face button | Previous / next weapon |
+| Either grip | Run |
+| Menu action | Open menu (Index: left stick click) |
+| Select or primary in menus | Advance |
+| Secondary in menus | Back |
+| Either stick in menus | Native navigation and repeat |
+
+Unavailable or unfocused actions become neutral. A button already held when
+it first becomes active, reconnects or regains focus requires release before
+it can act. Native input-clearing also suppresses held buttons across menu
+transitions. OpenXR focus is independent of desktop window focus.
+
+Aim/grip poses are collected at the predicted display time, but tracked aiming,
+hand-position firing, visible tracked weapons, haptics and comfort settings are
+still required. Current aim and shot origin remain the native player values.
+The control map is an initial fixed mapping, pending user settings.
+
+The test tools require an already-running **private** Monado remote-driver
+runtime with the native `mndrmt3` protocol. They do not modify global runtime
+configuration or installed game content. Supply the runtime environment and an
+owned GRP:
+
+```sh
+python3 tools/vr/smoke_actions.py --binary ./eduke32-xr --display :1 \
+  --grp /path/to/DUKE3D.GRP --work-dir work/actions --remote-port 29427
+# Add --title-menu to test the separate title/demo frame loop.
+python3 tools/vr/smoke_action_lifecycle.py --binary ./eduke32-xr \
+  --helper source/vr/xr_smoke --display :1 --grp /path/to/DUKE3D.GRP \
+  --work-dir work/actions --remote-port 29427
+python3 tools/vr/smoke_actions_multiplayer.py --binary ./eduke32 \
+  --client-binary ./eduke32-xr --display :1 --grp /path/to/DUKE3D.GRP \
+  --work-dir work/actions --remote-port 29427 --port 24586 --reconnect
+```
+
+The lifecycle tool requires exclusive use of the private runtime. It changes
+only the owned clients' Monado focus/IO state and restores that state on exit.
+Its native `restartvid` check retains the SDL2 context; actual in-game context
+loss/recreation remains an unclosed test gap.
