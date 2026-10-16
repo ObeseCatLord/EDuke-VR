@@ -79,7 +79,7 @@ def main():
         common=dict(os.environ,DISPLAY=a.display,SDL_VIDEODRIVER='x11',SDL_AUDIODRIVER='dummy')
         se={k:v for k,v in common.items() if not k.startswith(('XR_','EDUKE32_XR'))}
         ce=dict(common,EDUKE32_XR='1',EDUKE32_XR_UI='2',EDUKE32_XR_SINGLE_PASS='1',EDUKE32_XR_AIM=a.mode,
-                EDUKE32_XR_TEST_AIM='1',EDUKE32_XR_TEST_INPUT='1',EDUKE32_XR_HUD_OUTPUT=str(cl/'aim'),EDUKE32_XR_WORLD_OUTPUT=str(cl/'world'))
+                EDUKE32_XR_TEST_AIM='1',EDUKE32_XR_CROSSHAIR_OUTPUT=str(cl/'aim-crosshair'),EDUKE32_XR_TEST_INPUT='1',EDUKE32_XR_HUD_OUTPUT=str(cl/'aim'),EDUKE32_XR_WORLD_OUTPUT=str(cl/'world'))
         for key in ('EDUKE32_XR_TEST_ZERO_IPD','EDUKE32_XR_TEST_STEREO_POSE','EDUKE32_XR_TEST_FAIL','EDUKE32_XR_TEST_HUD_MENU','EDUKE32_XR_TEST_HUD_TINT'):
             ce.pop(key,None)
         slog=(sl/'server.log').open('w');logs.append(slog)
@@ -162,18 +162,21 @@ def main():
             positions=re.findall(position_pattern,text)
             actual_positions=list(map(int,positions[-1])) if positions else []
             checks['actual_eye_cameras_follow_HMD_once']=len(actual_camera)==6 and all(abs(difference(actual_camera[i],math.radians(v)))<.002 for i,v in ((2,head_yaw),(3,head_pitch),(4,head_yaw),(5,head_pitch)))
-            marker=re.findall(r'OpenXR aim crosshair: nativeX=(-?\d+\.\d+) nativeY=(-?\d+\.\d+) panelX=(-?\d+\.\d+) panelY=(-?\d+\.\d+)',text)
-            actual_marker=list(map(float,marker[-1])) if marker else []
-            hy,hp=map(math.radians,(head_yaw,head_pitch)); ay,ap=angle(head),pitch(head)
-            direction=np.array([math.sin(ay)*math.cos(ap),math.sin(ap),-math.cos(ay)*math.cos(ap)])
-            forward=np.array([math.sin(hy)*math.cos(hp),math.sin(hp),-math.cos(hy)*math.cos(hp)])
-            right_vector=np.array([math.cos(hy),0,math.sin(hy)]);up_vector=np.cross(right_vector,forward)
-            panel=[1.5*float(direction@axis)/float(direction@forward) for axis in (right_vector,up_vector)]
-            checks['crosshair_projection_matches_native_authority']=len(actual_marker)==4 and max(abs(actual_marker[i+2]-panel[i]) for i in range(2))<.003
-            ui=np.array(Image.open(cl/'aim-ui.ppm'))
-            px=int(ui.shape[1]/2+panel[0]/.9*ui.shape[1]/2);py=int(ui.shape[0]/2-panel[1]/(.9*ui.shape[0]/ui.shape[1])*ui.shape[0]/2)
-            patch=ui[max(0,py-8):py+9,max(0,px-8):px+9].astype(int)
-            checks['actual_UI_crosshair_pixels_at_projected_direction']=bool(((patch[:,:,0]>40)&(patch[:,:,1]>40)&(patch[:,:,2]<20)&(np.abs(patch[:,:,0]-patch[:,:,1])<8)).any())
+            # The former head-panel marker is now a native world-space segment.
+            from smoke_crosshair import raster
+            prefix=cl/'aim-crosshair'
+            actual_marker=list(map(int,re.findall(r'OpenXR world crosshair: start=(-?\d+),(-?\d+),(-?\d+) hit=(-?\d+),(-?\d+),(-?\d+)',text)[-1]))
+            ray=(np.array(actual_marker[3:])-actual_marker[:3])/np.array([1,1,16]);ray=ray/np.linalg.norm(ray)
+            ay,ap=angle(head),pitch(head)
+            direction=np.array([math.cos(ay)*math.cos(ap),math.sin(ay)*math.cos(ap),-math.sin(ap)])
+            checks['world_crosshair_trace_follows_native_authority']=float(np.abs(ray-direction).max())<.001
+            matrices={int(i):np.fromstring(m,sep=',').reshape(4,4,order='F') for i,m in re.findall(r'OpenXR crosshair matrix: eye=(\d) values=([^\n]+)\.',text)}
+            ui=np.array(Image.open(str(prefix)+'-ui.ppm'));alpha=np.array(Image.open(str(prefix)+'-coverage.pgm'));errors=[]
+            for eye,name in enumerate(('left','right')):
+                before_eye=np.array(Image.open(str(prefix)+f'-before-{name}.ppm'));after_eye=np.array(Image.open(str(prefix)+f'-{name}.ppm'))
+                depth=np.flipud(np.fromfile(str(prefix)+f'-before-{name}-depth.bin',dtype=np.uint32).reshape(before_eye.shape[:2]))/4294967295
+                expected,_,_=raster(before_eye,ui,alpha,depth,matrices[eye]);errors.append(int(np.abs(expected.astype(int)-after_eye.astype(int)).max()))
+            checks['both_eye_world_crosshair_pixels_match_projection']=max(errors)<=2
             if 'XR_APILAYER_LUNARG_core_validation' in ce.get('XR_ENABLE_API_LAYERS',''):
                 checks['core_validation_active']='Core Validation output type:' in co.text()
             checks['core_validation_no_warning_or_error']=not bool(re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',co.text()))
@@ -222,7 +225,7 @@ def main():
                 remote.packet.right.thumbstick.y=0;remote.send()
             if a.late_controller: checks['late_controller_uses_existing_head_reference']=checks['native_server_orientation_matches_tracking'] and checks['actual_eye_cameras_follow_HMD_once']
             result={'passed':all(checks.values()),'checks':checks,'mode':a.mode,'server_player':player,
-                    'native_samples':{'before':before,'controller':steady,'after_HMD_motion':head},'actual_RPG':actual,'actual_impact':hit,'impact_trajectory_error_build_units':trajectory_error,'actual_eye_camera_radians':actual_camera,'actual_eye_positions_build':actual_positions,'actual_marker':actual_marker,'expected_marker_panel':panel,
+                    'native_samples':{'before':before,'controller':steady,'after_HMD_motion':head},'actual_RPG':actual,'actual_impact':hit,'impact_trajectory_error_build_units':trajectory_error,'actual_eye_camera_radians':actual_camera,'actual_eye_positions_build':actual_positions,'actual_marker':actual_marker,'crosshair_pixel_max_error':errors,
                     'expected_delta_degrees':list(target),'observed_delta_degrees':[math.degrees(difference(angle(steady),angle(before))),math.degrees(pitch(steady)-pitch(before))]}
     except Exception as error:result={'passed':False,'phase':phase,'error':str(error)}
     finally:

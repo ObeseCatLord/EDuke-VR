@@ -230,3 +230,34 @@ frag/respawn, map changes/late joins, loss and independent VR peers. Retain
 existing bounded protocol work without spending further milestones on legacy
 compatibility. Remaining weapon families include Devastator (real native
 twin-barrel/spread policy), thrown explosives, tripmine, melee and flames.
+
+
+## World-space crosshair follow-through
+
+User explicitly requested a proper projected world-space aiming crosshair.
+The native crosshair event/ART now occupies one sequential captured segment at
+its original display boundary. Its world point comes from native hitscan using
+the existing constrained hand origin, or native body aim where applicable. The
+existing multiview segment draw accepts the two actual native camera clip
+matrices and LEQUAL world-depth testing, with writes off. Reusing this boundary
+avoids a fake actor, moved CON callbacks, another capture texture, renderer or
+frame owner. Exact native relative-coordinate projection is exported after each
+mask camera setup; large absolute world coordinates are subtracted first.
+
+Initial camera-facing ART clipped into its own hit wall. The narrow correction
+aligns wall/sector contacts to the hit surface and reuses native 320x200 scaling
+for the precise ART anchor. Point/depth/pixel and actual authoritative-shot
+checks qualify the geometry, rather than trusting uploaded matrices alone.
+The reticle previews free aim before weapon-specific correction/spread/arcs.
+Remaining full-pitch visibility, custom-material/camera and dynamic-world
+qualification still apply; the full VR/multiplayer goal remains active.
+
+
+User testing constraint (2026-10-16): all further local game tests in this task
+must use `EDUKE32_TEST_PRIVATE_WINDOW=1` plus the private null-compositor Monado
+runtime. SDL drawables stay unmapped; native startup dialogs/log windows,
+fullscreen changes, mouse capture and desktop gamma changes are suppressed in
+this explicit test mode. Use owned-window XSendEvent and framebuffer captures;
+never map/raise/focus a game window or send global desktop input. Current
+crosshair fixtures verify real unmapped/focus state as well as gameplay.
+Older-peer compatibility remains outside the required scope.

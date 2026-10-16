@@ -389,3 +389,26 @@ bounded slice. The narrow zero-xvel backoff repair removes a reproduced sideways
 vertical impact, without a new projectile state machine. It does not redesign
 all native impact policy. User subsequently removed older-peer compatibility as
 a requirement; additional work should focus on current-build behavior.
+
+## World-space crosshair — main design/verification
+
+User requested a projected world-space reticle. The verified scratch brief
+compared the existing sequential native-ART capture with injecting an actor,
+moving CON callbacks into room rendering, or adding a renderer/swapchain. Main
+kept the existing event order and capture/lifecycle, extending only its draw
+boundary with two native clip matrices and depth testing. Independent work could
+not start at retained agent capacity; earlier explicitly selected Astra follow-up
+requests hit the same limit. No fresh review or substitute-model review ran.
+
+| Decision | Main disposition/evidence |
+|---|---|
+| Reuse HUD projection depth | Rejected. Native Polymost's depth differs from the backend HUD near/far convention. Export actual prepared native projection/rotation plus relative Build mapping. Independent physical projection and real world-depth occlusion pass. |
+| Add a fake actor or move the crosshair event into room rendering | Rejected. One native event and original desktop ART segment remain; existing multiview capture is reused without another actor/owner/texture. |
+| Keep a camera-facing marker on every contact | Adapted after runtime failure. It intersected its own wall. Native wall/sector plane alignment removes that clipping; actor contacts retain billboard presentation. |
+| Place by the centre of the full capture texture | Rejected after source/runtime inspection. Reuse native viewport/320x200 scaling to find the actual ART anchor. The independently projected world point matches the marker anchor in both eyes. |
+| Trust a green counter/uploaded matrix | Rejected. Real server shot, independent physical projection, CPU depth/pixel oracle, actual occlusion and native callback references qualify15 cases plus9 regressions. |
+| Keep visible test windows | Rejected at user's request. Explicit hidden drawable mode and native startup suppression; actual X11 unmapped/focus checks pass for all15 final reticle fixtures. |
+
+The central ray is a preview, not another implementation of native autoaim,
+weapon spread/CON fire events or ballistic simulation. Those callbacks are not
+replayed for the reticle. User no longer requires older-peer interoperability.

@@ -95,7 +95,7 @@ def main():
     env={k:v for k,v in os.environ.items() if not k.startswith('EDUKE32_XR')}
     mode='left' if a.case=='left' else 'right'
     env.update(DISPLAY=a.display,SDL_VIDEODRIVER='x11',SDL_AUDIODRIVER='dummy',EDUKE32_XR='1',EDUKE32_XR_UI='2',EDUKE32_XR_SINGLE_PASS='1',EDUKE32_XR_AIM=mode,EDUKE32_XR_WEAPON='1',
-               EDUKE32_XR_WEAPON_OUTPUT=str(lab/'weapon'),EDUKE32_XR_WORLD_OUTPUT=str(lab/'world'),EDUKE32_XR_HUD_OUTPUT=str(lab/'hud'))
+               EDUKE32_XR_WEAPON_OUTPUT=str(lab/'weapon'),EDUKE32_XR_CROSSHAIR_OUTPUT=str(lab/'crosshair'),EDUKE32_XR_WORLD_OUTPUT=str(lab/'world'),EDUKE32_XR_HUD_OUTPUT=str(lab/'hud'))
     if a.case=='tint':env['EDUKE32_XR_TEST_HUD_TINT']='3'
     if a.case=='save':env['EDUKE32_XR_TEST_HUD_MENU']='2'
     if a.case=='nested':env['EDUKE32_XR_TEST_WEAPON_NESTED']='1'
@@ -161,8 +161,9 @@ def main():
                     # Pick peripheral points outside the head panel and card.
                     final=[np.array(Image.open(lab/f'hud-{eye}.ppm')) for eye in ('left','right')]
                     checks['full_eye_tint_reaches_already_composited_world']=all(np.any(f[:80,:80]!=w[:80,:80]) for f,w in zip(final,after))
-                # Independently composite the final head-relative HUD over the
-                # already placed weapon, respecting native full-eye tint/dim.
+                # The spatial crosshair is a separate sequential segment. Its
+                # own pixel/depth proof lives in smoke_crosshair; start this HUD
+                # composition at that actual completed boundary.
                 head=remote.packet.head.center
                 head_q=np.array([getattr(head.orientation,k) for k in ('x','y','z','w')])
                 head_pos=np.array([head.position.x,head.position.y,head.position.z])-local_origin
@@ -171,7 +172,8 @@ def main():
                 hud=np.array(Image.open(lab/'hud-ui.ppm'))
                 final_errors=[]
                 for i in range(2):
-                    world=after[i].astype(float)
+                    segment=lab/f"crosshair-{('left','right')[i]}.ppm"
+                    world=(np.array(Image.open(segment)) if segment.is_file() else after[i]).astype(float)
                     if a.case=='save':world=np.rint(world*(1-168/255))
                     if a.case=='tint':
                         tint=np.array([80,120,200],dtype=float)/255

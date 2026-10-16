@@ -102,6 +102,8 @@ static bool overlayEnabled()
 }
 static eduke_xr::Runtime *menuRuntime;
 static uint64_t menuGeneration, menuOwner;
+// Geometry from the same acquired world frame; no separate presentation owner.
+static struct { float matrix[2][16]; vec3_t eye[2]; bool valid=false; } crosshairViews;
 static eduke_xr::ActionInput rawInput;
 static std::array<uint32_t,2> activeInputButtons{}, blockedInputButtons{};
 static float aimYawOffset, aimPitchOffset;
@@ -624,6 +626,144 @@ void G_XREndWeapon(bool captured)
     { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
 }
 
+bool G_XRBeginCrosshair()
+{
+    if (!crosshairViews.valid || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return false;
+    // Flush the preceding HUD at its original depth/order. Only the native
+    // crosshair returned by EVENT_DISPLAYCROSSHAIR enters this spatial segment.
+    XrPosef panel=rawInput.headPose;
+    auto const offset=rotate(panel.orientation,{0,0,-eduke_xr::PanelDistance});
+    panel.position.x+=offset.x; panel.position.y+=offset.y; panel.position.z+=offset.z;
+    std::string error;
+    if (!menuRuntime->flushMenuOverlay(panel,eduke_xr::PanelHalfWidth,eduke_xr::PanelHalfWidth*float(ydim)/xdim,
+                                       rawInput.headValid && validPose(rawInput.headPose),error))
+    { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
+    if (worldFrames==59)
+        if (auto prefix=std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT"))
+        {
+            std::string before=std::string(prefix)+"-before";
+            if (!menuRuntime->captureFrame(before.c_str(),false,error,true))
+            { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
+        }
+    return true;
+}
+
+void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t flags)
+{
+    if (!captured || !crosshairViews.valid || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
+    auto const p=g_player[myconnectindex].ps;
+    auto const body=aimBodyCamera(camera());
+    bool visible=screenpeek==myconnectindex && !ud.recstat && p->newowner<0 && !p->over_shoulder_on
+        && !(p->gm & MODE_MENU) && rawInput.headValid && validPose(rawInput.headPose)
+        && (aimHand()==-2 || aimPoseUsable())
+        && unsigned(p->i)<MAXSPRITES && sprite[p->i].extra>0;
+    int64_t const anchorZ=int64_t(p->pos.z)+p->pyoff;
+    visible=visible && anchorZ>=INT32_MIN && anchorZ<=INT32_MAX;
+    vec3_t start={p->pos.x,p->pos.y,int32_t(std::max<int64_t>(INT32_MIN,std::min<int64_t>(INT32_MAX,anchorZ)))};
+    int16_t sector=p->cursectnum; bool clamped=false;
+    float const pitch=nativePitch(p->q16horiz+p->q16horizoff), angle=fix16_to_float(p->q16ang)*Pi/1024.f;
+    vec3_t ray={int32_t(std::lround(std::cos(angle)*std::cos(pitch)*32767.f)),
+                int32_t(std::lround(std::sin(angle)*std::cos(pitch)*32767.f)),int32_t(std::lround(-std::sin(pitch)*32767.f))*16};
+    if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
+    {
+        visible=visible && aimPoseUsable() && Net_VRShotAvailable() && G_VRResolveShot(myconnectindex,start,sector,clamped);
+        auto const shot=G_VRGetShotInput(myconnectindex);
+        ray={shot.direction[0],shot.direction[1],shot.direction[2]*16};
+    }
+    hitdata_t hit{}; hit.sect=-1;
+    if (visible && unsigned(sector)<unsigned(numsectors))
+    {
+        auto &owner=sprite[p->i]; auto const cstat=owner.cstat;
+        owner.cstat &= ~(CSTAT_SPRITE_BLOCK|CSTAT_SPRITE_BLOCK_HITSCAN);
+        hitscan(&start,sector,ray.x,ray.y,ray.z,&hit,CLIPMASK1);
+        owner.cstat=cstat;
+    }
+    visible=visible && hit.sect>=0;
+    float matrices[2][16]={};
+    XrPosef unused{}; unused.orientation.w=1;
+    if (visible)
+    {
+        // Pull four native XY-equivalent units toward the ray origin to avoid
+        // z fighting at the actual surface. The centre is shared by both eyes.
+        float const dx=float(hit.x)-start.x, dy=float(hit.y)-start.y, dz=float(hit.z)-start.z;
+        float const distance=std::sqrt(dx*dx+dy*dy+dz*dz/256.f);
+        float const back=distance>4.f ? 4.f/distance : 0.f;
+        XrVector3f const point={hit.x-dx*back,hit.y-dy*back,hit.z-dz*back};
+        auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+        float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+        auto const toBuild=[&](XrVector3f v) {
+            v=rotate(tracking,v);
+            return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+        };
+        auto const head=toBuild({rawInput.headPose.position.x-origin.x,rawInput.headPose.position.y-origin.y,rawInput.headPose.position.z-origin.z});
+        float const hx=point.x-body.pos.x-head.x, hy=point.y-body.pos.y-head.y, hz=(point.z-body.pos.z-head.z)/16.f;
+        float const halfHeight=.6f*std::sqrt(hx*hx+hy*hy+hz*hz)/UnitsPerMetre;
+        auto right=toBuild(rotate(rawInput.headPose.orientation,{1,0,0}));
+        auto up=toBuild(rotate(rawInput.headPose.orientation,{0,1,0}));
+        // Project onto the hit wall/sector plane. A head-facing billboard can
+        // otherwise bury half its ART behind the very surface it marks.
+        XrVector3f normal{};
+        if (hit.wall>=0)
+        {
+            auto const &a=wall[hit.wall], &b=wall[a.point2];
+            normal={float(b.y)-a.y,float(a.x)-b.x,0};
+        }
+        else if (hit.sprite<0)
+        {
+            bool const ceiling=std::abs(int64_t(hit.z)-getceilzofslope(hit.sect,hit.x,hit.y))
+                              <std::abs(int64_t(hit.z)-getflorzofslope(hit.sect,hit.x,hit.y));
+            auto const slope=ceiling ? getceilzofslope : getflorzofslope;
+            int const z=slope(hit.sect,hit.x,hit.y);
+            normal={-(slope(hit.sect,hit.x+256,hit.y)-z)/4096.f,
+                    -(slope(hit.sect,hit.x,hit.y+256)-z)/4096.f,1};
+        }
+        float const normalLength=std::sqrt(dot(normal,normal));
+        if (normalLength>0)
+        {
+            normal={normal.x/normalLength,normal.y/normalLength,normal.z/normalLength};
+            if (normal.x*ray.x+normal.y*ray.y+normal.z*ray.z/16.f>0)
+                normal={-normal.x,-normal.y,-normal.z};
+            XrVector3f r={right.x/UnitsPerMetre,right.y/UnitsPerMetre,right.z/ZUnitsPerMetre};
+            float const along=dot(r,normal);
+            r={r.x-normal.x*along,r.y-normal.y*along,r.z-normal.z*along};
+            float const length=std::sqrt(dot(r,r));
+            if (length>1e-5f)
+            {
+                r={r.x/length,r.y/length,r.z/length}; auto const u=cross(normal,r);
+                right={r.x*UnitsPerMetre,r.y*UnitsPerMetre,r.z*ZUnitsPerMetre};
+                up={u.x*UnitsPerMetre,u.y*UnitsPerMetre,u.z*ZUnitsPerMetre};
+            }
+        }
+        right={right.x*halfHeight*float(xdim)/ydim,right.y*halfHeight*float(xdim)/ydim,right.z*halfHeight*float(xdim)/ydim};
+        up={up.x*halfHeight,up.y*halfHeight,up.z*halfHeight};
+        auto const anchor=polymost_xrRotateSpriteAnchor(position,scale,flags);
+        float const ax=2.f*anchor.x/xdim-1.f, ay=1.f-2.f*anchor.y/ydim;
+        for (int eye=0;eye<2;++eye)
+        {
+            auto const &m=crosshairViews.matrix[eye]; auto const e=crosshairViews.eye[eye];
+            float const columns[4][4]={{right.x,right.y,right.z,0},{up.x,up.y,up.z,0},{0,0,0,0},
+                                      {point.x-e.x-right.x*ax-up.x*ay,point.y-e.y-right.y*ax-up.y*ay,point.z-e.z-right.z*ax-up.z*ay,1}};
+            for (int column=0;column<4;++column)
+                for (int row=0;row<4;++row)
+                    for (int k=0;k<4;++k) matrices[eye][column*4+row]+=m[k*4+row]*columns[column][k];
+        }
+        if (worldFrames==59 && std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT"))
+        {
+            LOG_F(INFO,"OpenXR world crosshair: start=%d,%d,%d hit=%d,%d,%d sector=%d wall=%d sprite=%d point=%.6f,%.6f,%.6f.",
+                  start.x,start.y,start.z,hit.x,hit.y,hit.z,hit.sect,hit.wall,hit.sprite,point.x,point.y,point.z);
+            LOG_F(INFO,"OpenXR crosshair anchor: pixel=%.6f,%.6f.",anchor.x,anchor.y);
+            for (int eye=0;eye<2;++eye)
+                LOG_F(INFO,"OpenXR crosshair matrix: eye=%d values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",eye,
+                      matrices[eye][0],matrices[eye][1],matrices[eye][2],matrices[eye][3],matrices[eye][4],matrices[eye][5],matrices[eye][6],matrices[eye][7],
+                      matrices[eye][8],matrices[eye][9],matrices[eye][10],matrices[eye][11],matrices[eye][12],matrices[eye][13],matrices[eye][14],matrices[eye][15]);
+        }
+    }
+    char const *prefix=worldFrames==59 ? std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT") : nullptr;
+    std::string error;
+    if (!menuRuntime->flushMenuOverlay(unused,1,1,visible,error,prefix,&matrices[0][0]))
+    { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
+}
+
 void G_XRArmMenuPresentation()
 {
     if (auto test=std::getenv("EDUKE32_XR_TEST_HUD_MENU"))
@@ -672,6 +812,7 @@ void G_XREndFrame()
 
 void G_XRBeginFrame()
 {
+    crosshairViews.valid=false;
     // Credit only the exact completed projection, never a rendered image that
     // was later canceled by a nested native draw, resize, or early swap.
     if (worldReceipt.runtime && worldReceipt.runtime->generation()==worldReceipt.generation
@@ -1092,6 +1233,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 renderPrepareMasksQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,
                                      eye.camera.angle,eye.camera.horizon,eye.camera.sector);
                 g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
+                polymost_xrRelativeWorldToClip(crosshairViews.matrix[i]);
+                crosshairViews.eye[i]=eye.camera.pos;
                 if (testArtClock()) totalclocklock=1;
                 spritesortcnt=pristine.size();
                 std::copy(pristine.begin(),pristine.end(),tsprite);
@@ -1187,6 +1330,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     renderSetAspect(oldRange,oldAspect);
     std::string endError;
     bool const deferPresentation=good && !fixtureTest && overlayEnabled();
+    crosshairViews.valid=deferPresentation;
     if (!deferPresentation && !runtime->finishFrame(good && !fixtureTest,endError)) { good=false; error += " "+endError; }
     if (deferPresentation)
     {

@@ -72,3 +72,10 @@ remain the implementation. The pure vertical backoff repair is a narrow native
 zero-horizontal-speed correction demonstrated against retained before evidence.
 Test wrappers include the caller's owned GAME.CON locally; they redistribute no
 proprietary game scripts/assets. No new RazeXR source is copied in this slice.
+
+The world-space reticle is original adapter code using EDuke32 hitscan,
+rotatesprite scaling, native ART/crosshair controls and actual Polymost camera
+matrices. It extends the existing native-segment multiview draw with depth
+testing, without copying another renderer or adding a network simulation.
+The private-window test flag changes only explicitly opted-in test processes;
+ordinary native window/input/gamma behavior remains on its existing branches.

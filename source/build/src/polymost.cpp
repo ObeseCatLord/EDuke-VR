@@ -7975,6 +7975,40 @@ void polymost_xrProjectionReset()
     xrProjection.active = false;
 }
 
+// Reuse native 320x200/viewport scaling to anchor a spatial UI segment exactly
+// at the returned ART draw origin, including native/custom draw offsets.
+vec2f_t polymost_xrRotateSpriteAnchor(vec2_t position, int32_t scale, int32_t flags)
+{
+    int32_t aspect, inverseAspect;
+    if (g_rotatespriteNoWidescreen) { flags|=RS_STRETCH; flags&=~RS_ALIGN_MASK; }
+    dorotspr_handle_bit2(&position.x,&position.y,&scale,flags,windowxy1.x+windowxy2.x,windowxy1.y+windowxy2.y,&aspect,&inverseAspect);
+    return {float(position.x)/65536.f,float(position.y)/65536.f};
+}
+
+// Same world-relative vertex construction as native face sprites/drawpoly,
+// followed by the actual native shader rotation and GL projection. Keeping the
+// native depth convention is essential for depth-tested world-space overlays.
+void polymost_xrRelativeWorldToClip(float *matrix)
+{
+    float projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
+    float const scale=1.f/(gviewxrange*1024.f);
+    float const coordinates[16]={-gsinang*scale,0,gcosang2*scale,0,
+                                gcosang*scale,0,gsinang2*scale,0,
+                                0,-gyxscale*grhalfxdown10/gviewxrange,0,0,
+                                0,0,0,1};
+    for (int column=0;column<4;++column)
+    {
+        float rotated[4]={};
+        for (int row=0;row<4;++row)
+            for (int k=0;k<4;++k) rotated[row]+=polymost1RotMatrix[k*4+row]*coordinates[column*4+k];
+        for (int row=0;row<4;++row)
+        {
+            matrix[column*4+row]=0;
+            for (int k=0;k<4;++k) matrix[column*4+row]+=projection[k*4+row]*rotated[k];
+        }
+    }
+}
+
 void polymost_prepareMasksView()
 {
     if (videoGetRenderMode() != REND_POLYMOST)

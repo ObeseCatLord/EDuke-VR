@@ -1465,7 +1465,7 @@ bool Runtime::cancelMenuPresentation(std::string &error, bool mirror)
     return good;
 }
 
-bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error)
+bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices)
 {
     GLState state;
     state.save();
@@ -1501,7 +1501,9 @@ bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHe
             viewMatrix(m_impl->views[i].pose, view);
             multiply(viewProjection, projection, view);
             multiply(matrices[i], viewProjection, model);
+            if (worldClipMatrices) std::memcpy(matrices[i],worldClipMatrices+i*16,sizeof(matrices[i]));
         }
+        if (worldClipMatrices) { glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); }
         glUseProgram(m_impl->menuProgram);
         glUniform1i(glGetUniformLocation(m_impl->menuProgram,"uMode"),m_impl->menuOverlay ? 1 : 0);
         glUniformMatrix4fv(glGetUniformLocation(m_impl->menuProgram, "uViewProj[0]"), kViewCount, GL_FALSE, &matrices[0][0]);
@@ -1518,11 +1520,11 @@ bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHe
 }
 
 bool Runtime::flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfHeight, bool visible,
-                              std::string &error, char const *capturePrefix)
+                              std::string &error, char const *capturePrefix, float const *worldClipMatrices)
 {
     error.clear();
     if (!menuOverlayTargetBound()) { error="overlay flush requires the active UI target"; return false; }
-    bool good=!visible || drawMenuCapture(pose,halfWidth,halfHeight,error);
+    bool good=!visible || drawMenuCapture(pose,halfWidth,halfHeight,error,worldClipMatrices);
     if (good && capturePrefix)
     {
         GLint bits=0; glGetIntegerv(GL_SUBPIXEL_BITS,&bits);

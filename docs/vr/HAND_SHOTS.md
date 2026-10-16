@@ -114,8 +114,10 @@ pivot and raw aim orientation; actual GPU fixtures compare it with independently
 projected server origins in a static map. Dynamic-world latency reconciliation
 is still open. The origin is the aim pose, not a calibrated barrel tip. The card
 keeps its existing foreground depth behavior and can intersect the world.
-Crosshair direction follows the full vector within its finite head panel; it
-is not a world-depth impact marker or a promise about native autoaim/spread.
+With gameplay HUD mode the crosshair now traces from that constrained origin
+along the physical aim ray and projects its native ART into world space using
+the actual native eye matrices/depth. It represents central free aim before
+native autoaim/spread/CON shot overrides or projectile arcs/bounces.
 Full-pitch projectile flight does not establish full-pitch world rendering.
 
 ## Reproducible proof

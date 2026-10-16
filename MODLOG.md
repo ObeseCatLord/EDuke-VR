@@ -147,3 +147,21 @@ Synthesize senior review into docs/vr/PLAN.md with dispositions and test gates; 
 - Fresh review unavailable at retained thread capacity; main verification only.
 - User clarified built-in multiplayer is the foundation, older peers not required,
   and requested a proper projected world-space aiming crosshair as the next slice.
+
+### Projected world-space aiming crosshair and private test isolation
+- User requested world-space aiming: one native collision point, independent
+  eye projection, world depth testing, wall/sector alignment and native ART
+  anchor. Native event/size/color/toggle/cancel and desktop draw remain.
+- Reused sequential capture and its single multiview draw; no fake actor,
+  shader program, texture, frame owner, protocol or duplicate weapon simulation.
+- 15 actual native-server/XR reticle cases plus9 regressions pass. Independent
+  world-point error<6.6e-7 NDC, GPU pixel error<=1, world depth unchanged, actual
+  decoration occludes24 marker coverage pixels per eye. Real server hits agree.
+- User requested private tests. Added explicit hidden drawable mode, suppressed
+  native startup log/dialogs and disabled fullscreen/mouse capture/gamma changes.
+  First isolation trial caught a separate GTK server log window; fixed that path.
+  Final15 cases verify no mapped game/server window and no game desktop focus.
+- Updated earlier panel/weapon test oracles for the new native-segment boundary;
+  native events/weapon ray-plane and exact animated-mask proofs still pass.
+- No fresh independent review at retained agent capacity; main verification.
+  Full port/SPS/multiplayer goal remains active, with older peers out of scope.

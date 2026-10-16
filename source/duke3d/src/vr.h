@@ -15,6 +15,8 @@ void G_XRUpdateShotInput();
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
 fix16_t G_XRMovementAngle(fix16_t nativeAngle);
 bool G_XRCrosshairPosition(vec2_t &position);
+bool G_XRBeginCrosshair();
+void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t flags);
 void G_XRArmWorldDraw();
 bool G_XRConsumeWorldDraw();
 void G_XRBeginMenuPresentation();

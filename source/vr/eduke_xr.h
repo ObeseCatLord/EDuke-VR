@@ -96,8 +96,10 @@ class Runtime
     bool        menuOverlayTargetBound() const;
     // Composite one sequential native segment, mirror it, then clear/reuse the
     // same capture. The original presentation owner and acquired frame remain.
+    // Optional two column-major native clip matrices place a world-space segment
+    // with LEQUAL testing against existing eye depth; depth writes remain off.
     bool        flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfHeight, bool visible,
-                                 std::string &error, char const *capturePrefix = nullptr);
+                                 std::string &error, char const *capturePrefix = nullptr, float const *worldClipMatrices = nullptr);
     bool        tintMenuWorld(float const *rgba, float const *correction, std::string &error);
     bool        completeMenuPresentation(std::string &error, char const *capturePrefix = nullptr);
     bool        cancelMenuPresentation(std::string &error, bool mirror = true);
@@ -111,7 +113,7 @@ class Runtime
     uint64_t    generation() const;
 
   private:
-    bool drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error);
+    bool drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices = nullptr);
     struct Impl;
     Impl *m_impl;
 };

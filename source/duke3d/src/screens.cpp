@@ -1239,9 +1239,13 @@ void G_DisplayRest(int32_t smoothratio)
             }
 
 #ifdef USE_OPENXR
-            if (G_XRCrosshairPosition(crosshairpos))
+            bool const xrCrosshair=G_XRBeginCrosshair();
+            if (xrCrosshair || G_XRCrosshairPosition(crosshairpos))
 #endif
                 rotatesprite_win(crosshairpos.x, crosshairpos.y, crosshair_scale, 0, a, 0, crosshair_pal, crosshair_o);
+#ifdef USE_OPENXR
+            G_XREndCrosshair(xrCrosshair,crosshairpos,crosshair_scale,crosshair_o);
+#endif
 
             if (FURY)
                 renderSetAspect(viewingrange, oyxaspect);

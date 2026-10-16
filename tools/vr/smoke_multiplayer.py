@@ -145,6 +145,23 @@ class X11:
         window, geometry, _ = max(candidates, key=lambda item: item[2])
         return window, geometry
 
+    def window_visibility(self, window):
+        class Attributes(c.Structure):
+            _fields_=[(n,c.c_int) for n in ('x','y','width','height','border_width','depth')]+[
+                ('visual',c.c_void_p),('root',c.c_ulong),('window_class',c.c_int),('bit_gravity',c.c_int),
+                ('win_gravity',c.c_int),('backing_store',c.c_int),('backing_planes',c.c_ulong),
+                ('backing_pixel',c.c_ulong),('save_under',c.c_int),('colormap',c.c_ulong),
+                ('map_installed',c.c_int),('map_state',c.c_int),('all_event_masks',c.c_long),
+                ('your_event_mask',c.c_long),('do_not_propagate_mask',c.c_long),
+                ('override_redirect',c.c_int),('screen',c.c_void_p)]
+        self.x.XGetWindowAttributes.argtypes=[c.c_void_p,c.c_ulong,c.POINTER(Attributes)]
+        self.x.XGetInputFocus.argtypes=[c.c_void_p,c.POINTER(c.c_ulong),c.POINTER(c.c_int)]
+        attrs=Attributes();focus=c.c_ulong();revert=c.c_int()
+        if not self.x.XGetWindowAttributes(self.display,window,c.byref(attrs)):
+            raise RuntimeError('owned test window disappeared during visibility check')
+        self.x.XGetInputFocus(self.display,c.byref(focus),c.byref(revert))
+        return {'unmapped':attrs.map_state==0,'has_desktop_focus':focus.value==window}
+
     def send_event_key(self, window, key, pressed):
         class Key(c.Structure):
             _fields_ = [('type', c.c_int), ('serial', c.c_ulong), ('send_event', c.c_int), ('display', c.c_void_p),
@@ -171,6 +188,8 @@ class X11:
             if self.error_seen:
                 raise RuntimeError('owned SDL window changed during input; test did not send input to another window')
             return
+        if os.environ.get('EDUKE32_TEST_PRIVATE_WINDOW')=='1':
+            raise RuntimeError('private test input must target its owned window without desktop focus')
         code = self.x.XKeysymToKeycode(self.display, self.x.XStringToKeysym(key.encode()))
         self.x.XMapRaised(self.display, window)
         self.x.XSetInputFocus(self.display, window, 1, 0)

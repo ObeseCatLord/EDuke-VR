@@ -635,3 +635,56 @@ retains existing compiler warnings. Fresh independent review was unavailable at
 the retained thread limit; this is main source/runtime verification. Full-pitch
 world coverage, remaining weapons and full current-build multiplayer combat,
 respawn, map/late-join/loss and remote hand presentation remain unqualified.
+
+## Projected world-space crosshair and private tests — 2026-10-16
+
+Fifteen real native-server/XR-client crosshair cases pass under private simulated
+Monado: base, constrained wall, independent head translation, occlusion, off,
+lost hand, event cancellation, left aim, ceiling, floor, size100, green color,
+real enemy actor, sloped ceiling and sloped floor. Actual native server firing
+agrees with the crosshair's client-world origin and collision point in each
+positive case. This is the central free-aim ray before autoaim/spread/CON shot
+overrides and projectile arcs/bounces; dynamic reconciliation remains open.
+
+Both eyes match an independent physical world-point projection within
+6.6e-7 NDC. A separate CPU raster/linear-sampling/depth-test reference differs
+from actual GPU output by at most1 channel value. Eye depth is byte-identical
+before/after the marker. An opaque decoration that deliberately permits native
+hitscan through it occludes all24 reticle coverage pixels in each eye; a
+reference without depth testing would draw them. A moved head retains the same
+server hit while changing eye projections. Native crosshair events execute once
+per eligible native display frame, or zero when disabled. Native size100 and
+actual green UI pixels prove size/color settings survive the spatial segment.
+
+Wall/sector surfaces use native collision geometry/slopes to align the marker.
+The first billboard version clipped into its own contact wall; the surface
+alignment fixes that demonstrated issue. Native 320x200 scaling supplies the ART
+anchor, so its physical aim point is independent of viewport/draw offsets.
+The same existing menu multiview shader draws the segment once for both eyes,
+with exact native projection/depth and LEQUAL; there is no new actor, renderer,
+shader program, texture, frame owner or network stream.
+
+Nine private regression groups pass: six native-ART weapon cases (rotated,
+tint, lost, resize, save, nested), controller/native aim authority, HUD with
+actual native callback reference, and the exact animated-mask stereo oracle.
+Right/left/head body-aim tests also passed before isolation was requested.
+The weapon composition oracle now starts its final-HUD check at the completed
+spatial-crosshair boundary; its preceding weapon ray/plane oracle remains
+independent. The stereo oracle retains exact RGB/raw depth and callback counts.
+Native and XR builds, Python syntax and diff checks pass; the native executable
+has no OpenXR dependency. Existing compiler warnings remain.
+
+All15 final crosshair fixtures explicitly verify an unmapped XR drawable,
+no mapped server window and no desktop focus on the test window. A first
+isolation trial exposed the server's separate GTK startup log window; skipping
+that path fixes it. The explicit test-only flag also disables fullscreen,
+mouse capture and desktop gamma changes. Error dialogs stay in the test log;
+an actual fixture compile error exercised that path. Subsequent captures come
+from the acquired eye framebuffers, with no mapped desktop window needed.
+
+Bounded numeric evidence and actual eye images are in sibling
+`evidence/world-crosshair-validation.json` and `world-crosshair-stereo.png`.
+Fresh independent review could not run at retained agent capacity; this is main
+source/runtime verification. Full-pitch world visibility, broad custom camera,
+model/material/CON behavior and current-build multiplayer combat/respawn/map/
+loss qualification remain required for the full port.

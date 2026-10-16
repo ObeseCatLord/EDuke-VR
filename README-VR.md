@@ -276,11 +276,14 @@ not reverse forward movement.
 Native player angle updates and unchanged packets carry this orientation to the
 server. HMD rendering removes the applied aim offset before applying head poses,
 so the controller does not rotate the world and head rotation is applied once.
-The native crosshair event still runs once; its resulting marker is projected
-onto the existing head-relative panel from native authoritative angles. Markers
-behind/outside that finite panel are hidden. This is a direction marker, not yet
-a world-depth hit indicator or a tracked gun mesh. Native weapon auto-aim/spread
-settings remain unchanged; the deterministic RPG fixture disables auto-aim.
+With gameplay HUD mode (`EDUKE32_XR_UI=2`), the native crosshair event runs once
+and its ART is projected onto the world at the aiming ray's collision point.
+Each eye uses the exact native world projection and existing world depth.
+Walls/floors/ceilings receive a surface-aligned marker; other visible geometry
+can occlude it. Native crosshair size, color, toggle and script cancellation
+remain available. See the world-space aiming section below. Native weapon
+autoaim/spread settings remain unchanged; the deterministic fixtures disable
+autoaim when comparing the central free-aim ray.
 
 Source loss suppresses firing and requires release before a held trigger can
 act after recovery. XR retains native look-mode ownership during pose loss so
@@ -401,3 +404,43 @@ python3 tools/vr/smoke_hitscan.py --binary ./eduke32 --client-binary ./eduke32-x
   --grp /path/to/owned/DUKE3D.GRP --work-dir work/hitscan \
   --display :1 --remote-port 29427 --weapon shotgun --case spread
 ```
+
+
+## World-space aiming crosshair
+
+Gameplay HUD mode (`EDUKE32_XR_UI=2`) draws the crosshair at the native hitscan
+collision of the aiming ray. With supported hand-origin weapons it uses the
+same constrained hand position and physical direction as firing. Body-origin
+mode uses native player aim. The marker has real stereo parallax, uses existing
+world depth with depth writes disabled, and is aligned to hit walls or sector
+planes. A small pullback avoids surface z fighting. Its angular scale follows
+the native crosshair size setting; the normal crosshair color/toggle and
+`EVENT_DISPLAYCROSSHAIR` artwork/cancellation apply. For a bright marker, the
+native console command `crosshaircolor 255 255 255` selects white. Losing the selected hand
+hides its marker. The desktop retains its native crosshair draw position.
+
+The trace previews central free aim before weapon spread, autoaim, CON shoot
+overrides and ballistic/bounce behavior. Dynamic server reconciliation and
+broader custom projectile/model/mirror/YAX behavior remain qualification work.
+The existing partial head-pitch world-rendering limit also applies.
+
+```sh
+EDUKE32_TEST_PRIVATE_WINDOW=1 python3 tools/vr/smoke_crosshair.py --binary ./eduke32 \
+  --client-binary ./eduke32-xr --grp /path/to/owned/DUKE3D.GRP \
+  --work-dir work/crosshair --display :1 --remote-port 29427 --case occluded
+```
+
+The runner checks real server shot agreement, independent physical projection,
+actual two-eye pixels against a depth-tested CPU oracle, unchanged native world
+depth and native crosshair event counts. It also exercises head translation,
+near-wall/sector contacts, target actors, handed aim, tracking loss and native
+visibility/size/color controls.
+
+For non-interrupting simulator tests, set `EDUKE32_TEST_PRIVATE_WINDOW=1` on
+both game processes (the Python runners inherit it). The native startup log
+window is suppressed and SDL creates an unmapped GPU drawable, with fullscreen,
+mouse capture and desktop gamma changes disabled. Test input uses owned-window
+XSendEvent or the private Monado actions; the helper refuses focus-changing
+input in this mode. Use framebuffer eye captures instead of desktop screenshots.
+The crosshair runner verifies actual X11 unmapped/focus state as part of the
+proof. Normal game launches omit this test-only flag.

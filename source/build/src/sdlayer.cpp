@@ -92,6 +92,14 @@ static SDL_Surface *sdl_surface/*=NULL*/;
 
 static vec2_t sdl_resize;
 static int sdl_minimized;
+// Opt-in test isolation: create an unmapped drawable, never take desktop focus,
+// switch its display mode, or capture the user's mouse. XR/offscreen FBOs still
+// use the real GPU context; ordinary game windows are unaffected.
+static bool privateTestWindow()
+{
+    auto const value=Bgetenv("EDUKE32_TEST_PRIVATE_WINDOW");
+    return value && !Bstrcmp(value,"1");
+}
 
 #if SDL_MAJOR_VERSION >= 2
 static SDL_Window *sdl_window;
@@ -346,6 +354,7 @@ int32_t wm_msgbox(const char *name, const char *fmt, ...)
     Bvsnprintf(buf,MSGBOX_PRINTF_MAX,fmt,va);
     va_end(va);
     buf[MSGBOX_PRINTF_MAX-1] = 0;
+    if (privateTestWindow()) { LOG_F(INFO,"Private test message: %s: %s",name,buf); return 0; }
 #if defined EDUKE32_OSX
     auto result = osx_msgbox(name, buf);
     return result;
@@ -393,6 +402,7 @@ int32_t wm_ynbox(const char *name, const char *fmt, ...)
     Bvsnprintf(buf,MSGBOX_PRINTF_MAX,fmt,va);
     va_end(va);
     buf[MSGBOX_PRINTF_MAX-1] = 0;
+    if (privateTestWindow()) { LOG_F(INFO,"Private test message: %s: %s",name,buf); return 0; }
 #if defined EDUKE32_OSX
     auto result = osx_ynbox(name, buf);
     return result;
@@ -730,7 +740,7 @@ int main(int argc, char *argv[])
 #ifdef EDUKE32_OSX
     osx_preopen();
 #endif
-    startwin_open();
+    if (!privateTestWindow()) startwin_open();
 #ifdef EDUKE32_OSX
     osx_postopen();
 #endif
@@ -1455,6 +1465,7 @@ static void SetWindowGrab(SDL_Window *pWindow, int const clipToWindow)
 #endif
 static inline char grabmouse_low(char a)
 {
+    if (privateTestWindow()) a=0;
 #if !defined EDUKE32_TOUCH_DEVICES
     /* FIXME: Maybe it's better to make sure that grabmouse_low
        is called only when a window is ready?                */
@@ -1474,6 +1485,7 @@ static inline char grabmouse_low(char a)
 //
 void mouseGrabInput(bool grab)
 {
+    if (privateTestWindow()) grab=false;
     if (grab != g_mouseGrabbed)
         g_mousePos.x = g_mousePos.y = 0;
 
@@ -1949,7 +1961,7 @@ int setvideomode_sdlcommonpost(int32_t x, int32_t y, int32_t c, int32_t fs, int3
 
     SDL_SetWindowSize(sdl_window, x, y);
 
-    if (fs)
+    if (fs && !privateTestWindow())
     {
         if (SDL_SetWindowFullscreen(sdl_window, SDL_WINDOW_FULLSCREEN))
         {
@@ -1958,7 +1970,7 @@ int setvideomode_sdlcommonpost(int32_t x, int32_t y, int32_t c, int32_t fs, int3
         }
         else SDL_SetWindowPosition(sdl_window, (int)SDL_WINDOWPOS_UNDEFINED_DISPLAY(newdisplayindex), (int)SDL_WINDOWPOS_UNDEFINED_DISPLAY(newdisplayindex));
     }
-    else
+    else if (!privateTestWindow())
     {
         if (SDL_SetWindowFullscreen(sdl_window, 0))
         {
@@ -1991,6 +2003,7 @@ int setvideomode_sdlcommonpost(int32_t x, int32_t y, int32_t c, int32_t fs, int3
 #if SDL_MAJOR_VERSION >= 2
 int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
 {
+    if (privateTestWindow()) fs=0;
 #ifdef USE_OPENXR
     sdlayer_xr_cancelMenuPresentation();
 #endif
@@ -2056,7 +2069,8 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
 
         sdl_window = SDL_CreateWindow("", g_windowPosValid ? g_windowPos.x : (int)SDL_WINDOWPOS_CENTERED_DISPLAY(display),
                                           g_windowPosValid ? g_windowPos.y : (int)SDL_WINDOWPOS_CENTERED_DISPLAY(display), x, y,
-                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | borderless);
+                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | borderless
+                                        | (privateTestWindow() ? SDL_WINDOW_HIDDEN|SDL_WINDOW_SKIP_TASKBAR : 0));
 
         if (sdl_window)
             sdl_context = SDL_GL_CreateContext(sdl_window);
@@ -2096,7 +2110,8 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
         // init
         sdl_window = SDL_CreateWindow("", g_windowPosValid ? g_windowPos.x : (int)SDL_WINDOWPOS_CENTERED_DISPLAY(display),
                                           g_windowPosValid ? g_windowPos.y : (int)SDL_WINDOWPOS_CENTERED_DISPLAY(display), x, y,
-                                      SDL_WINDOW_RESIZABLE | borderless);
+                                      SDL_WINDOW_RESIZABLE | borderless
+                                      | (privateTestWindow() ? SDL_WINDOW_HIDDEN|SDL_WINDOW_SKIP_TASKBAR : 0));
         if (!sdl_window)
             SDL2_VIDEO_ERR("SDL_CreateWindow");
 
@@ -2438,6 +2453,7 @@ int32_t videoSetGamma(void)
     }
 #endif
 
+    if (privateTestWindow()) return 0; // never alter the desktop's gamma ramp
     int32_t i;
     uint16_t gammaTable[768];
     float gamma = max(MIN_GAMMA, min(MAX_GAMMA, g_videoGamma));
