@@ -105,16 +105,51 @@ static eduke_xr::Runtime sdl_xr;
 static bool sdl_xr_attempted;
 static bool sdl_xr_active;
 static unsigned long sdl_xr_frameLimit;
+static bool sdl_xr_worldAttempted, sdl_xr_worldActive;
 
 static void sdlayer_xr_shutdown()
 {
     sdl_xr.shutdown();
     sdl_xr_active = false;
     sdl_xr_attempted = false;
+    sdl_xr_worldAttempted = sdl_xr_worldActive = false;
+}
+
+// The game owns room rendering; SDL owns the session/context lifetime.
+eduke_xr::Runtime *sdlayer_xr_worldRuntime()
+{
+    if (!sdl_xr_worldAttempted)
+    {
+        sdl_xr_worldAttempted = true;
+        char const *enabled = std::getenv("EDUKE32_XR");
+        if (!enabled || std::strcmp(enabled, "1"))
+            return nullptr;
+        std::string error;
+        int width, height;
+        SDL_GetWindowSize(sdl_window, &width, &height);
+        if (!sdl_xr.initialize(sdl_window, error, width, height))
+        {
+            LOG_F(ERROR, "OpenXR world initialization failed: %s", error.c_str());
+            return nullptr;
+        }
+        sdl_xr_worldActive = true;
+        LOG_F(INFO, "OpenXR experimental Polymost world session started (two-pass stereo oracle).");
+    }
+    return sdl_xr_worldActive ? &sdl_xr : nullptr;
+}
+
+void sdlayer_xr_disableWorld(char const *reason)
+{
+    LOG_F(ERROR, "OpenXR world stopped: %s", reason);
+    sdl_xr.shutdown();
+    sdl_xr_worldActive = false;
 }
 
 static void sdlayer_xr_diagnostic()
 {
+    char const *world = std::getenv("EDUKE32_XR");
+    if (world && !std::strcmp(world, "1"))
+        return;
     std::string error;
     if (!sdl_xr_attempted)
     {

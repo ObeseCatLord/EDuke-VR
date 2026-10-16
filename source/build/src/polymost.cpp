@@ -143,6 +143,13 @@ int polymost2d;
 int32_t gltexmaxsize = 0;      // 0 means autodetection on first run
 int32_t gltexmiplevel = 0;		// discards this many mipmap levels
 int32_t glprojectionhacks = 2;
+#ifdef USE_OPENXR
+static struct
+{
+    float left, right, down, up;
+    bool active;
+} xrProjection;
+#endif
 static GLuint polymosttext = 0;
 int32_t glrendmode = REND_POLYMOST;
 
@@ -1390,6 +1397,11 @@ void calc_and_apply_fog_factor(int32_t shade, int32_t vis, int32_t pal, float fa
 
 static float get_projhack_ratio(void)
 {
+#ifdef USE_OPENXR
+    if (xrProjection.active)
+        return 1.f;
+#endif
+
     if ((glprojectionhacks == 1) && !r_yshearing)
     {
         // calculates the extend of the zenith glitch
@@ -1408,7 +1420,7 @@ static float get_projhack_ratio(void)
     return 1.f;
 }
 
-static void resizeglcheck(void)
+static void resizeglcheck(bool clearDebugBuffers = true)
 {
 #ifndef EDUKE32_GLES
     //FUK
@@ -1426,7 +1438,7 @@ static void resizeglcheck(void)
             glPolygonMode(GL_FRONT_AND_BACK,GL_POINT); break;
         }
     }
-    if (r_polygonmode) //FUK
+    if (r_polygonmode && clearDebugBuffers) //FUK
     {
         glClearColor(1.0,1.0,1.0,0.0);
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
@@ -1453,10 +1465,25 @@ static void resizeglcheck(void)
     float const nearclip = 4.f / (gxyaspect * gyxscale * 512.f);
     float const farclip = 8.f;
 
-    m[0][0] = 1.f;
-    m[1][1] = fxdimen / (fydimen * ratio);
-    m[2][0] = 2.f * ghoriz2 * gstang / fxdimen;
-    m[2][1] = 2.f * (ghoriz2 * gctang + ghorizcorrect) / fydimen;
+#ifdef USE_OPENXR
+    if (xrProjection.active)
+    {
+        float const horizontalTan = xrProjection.right - xrProjection.left;
+        float const verticalTan = xrProjection.up - xrProjection.down;
+
+        m[0][0] = 2.f * gvrcorrection / horizontalTan;
+        m[1][1] = 2.f * gvrcorrection / verticalTan;
+        m[2][0] = -(xrProjection.right + xrProjection.left) / horizontalTan;
+        m[2][1] = -(xrProjection.up + xrProjection.down) / verticalTan;
+    }
+    else
+#endif
+    {
+        m[0][0] = 1.f;
+        m[1][1] = fxdimen / (fydimen * ratio);
+        m[2][0] = 2.f * ghoriz2 * gstang / fxdimen;
+        m[2][1] = 2.f * (ghoriz2 * gctang + ghorizcorrect) / fydimen;
+    }
     m[2][2] = (farclip + nearclip) / (farclip - nearclip);
     m[2][3] = 1.f;
     m[3][2] = -(2.f * farclip * nearclip) / (farclip - nearclip);
@@ -6837,6 +6864,124 @@ static void polymost_initmosts(const float * px, const float * py, int const n)
 #endif
 }
 
+static float polymost_prepareCamera(bool clearDebugBuffers = true)
+{
+    gvrcorrection = viewingrange*(1.f/65536.f);
+    if (glprojectionhacks == 2
+#ifdef USE_OPENXR
+        && !xrProjection.active
+#endif
+        )
+    {
+        // calculates the extend of the zenith glitch
+        float verticalfovtan = (fviewingrange * (windowxy2.y-windowxy1.y) * 5.f) / ((float)yxaspect * (windowxy2.x-windowxy1.x) * 4.f);
+        float verticalfov = atanf(verticalfovtan) * (2.f / fPI);
+        static constexpr float const maxhorizangle = 0.6361136f; // horiz of 199 in degrees
+        float zenglitch = verticalfov + maxhorizangle - 0.95f; // less than 1 because the zenith glitch extends a bit
+        if (zenglitch > 0.f)
+            gvrcorrection /= (zenglitch * 2.5f) + 1.f;
+    }
+
+    //Polymost supports true look up/down :) Here, we convert horizon to angle.
+    //gchang&gshang are cos&sin of this angle (respectively)
+    gyxscale = ((float)xdimenscale)*(1.0f/131072.f);
+    gxyaspect = ((double)xyaspect*fviewingrange)*(5.0/(65536.0*262144.0));
+    gviewxrange = fviewingrange * fxdimen * (1.f/(32768.f*1024.f));
+    gcosang = fcosglobalang*(1.0f/262144.f);
+    gsinang = fsinglobalang*(1.0f/262144.f);
+    gcosang2 = gcosang * (fviewingrange * (1.0f/65536.f));
+    gsinang2 = gsinang * (fviewingrange * (1.0f/65536.f));
+    ghalfx = (float)(xdimen>>1);
+    ghalfy = (float)(ydimen>>1);
+    grhalfxdown10 = 1.f/(ghalfx*1024.f);
+    ghoriz = fix16_to_float(qglobalhoriz);
+    ghorizcorrect = fix16_to_float((100-polymostcenterhoriz)*divscale16(xdimenscale, viewingrange));
+#ifdef USE_OPENXR
+    if (xrProjection.active)
+        ghorizcorrect = 0.f;
+#endif
+
+    gvisibility = ((float)globalvisibility)*FOGSCALE;
+
+    polymost_shadeInterpolate(r_shadeinterpolate);
+
+    //global cos/sin height angle
+    if (r_yshearing
+#ifdef USE_OPENXR
+        && !xrProjection.active
+#endif
+        )
+    {
+        gshang  = 0.f;
+        gchang  = 1.f;
+        ghoriz2 = (float)(ydimen >> 1) - (ghoriz + ghorizcorrect);
+    }
+    else
+    {
+        float r = (float)(ydimen >> 1) - (ghoriz + ghorizcorrect);
+        gshang  = r / Bsqrtf(r * r + ghalfx * ghalfx / (gvrcorrection * gvrcorrection));
+        gchang  = Bsqrtf(1.f - gshang * gshang);
+        ghoriz2 = 0.f;
+    }
+
+    ghoriz = (float)(ydimen>>1);
+
+    resizeglcheck(clearDebugBuffers);
+    float const ratio = 1.f/get_projhack_ratio();
+
+    //global cos/sin tilt angle
+    gctang = cosf(gtang);
+    gstang = sinf(gtang);
+
+    if (Bfabsf(gstang) < .001f)  // This hack avoids nasty precision bugs in domost()
+    {
+        gstang = 0.f;
+        gctang = (gctang > 0.f) ? 1.f : -1.f;
+    }
+
+    if (inpreparemirror)
+        gstang = -gstang;
+
+    return ratio;
+}
+
+#ifdef USE_OPENXR
+void polymost_xrProjection(float leftTan, float rightTan, float downTan, float upTan)
+{
+    if (!(leftTan < rightTan) || !(downTan < upTan))
+    {
+        polymost_xrProjectionReset();
+        return;
+    }
+
+    xrProjection = { leftTan, rightTan, downTan, upTan, true };
+}
+
+void polymost_xrProjectionReset()
+{
+    xrProjection.active = false;
+}
+
+void polymost_prepareMasksView()
+{
+    if (videoGetRenderMode() != REND_POLYMOST)
+        return;
+
+    videoBeginDrawing();
+    buildgl_setDisabled(GL_BLEND);
+    buildgl_setDisabled(GL_ALPHA_TEST);
+    buildgl_setEnabled(GL_DEPTH_TEST);
+    buildgl_setDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+
+    // Rebuilding camera state must preserve both opaque eye layers, including
+    // wireframe/point mode where ordinary setup deliberately clears buffers.
+    polymost_prepareCamera(false);
+    grhalfxdown10x = grhalfxdown10;
+    polymost_updaterotmat();
+}
+#endif
+
 void polymost_drawrooms()
 {
     MICROPROFILE_SCOPEI("Engine", EDUKE32_FUNCTION, MP_AUTO);
@@ -6867,70 +7012,7 @@ void polymost_drawrooms()
     buildgl_setDepthFunc(GL_ALWAYS); //NEVER,LESS,(,L)EQUAL,GREATER,(NOT,G)EQUAL,ALWAYS
 //        glDepthRange(0.0, 1.0); //<- this is more widely supported than glPolygonOffset
 
-    gvrcorrection = viewingrange*(1.f/65536.f);
-    if (glprojectionhacks == 2)
-    {
-        // calculates the extend of the zenith glitch
-        float verticalfovtan = (fviewingrange * (windowxy2.y-windowxy1.y) * 5.f) / ((float)yxaspect * (windowxy2.x-windowxy1.x) * 4.f);
-        float verticalfov = atanf(verticalfovtan) * (2.f / fPI);
-        static constexpr float const maxhorizangle = 0.6361136f; // horiz of 199 in degrees
-        float zenglitch = verticalfov + maxhorizangle - 0.95f; // less than 1 because the zenith glitch extends a bit
-        if (zenglitch > 0.f)
-            gvrcorrection /= (zenglitch * 2.5f) + 1.f;
-    }
-
-    //Polymost supports true look up/down :) Here, we convert horizon to angle.
-    //gchang&gshang are cos&sin of this angle (respectively)
-    gyxscale = ((float)xdimenscale)*(1.0f/131072.f);
-    gxyaspect = ((double)xyaspect*fviewingrange)*(5.0/(65536.0*262144.0));
-    gviewxrange = fviewingrange * fxdimen * (1.f/(32768.f*1024.f));
-    gcosang = fcosglobalang*(1.0f/262144.f);
-    gsinang = fsinglobalang*(1.0f/262144.f);
-    gcosang2 = gcosang * (fviewingrange * (1.0f/65536.f));
-    gsinang2 = gsinang * (fviewingrange * (1.0f/65536.f));
-    ghalfx = (float)(xdimen>>1);
-    ghalfy = (float)(ydimen>>1);
-    grhalfxdown10 = 1.f/(ghalfx*1024.f);
-    ghoriz = fix16_to_float(qglobalhoriz);
-    ghorizcorrect = fix16_to_float((100-polymostcenterhoriz)*divscale16(xdimenscale, viewingrange));
-
-    gvisibility = ((float)globalvisibility)*FOGSCALE;
-
-
-    polymost_shadeInterpolate(r_shadeinterpolate);
-
-    //global cos/sin height angle
-    if (r_yshearing)
-    {
-        gshang  = 0.f;
-        gchang  = 1.f;
-        ghoriz2 = (float)(ydimen >> 1) - (ghoriz + ghorizcorrect);
-    }
-    else
-    {
-        float r = (float)(ydimen >> 1) - (ghoriz + ghorizcorrect);
-        gshang  = r / Bsqrtf(r * r + ghalfx * ghalfx / (gvrcorrection * gvrcorrection));
-        gchang  = Bsqrtf(1.f - gshang * gshang);
-        ghoriz2 = 0.f;
-    }
-
-    ghoriz = (float)(ydimen>>1);
-
-    resizeglcheck();
-    float const ratio = 1.f/get_projhack_ratio();
-
-    //global cos/sin tilt angle
-    gctang = cosf(gtang);
-    gstang = sinf(gtang);
-
-    if (Bfabsf(gstang) < .001f)  // This hack avoids nasty precision bugs in domost()
-    {
-        gstang = 0.f;
-        gctang = (gctang > 0.f) ? 1.f : -1.f;
-    }
-
-    if (inpreparemirror)
-        gstang = -gstang;
+    float const ratio = polymost_prepareCamera();
 
     //Generate viewport trapezoid (for handling screen up/down)
     vec3f_t p[4] = {  { 0-1,                                        0-1+ghorizcorrect,                                  0 },

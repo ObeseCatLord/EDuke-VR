@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <openxr/openxr.h>
 #include <string>
 
 struct SDL_Window;
@@ -11,8 +12,10 @@ struct SDL_Window;
 namespace eduke_xr
 {
 
-// A deliberately small OpenXR diagnostic runtime.  It consumes the current
-// SDL OpenGL context and does not own the window or graphics context.
+// Shared OpenXR frame lifecycle.  The caller owns the current SDL OpenGL
+// context and must retain it through shutdown.  Native rendering between
+// bindEye/bindMultiview and finishFrame owns its ordinary GL state; the runtime
+// restores only its framebuffer bindings at the frame boundary.
 class Runtime
 {
   public:
@@ -24,15 +27,35 @@ class Runtime
         Error,
     };
 
+    enum class FrameResult
+    {
+        Idle,
+        Ready,
+        Exit,
+        Error
+    };
+    struct Frame
+    {
+        uint32_t width = 0, height = 0;
+        XrTime   predictedDisplayTime = 0;
+        XrView   views[2] {};
+    };
+
     Runtime();
     ~Runtime();
     Runtime(Runtime const &)            = delete;
     Runtime &operator=(Runtime const &) = delete;
 
-    bool       initialize(SDL_Window *window, std::string &error);
-    void       shutdown();
-    TickResult diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error);
-    uint64_t   submittedFrames() const;
+    bool        initialize(SDL_Window *window, std::string &error, uint32_t renderWidth = 0, uint32_t renderHeight = 0);
+    void        shutdown();
+    FrameResult beginFrame(Frame &frame, std::string &error);
+    bool        bindEye(uint32_t eye, std::string &error);
+    bool        bindMultiview(std::string &error);
+    bool        captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error);
+    bool        mirrorEye(uint32_t eye, std::string &error);
+    bool        finishFrame(bool submit, std::string &error);
+    TickResult  diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error);
+    uint64_t    submittedFrames() const;
 
   private:
     struct Impl;

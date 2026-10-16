@@ -1275,6 +1275,14 @@ void   renderCompleteMirror(void);
 
 int32_t renderDrawRoomsQ16(int32_t daposx, int32_t daposy, int32_t daposz, fix16_t daang, fix16_t dahoriz, int16_t dacursectnum);
 
+#ifdef USE_OPENXR
+// Rebuild the Build and Polymost camera state before a second transparent-mask pass.
+// The caller owns the corresponding opaque-room depth buffer and must not use this
+// as a replacement for renderDrawRoomsQ16().
+void renderPrepareMasksQ16(int32_t daposx, int32_t daposy, int32_t daposz,
+                           fix16_t daang, fix16_t dahoriz, int16_t dacursectnum);
+#endif
+
 static FORCE_INLINE int32_t drawrooms(int32_t daposx, int32_t daposy, int32_t daposz, int16_t daang, int16_t dahoriz, int16_t dacursectnum)
 {
     return renderDrawRoomsQ16(daposx, daposy, daposz, fix16_from_int(daang), fix16_from_int(dahoriz), dacursectnum);

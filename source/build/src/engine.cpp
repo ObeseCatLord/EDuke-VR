@@ -9427,16 +9427,9 @@ void set_globalang(fix16_t const ang)
 //
 // drawrooms
 //
-int32_t renderDrawRoomsQ16(int32_t daposx, int32_t daposy, int32_t daposz,
-                           fix16_t daang, fix16_t dahoriz, int16_t dacursectnum)
+static void renderSetupCameraQ16(int32_t daposx, int32_t daposy, int32_t daposz,
+                                 fix16_t daang, fix16_t dahoriz, int16_t dacursectnum)
 {
-    MICROPROFILE_SCOPEI("Engine", EDUKE32_FUNCTION, MP_AUTO);
-
-    int32_t i, j, /*cz, fz,*/ closest;
-    int16_t *shortptr1, *shortptr2;
-
-    beforedrawrooms = 0;
-
     set_globalpos(daposx, daposy, daposz);
     set_globalang(daang);
 
@@ -9450,7 +9443,7 @@ int32_t renderDrawRoomsQ16(int32_t daposx, int32_t daposy, int32_t daposz,
     globaluclip = (0-globalhoriz)*xdimscale;
     globaldclip = (ydimen-globalhoriz)*xdimscale;
 
-    i = mulscale16(xdimenscale,viewingrangerecip);
+    int32_t const i = mulscale16(xdimenscale,viewingrangerecip);
     globalpisibility = mulscale16(parallaxvisibility,i);
     switch (videoGetRenderMode())
     {
@@ -9498,6 +9491,31 @@ int32_t renderDrawRoomsQ16(int32_t daposx, int32_t daposy, int32_t daposz,
 
     if ((xyaspect != oxyaspect) || (xdimen != oxdimen) || (viewingrange != oviewingrange))
         dosetaspect();
+}
+
+#ifdef USE_OPENXR
+void renderPrepareMasksQ16(int32_t daposx, int32_t daposy, int32_t daposz,
+                           fix16_t daang, fix16_t dahoriz, int16_t dacursectnum)
+{
+    if (videoGetRenderMode() != REND_POLYMOST)
+        return;
+
+    renderSetupCameraQ16(daposx, daposy, daposz, daang, dahoriz, dacursectnum);
+    polymost_prepareMasksView();
+}
+#endif
+
+int32_t renderDrawRoomsQ16(int32_t daposx, int32_t daposy, int32_t daposz,
+                           fix16_t daang, fix16_t dahoriz, int16_t dacursectnum)
+{
+    MICROPROFILE_SCOPEI("Engine", EDUKE32_FUNCTION, MP_AUTO);
+
+    int32_t i, j, /*cz, fz,*/ closest;
+    int16_t *shortptr1, *shortptr2;
+
+    beforedrawrooms = 0;
+
+    renderSetupCameraQ16(daposx, daposy, daposz, daang, dahoriz, dacursectnum);
 
     Bmemset(gotsector, 0, sizeof(gotsector));
 

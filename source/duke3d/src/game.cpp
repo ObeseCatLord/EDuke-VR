@@ -49,6 +49,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #endif
 
 #include "vfs.h"
+#include "vr.h"
 
 // Uncomment to prevent anything except mirrors from drawing. It is sensible to
 // also uncomment ENGINE_CLEAR_SCREEN in build/src/engine_priv.h.
@@ -1138,18 +1139,23 @@ void G_DrawRooms(int32_t playerNum, int32_t smoothRatio)
 #ifdef DEBUG_MIRRORS_ONLY
             bitmap_set(gotpic, MIRROR);
 #else
-            yax_preparedrawrooms();
-            renderDrawRoomsQ16(CAMERA(pos.x),CAMERA(pos.y),CAMERA(pos.z),CAMERA(q16ang),CAMERA(q16horiz),CAMERA(sect));
-            yax_drawrooms(G_DoSpriteAnimations, CAMERA(sect), 0, smoothRatio);
-#ifdef LEGACY_ROR
-            if ((unsigned)ror_sprite < MAXSPRITES && drawing_ror == 1)  // viewing from bottom
-                G_OROR_DupeSprites(&sprite[ror_sprite]);
+#ifdef USE_OPENXR
+            if (!G_XRDrawRooms(smoothRatio))
 #endif
-            G_DoSpriteAnimations(CAMERA(pos.x),CAMERA(pos.y),CAMERA(pos.z),fix16_to_int(CAMERA(q16ang)),smoothRatio);
+            {
+                yax_preparedrawrooms();
+                renderDrawRoomsQ16(CAMERA(pos.x),CAMERA(pos.y),CAMERA(pos.z),CAMERA(q16ang),CAMERA(q16horiz),CAMERA(sect));
+                yax_drawrooms(G_DoSpriteAnimations, CAMERA(sect), 0, smoothRatio);
 #ifdef LEGACY_ROR
-            drawing_ror = 0;
+                if ((unsigned)ror_sprite < MAXSPRITES && drawing_ror == 1)  // viewing from bottom
+                    G_OROR_DupeSprites(&sprite[ror_sprite]);
 #endif
-            renderDrawMasks();
+                G_DoSpriteAnimations(CAMERA(pos.x),CAMERA(pos.y),CAMERA(pos.z),fix16_to_int(CAMERA(q16ang)),smoothRatio);
+#ifdef LEGACY_ROR
+                drawing_ror = 0;
+#endif
+                renderDrawMasks();
+            }
 #endif
         }
 
@@ -3706,6 +3712,9 @@ static inline void G_DoEventAnimSprites(int tspriteNum)
 
 void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura, int32_t smoothratio)
 {
+#ifdef USE_OPENXR
+    G_XRTestAnimationInputs();
+#endif
     MICROPROFILE_SCOPEI("Game", EDUKE32_FUNCTION, MP_YELLOWGREEN);
 
     UNREFERENCED_PARAMETER(ourz);
@@ -4080,7 +4089,11 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
             if ((g_netServer || ud.multimode > 1) && (display_mirror || screenpeek != playerNum || pSprite->owner == -1))
             {
                 if (ud.showweapons && sprite[g_player[playerNum].ps->i].extra > 0 && g_player[playerNum].ps->curr_weapon > 0
+#ifdef USE_OPENXR
+                        && G_XRCanAppendSprite(maxspritesonscreen))
+#else
                         && spritesortcnt < maxspritesonscreen)
+#endif
                 {
                     auto const newTspr       = &tsprite[spritesortcnt];
                     int const  currentWeapon = g_player[playerNum].ps->curr_weapon;
@@ -4094,10 +4107,18 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                     newTspr->xrepeat = (newTspr->picnum == HEAVYHBOMB) ? 10 : 16;
                     newTspr->yrepeat = newTspr->xrepeat;
 
+#ifdef USE_OPENXR
+                    G_XRInheritSprite(spritesortcnt,j);
+#endif
                     spritesortcnt++;
                 }
 
-                if (g_player[playerNum].input.extbits & BIT(EK_CHAT_MODE) && !ud.pause_on && spritesortcnt < maxspritesonscreen)
+                if (g_player[playerNum].input.extbits & BIT(EK_CHAT_MODE) && !ud.pause_on
+#ifdef USE_OPENXR
+                    && G_XRCanAppendSprite(maxspritesonscreen))
+#else
+                    && spritesortcnt < maxspritesonscreen)
+#endif
                 {
                     auto const playerTyping = &tsprite[spritesortcnt];
 
@@ -4110,6 +4131,9 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                     playerTyping->yrepeat = 32;
                     playerTyping->pal     = 20;
 
+#ifdef USE_OPENXR
+                    G_XRInheritSprite(spritesortcnt,j);
+#endif
                     spritesortcnt++;
                 }
             }
@@ -4354,7 +4378,12 @@ skip:
                 if (actor[i].flags & SFLAG_NOFLOORSHADOW)
                     continue;
 
-                if (ud.shadows && spritesortcnt < (maxspritesonscreen-2)
+                if (ud.shadows
+#ifdef USE_OPENXR
+                    && G_XRCanAppendSprite(maxspritesonscreen-2)
+#else
+                    && spritesortcnt < (maxspritesonscreen-2)
+#endif
 #ifdef POLYMER
                     && !(videoGetRenderMode() == REND_POLYMER && pr_lighting != 0)
 #endif
@@ -4406,6 +4435,9 @@ skip:
                                 tsprShadow->y += ofs.y;
                             }
                         }
+#endif
+#ifdef USE_OPENXR
+                        G_XRInheritSprite(spritesortcnt,j);
 #endif
                         spritesortcnt++;
                     }

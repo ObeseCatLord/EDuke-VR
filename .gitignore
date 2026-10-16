@@ -1,6 +1,7 @@
 
 obj/
-obj-xr/
+/obj-*/
+/work/
 /eduke32-xr
 /source/vr/xr_smoke
 /source/vr/*.o

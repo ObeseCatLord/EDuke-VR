@@ -11,6 +11,12 @@
 
 #define EDUKE32_SDL_LINKED_PREREQ(x, a, b, c) ((x).major > (a) || ((x).major == (a) && ((x).minor > (b) || ((x).minor == (b) && (x).patch >= (c)))))
 
+#ifdef USE_OPENXR
+namespace eduke_xr { class Runtime; }
+eduke_xr::Runtime *sdlayer_xr_worldRuntime();
+void sdlayer_xr_disableWorld(char const *reason);
+#endif
+
 extern int32_t maxrefreshfreq;
 
 #ifdef _WIN32

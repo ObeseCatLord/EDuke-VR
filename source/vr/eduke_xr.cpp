@@ -245,6 +245,10 @@ struct Runtime::Impl
     GLuint                                  fbo = 0, depth = 0, program = 0, vao = 0, vbo = 0;
     PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC multiview = nullptr;
     bool                                    running = false, exiting = false;
+    bool                                    frameBegun = false, imageAcquired = false, imageReady = false;
+    uint32_t                                imageIndex = 0;
+    XrFrameState                            frameState { XR_TYPE_FRAME_STATE };
+    GLint                                   previousReadFbo = 0, previousDrawFbo = 0;
     uint64_t                                submitted = 0;
 
     void destroyGl()
@@ -280,6 +284,7 @@ struct Runtime::Impl
         width = height = 0;
         multiview      = nullptr;
         running = exiting = false;
+        frameBegun = imageAcquired = imageReady = false;
     }
 };
 
@@ -292,7 +297,7 @@ Runtime::~Runtime()
     delete m_impl;
 }
 
-bool Runtime::initialize(SDL_Window *window, std::string &error)
+bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t renderWidth, uint32_t renderHeight)
 {
     shutdown();
     error.clear();
@@ -369,7 +374,7 @@ bool Runtime::initialize(SDL_Window *window, std::string &error)
     }
     char const          *enabled[] = { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME };
     XrInstanceCreateInfo instanceInfo { XR_TYPE_INSTANCE_CREATE_INFO };
-    std::snprintf(instanceInfo.applicationInfo.applicationName, sizeof(instanceInfo.applicationInfo.applicationName), "EDuke32 VR diagnostic");
+    std::snprintf(instanceInfo.applicationInfo.applicationName, sizeof(instanceInfo.applicationInfo.applicationName), "EDuke32 VR");
     instanceInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
     instanceInfo.enabledExtensionCount      = 1;
     instanceInfo.enabledExtensionNames      = enabled;
@@ -499,6 +504,31 @@ bool Runtime::initialize(SDL_Window *window, std::string &error)
         shutdown();
         return false;
     }
+    if (renderWidth || renderHeight)
+    {
+        if (!renderWidth || !renderHeight)
+        {
+            error = "both OpenXR render dimensions must be specified";
+            shutdown();
+            return false;
+        }
+        if (renderWidth > systemProperties.graphicsProperties.maxSwapchainImageWidth
+            || renderHeight > systemProperties.graphicsProperties.maxSwapchainImageHeight)
+        {
+            error = "requested render extent exceeds an OpenXR system limit";
+            shutdown();
+            return false;
+        }
+        for (auto const &view : viewConfig)
+            if (renderWidth > view.maxImageRectWidth || renderHeight > view.maxImageRectHeight)
+            {
+                error = "requested render extent exceeds an OpenXR view limit";
+                shutdown();
+                return false;
+            }
+        m_impl->width  = renderWidth;
+        m_impl->height = renderHeight;
+    }
     XrSwapchainCreateInfo swapInfo { XR_TYPE_SWAPCHAIN_CREATE_INFO };
     swapInfo.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
     swapInfo.format      = chosen;
@@ -617,13 +647,14 @@ void Runtime::shutdown()
         state.restore();
 }
 
-Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error)
+Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
 {
     error.clear();
-    if (!m_impl->instance || !m_impl->session)
+    frame = {};
+    if (!m_impl->instance || !m_impl->session || m_impl->frameBegun)
     {
-        error = "OpenXR runtime is not initialized";
-        return TickResult::Error;
+        error = m_impl->frameBegun ? "previous OpenXR frame is still open" : "OpenXR runtime is not initialized";
+        return FrameResult::Error;
     }
     XrEventDataBuffer event { XR_TYPE_EVENT_DATA_BUFFER };
     while (true)
@@ -634,7 +665,7 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
         if (XR_FAILED(result))
         {
             error = xrError(m_impl->instance, result, "xrPollEvent");
-            return TickResult::Error;
+            return FrameResult::Error;
         }
         if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING)
         {
@@ -652,7 +683,7 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
                 if (XR_FAILED(result))
                 {
                     error = xrError(m_impl->instance, result, "xrBeginSession");
-                    return TickResult::Error;
+                    return FrameResult::Error;
                 }
                 m_impl->running = true;
             }
@@ -664,7 +695,7 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
                     if (XR_FAILED(result))
                     {
                         error = xrError(m_impl->instance, result, "xrEndSession");
-                        return TickResult::Error;
+                        return FrameResult::Error;
                     }
                 }
                 m_impl->running = false;
@@ -678,43 +709,28 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
         event = { XR_TYPE_EVENT_DATA_BUFFER };
     }
     if (m_impl->exiting)
-        return TickResult::Exit;
+        return FrameResult::Exit;
     if (!m_impl->running)
-        return TickResult::Idle;
+        return FrameResult::Idle;
     XrFrameWaitInfo waitInfo { XR_TYPE_FRAME_WAIT_INFO };
-    XrFrameState    frameState { XR_TYPE_FRAME_STATE };
-    XrResult        result = xrWaitFrame(m_impl->session, &waitInfo, &frameState);
+    m_impl->frameState  = { XR_TYPE_FRAME_STATE };
+    auto    &frameState = m_impl->frameState;
+    XrResult result     = xrWaitFrame(m_impl->session, &waitInfo, &frameState);
     if (XR_FAILED(result))
     {
         error = xrError(m_impl->instance, result, "xrWaitFrame");
-        return TickResult::Error;
+        return FrameResult::Error;
     }
     XrFrameBeginInfo beginInfo { XR_TYPE_FRAME_BEGIN_INFO };
     result = xrBeginFrame(m_impl->session, &beginInfo);
     if (XR_FAILED(result))
     {
         error = xrError(m_impl->instance, result, "xrBeginFrame");
-        return TickResult::Error;
+        return FrameResult::Error;
     }
-    // A frame the runtime asks us to skip is still ended correctly, but it is
-    // not counted as a submitted diagnostic: no multiview pixels were proven.
-    auto endEmpty = [&]()
-    {
-        XrFrameEndInfo end { XR_TYPE_FRAME_END_INFO };
-        end.displayTime          = frameState.predictedDisplayTime;
-        end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        end.layerCount           = 0;
-        end.layers               = nullptr;
-        result                   = xrEndFrame(m_impl->session, &end);
-        if (XR_FAILED(result))
-        {
-            error = xrError(m_impl->instance, result, "xrEndFrame");
-            return false;
-        }
-        return true;
-    };
+    m_impl->frameBegun = true;
     if (!frameState.shouldRender)
-        return endEmpty() ? TickResult::Idle : TickResult::Error;
+        return finishFrame(false, error) ? FrameResult::Idle : FrameResult::Error;
     XrViewLocateInfo locate { XR_TYPE_VIEW_LOCATE_INFO };
     locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
     locate.displayTime           = frameState.predictedDisplayTime;
@@ -726,81 +742,93 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
     if (XR_FAILED(result) || count != kViewCount)
     {
         error = XR_FAILED(result) ? xrError(m_impl->instance, result, "xrLocateViews") : "OpenXR did not provide valid stereo view poses";
-        return endEmpty() ? TickResult::Error : TickResult::Error;
+        finishFrame(false, error);
+        return FrameResult::Error;
     }
     // Validity can be temporarily absent at session start or while tracking
     // recovers.  Keep polling instead of treating this as a fatal API error.
     if ((viewState.viewStateFlags & (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT))
         != (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT))
-        return endEmpty() ? TickResult::Idle : TickResult::Error;
-    uint32_t                    imageIndex = 0;
+        return finishFrame(false, error) ? FrameResult::Idle : FrameResult::Error;
+    auto                       &imageIndex = m_impl->imageIndex;
     XrSwapchainImageAcquireInfo acquire { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
     result = xrAcquireSwapchainImage(m_impl->color, &acquire, &imageIndex);
     if (XR_FAILED(result))
     {
         error = xrError(m_impl->instance, result, "xrAcquireSwapchainImage");
-        return endEmpty() ? TickResult::Error : TickResult::Error;
+        finishFrame(false, error);
+        return FrameResult::Error;
     }
+    m_impl->imageAcquired = true;
     XrSwapchainImageWaitInfo imageWait { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
     imageWait.timeout = 1000LL * 1000LL * 1000LL;
     result            = xrWaitSwapchainImage(m_impl->color, &imageWait);
     if (result != XR_SUCCESS)
     {
         error = xrError(m_impl->instance, result, "xrWaitSwapchainImage");
-        return TickResult::Error;
+        return FrameResult::Error;
+    }
+    m_impl->imageReady = true;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &m_impl->previousReadFbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &m_impl->previousDrawFbo);
+    frame.width                = m_impl->width;
+    frame.height               = m_impl->height;
+    frame.predictedDisplayTime = frameState.predictedDisplayTime;
+    std::copy(m_impl->views.begin(), m_impl->views.end(), frame.views);
+    return FrameResult::Ready;
+}
+
+bool Runtime::bindEye(uint32_t eye, std::string &error)
+{
+    if (!m_impl->frameBegun || !m_impl->imageReady || eye >= kViewCount)
+    {
+        error = "cannot bind an eye without a ready OpenXR frame";
+        return false;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[m_impl->imageIndex].image, 0, eye);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_impl->depth, 0, eye);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE)
+    {
+        error = "OpenXR eye framebuffer incomplete: " + std::to_string(status);
+        return false;
+    }
+    return glSucceeded("binding OpenXR eye", error);
+}
+
+bool Runtime::bindMultiview(std::string &error)
+{
+    if (!m_impl->frameBegun || !m_impl->imageReady)
+    {
+        error = "cannot bind multiview without a ready OpenXR frame";
+        return false;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fbo);
+    m_impl->multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[m_impl->imageIndex].image, 0, 0, kViewCount);
+    m_impl->multiview(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_impl->depth, 0, 0, kViewCount);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE)
+    {
+        error = "OpenXR multiview framebuffer incomplete: " + std::to_string(status);
+        return false;
+    }
+    return glSucceeded("binding OpenXR multiview", error);
+}
+
+bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error)
+{
+    if (!m_impl->frameBegun || !m_impl->imageReady)
+    {
+        error = "cannot capture without a ready OpenXR frame";
+        return false;
     }
     GLState state;
     state.save();
-    while (glGetError() != GL_NO_ERROR) { }
-    glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fbo);
-    m_impl->multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[imageIndex].image, 0, 0, kViewCount);
-    m_impl->multiview(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_impl->depth, 0, 0, kViewCount);
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE || !glSucceeded("setting up multiview framebuffer", error))
-    {
-        state.restore();
-        XrSwapchainImageReleaseInfo release { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-        xrReleaseSwapchainImage(m_impl->color, &release);
-        if (error.empty())
-            error = "OpenXR multiview framebuffer is incomplete";
-        return endEmpty() ? TickResult::Error : TickResult::Error;
-    }
-    glViewport(0, 0, m_impl->width, m_impl->height);
-    glDisable(GL_SCISSOR_TEST);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    glDepthMask(GL_TRUE);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glDisable(GL_BLEND);
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_ALPHA_TEST);
-    glDisable(GL_RASTERIZER_DISCARD);
-    glDisable(GL_FRAMEBUFFER_SRGB);
-    glDisable(GL_DITHER);
-    glClearColor(.015f, .02f, .04f, 1);
-    glClearDepth(1);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    float matrices[kViewCount][16];
-    for (uint32_t i = 0; i < kViewCount; ++i)
-    {
-        float p[16], v[16];
-        projectionMatrix(m_impl->views[i].fov, p);
-        viewMatrix(m_impl->views[i].pose, v);
-        multiply(matrices[i], p, v);
-    }
-    glUseProgram(m_impl->program);
-    glUniformMatrix4fv(glGetUniformLocation(m_impl->program, "uViewProj[0]"), kViewCount, GL_FALSE, &matrices[0][0]);
-    glBindVertexArray(m_impl->vao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    if (!glSucceeded("drawing multiview diagnostic", error))
-    {
-        state.restore();
-        XrSwapchainImageReleaseInfo release { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-        xrReleaseSwapchainImage(m_impl->color, &release);
-        return endEmpty() ? TickResult::Error : TickResult::Error;
-    }
-    bool pixelsOk = true;
-    if (verifyPixels)
+    uint32_t imageIndex = m_impl->imageIndex;
+    bool     pixelsOk   = true;
     {
         std::array<uint64_t, kViewCount> hashes {};
         std::vector<unsigned char>       pixels(size_t(m_impl->width) * m_impl->height * 4);
@@ -845,14 +873,14 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
                     break;
                 }
             }
-            if (!nonBackground)
+            if (requireDistinct && !nonBackground)
             {
                 error    = "diagnostic layer contains only its background";
                 pixelsOk = false;
                 break;
             }
         }
-        if (pixelsOk && hashes[0] == hashes[1])
+        if (pixelsOk && requireDistinct && hashes[0] == hashes[1])
         {
             error    = "diagnostic layers are identical";
             pixelsOk = false;
@@ -862,18 +890,75 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
             pixelsOk = false;
     }
     state.restore();
-    XrSwapchainImageReleaseInfo release { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-    result = xrReleaseSwapchainImage(m_impl->color, &release);
-    if (XR_FAILED(result))
+    return pixelsOk;
+}
+
+bool Runtime::mirrorEye(uint32_t eye, std::string &error)
+{
+    if (!bindEye(eye, error))
+        return false;
+    // FBOs and scissor are restored exactly; no engine-cached state is changed.
+    GLboolean const scissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_impl->fbo);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_impl->previousDrawFbo);
+    glBlitFramebuffer(0, 0, m_impl->width, m_impl->height, 0, 0,
+                      m_impl->width, m_impl->height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    if (scissor)
+        glEnable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_impl->previousReadFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_impl->previousDrawFbo);
+    return glSucceeded("mirroring OpenXR eye", error);
+}
+
+bool Runtime::finishFrame(bool submit, std::string &error)
+{
+    if (!m_impl->frameBegun)
     {
-        error = xrError(m_impl->instance, result, "xrReleaseSwapchainImage");
-        return endEmpty() ? TickResult::Error : TickResult::Error;
+        error = "no OpenXR frame is open";
+        return false;
     }
-    if (!pixelsOk)
+    if (m_impl->imageAcquired && !m_impl->imageReady)
     {
-        error = "multiview diagnostic readback did not contain distinct non-background left/right images";
-        return endEmpty() ? TickResult::Error : TickResult::Error;
+        error = "acquired OpenXR image never became ready; runtime shutdown is required";
+        return false;
     }
+    if (m_impl->imageReady)
+    {
+        // Rendering belongs to the caller.  Preserve its engine GL state cache:
+        // only the framebuffer bindings owned by this adapter are restored.
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_impl->previousReadFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_impl->previousDrawFbo);
+        XrSwapchainImageReleaseInfo release { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+        XrResult                    result = xrReleaseSwapchainImage(m_impl->color, &release);
+        if (XR_FAILED(result))
+        {
+            error = xrError(m_impl->instance, result, "xrReleaseSwapchainImage");
+            return false;
+        }
+        m_impl->imageReady = m_impl->imageAcquired = false;
+    }
+    else if (submit)
+    {
+        error = "cannot submit without rendering a ready OpenXR image";
+        return false;
+    }
+    if (!submit)
+    {
+        XrFrameEndInfo end { XR_TYPE_FRAME_END_INFO };
+        end.displayTime          = m_impl->frameState.predictedDisplayTime;
+        end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        XrResult result          = xrEndFrame(m_impl->session, &end);
+        m_impl->frameBegun       = false;
+        if (XR_FAILED(result))
+        {
+            error = xrError(m_impl->instance, result, "xrEndFrame");
+            return false;
+        }
+        return true;
+    }
+    XrResult                                                 result;
     std::array<XrCompositionLayerProjectionView, kViewCount> layerViews {};
     for (uint32_t i = 0; i < kViewCount; ++i)
     {
@@ -890,7 +975,7 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
     projection.views                             = layerViews.data();
     XrCompositionLayerBaseHeader const *layers[] = { reinterpret_cast<XrCompositionLayerBaseHeader const *>(&projection) };
     XrFrameEndInfo                      end { XR_TYPE_FRAME_END_INFO };
-    end.displayTime          = frameState.predictedDisplayTime;
+    end.displayTime          = m_impl->frameState.predictedDisplayTime;
     end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     end.layerCount           = 1;
     end.layers               = layers;
@@ -898,10 +983,69 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
     if (XR_FAILED(result))
     {
         error = xrError(m_impl->instance, result, "xrEndFrame");
+        return false;
+    }
+    m_impl->frameBegun = false;
+    ++m_impl->submitted;
+    return true;
+}
+
+Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error)
+{
+    Frame       frame;
+    FrameResult result = beginFrame(frame, error);
+    if (result == FrameResult::Idle)
+        return TickResult::Idle;
+    if (result == FrameResult::Exit)
+        return TickResult::Exit;
+    if (result != FrameResult::Ready)
+        return TickResult::Error;
+    GLState state;
+    state.save();
+    while (glGetError() != GL_NO_ERROR) { }
+    if (!bindMultiview(error))
+    {
+        state.restore();
+        finishFrame(false, error);
         return TickResult::Error;
     }
-    ++m_impl->submitted;
-    return TickResult::Submitted;
+    glViewport(0, 0, m_impl->width, m_impl->height);
+    glDisable(GL_SCISSOR_TEST);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_RASTERIZER_DISCARD);
+    glDisable(GL_FRAMEBUFFER_SRGB);
+    glDisable(GL_DITHER);
+    glClearColor(.015f, .02f, .04f, 1);
+    glClearDepth(1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    float matrices[kViewCount][16];
+    for (uint32_t i = 0; i < kViewCount; ++i)
+    {
+        float p[16], v[16];
+        projectionMatrix(m_impl->views[i].fov, p);
+        viewMatrix(m_impl->views[i].pose, v);
+        multiply(matrices[i], p, v);
+    }
+    glUseProgram(m_impl->program);
+    glUniformMatrix4fv(glGetUniformLocation(m_impl->program, "uViewProj[0]"), kViewCount, GL_FALSE, &matrices[0][0]);
+    glBindVertexArray(m_impl->vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    bool rendered = glSucceeded("drawing multiview diagnostic", error);
+    if (rendered && verifyPixels)
+        rendered = captureFrame(outputPrefix, true, error);
+    state.restore();
+    if (!rendered)
+    {
+        finishFrame(false, error);
+        return TickResult::Error;
+    }
+    return finishFrame(true, error) ? TickResult::Submitted : TickResult::Error;
 }
 
 uint64_t Runtime::submittedFrames() const
