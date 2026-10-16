@@ -62,7 +62,7 @@ struct Eye
 };
 static std::array<uint8_t, MAXSPRITESONSCREEN> membership;
 static bool animating, generationSaturated;
-static uint64_t worldFrames;
+static uint64_t worldFrames, worldMultiviewFrames, worldOracleFrames;
 static eduke_xr::Runtime *previousRuntime;
 static XrVector3f origin;
 static XrQuaternionf inverseYaw;
@@ -154,6 +154,62 @@ void G_XRTestAnimationInputs()
           unsigned(g_frameCounter),spritesortcnt,duplicates);
 }
 
+// A matched attachment isolates renderer differences from window-system versus
+// texture-target rasterization. This fixture still executes the native room,
+// animation and mask path below without the stereo transaction or XR runtime.
+static GLuint nativeTestFbo, nativeTestColor, nativeTestDepth;
+static GLint nativeTestDrawFbo, nativeTestReadFbo;
+void G_XRTestBeginNative()
+{
+    if (nativeTestFbo || !std::getenv("EDUKE32_XR_TEST_NATIVE_TARGET") || !std::getenv("EDUKE32_XR_TEST_CAPTURE")
+        || g_frameCounter != 12 || videoGetRenderMode() != REND_POLYMOST)
+        return;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&nativeTestDrawFbo);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&nativeTestReadFbo);
+    GLint texture;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY,&texture);
+    glGenFramebuffers(1,&nativeTestFbo);
+    glGenTextures(1,&nativeTestColor);
+    glGenTextures(1,&nativeTestDepth);
+    glBindTexture(GL_TEXTURE_2D_ARRAY,nativeTestColor);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_SRGB8_ALPHA8,xdim,ydim,2,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+    glBindTexture(GL_TEXTURE_2D_ARRAY,nativeTestDepth);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_DEPTH_COMPONENT24,xdim,ydim,2,0,GL_DEPTH_COMPONENT,GL_UNSIGNED_INT,nullptr);
+    glBindTexture(GL_TEXTURE_2D_ARRAY,texture);
+    glBindFramebuffer(GL_FRAMEBUFFER,nativeTestFbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,nativeTestColor,0,0);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,nativeTestDepth,0,0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        LOG_F(ERROR,"XR native reference attachment incomplete.");
+    glClearColor(0,0,0,1);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+void G_XRTestCaptureNative()
+{
+    static bool captured;
+    char const *prefix=std::getenv("EDUKE32_XR_TEST_CAPTURE");
+    if (captured || !prefix || g_frameCounter != 12 || videoGetRenderMode() != REND_POLYMOST)
+        return;
+    captured=true;
+    std::string error;
+    std::string path=std::string(prefix)+"-native.ppm";
+    if (!eduke_xr::captureFramebuffer(path.c_str(),xdim,ydim,error))
+        LOG_F(ERROR,"XR native reference capture failed: %s",error.c_str());
+    else
+        LOG_F(INFO,"XR native reference captured at logical frame 12 (%s attachment).",nativeTestFbo ? "matched texture" : "window");
+    if (nativeTestFbo)
+    {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,nativeTestDrawFbo);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,nativeTestReadFbo);
+        glDeleteFramebuffers(1,&nativeTestFbo);
+        glDeleteTextures(1,&nativeTestColor);
+        glDeleteTextures(1,&nativeTestDepth);
+        nativeTestFbo=nativeTestColor=nativeTestDepth=0;
+    }
+}
+
 bool G_XRCanAppendSprite(int32_t limit)
 {
     bool const fits = spritesortcnt < limit;
@@ -186,6 +242,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         previousRuntime = runtime;
         recentered = false;
         worldFrames = 0;
+        worldMultiviewFrames = worldOracleFrames = 0;
     }
     eduke_xr::Runtime::Frame frame;
     std::string error;
@@ -208,48 +265,142 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     }
     Camera logical = camera();
     std::array<Eye,2> eyes;
-    for (unsigned i=0;i<2;++i)
-        if (!makeEye(frame.views[i],logical,float(frame.width)/frame.height,eyes[i]))
+    char const *zeroValue=std::getenv("EDUKE32_XR_TEST_ZERO_IPD");
+    bool const zeroTest=zeroValue && !Bstrcmp(zeroValue,"1");
+    char const *stereoValue=std::getenv("EDUKE32_XR_TEST_STEREO_POSE");
+    bool const unequalTest=stereoValue && !Bstrcmp(stereoValue,"2");
+    bool const stereoTest=stereoValue && (!Bstrcmp(stereoValue,"1") || unequalTest);
+    bool const fixtureTest=zeroTest || stereoTest;
+    if (stereoTest)
+    {
+        origin={0,1.6f,0};
+        inverseYaw={0,0,0,1};
+        XrQuaternionf const yaw{0,std::sin(.035f),0,std::cos(.035f)};
+        XrQuaternionf const pitch{std::sin(.025f),0,0,std::cos(.025f)};
+        XrQuaternionf const roll{0,0,std::sin(-.015f),std::cos(-.015f)};
+        for (unsigned i=0;i<2;++i)
         {
-            static bool warned;
-            if (!warned)
-                LOG_F(WARNING,"XR oracle frame outside native camera coverage/collision domain; full-pitch/room-scale support remains pending.");
-            warned = true;
+            frame.views[i].pose.position={i ? .032f : -.032f,1.6f,0};
+            frame.views[i].pose.orientation=multiply(multiply(yaw,pitch),roll);
+            frame.views[i].fov={i ? -.8f : -.75f,i ? .75f : .8f,.7f,-.72f};
+            if (unequalTest && i == 1)
+                frame.views[i].fov={-.68f,.65f,.6f,-.62f};
+        }
+    }
+    if (zeroTest)
+    {
+        // Offscreen differential fixture only. No projection layer is submitted
+        // for these synthetic poses/FOVs, so runtime-located eyes stay truthful.
+        if (windowxy1.x || windowxy1.y || windowxy2.x != xdim-1 || windowxy2.y != ydim-1 || yxaspect != 81920)
+        {
             runtime->finishFrame(false,error);
+            sdlayer_xr_disableWorld("zero-IPD fixture requires full viewport and square Build pixel aspect");
             return false;
         }
+        for (auto &eye : eyes)
+        {
+            eye.camera=logical;
+            eye.cover=float(viewingrange)/65536.f;
+            eye.left=-eye.cover; eye.right=eye.cover;
+            eye.down=-eye.cover/(float(xdim)/ydim); eye.up=-eye.down;
+        }
+    }
+    else
+        for (unsigned i=0;i<2;++i)
+            if (!makeEye(frame.views[i],logical,float(frame.width)/frame.height,eyes[i]))
+            {
+                static bool warned;
+                if (!warned)
+                    LOG_F(WARNING,"XR oracle frame outside native camera coverage/collision domain; full-pitch/room-scale support remains pending.");
+                warned = true;
+                runtime->finishFrame(false,error);
+                return false;
+            }
     vec2_t const oldStart=windowxy1, oldEnd=windowxy2;
     int const oldRange=viewingrange, oldAspect=yxaspect;
     int const frozenVisibility=g_visibility, frozenParallax=parallaxvisibility;
-    bool animated=false, good=true;
+    bool animated=false, good=true, usedMultiview=false;
     videoSetViewableArea(0,0,xdim-1,ydim-1);
-    for (unsigned i=0;i<2 && good;++i)
+    auto const drawOpaque = [&](bool collect) {
+        for (unsigned i=0;i<2 && good;++i)
+        {
+            auto &eye=eyes[i];
+            eye.sprites.clear();
+            eye.walls.clear();
+            good=runtime->bindEye(i,error);
+            if (!good) return false;
+            eyeState(eye);
+            glClearColor(0,0,0,1);
+            glClear(GL_COLOR_BUFFER_BIT);
+            spritesortcnt=0;
+            if (collect) polymost_xrBeginOpaqueCollection(i);
+            yax_preparedrawrooms();
+            renderDrawRoomsQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,
+                              eye.camera.angle,eye.camera.horizon,eye.camera.sector);
+            if (collect && polymost_xrEndOpaqueCollection(i) != POLYMOST_XR_COLLECT_OK)
+                return false;
+            if (spritesortcnt >= maxspritesonscreen || maskwallcnt >= MAXWALLSB)
+            {
+                error="stereo collection saturated native list capacity";
+                good=false; return false;
+            }
+            eye.sprites.assign(tsprite,tsprite+spritesortcnt);
+            eye.walls.reserve(maskwallcnt);
+            for (int j=0;j<maskwallcnt;++j) eye.walls.push_back(thewall[maskwall[j]]);
+            std::copy(std::begin(gotsector),std::end(gotsector),eye.sectors.begin());
+            if (i == 0 && testFailure("opaque"))
+            {
+                error="injected failure after left opaque pass";
+                good=false; return false;
+            }
+        }
+        return good;
+    };
+    char const *singleValue=std::getenv("EDUKE32_XR_SINGLE_PASS");
+    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1");
+    if (singlePass)
     {
-        auto &eye=eyes[i];
-        good=runtime->bindEye(i,error);
-        if (!good) break;
-        eyeState(eye);
-        glClearColor(0,0,0,1);
-        glClear(GL_COLOR_BUFFER_BIT);
-        spritesortcnt=0;
-        yax_preparedrawrooms();
-        renderDrawRoomsQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,
-                          eye.camera.angle,eye.camera.horizon,eye.camera.sector);
-        if (spritesortcnt >= maxspritesonscreen || maskwallcnt >= MAXWALLSB)
+        bool committed=drawOpaque(true);
+        if (committed)
         {
-            error="stereo collection saturated native list capacity";
-            good=false; break;
+            good=runtime->bindMultiview(error);
+            if (good)
+            {
+                // Collection can execute unsupported native draw families on
+                // the individual eye targets. Commit only the accepted replay.
+                glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+                committed=polymost_xrReplayOpaqueCollection() == POLYMOST_XR_COLLECT_OK;
+                if (committed)
+                {
+                    usedMultiview=true;
+                    static bool reported;
+                    if (!reported || g_frameCounter == 12)
+                    {
+                        auto const stats=polymost_xrOpaqueCollectionStats();
+                        LOG_F(INFO,"OpenXR opaque single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u",
+                              unsigned(g_frameCounter),stats.pairedCalls,stats.eyeOnlyCalls,stats.pairedVertices,stats.eyeOnlyVertices);
+                        reported=true;
+                    }
+                }
+            }
+            else committed=false;
         }
-        eye.sprites.assign(tsprite,tsprite+spritesortcnt);
-        eye.walls.reserve(maskwallcnt);
-        for (int j=0;j<maskwallcnt;++j) eye.walls.push_back(thewall[maskwall[j]]);
-        std::copy(std::begin(gotsector),std::end(gotsector),eye.sectors.begin());
-        if (i == 0 && testFailure("opaque"))
+        if (!committed && good)
         {
-            error="injected failure after left opaque pass";
-            good=false;
+            static bool reported;
+            if (!reported)
+            {
+                LOG_F(INFO,"OpenXR opaque candidate uses two-pass oracle: %s",polymost_xrOpaqueCollectionReason());
+                reported=true;
+            }
+            polymost_xrDiscardOpaqueCollection();
+            // Retry before animation in the same located/acquired XR frame.
+            // No CON callback or simulation/input tick is repeated here.
+            drawOpaque(false);
         }
+        polymost_xrDiscardOpaqueCollection();
     }
+    else drawOpaque(false);
     if (good)
     {
         std::vector<int> byOwner(MAXSPRITES,-1);
@@ -326,7 +477,16 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             for (int j=0;j<maskwallcnt;++j) { maskwall[j]=j; thewall[j]=eye.walls[j]; }
             renderDrawMasks();
         }
-        if (good && worldFrames == 59)
+        if (good && fixtureTest && g_frameCounter == 12)
+        {
+            if (auto prefix=std::getenv("EDUKE32_XR_TEST_CAPTURE"))
+            {
+                good=runtime->captureFrame(prefix,false,error);
+                if (good)
+                    LOG_F(INFO,"XR %s eyes captured at logical frame 12 (offscreen, no projection submission).",zeroTest ? "zero-IPD" : "stereo-fixture");
+            }
+        }
+        if (good && !fixtureTest && worldFrames == 59)
         {
             if (auto prefix=std::getenv("EDUKE32_XR_WORLD_OUTPUT"))
                 good=runtime->captureFrame(prefix,false,error);
@@ -338,7 +498,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     videoSetViewableArea(oldStart.x,oldStart.y,oldEnd.x,oldEnd.y);
     renderSetAspect(oldRange,oldAspect);
     std::string endError;
-    if (!runtime->finishFrame(good,endError)) { good=false; error += " "+endError; }
+    if (!runtime->finishFrame(good && !fixtureTest,endError)) { good=false; error += " "+endError; }
     // Display-end callbacks must not observe the right eye's renderer globals.
     // Preserve script visibility mutations while rebuilding native derived fog.
     int const scriptVisibility=g_visibility, scriptParallax=parallaxvisibility;
@@ -351,8 +511,11 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     else
     {
         ++worldFrames;
-        if (worldFrames == 60)
-            LOG_F(INFO,"OpenXR world oracle: 60 frames, two opaque/mask eye passes and one animation transaction per frame.");
+        if (usedMultiview) ++worldMultiviewFrames;
+        else ++worldOracleFrames;
+        if (!fixtureTest && worldFrames == 60)
+            LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; per-eye masks and one animation transaction per frame.",
+                  unsigned(worldMultiviewFrames),unsigned(worldOracleFrames));
     }
     // Native Polymost appends to these arrays rather than resetting the sprite
     // count. Also clear on an aborted pass before fallback/next-frame rendering.

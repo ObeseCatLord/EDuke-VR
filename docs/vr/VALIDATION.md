@@ -1,4 +1,4 @@
-# Verification record — 2026-10-15
+# Verification record — updated 2026-10-16
 
 These results distinguish working code from planned full-port behavior. Private raw logs remain in the local work directory; no session telemetry or proprietary game data is committed.
 
@@ -25,6 +25,10 @@ These results distinguish working code from planned full-port behavior. Private 
 | Temporary invalid tracking recovery | Source handling corrected to empty-frame/Idle | No injected invalid→valid runtime test yet. |
 | XR context recreation/session STOPPING/loss/restart | Cleanup paths inspected; repeated process runs pass | Controlled lifecycle-transition matrix still untested. |
 | Actual Duke-world stereo | First ordinary-room two-pass oracle submitted 60 frames; E1L1 roof/masked fence/sprites captured in both eye layers | Single-pass world, full-pitch coverage, tracked-motion tests, weapons/HUD, controllers, YAX/mirrors and CON regression matrix remain open. |
+| Native-fragment multiview shader probe | Pass in actual NVIDIA EDuke GL4.6 context; unchanged GLSL120 fragment links directly with GLSL410 multiview vertex; normal native E1L1 afterward | Link/state proof only; full renderer coverage remains open. |
+| Strict zero-IPD differential fixture | Native matched-array reference, two-pass eyes and multiview eyes match all 576,000 pixels exactly; CON counts 14/14/14 | Fixed ordinary portal room, indexed ART, normal sprite mask; not arbitrary CON/mod compatibility. |
+| Nonzero IPD/asymmetric FOV/rotated fixture | Both multiview eyes match their two-pass references exactly; 30 paired calls, 342 vertices; eyes distinct | Deterministic synthetic pose, no projection layer submitted; not live tracking/headset proof. |
+| Unequal eye coverage / replay init failure | Exact per-eye reference match; 0 paired / 60 eye-only calls, 342 vertices; one injected GL error + partial init cleanup recovers before animation | Demonstrates conservative incompatible-state handling and retry, not draw-call savings for this case. |
 | Physical headset / Windows / Quest | Not tested / bindings not implemented | Simulator cannot prove headset comfort, optics, device input or sustained mobile performance. |
 
 ## Exact successful build/test shapes
@@ -87,3 +91,32 @@ Sibling output files (outside the source Git repository to avoid committing game
 ## Final retained checkpoint
 
 Final native/XR full builds, standalone 12-frame multiview/core-validation, world 60-frame and both opaque/masks abort regressions pass. With temporary source traces removed, the final mixed runner passed native dedicated/XR-client initial join and reconnect, with 60 actual world frames and distinct readbacks for each. The corresponding native listen/client run reached gameplay and responded to W input. The final native and XR gameplay images were inspected. The private Monado service and owned game/Xvfb processes were stopped after testing.
+
+## 2026-10-16 — bounded opaque multiview proof
+
+A generated two-sector portal map uses owned indexed ART, alternating wall palette/shade inputs and an ordinary bottle sprite. A stock-CON wrapper fixes only the rendering camera and counts DISPLAYROOMS / ANIMATESPRITES / DISPLAYROOMSEND. Native and stereo paths each report 14/14/14; sprite animation remains one logical transaction. No owned game data is copied into the fixture source.
+
+The first uncontrolled-camera comparison was invalid because startup interpolation advanced differently. Fixing the normal writable CON camera gamevars removed that difference. The remaining 344 of 576,000 window-versus-array pixel differences persisted with identical camera/projection values, including a native-projection XR experiment. The unchanged native room/animation/mask path rendered to a matching SRGB8_ALPHA8/depth24 array attachment then matched both stereo eyes exactly. The strict harness defaults to that matched attachment; it retains `--native-attachment window` and reports the choice explicitly. No error tolerance was introduced. This isolates render-target dependence; the exact driver-internal rasterization cause was not established.
+
+The new opt-in opaque path captures already-resolved native shader inputs/final vertices, triangle-expands fans, and linearly merges compatible packet heads. Eye ownership clips the other view's triangles while preserving each filtered eye stream's GL_ALWAYS order. Native persistent-buffer offsets/fences, material policy and uniform caches remain owned by native code. Replay has isolated program/VBO resources and restores actual GL state/accounting before native masks. Main integration retries rejected collection in the same ready XR frame before any sprite/CON animation.
+
+| Fixture | Strict pixel reference | Frame-12 replay evidence |
+|---|---|---|
+| Identical zero-IPD eyes | Matched native reference and two-pass, both exact | 18 paired calls, 0 eye-only, 216 vertices |
+| 64 mm IPD, asymmetric FOV, pitch/yaw/roll | Two-pass, both exact and mutually distinct | 30 paired calls, 0 eye-only, 342 vertices |
+| Unequal coverage, injected init failure | Two-pass, both exact and mutually distinct; counters unchanged | 0 paired, 60 eye-only, 342 vertices; failed init cleaned and later replay succeeds |
+
+Unequal coverage changes shader-effective visibility, so these packets deliberately do not pair. Two CPU traversals and duplicate eye geometry remain. Masks still use two passes. These figures establish actual multiview submission for the restricted family; they do not establish lower GPU/CPU time or complete single-pass world frames.
+
+Reproduce with the existing runtime environment:
+
+```sh
+python3 tools/vr/check_stereo_oracle.py --binary ./eduke32-xr --single-pass --display :1 \
+  --grp /path/to/owned/DUKE3D.GRP --work-dir /path/to/test/labs
+# Add --pose stereo for the asymmetric fixture.
+# Add --pose unequal --inject-replay-init-failure for eye-only and recovery paths.
+```
+
+The native-fragment shader proof linked unchanged GLSL120 directly; the generated GLSL410 version wrapper was not needed. Fresh Astra/xhigh correctness review found an initialization-error ownership/partial-object issue, now fixed and fault-injection tested. E1L1 with the prototype enabled rejects sky explicitly, uses the existing oracle and submits 60 frames with distinct actual eye images. The mixed native dedicated/XR-client runner repeated initial join and reconnect with the prototype enabled; both retain 60 frames/distinct eyes and the owned gameplay image responds to W input. This exercises the oracle fallback, not paired multiplayer sky rendering.
+
+Native and XR full builds pass, as do the 1000-case projection derivation and Python compilation/diff checks. Image `../../../evidence/bounded-opaque-stereo.png` shows the asymmetric portal fixture. Complete opaque sky/material coverage, mask/sprite multiview, real tracking/full pitch, controllers/headset UI, broad CON features and the full multiplayer action matrix remain open.

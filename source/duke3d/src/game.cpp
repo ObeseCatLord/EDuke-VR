@@ -1143,6 +1143,9 @@ void G_DrawRooms(int32_t playerNum, int32_t smoothRatio)
             if (!G_XRDrawRooms(smoothRatio))
 #endif
             {
+#ifdef USE_OPENXR
+                G_XRTestBeginNative();
+#endif
                 yax_preparedrawrooms();
                 renderDrawRoomsQ16(CAMERA(pos.x),CAMERA(pos.y),CAMERA(pos.z),CAMERA(q16ang),CAMERA(q16horiz),CAMERA(sect));
                 yax_drawrooms(G_DoSpriteAnimations, CAMERA(sect), 0, smoothRatio);
@@ -1155,6 +1158,9 @@ void G_DrawRooms(int32_t playerNum, int32_t smoothRatio)
                 drawing_ror = 0;
 #endif
                 renderDrawMasks();
+#ifdef USE_OPENXR
+                G_XRTestCaptureNative();
+#endif
             }
 #endif
         }

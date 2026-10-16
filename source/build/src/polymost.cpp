@@ -21,6 +21,10 @@ Ken Silverman's official web site: http://www.advsys.net/ken
 #include "texcache.h"
 #include "hash.h"
 
+#ifdef USE_OPENXR
+# include <vector>
+#endif
+
 #ifdef POLYMOST2
 int32_t r_enablepolymost2 = 0;
 #endif // POLYMOST2
@@ -183,6 +187,9 @@ static GLuint paletteTextureIDs[MAXBASEPALS];
 static GLuint palswapTextureID = 0;
 extern char const *polymost1Frag;
 extern char const *polymost1Vert;
+#ifdef USE_OPENXR
+extern char const *polymost1VertXR;
+#endif
 static GLuint polymost1CurrentShaderProgramID = 0;
 static GLuint polymost1BasicShaderProgramID = 0;
 static GLuint polymost1ExtendedShaderProgramID = 0;
@@ -229,6 +236,134 @@ static GLint polymost1ShadeInterpolateLoc = -1;
 static float polymost1ShadeInterpolate = 1.f;
 static GLint polymost1ColorCorrectionLoc = -1;
 vec4f_t g_glColorCorrection = { 1.f, 1.f, 1.f, 0.f };
+#ifdef USE_OPENXR
+// This follows the value actually sent to the native program.  The public
+// setter takes an argument and intentionally does not update g_glColorCorrection.
+static vec4f_t polymost1UploadedColorCorrection = { 1.f, 1.f, 1.f, 0.f };
+
+// This is deliberately a transport for the already-resolved indexed ART
+// path, not a second Polymost material implementation.  drawpoly continues
+// to select textures, update uniforms, and run its usual cleanup; only its
+// final fan submission is diverted while a collection is active.
+static constexpr uint32_t XR_OPAQUE_MAX_PACKETS = 8192;
+static constexpr uint32_t XR_OPAQUE_MAX_VERTICES = 262144;
+
+struct xr_opaque_vertex_t
+{
+    float x, y, z, u, v, eye;
+};
+
+struct xr_opaque_packet_t
+{
+    uint32_t first, count;
+    GLuint texture, palswap, palette, sampler;
+    vec4f_t texturePosSize, npot, color, correction;
+    vec2f_t halfTexel, palswapPos, palswapSize, clamp, numShades;
+    float shade, vis, fog, colorOnly, paletteEnabled, shadeInterpolate;
+    float projection[16], rotation[16];
+};
+
+struct xr_opaque_transport_t
+{
+    bool pending = false;
+    xr_opaque_packet_t packet{};
+    std::vector<xr_opaque_vertex_t> fan;
+};
+
+struct xr_opaque_collection_t
+{
+    bool active = false;
+    bool rejected = false;
+    uint32_t eye = 0;
+    char const *reason = "not collected";
+    float projection[2][16]{};
+    bool projectionValid[2]{};
+    std::vector<xr_opaque_packet_t> packets[2];
+    std::vector<xr_opaque_vertex_t> vertices[2];
+    xr_opaque_transport_t transport;
+    polymost_xr_collect_stats stats{};
+    GLuint program = 0, vbo = 0;
+};
+
+static xr_opaque_collection_t xrOpaque;
+
+static void polymost_xrRejectOpaque(char const *reason, bool const capacity = false)
+{
+    if (!xrOpaque.active || xrOpaque.rejected)
+        return;
+
+    xrOpaque.rejected = true;
+    xrOpaque.reason = capacity ? "opaque collection capacity" : reason;
+    xrOpaque.transport.pending = false;
+    xrOpaque.transport.fan.clear();
+}
+
+static void polymost_xrTextureMutation()
+{
+    polymost_xrRejectOpaque("texture or palette mutation");
+}
+
+void polymost_xrBeginOpaqueCollection(uint32_t const eye)
+{
+    if (eye > 1)
+        return;
+
+    if (eye == 0)
+    {
+        xrOpaque.packets[0].clear();
+        xrOpaque.packets[1].clear();
+        xrOpaque.vertices[0].clear();
+        xrOpaque.vertices[1].clear();
+        xrOpaque.transport = {};
+        xrOpaque.projectionValid[0] = xrOpaque.projectionValid[1] = false;
+        xrOpaque.stats = {};
+        xrOpaque.rejected = false;
+        xrOpaque.reason = "collecting";
+    }
+    else if (!xrOpaque.active)
+    {
+        xrOpaque.active = true;
+        xrOpaque.rejected = true;
+        xrOpaque.reason = "missing left opaque collection";
+    }
+
+    xrOpaque.active = true;
+    xrOpaque.eye = eye;
+}
+
+polymost_xr_collect_result polymost_xrEndOpaqueCollection(uint32_t const eye)
+{
+    if (!xrOpaque.active || eye != xrOpaque.eye)
+        return POLYMOST_XR_COLLECT_ERROR;
+    if (xrOpaque.transport.pending)
+        polymost_xrRejectOpaque("incomplete opaque transport");
+    if (xrOpaque.rejected)
+        return !Bstrcmp(xrOpaque.reason, "opaque collection capacity") ? POLYMOST_XR_COLLECT_CAPACITY : POLYMOST_XR_COLLECT_REJECTED;
+    return POLYMOST_XR_COLLECT_OK;
+}
+
+void polymost_xrDiscardOpaqueCollection()
+{
+    xrOpaque.active = false;
+    xrOpaque.rejected = false;
+    xrOpaque.transport = {};
+    xrOpaque.packets[0].clear();
+    xrOpaque.packets[1].clear();
+    xrOpaque.vertices[0].clear();
+    xrOpaque.vertices[1].clear();
+    xrOpaque.reason = "discarded";
+}
+
+polymost_xr_collect_stats polymost_xrOpaqueCollectionStats()
+{
+    return xrOpaque.stats;
+}
+
+char const *polymost_xrOpaqueCollectionReason()
+{
+    return xrOpaque.reason;
+}
+#endif
 
 static inline float float_trans(uint32_t maskprops, uint8_t blend)
 {
@@ -281,6 +416,9 @@ static inline int32_t gltexmayhavealpha(int32_t dapicnum, int32_t dapalnum)
 
 void gltexinvalidate(int32_t dapicnum, int32_t dapalnum, int32_t dameth)
 {
+#ifdef USE_OPENXR
+    polymost_xrTextureMutation();
+#endif
     const int32_t pic = (dapicnum&(GLTEXCACHEADSIZ-1));
 
     for (pthtyp *pth=texcache.list[pic]; pth; pth=pth->next)
@@ -298,6 +436,9 @@ void gltexinvalidate(int32_t dapicnum, int32_t dapalnum, int32_t dameth)
 //Use this for palette effects ... but not ones that change every frame!
 void gltexinvalidatetype(int32_t type)
 {
+#ifdef USE_OPENXR
+    polymost_xrTextureMutation();
+#endif
     for (bssize_t j=0; j<=GLTEXCACHEADSIZ-1; j++)
     {
         for (pthtyp *pth=texcache.list[j]; pth; pth=pth->next)
@@ -492,8 +633,417 @@ static GLuint polymost2_compileShader(GLenum shaderType, const char* const sourc
     return polymost2_compileShader(shaderType, source, &length);
 }
 
+#ifdef USE_OPENXR
+static GLuint polymost_xrCompileShader(GLenum const shaderType, char const * const * const source, GLint const * const lengths,
+                                       char const * const label)
+{
+    GLuint const shader = glCreateShader(shaderType);
+    if (!shader)
+    {
+        LOG_F(INFO, "OpenXR single-pass shader probe: unable to create %s shader.", label);
+        return 0;
+    }
+
+    GLint const count = lengths ? 2 : 1;
+    glShaderSource(shader, count, source, lengths);
+    glCompileShader(shader);
+
+    GLint compiled = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (compiled)
+        return shader;
+
+    GLint logLength = 0;
+    glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLength);
+    if (logLength > 1)
+    {
+        auto const log = (char *)Xmalloc(logLength);
+        glGetShaderInfoLog(shader, logLength, nullptr, log);
+        LOG_F(INFO, "OpenXR single-pass shader probe: %s shader failed:\n%s", label, log);
+        Xfree(log);
+    }
+    else
+        LOG_F(INFO, "OpenXR single-pass shader probe: %s shader failed.", label);
+
+    glDeleteShader(shader);
+    return 0;
+}
+
+static bool polymost_xrLinkProbe(GLuint const vertex, GLuint const fragment, char const * const fragmentLabel)
+{
+    GLuint const program = glCreateProgram();
+    if (!program)
+    {
+        LOG_F(INFO, "OpenXR single-pass shader probe: unable to create program.");
+        return false;
+    }
+
+    glAttachShader(program, vertex);
+    glAttachShader(program, fragment);
+    glLinkProgram(program);
+
+    GLint linked = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        GLint logLength = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLength);
+        if (logLength > 1)
+        {
+            auto const log = (char *)Xmalloc(logLength);
+            glGetProgramInfoLog(program, logLength, nullptr, log);
+            LOG_F(INFO, "OpenXR single-pass shader probe: link with %s fragment failed:\n%s", fragmentLabel, log);
+            Xfree(log);
+        }
+        else
+            LOG_F(INFO, "OpenXR single-pass shader probe: link with %s fragment failed.", fragmentLabel);
+    }
+
+    glDetachShader(program, vertex);
+    glDetachShader(program, fragment);
+    glDeleteProgram(program);
+    return linked == GL_TRUE;
+}
+
+// This probe deliberately only validates shader compatibility.  It does not
+// bind a program, issue a draw, or take ownership of Polymost's material state.
+static void polymost_xrShaderProbe()
+{
+    char const * const enabled = Bgetenv("EDUKE32_XR_SHADER_PROBE");
+    if (!enabled || enabled[0] != '1' || enabled[1] != '\0')
+        return;
+
+    char const * const vertexSources[] = { polymost1VertXR };
+    GLuint const vertex = polymost_xrCompileShader(GL_VERTEX_SHADER, vertexSources, nullptr, "GLSL 410 multiview vertex");
+    if (!vertex)
+        return;
+
+    char const * const nativeFragmentSources[] = { polymost1Frag };
+    GLuint fragment = polymost_xrCompileShader(GL_FRAGMENT_SHADER, nativeFragmentSources, nullptr, "native GLSL 120 fragment");
+    bool linked = fragment && polymost_xrLinkProbe(vertex, fragment, "native GLSL 120");
+    if (fragment)
+        glDeleteShader(fragment);
+
+    if (!linked)
+    {
+        // The body is the exact embedded native fragment source after its
+        // #version line.  Compatibility profiles retain its fixed-function
+        // inputs; only the version declaration changes for cross-stage link.
+        char const * const fragmentBody = Bstrchr(polymost1Frag, '\n');
+        if (fragmentBody)
+        {
+            char const * const compatFragmentSources[] = { "#version 410 compatibility\n", fragmentBody + 1 };
+            GLint const compatFragmentLengths[] = { -1, -1 };
+            fragment = polymost_xrCompileShader(GL_FRAGMENT_SHADER, compatFragmentSources, compatFragmentLengths,
+                                                "GLSL 410 compatibility fragment");
+            linked = fragment && polymost_xrLinkProbe(vertex, fragment, "GLSL 410 compatibility");
+            if (fragment)
+                glDeleteShader(fragment);
+        }
+    }
+
+    glDeleteShader(vertex);
+    LOG_F(INFO, "OpenXR single-pass shader probe: %s.", linked ? "linked native fragment policy" : "failed");
+}
+
+struct xr_opaque_locations_t
+{
+    GLint texture, palswap, palette, detail, glow;
+    GLint texturePosSize, halfTexel, palswapPos, palswapSize, clamp, shade, numShades, vis, fog;
+    GLint colorOnly, paletteEnabled, detailEnabled, glowEnabled, npot, shadeInterpolate, correction;
+    GLint projection[2], rotation[2];
+};
+
+static xr_opaque_locations_t xrOpaqueLoc{};
+
+static bool polymost_xrInitOpaqueReplay()
+{
+    if (xrOpaque.program && xrOpaque.vbo)
+        return true;
+
+    if (xrOpaque.program) glDeleteProgram(xrOpaque.program);
+    if (xrOpaque.vbo) glDeleteBuffers(1, &xrOpaque.vbo);
+    xrOpaque.program = xrOpaque.vbo = 0;
+
+    char const * const vertexSource[] = { polymost1VertXR };
+    char const * const fragmentSource[] = { polymost1Frag };
+    GLuint const vertex = polymost_xrCompileShader(GL_VERTEX_SHADER, vertexSource, nullptr, "opaque replay vertex");
+    GLuint const fragment = polymost_xrCompileShader(GL_FRAGMENT_SHADER, fragmentSource, nullptr, "opaque replay fragment");
+    if (!vertex || !fragment)
+    {
+        if (vertex) glDeleteShader(vertex);
+        if (fragment) glDeleteShader(fragment);
+        return false;
+    }
+
+    GLuint const program = glCreateProgram();
+    if (!program)
+    {
+        glDeleteShader(vertex);
+        glDeleteShader(fragment);
+        return false;
+    }
+    glAttachShader(program, vertex);
+    glAttachShader(program, fragment);
+    glBindAttribLocation(program, 7, "a_eye");
+    glLinkProgram(program);
+    glDetachShader(program, vertex);
+    glDetachShader(program, fragment);
+    glDeleteShader(vertex);
+    glDeleteShader(fragment);
+
+    GLint linked = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        glDeleteProgram(program);
+        return false;
+    }
+
+#define XR_OPAQUE_UNIFORM(name, member) xrOpaqueLoc.member = glGetUniformLocation(program, name)
+    XR_OPAQUE_UNIFORM("s_texture", texture); XR_OPAQUE_UNIFORM("s_palswap", palswap); XR_OPAQUE_UNIFORM("s_palette", palette);
+    XR_OPAQUE_UNIFORM("s_detail", detail); XR_OPAQUE_UNIFORM("s_glow", glow);
+    XR_OPAQUE_UNIFORM("u_texturePosSize", texturePosSize); XR_OPAQUE_UNIFORM("u_halfTexelSize", halfTexel);
+    XR_OPAQUE_UNIFORM("u_palswapPos", palswapPos); XR_OPAQUE_UNIFORM("u_palswapSize", palswapSize);
+    XR_OPAQUE_UNIFORM("u_clamp", clamp); XR_OPAQUE_UNIFORM("u_shade", shade); XR_OPAQUE_UNIFORM("u_numShades", numShades);
+    XR_OPAQUE_UNIFORM("u_visFactor", vis); XR_OPAQUE_UNIFORM("u_fogEnabled", fog); XR_OPAQUE_UNIFORM("u_useColorOnly", colorOnly);
+    XR_OPAQUE_UNIFORM("u_usePalette", paletteEnabled); XR_OPAQUE_UNIFORM("u_useDetailMapping", detailEnabled);
+    XR_OPAQUE_UNIFORM("u_useGlowMapping", glowEnabled); XR_OPAQUE_UNIFORM("u_npotEmulation", npot);
+    XR_OPAQUE_UNIFORM("u_shadeInterpolate", shadeInterpolate); XR_OPAQUE_UNIFORM("u_colorCorrection", correction);
+    XR_OPAQUE_UNIFORM("u_projection[0]", projection[0]); XR_OPAQUE_UNIFORM("u_projection[1]", projection[1]);
+    XR_OPAQUE_UNIFORM("u_rotation[0]", rotation[0]); XR_OPAQUE_UNIFORM("u_rotation[1]", rotation[1]);
+#undef XR_OPAQUE_UNIFORM
+    GLuint vbo = 0;
+    glGenBuffers(1, &vbo);
+    static bool injected;
+    char const * const failure = Bgetenv("EDUKE32_XR_TEST_FAIL");
+    if (!injected && failure && !Bstrcmp(failure,"replay-init"))
+    {
+        injected = true;
+        // Invalid buffer target deliberately queues an owned GL error. The
+        // same cleanup/retry path must work without poisoning Runtime::bindEye.
+        glBindBuffer(GL_TEXTURE_2D,0);
+        if (vbo) glDeleteBuffers(1,&vbo);
+        vbo = 0;
+        xrOpaque.reason = "injected opaque replay initialization";
+    }
+    if (!vbo)
+    {
+        glDeleteProgram(program);
+        return false;
+    }
+    xrOpaque.program = program;
+    xrOpaque.vbo = vbo;
+    return true;
+}
+
+static bool polymost_xrCompatibleOpaque(xr_opaque_packet_t const &left, xr_opaque_packet_t const &right)
+{
+    // Projection and rotation intentionally differ by eye.  Every other
+    // resolved input is zero-initialized and captured byte-for-byte.
+    return Bmemcmp(&left.texture, &right.texture, (char const *)&left.projection - (char const *)&left.texture) == 0;
+}
+
+static bool polymost_xrValidateOpaqueStream(uint32_t const eye)
+{
+    std::vector<xr_opaque_vertex_t> const &vertices = xrOpaque.vertices[eye];
+    for (xr_opaque_packet_t const &packet : xrOpaque.packets[eye])
+    {
+        if (packet.first + packet.count > vertices.size() || packet.count % 3)
+            return false;
+        for (uint32_t i = packet.first; i < packet.first + packet.count; ++i)
+            if (vertices[i].eye != float(eye))
+                return false;
+    }
+    return true;
+}
+
+struct xr_opaque_array_state_t
+{
+    GLint size = 0, type = 0, stride = 0, buffer = 0;
+    GLboolean enabled = GL_FALSE;
+    GLvoid *pointer = nullptr;
+};
+
+static xr_opaque_array_state_t polymost_xrCaptureFixedArray(GLenum const array, GLenum const size, GLenum const type,
+                                                              GLenum const stride, GLenum const pointer, GLenum const buffer)
+{
+    xr_opaque_array_state_t state;
+    state.enabled = glIsEnabled(array);
+    glGetIntegerv(size, &state.size);
+    glGetIntegerv(type, &state.type);
+    glGetIntegerv(stride, &state.stride);
+    glGetIntegerv(buffer, &state.buffer);
+    glGetPointerv(pointer, &state.pointer);
+    return state;
+}
+
+static void polymost_xrRestoreFixedArray(GLenum const array, xr_opaque_array_state_t const &state, bool const texcoord)
+{
+    glBindBuffer(GL_ARRAY_BUFFER, state.buffer);
+    if (texcoord)
+        glTexCoordPointer(state.size, state.type, state.stride, state.pointer);
+    else
+        glVertexPointer(state.size, state.type, state.stride, state.pointer);
+    if (state.enabled) glEnableClientState(array); else glDisableClientState(array);
+}
+
+static void polymost_xrUploadOpaquePacket(xr_opaque_packet_t const &left, xr_opaque_packet_t const * const right)
+{
+    xr_opaque_packet_t const &other = right ? *right : left;
+#define XR_OPAQUE_1F(member, value) if (xrOpaqueLoc.member >= 0) glUniform1f(xrOpaqueLoc.member, value)
+#define XR_OPAQUE_1I(member, value) if (xrOpaqueLoc.member >= 0) glUniform1i(xrOpaqueLoc.member, value)
+    XR_OPAQUE_1I(texture, 0); XR_OPAQUE_1I(palswap, 1); XR_OPAQUE_1I(palette, 2);
+    // Detail/glow are qualified out, but the unchanged extended fragment
+    // still evaluates their samplers before multiplying by zero.
+    XR_OPAQUE_1I(detail, 0); XR_OPAQUE_1I(glow, 0);
+    if (xrOpaqueLoc.texturePosSize >= 0) glUniform4f(xrOpaqueLoc.texturePosSize, left.texturePosSize.x, left.texturePosSize.y, left.texturePosSize.z, left.texturePosSize.w);
+    if (xrOpaqueLoc.halfTexel >= 0) glUniform2f(xrOpaqueLoc.halfTexel, left.halfTexel.x, left.halfTexel.y);
+    if (xrOpaqueLoc.palswapPos >= 0) glUniform2f(xrOpaqueLoc.palswapPos, left.palswapPos.x, left.palswapPos.y);
+    if (xrOpaqueLoc.palswapSize >= 0) glUniform2f(xrOpaqueLoc.palswapSize, left.palswapSize.x, left.palswapSize.y);
+    if (xrOpaqueLoc.clamp >= 0) glUniform2f(xrOpaqueLoc.clamp, left.clamp.x, left.clamp.y);
+    XR_OPAQUE_1F(shade, left.shade); if (xrOpaqueLoc.numShades >= 0) glUniform2f(xrOpaqueLoc.numShades, left.numShades.x, left.numShades.y);
+    XR_OPAQUE_1F(vis, left.vis); XR_OPAQUE_1F(fog, left.fog); XR_OPAQUE_1F(colorOnly, left.colorOnly); XR_OPAQUE_1F(paletteEnabled, left.paletteEnabled);
+    XR_OPAQUE_1F(detailEnabled, 0.f); XR_OPAQUE_1F(glowEnabled, 0.f);
+    if (xrOpaqueLoc.npot >= 0) glUniform4f(xrOpaqueLoc.npot, left.npot.x, left.npot.y, left.npot.z, left.npot.w);
+    XR_OPAQUE_1F(shadeInterpolate, left.shadeInterpolate);
+    if (xrOpaqueLoc.correction >= 0) glUniform4f(xrOpaqueLoc.correction, left.correction.x, left.correction.y, left.correction.z, left.correction.w);
+    if (xrOpaqueLoc.projection[0] >= 0) glUniformMatrix4fv(xrOpaqueLoc.projection[0], 1, GL_FALSE, left.projection);
+    if (xrOpaqueLoc.projection[1] >= 0) glUniformMatrix4fv(xrOpaqueLoc.projection[1], 1, GL_FALSE, other.projection);
+    if (xrOpaqueLoc.rotation[0] >= 0) glUniformMatrix4fv(xrOpaqueLoc.rotation[0], 1, GL_FALSE, left.rotation);
+    if (xrOpaqueLoc.rotation[1] >= 0) glUniformMatrix4fv(xrOpaqueLoc.rotation[1], 1, GL_FALSE, other.rotation);
+#undef XR_OPAQUE_1F
+#undef XR_OPAQUE_1I
+
+    glColor4f(left.color.x, left.color.y, left.color.z, left.color.w);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, left.texture); glBindSampler(0, left.sampler);
+    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, left.palswap); glBindSampler(1, 0);
+    glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, left.palette); glBindSampler(2, 0);
+}
+
+static void polymost_xrReplayOpaqueDraw(xr_opaque_packet_t const &left, uint32_t const eye, xr_opaque_packet_t const * const right)
+{
+    static std::vector<xr_opaque_vertex_t> replayVertices;
+    replayVertices.clear();
+    replayVertices.insert(replayVertices.end(), xrOpaque.vertices[eye].begin() + left.first, xrOpaque.vertices[eye].begin() + left.first + left.count);
+    if (right)
+        replayVertices.insert(replayVertices.end(), xrOpaque.vertices[1].begin() + right->first, xrOpaque.vertices[1].begin() + right->first + right->count);
+    polymost_xrUploadOpaquePacket(left, right);
+    glBufferData(GL_ARRAY_BUFFER, replayVertices.size() * sizeof(xr_opaque_vertex_t), replayVertices.data(), GL_STREAM_DRAW);
+    glVertexPointer(3, GL_FLOAT, sizeof(xr_opaque_vertex_t), 0);
+    glTexCoordPointer(2, GL_FLOAT, sizeof(xr_opaque_vertex_t), (GLvoid *)(3 * sizeof(float)));
+    glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, sizeof(xr_opaque_vertex_t), (GLvoid *)(5 * sizeof(float)));
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glEnableVertexAttribArray(7);
+    glDrawArrays(GL_TRIANGLES, 0, replayVertices.size());
+}
+
+polymost_xr_collect_result polymost_xrReplayOpaqueCollection()
+{
+    if (!xrOpaque.active || xrOpaque.rejected || !polymost_xrValidateOpaqueStream(0) || !polymost_xrValidateOpaqueStream(1))
+        return xrOpaque.rejected ? POLYMOST_XR_COLLECT_REJECTED : POLYMOST_XR_COLLECT_ERROR;
+    // The replay objects belong to this error interval.  An initialization
+    // failure must not leave a stale GL error for the native fallback.
+    while (glGetError() != GL_NO_ERROR) {}
+    xrOpaque.reason = "opaque replay initialization";
+    if (!polymost_xrInitOpaqueReplay())
+    {
+        while (glGetError() != GL_NO_ERROR) {}
+        return POLYMOST_XR_COLLECT_ERROR;
+    }
+    GLenum initError = GL_NO_ERROR;
+    while (GLenum const error = glGetError()) initError = error;
+    if (initError != GL_NO_ERROR)
+    {
+        glDeleteProgram(xrOpaque.program);
+        glDeleteBuffers(1, &xrOpaque.vbo);
+        xrOpaque.program = xrOpaque.vbo = 0;
+        while (glGetError() != GL_NO_ERROR) {}
+        xrOpaque.reason = "opaque replay initialization GL error";
+        return POLYMOST_XR_COLLECT_ERROR;
+    }
+
+    GLint program = 0, active = 0, clientActive = 0, arrayBuffer = 0, depthFunc = 0, vao = 0;
+    GLint textures[3]{}; GLuint samplers[MAXTEXUNIT - GL_TEXTURE0]{};
+    GLboolean depthWrite = GL_FALSE;
+    GLfloat color[4]{};
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program); glGetIntegerv(GL_ACTIVE_TEXTURE, &active); glGetIntegerv(GL_CLIENT_ACTIVE_TEXTURE, &clientActive);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer); glGetIntegerv(GL_DEPTH_FUNC, &depthFunc); glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite); glGetFloatv(GL_CURRENT_COLOR, color);
+#ifdef GL_VERTEX_ARRAY_BINDING
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+#endif
+    xr_opaque_array_state_t const vertex = polymost_xrCaptureFixedArray(GL_VERTEX_ARRAY, GL_VERTEX_ARRAY_SIZE, GL_VERTEX_ARRAY_TYPE, GL_VERTEX_ARRAY_STRIDE, GL_VERTEX_ARRAY_POINTER, GL_VERTEX_ARRAY_BUFFER_BINDING);
+    glClientActiveTexture(GL_TEXTURE0);
+    xr_opaque_array_state_t const texcoord = polymost_xrCaptureFixedArray(GL_TEXTURE_COORD_ARRAY, GL_TEXTURE_COORD_ARRAY_SIZE, GL_TEXTURE_COORD_ARRAY_TYPE, GL_TEXTURE_COORD_ARRAY_STRIDE, GL_TEXTURE_COORD_ARRAY_POINTER, GL_TEXTURE_COORD_ARRAY_BUFFER_BINDING);
+    glClientActiveTexture(clientActive);
+    GLint eyeEnabled = 0, eyeSize = 0, eyeType = 0, eyeNormalized = 0, eyeStride = 0, eyeBuffer = 0; GLvoid *eyePointer = nullptr;
+    glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &eyeEnabled); glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_SIZE, &eyeSize);
+    glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_TYPE, &eyeType); glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &eyeNormalized);
+    glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &eyeStride); glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &eyeBuffer); glGetVertexAttribPointerv(7, GL_VERTEX_ATTRIB_ARRAY_POINTER, &eyePointer);
+    for (int i = 0; i < 3; ++i) { glActiveTexture(GL_TEXTURE0 + i); glGetIntegerv(GL_TEXTURE_BINDING_2D, &textures[i]); }
+    for (int i = 0; i < MAXTEXUNIT - GL_TEXTURE0; ++i) { GLint sampler = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, i, &sampler); samplers[i] = sampler; }
+
+    buildgl_resetStateAccounting();
+    glUseProgram(xrOpaque.program); glBindBuffer(GL_ARRAY_BUFFER, xrOpaque.vbo); glClientActiveTexture(GL_TEXTURE0); glDepthFunc(GL_ALWAYS); glDepthMask(GL_TRUE);
+    size_t left = 0, right = 0;
+    xrOpaque.stats = {};
+    while (left < xrOpaque.packets[0].size() || right < xrOpaque.packets[1].size())
+    {
+        if (left < xrOpaque.packets[0].size() && right < xrOpaque.packets[1].size() && polymost_xrCompatibleOpaque(xrOpaque.packets[0][left], xrOpaque.packets[1][right]))
+        {
+            polymost_xrReplayOpaqueDraw(xrOpaque.packets[0][left], 0, &xrOpaque.packets[1][right]);
+            ++xrOpaque.stats.pairedCalls; xrOpaque.stats.pairedVertices += xrOpaque.packets[0][left].count + xrOpaque.packets[1][right].count; ++left; ++right;
+        }
+        else
+        {
+            uint32_t const eye = left < xrOpaque.packets[0].size() ? 0 : 1;
+            size_t &cursor = eye ? right : left;
+            auto const &packet = xrOpaque.packets[eye][cursor++];
+            polymost_xrReplayOpaqueDraw(packet,eye,nullptr);
+            ++xrOpaque.stats.eyeOnlyCalls;
+            xrOpaque.stats.eyeOnlyVertices += packet.count;
+        }
+    }
+
+    glUseProgram(program); glDepthFunc(depthFunc); glDepthMask(depthWrite); glColor4fv(color);
+    for (int i = 0; i < MAXTEXUNIT - GL_TEXTURE0; ++i) glBindSampler(i, samplers[i]);
+    for (int i = 0; i < 3; ++i) { glActiveTexture(GL_TEXTURE0 + i); glBindTexture(GL_TEXTURE_2D, textures[i]); }
+ #ifdef GL_VERTEX_ARRAY_BINDING
+    glBindVertexArray(vao);
+ #endif
+    glClientActiveTexture(GL_TEXTURE0); polymost_xrRestoreFixedArray(GL_TEXTURE_COORD_ARRAY, texcoord, true);
+    polymost_xrRestoreFixedArray(GL_VERTEX_ARRAY, vertex, false);
+    glBindBuffer(GL_ARRAY_BUFFER, eyeBuffer); glVertexAttribPointer(7, eyeSize, eyeType, eyeNormalized, eyeStride, eyePointer); if (eyeEnabled) glEnableVertexAttribArray(7); else glDisableVertexAttribArray(7);
+    glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer); glClientActiveTexture(clientActive);
+    // Keep Build's program/active-unit bookkeeping truthful without calling
+    // polymost_resetState() or any native uniform uploader.
+    buildgl_useShaderProgram(program); glActiveTexture(active); buildgl_activeTexture(active);
+    GLenum replayError = GL_NO_ERROR;
+    while (GLenum const error = glGetError()) replayError = error;
+    if (replayError != GL_NO_ERROR)
+    {
+        xrOpaque.reason = "opaque replay GL error";
+        return POLYMOST_XR_COLLECT_ERROR;
+    }
+    xrOpaque.reason = "replayed";
+    return POLYMOST_XR_COLLECT_OK;
+}
+#endif
+
 void polymost_glreset()
 {
+#ifdef USE_OPENXR
+    // GL object names are context-local; release the isolated replay objects
+    // with the rest of Polymost rather than carrying stale names across reset.
+    if (!nogl)
+    {
+        if (xrOpaque.program) glDeleteProgram(xrOpaque.program);
+        if (xrOpaque.vbo) glDeleteBuffers(1, &xrOpaque.vbo);
+    }
+    xrOpaque.program = xrOpaque.vbo = 0;
+    xrOpaque.active = false;
+#endif
     buildgl_resetStateAccounting();
     if (!nogl)
         buildgl_activeTexture(GL_TEXTURE0);
@@ -677,6 +1227,9 @@ static void polymost_setCurrentShaderProgram(uint32_t programID)
     glUniformMatrix4fv(polymost1RotMatrixLoc, 1, false, polymost1RotMatrix);
     glUniform1f(polymost1ShadeInterpolateLoc, polymost1ShadeInterpolate);
     glUniform4f(polymost1ColorCorrectionLoc, g_glColorCorrection.x, g_glColorCorrection.y, g_glColorCorrection.z, g_glColorCorrection.w);
+#ifdef USE_OPENXR
+    polymost1UploadedColorCorrection = g_glColorCorrection;
+#endif
 }
 
 void polymost_setColorCorrection(vec4f_t const &colorCorrection)
@@ -685,6 +1238,9 @@ void polymost_setColorCorrection(vec4f_t const &colorCorrection)
         return;
 
     glUniform4f(polymost1ColorCorrectionLoc, colorCorrection.x, colorCorrection.y, colorCorrection.z, colorCorrection.w);
+#ifdef USE_OPENXR
+    polymost1UploadedColorCorrection = colorCorrection;
+#endif
 }
 
 void polymost_setTexturePosSize(vec4f_t const &texturePosSize)
@@ -1165,6 +1721,12 @@ void polymost_glinit()
     glDeleteShader(polymost1ExtendedFragmentShaderID);
     glDeleteShader(polymost1BasicFragmentShaderID);
 
+#ifdef USE_OPENXR
+    // Normal Polymost programs are initialized above.  The optional probe
+    // creates and deletes its own objects, so it cannot alter renderer state.
+    polymost_xrShaderProbe();
+#endif
+
     // set defaults
     polymost_setCurrentShaderProgram(polymost1ExtendedShaderProgramID);
     glUniform1i(polymost1TexSamplerLoc, 0);
@@ -1470,9 +2032,14 @@ static void resizeglcheck(bool clearDebugBuffers = true)
     {
         float const horizontalTan = xrProjection.right - xrProjection.left;
         float const verticalTan = xrProjection.up - xrProjection.down;
+        // Keep the zero-IPD covering frustum's vertical multiplication order
+        // identical to native Polymost.  This is also the crop scale for an
+        // arbitrary asymmetric XR tangent rectangle.
+        float const nativeYScale = fxdimen / (fydimen * ratio);
+        float const nativeYTan = gvrcorrection / nativeYScale;
 
         m[0][0] = 2.f * gvrcorrection / horizontalTan;
-        m[1][1] = 2.f * gvrcorrection / verticalTan;
+        m[1][1] = (2.f * nativeYTan / verticalTan) * nativeYScale;
         m[2][0] = -(xrProjection.right + xrProjection.left) / horizontalTan;
         m[2][1] = -(xrProjection.up + xrProjection.down) / verticalTan;
     }
@@ -1487,6 +2054,13 @@ static void resizeglcheck(bool clearDebugBuffers = true)
     m[2][2] = (farclip + nearclip) / (farclip - nearclip);
     m[2][3] = 1.f;
     m[3][2] = -(2.f * farclip * nearclip) / (farclip - nearclip);
+#ifdef USE_OPENXR
+    if (xrOpaque.active && !xrOpaque.rejected && xrOpaque.eye < 2)
+    {
+        Bmemcpy(xrOpaque.projection[xrOpaque.eye], m, sizeof(m));
+        xrOpaque.projectionValid[xrOpaque.eye] = true;
+    }
+#endif
     glLoadMatrixf(&m[0][0]);
 
     glMatrixMode(GL_MODELVIEW);
@@ -1755,6 +2329,9 @@ static void Polymost_SendTexToDriver(int32_t const doalloc,
 void uploadtexture(int32_t doalloc, vec2_t siz, int32_t texfmt,
                    coltype *pic, vec2_t tsiz, int32_t dameth)
 {
+#ifdef USE_OPENXR
+    polymost_xrTextureMutation();
+#endif
     const int artimmunity = !!(dameth & DAMETH_ARTIMMUNITY);
     const int hi = !!(dameth & DAMETH_HI);
     const int nodownsize = !!(dameth & DAMETH_NODOWNSIZE) || artimmunity;
@@ -1896,6 +2473,9 @@ void uploadtexture(int32_t doalloc, vec2_t siz, int32_t texfmt,
 
 void uploadtextureindexed(int32_t doalloc, vec2_t offset, vec2_t siz, intptr_t tile)
 {
+#ifdef USE_OPENXR
+    polymost_xrTextureMutation();
+#endif
     if (doalloc & 1)
     {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
@@ -1914,6 +2494,9 @@ void uploadtextureindexed(int32_t doalloc, vec2_t offset, vec2_t siz, intptr_t t
 
 void uploadbasepalette(int32_t basepalnum)
 {
+#ifdef USE_OPENXR
+    polymost_xrTextureMutation();
+#endif
     if (!polymost1BasicShaderProgramID)
     {
         //POGO: if we haven't initialized properly yet, we shouldn't be uploading base palettes
@@ -1959,6 +2542,9 @@ void uploadbasepalette(int32_t basepalnum)
 
 void uploadpalswap(int32_t palookupnum)
 {
+#ifdef USE_OPENXR
+    polymost_xrTextureMutation();
+#endif
     if (!polymost1BasicShaderProgramID)
     {
         //POGO: if we haven't initialized properly yet, we shouldn't be uploading palette swap tables
@@ -3164,8 +3750,147 @@ static void polymost_polyeditorfunc(vec2f_t const * const dpxy, int n)
 
 static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, int32_t method);
 
+#ifdef USE_OPENXR
+static bool polymost_xrIdentityMatrix(float const matrix[16])
+{
+    static float const identity[16] = { 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+                                        0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f };
+    return Bmemcmp(matrix, identity, sizeof(identity)) == 0;
+}
+
+static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t const method, float const color[4])
+{
+    if (!xrOpaque.active || xrOpaque.rejected)
+        return false;
+
+    GLint depthFunc = 0, program = 0, activeTexture = 0;
+    GLboolean depthWrite = GL_FALSE;
+    GLboolean colorMask[4]{};
+    GLfloat modelview[16], textureMatrix[16];
+    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+    glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+    glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
+    glActiveTexture(GL_TEXTURE0);
+    glGetFloatv(GL_TEXTURE_MATRIX, textureMatrix);
+    glActiveTexture(activeTexture);
+
+    int const sampler = gl.currentBoundSampler[0];
+    if (videoGetRenderMode() != REND_POLYMOST || !buildgl_samplerObjectsEnabled() ||
+        !(pth->flags & PTH_INDEXED) || (pth->flags & PTH_HIGHTILE) || pth->hicr ||
+        polymost_usetileshades() != TS_SHADETABLE || !polymost_useindexedtextures() ||
+        (method & DAMETH_MASKPROPS) || program != (GLint)polymost1CurrentShaderProgramID ||
+        !glIsEnabled(GL_DEPTH_TEST) || glIsEnabled(GL_BLEND) || glIsEnabled(GL_ALPHA_TEST) ||
+        depthFunc != GL_ALWAYS || !depthWrite || !colorMask[0] || !colorMask[1] || !colorMask[2] || !colorMask[3] ||
+        !polymost_xrIdentityMatrix(modelview) || !polymost_xrIdentityMatrix(textureMatrix) ||
+        polymost1FogEnabled != 0.f || polymost1UseColorOnly != 0.f || polymost1UsePalette != 1.f ||
+        polymost1UseDetailMapping != 0.f || polymost1UseGlowMapping != 0.f ||
+        polymost1NPOTEmulation.x != 0.f || polymost1NPOTEmulation.y != 1.f ||
+        polymost1NPOTEmulation.z != 0.f || polymost1NPOTEmulation.w != 1.f ||
+        sampler < SAMPLER_NONE || sampler >= NUM_SAMPLERS || !xrOpaque.projectionValid[xrOpaque.eye] ||
+        !palswapTextureID || !paletteTextureIDs[curbasepal])
+    {
+        polymost_xrRejectOpaque("unsupported opaque material or state");
+        return false;
+    }
+
+    if (xrOpaque.packets[xrOpaque.eye].size() == XR_OPAQUE_MAX_PACKETS)
+    {
+        polymost_xrRejectOpaque("opaque collection capacity", true);
+        return false;
+    }
+
+    xr_opaque_packet_t &packet = xrOpaque.transport.packet;
+    packet = {};
+    packet.texture = pth->glpic;
+    packet.palswap = palswapTextureID;
+    packet.palette = paletteTextureIDs[curbasepal];
+    packet.sampler = samplerObjectIDs[sampler];
+    packet.texturePosSize = polymost1TexturePosSize;
+    packet.halfTexel = polymost1HalfTexelSize;
+    packet.palswapPos = polymost1PalswapPos;
+    packet.palswapSize = polymost1PalswapInnerSize;
+    packet.clamp = polymost1Clamp;
+    packet.npot = polymost1NPOTEmulation;
+    packet.shade = polymost1Shade;
+    packet.numShades = polymost1NumShades;
+    packet.vis = polymost1VisFactor;
+    packet.fog = polymost1FogEnabled;
+    packet.colorOnly = polymost1UseColorOnly;
+    packet.paletteEnabled = polymost1UsePalette;
+    packet.shadeInterpolate = polymost1ShadeInterpolate;
+    packet.correction = polymost1UploadedColorCorrection;
+    packet.color = { color[0], color[1], color[2], color[3] };
+    Bmemcpy(packet.projection, xrOpaque.projection[xrOpaque.eye], sizeof(packet.projection));
+    Bmemcpy(packet.rotation, polymost1RotMatrix, sizeof(packet.rotation));
+    xrOpaque.transport.pending = true;
+    return true;
+}
+
+static void polymost_xrStartOpaqueTransport(int const vertices)
+{
+    if (!xrOpaque.active || xrOpaque.rejected)
+        return;
+    if (!xrOpaque.transport.pending || vertices < 3)
+    {
+        polymost_xrRejectOpaque("unexpected opaque transport");
+        return;
+    }
+    xrOpaque.transport.fan.clear();
+    xrOpaque.transport.fan.reserve(vertices);
+}
+
+static void polymost_xrBufferOpaqueVertex(vec3f_t const v, vec2f_t const t)
+{
+    if (!xrOpaque.active || xrOpaque.rejected || !xrOpaque.transport.pending)
+        return;
+    xrOpaque.transport.fan.push_back({ v.x, v.y, v.z, t.x, t.y, float(xrOpaque.eye) });
+}
+
+static void polymost_xrFinishOpaqueTransport(int const mode)
+{
+    if (!xrOpaque.active || xrOpaque.rejected)
+        return;
+    if (!xrOpaque.transport.pending || mode != GL_TRIANGLE_FAN || xrOpaque.transport.fan.size() < 3)
+    {
+        polymost_xrRejectOpaque("unsupported opaque geometry");
+        return;
+    }
+
+    uint32_t const count = 3u * (xrOpaque.transport.fan.size() - 2u);
+    std::vector<xr_opaque_vertex_t> &vertices = xrOpaque.vertices[xrOpaque.eye];
+    if (vertices.size() + count > XR_OPAQUE_MAX_VERTICES)
+    {
+        polymost_xrRejectOpaque("opaque collection capacity", true);
+        return;
+    }
+
+    xr_opaque_packet_t packet = xrOpaque.transport.packet;
+    packet.first = vertices.size();
+    packet.count = count;
+    for (size_t i = 1; i + 1 < xrOpaque.transport.fan.size(); ++i)
+    {
+        vertices.push_back(xrOpaque.transport.fan[0]);
+        vertices.push_back(xrOpaque.transport.fan[i]);
+        vertices.push_back(xrOpaque.transport.fan[i+1]);
+    }
+    xrOpaque.packets[xrOpaque.eye].push_back(packet);
+    xrOpaque.transport.pending = false;
+    xrOpaque.transport.fan.clear();
+}
+#endif
+
 void polymost_startBufferedDrawing(int nn)
 {
+#ifdef USE_OPENXR
+    if (xrOpaque.active)
+    {
+        polymost_xrStartOpaqueTransport(nn);
+        return;
+    }
+#endif
     if (nn * 5 + drawpolyVertsOffset > (drawpolyVertsSubBufferIndex + 1) * drawpolyVertsBufferLength)
     {
         if (persistentStreamBuffer)
@@ -3188,6 +3913,13 @@ void polymost_startBufferedDrawing(int nn)
 
 void polymost_bufferVert(vec3f_t const v, vec2f_t const t)
 {
+#ifdef USE_OPENXR
+    if (xrOpaque.active)
+    {
+        polymost_xrBufferOpaqueVertex(v, t);
+        return;
+    }
+#endif
     uint32_t const off = (persistentStreamBuffer * drawpolyVertsOffset + drawpolyVertsCnt++) * 5;
     *(vec3f_t *)(&drawpolyVerts[off]) = v;
     *(vec2f_t*)(&drawpolyVerts[off+3]) = t;
@@ -3195,6 +3927,13 @@ void polymost_bufferVert(vec3f_t const v, vec2f_t const t)
 
 void polymost_finishBufferedDrawing(int mode)
 {
+#ifdef USE_OPENXR
+    if (xrOpaque.active)
+    {
+        polymost_xrFinishOpaqueTransport(mode);
+        return;
+    }
+#endif
     if (!persistentStreamBuffer)
         glBufferSubData(GL_ARRAY_BUFFER, drawpolyVertsOffset * sizeof(float) * 5, drawpolyVertsCnt * sizeof(float) * 5, drawpolyVerts);
 
@@ -3237,6 +3976,13 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
     static int32_t skyzbufferhack_pass = 0;
     if (flatskyrender && skyzbufferhack_pass == 0)
     {
+#ifdef USE_OPENXR
+        if (xrOpaque.active)
+        {
+            polymost_xrRejectOpaque("sky opaque draw");
+            return;
+        }
+#endif
         polymost_flatskyrender(dpxy, n, method);
         return;
     }
@@ -3313,6 +4059,9 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
 
     if (!pth)
     {
+#ifdef USE_OPENXR
+        polymost_xrRejectOpaque("unresolved opaque texture");
+#endif
         if (editstatus)
         {
             Bsprintf(ptempbuf, "pth==NULL! (bad pal?) pic=%d pal=%d", globalpicnum, globalpal);
@@ -3520,9 +4269,24 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
 
     glColor4f(pc[0], pc[1], pc[2], pc[3]);
 
+#ifdef USE_OPENXR
+    bool collectOpaque = xrOpaque.active;
+    if (collectOpaque && pow2xsplit && tsiz.x != tsiz2.x)
+    {
+        polymost_xrRejectOpaque("split opaque geometry");
+        collectOpaque = false;
+    }
+    if (collectOpaque)
+        collectOpaque = polymost_xrPrepareOpaquePacket(pth, method, pc);
+#endif
+
     //POGOTODO: remove this, replace it with a shader implementation
     //Hack for walls&masked walls which use textures that are not a power of 2
-    if ((pow2xsplit) && (tsiz.x != tsiz2.x))
+    if (
+#ifdef USE_OPENXR
+        !xrOpaque.active &&
+#endif
+        (pow2xsplit) && (tsiz.x != tsiz2.x))
     {
         vec3f_t const opxy[3] = { { py[1] - py[2], py[2] - py[0], py[0] - py[1] },
                                   { px[2] - px[1], px[0] - px[2], px[1] - px[0] },
@@ -3641,6 +4405,9 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
         }
     }
     else
+#ifdef USE_OPENXR
+    if (!xrOpaque.active || collectOpaque)
+#endif
     {
         polymost_startBufferedDrawing(npoints);
 

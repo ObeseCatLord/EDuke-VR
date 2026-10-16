@@ -6,6 +6,8 @@
 // was consumed, including failures after animation (never repeat CON effects).
 bool G_XRDrawRooms(int32_t smoothRatio);
 void G_XRTestAnimationInputs();
+void G_XRTestBeginNative();
+void G_XRTestCaptureNative();
 bool G_XRCanAppendSprite(int32_t limit);
 void G_XRInheritSprite(int32_t destination, int32_t parent);
 #endif

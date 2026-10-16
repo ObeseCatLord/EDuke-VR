@@ -232,6 +232,34 @@ bool glSucceeded(char const *where, std::string &error)
 }
 }  // namespace
 
+bool captureFramebuffer(char const *path, uint32_t width, uint32_t height, std::string &error)
+{
+    if (!path || !width || !height)
+    {
+        error="invalid framebuffer capture parameters";
+        return false;
+    }
+    GLState state;
+    state.save();
+    glBindFramebuffer(GL_READ_FRAMEBUFFER,state.drawFbo);
+    glReadBuffer(state.drawFbo ? GL_COLOR_ATTACHMENT0 : GL_BACK);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER,0);
+    glPixelStorei(GL_PACK_ALIGNMENT,1);
+    glPixelStorei(GL_PACK_ROW_LENGTH,0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS,0);
+    glPixelStorei(GL_PACK_SKIP_ROWS,0);
+    std::vector<unsigned char> pixels(size_t(width)*height*4);
+    glReadPixels(0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());
+    bool good=glSucceeded("reading native world framebuffer",error);
+    if (good && !writePpm(path,pixels,width,height))
+    {
+        error="could not write native world framebuffer capture";
+        good=false;
+    }
+    state.restore();
+    return good;
+}
+
 struct Runtime::Impl
 {
     XrInstance                              instance = XR_NULL_HANDLE;

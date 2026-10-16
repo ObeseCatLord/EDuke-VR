@@ -42,3 +42,12 @@ Synthesize senior review into docs/vr/PLAN.md with dispositions and test gates; 
 
 - Final uninstrumented world 60-frame, both abort-boundary regressions and standalone 12-frame multiview/core-validation tests pass. All temporary frame/session traces removed. Final sources committed as 7060173 (world) and 589bf62 (snapshot/harness baseline); final harness startup timing refinement follows.
 - Final harness uses -nologo, waits for level synchronization and lets the finite startup-menu fade finish before Escape. Final uninstrumented mixed join/reconnect and native listen gameplay tests pass; both XR joins retain 60-frame eye captures. Private Monado and owned games/Xvfb stopped.
+
+## 2026-10-16 — restricted opaque world single-pass
+
+- Fresh Astra/xhigh senior design review narrowed collection to typed already-resolved native inputs/final vertices, independent eye clipping/order and isolated replay state. Preserved native material resolution, GL_ALWAYS, persistent streaming and CON ownership; no renderer/protocol replacement.
+- Verified actual EDuke-context native GLSL120 fragment linkage with OVRmultiview2 GLSL410 vertex. Added opt-in bounded indexed-ART opaque collection/replay and same-frame two-pass retry before animation; masks remain per eye.
+- Added source-generated portal map and stock-CON counter wrapper, matched-target native capture and strict differential harness. Zero-IPD/native and asymmetric-IPD/two-pass comparisons pass exactly, with CON14/14/14. Unequal coverage preserves incompatible visibility values and uses eye-only packets with exact images.
+- Fresh verified Astra/xhigh implementation review found replay-init error leakage/partial object publication. Adopted atomic initialization/owned error cleanup and tested one queued GL error + VBO failure; fallback and later replay pass without duplicate callbacks.
+- Single-pass remains restricted: 18 paired calls for zero pose, 30 for rotated/asymmetric equal coverage; unequal coverage has 60 eye-only calls and no draw savings. Two CPU traversals/duplicate geometry remain; no performance claim.
+- E1L1 sky explicitly falls back. Native dedicated/XR client join and reconnect still each produce 60 stereo frames/distinct layers with visible movement input. Combat/maps/convergence remain open. Native/XR builds pass. Full port goal active.

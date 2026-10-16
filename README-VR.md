@@ -1,6 +1,6 @@
 # EDuke32 VR work in progress
 
-This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR. It is not yet a complete playable VR port: single-pass world rendering, full presentation coverage, headset/controller gameplay and multiplayer qualification remain open.
+This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded opaque-world multiview path with exact differential fixtures. It is not yet a complete playable VR port: single-pass world rendering, full presentation coverage, headset/controller gameplay and multiplayer qualification remain open.
 
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
@@ -78,6 +78,23 @@ python3 tools/vr/smoke_world.py --binary ./eduke32-xr --display :1 \
 The numeric test checks the rigid-pose/native-camera/asymmetric-projection derivation. It does not validate CPU visibility. The world runner requires 60 submitted world frames and distinct actual eye readbacks. Use a real supported GL context; Xvfb's llvmpipe did not work with this Monado/NVIDIA swapchain combination.
 
 For bounded failure regression only, `EDUKE32_XR_TEST_FAIL=opaque` injects one failure after left opaque collection; `masks` injects after the once-only animation and before masks. Both stop XR. Up to ten native animation input counts/provenance checks are logged to verify that fallback/next-frame rendering receives no stale sprite entries. This flag is for testing, not ordinary gameplay.
+
+## Bounded opaque single-pass prototype
+
+`EDUKE32_XR_SINGLE_PASS=1` alongside `EDUKE32_XR=1` opts into ordinary indexed-ART opaque multiview replay. Both native CPU eye traversals and clipping remain; compatible material heads become one GPU draw for both layers. Eye-owned triangles preserve each eye's native order and GL_ALWAYS depth semantics. Native fragment shading remains the sole material policy. Masks still use two native passes. Unsupported sky, hires/detail/glow, recursion, mutable textures, NPOT transforms and unknown state retry the two-pass opaque reference within the same XR frame, before animation. E1L1's sky currently requires that fallback. This prototype is not complete single-pass world rendering or a performance claim.
+
+The deterministic portal fixture includes alternating palette/shade walls and an ordinary sprite mask after opaque replay. It reads only the caller's owned GRP. Synthetic fixture poses finish empty XR frames and never submit projection layers:
+
+```sh
+python3 tools/vr/check_stereo_oracle.py --binary ./eduke32-xr --single-pass --display :1 \
+    --grp /path/to/owned/DUKE3D.GRP --work-dir /path/to/test/labs
+# Nonzero IPD, asymmetric FOV, pitch/yaw/roll against the two-pass reference:
+# Repeat with --pose stereo.
+# Unequal eye coverage exercises incompatible material/eye-only packets and init failure recovery:
+# Repeat with --pose unequal --inject-replay-init-failure.
+```
+
+The default native reference executes its unchanged room/animation/mask path on a matching SRGB8_ALPHA8/depth24 array attachment, allowing strict byte-for-byte comparison. `--native-attachment window` preserves the window-system comparison, which currently differs at 344 of 576,000 pixels in this NVIDIA fixture despite identical matrices/cameras. The matched attachment comparison uses zero tolerance and checks CON counts. It also requires real replay statistics at the captured frame, preventing a fallback-only run from passing as paired multiview.
 
 ## Dedicated-server regression
 

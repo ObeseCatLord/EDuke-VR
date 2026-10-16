@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// This is a test wrapper. GAME.CON is resolved from the caller-provided GRP.
+include GAME.CON
+
+// The counters intentionally have no per-player/per-actor flags.  A regular
+// G_DrawRooms call must execute DISPLAYROOMS and DISPLAYROOMSEND once, while
+// ANIMATESPRITES is expected once per visible tsprite.  The renderer test
+// compares this bounded native reference against the XR path. The summary is
+// deliberately later than the frame-12 pixel capture used by the harness.
+gamevar vrfixture_displayrooms 0 0
+gamevar vrfixture_animatesprites 0 0
+gamevar vrfixture_displayroomsend 0 0
+gamevar vrfixture_reported 0 0
+gamevar vrfixture_sprite 0 0
+
+// The generated map has exactly one map sprite at index zero. TSPRACCESS is
+// spriteext's bit 16 (build.h); it permits EVENT_ANIMATESPRITES to observe the
+// decoration without changing its position or gameplay state.
+onevent EVENT_ENTERLEVEL
+    setactor[vrfixture_sprite].mdflags 16
+endevent
+
+onevent EVENT_DISPLAYROOMS
+    // Hold the comparison's rendering input fixed despite different native/XR
+    // frame rates and startup interpolation. These are normal writable camera
+    // gamevars, not player/physics mutations. Both paths execute this once.
+    setvar camerax 1024
+    setvar cameray 2048
+    setvar cameraz -9728
+    setvar cameraang 0
+    setvar camerahoriz 100
+    setvar camerasect 0
+    addvar vrfixture_displayrooms 1
+endevent
+
+onevent EVENT_ANIMATESPRITES
+    addvar vrfixture_animatesprites 1
+endevent
+
+onevent EVENT_DISPLAYROOMSEND
+    addvar vrfixture_displayroomsend 1
+    ifvare vrfixture_displayrooms 14
+    {
+        ifvare vrfixture_reported 0
+        {
+            addlog vrfixture_displayrooms
+            addlog vrfixture_animatesprites
+            addlog vrfixture_displayroomsend
+            setvar vrfixture_reported 1
+        }
+    }
+endevent

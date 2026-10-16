@@ -330,6 +330,10 @@ engine_objs := \
     polymost1Frag.glsl \
     polymost1Vert.glsl \
 
+ifeq ($(USE_OPENXR),1)
+    engine_objs += polymost1VertXR.glsl
+endif
+
 ifeq (0,$(NOASM))
   engine_objs += a.nasm
 else

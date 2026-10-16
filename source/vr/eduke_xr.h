@@ -11,6 +11,10 @@ struct SDL_Window;
 
 namespace eduke_xr
 {
+// Save the currently drawn framebuffer without changing its rendering state.
+// Used for native-versus-stereo regression captures at the world boundary.
+bool captureFramebuffer(char const *path, uint32_t width, uint32_t height, std::string &error);
+
 
 // Shared OpenXR frame lifecycle.  The caller owns the current SDL OpenGL
 // context and must retain it through shutdown.  Native rendering between

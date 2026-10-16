@@ -46,6 +46,30 @@ void polymost_completeMirror();
 void polymost_xrProjection(float leftTan, float rightTan, float downTan, float upTan);
 void polymost_xrProjectionReset();
 void polymost_prepareMasksView();
+
+enum polymost_xr_collect_result
+{
+    POLYMOST_XR_COLLECT_OK,
+    POLYMOST_XR_COLLECT_REJECTED,
+    POLYMOST_XR_COLLECT_CAPACITY,
+    POLYMOST_XR_COLLECT_ERROR,
+};
+
+struct polymost_xr_collect_stats
+{
+    uint32_t pairedCalls, eyeOnlyCalls;
+    uint32_t pairedVertices, eyeOnlyVertices;
+};
+
+// Frame-local transport only: begin eye 0 resets both streams, eye 1 continues.
+// End leaves interception active until discard. Replay requires an already
+// bound two-view framebuffer; reject/retry before any logical sprite animation.
+void polymost_xrBeginOpaqueCollection(uint32_t eye);
+polymost_xr_collect_result polymost_xrEndOpaqueCollection(uint32_t eye);
+polymost_xr_collect_result polymost_xrReplayOpaqueCollection();
+void polymost_xrDiscardOpaqueCollection();
+polymost_xr_collect_stats polymost_xrOpaqueCollectionStats();
+char const *polymost_xrOpaqueCollectionReason();
 #endif
 void polymost_startBufferedDrawing(int nn);
 void polymost_bufferVert(vec3f_t const v, vec2f_t const t);

@@ -1,6 +1,6 @@
 # EDuke32 VR port plan
 
-Status: native XR foundation and first ordinary-room stereo oracle implemented, **not a completed VR port**. Prepared 2026-10-15. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
+Status: native XR foundation and first ordinary-room stereo oracle implemented, **not a completed VR port**. Updated 2026-10-16. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
 
 ## Current implementation checkpoint
 
@@ -8,7 +8,8 @@ Status: native XR foundation and first ordinary-room stereo oracle implemented, 
 - First ordinary Polymost room renders to two exact XR eye layers using a two-pass reference transaction; 60-frame E1L1 captures pass.
 - The native world snapshot payload bug is corrected. A native dedicated server plus XR client passes join and replacement/reconnect, with 60 stereo frames/readbacks per join and visible gameplay input changes.
 - Independent Astra/xhigh design and code reviews completed; their concrete fixes and tests are recorded in SENIOR_REVIEW.md and VALIDATION.md.
-- Next implementation work: close zero-IPD/native callback and portal-membership comparisons, prove tracked camera motion/full-pitch coverage, then promote bounded native geometry submission to single-pass. Controllers, headset weapon/HUD/menu presentation and the full multiplayer/action/platform matrix remain required.
+- Strict matched-target zero-IPD/native pixel and callback equivalence passes. A bounded indexed-ART opaque multiview path also matches the two-pass reference with deterministic nonzero IPD, asymmetric FOV and pitch/yaw/roll; unequal coverage and initialization-error recovery pass.
+- Next implementation work: extend the restricted opaque family to ordinary sky/material coverage, qualify real tracked motion/full-pitch and portal eye-only visibility, then promote masks/sprites and remaining draw families. Controllers, headset weapon/HUD/menu presentation and the full multiplayer/action/platform matrix remain required.
 
 ## Source and behavioral reference
 
@@ -24,7 +25,7 @@ Initial executable validation target is Linux desktop OpenXR/SDL2/GLX using avai
 |---|---|---|
 | Native build | Default GNU Make build succeeds, NETCODE defaults to 1 | Preserve desktop build and network-enabled builds; keep XR optional. |
 | Native gameplay | GRP-only owned World Tour content loads E1L1 | Use this baseline; loose WT CON/map filenames have a Linux case mismatch. Do not alter installed data. |
-| Native LAN | A wire trace found malformed snapshot payloads despite successful ping synchronization; a minimal pointer correction is under validation | Loading logs/ping success do not establish gameplay. Keep movement/combat/map change/reconnect as separate gates. |
+| Native LAN | A wire trace found malformed snapshot payloads despite successful ping synchronization; a minimal pointer correction passes native/mixed startup and reconnect checks | Loading logs/ping success do not establish gameplay. Keep movement/combat/map change/reconnect as separate gates. |
 | Dedicated mode | Native baseline crashes at null control timer callback during map-entry input flush | Narrowly skip device polling when dedicated; retain all FIFO reset and verify with real clients. |
 | Graphics | Actual NVIDIA desktop GL4.6 advertises OVR multiview2; Xvfb uses llvmpipe | Probe each actual context. Do not infer extension support from another display/driver. |
 | OpenXR | Private simulated Monado creates HMD/controllers and GL swapchains | Null compositor is lifecycle/allocation evidence, not visible headset/world correctness. |
@@ -45,7 +46,7 @@ Compared alternatives:
 | Replace Polymost with a new world-space renderer | Geometry/data could be reused | No failed bounded adapter experiment yet; duplicates visibility/material/model policy and expands mod compatibility work | Deferred unless evidence requires it. |
 | Change opaque depth policy globally | Current geometry | GL_ALWAYS is part of native opaque ordering; global LEQUAL changes may reveal hidden surfaces/sky regressions | Not justified. |
 
-For single-pass GPU stereo, retain independent eye visibility until evidence allows reuse. A single CPU visibility traversal is not an additional requirement. Explore pairing equivalent surface batches with eye-specific clipping/ownership and one multiview submission; preserve each eye's ordering. This is an experiment, not a promised production algorithm. If it becomes a full command recorder, a second visibility engine, or repeated material/state repair, stop and reopen the architecture with evidence and deletion opportunities.
+For single-pass GPU stereo, retain independent eye visibility until evidence allows reuse. A single CPU visibility traversal is not an additional requirement. The bounded prototype pairs already-resolved compatible packet heads with eye-specific final vertices and multiview submission; it preserves each eye's ordering. Exact portal-fixture comparisons pass, but ordinary sky and remaining material/draw families still need qualification. This is an experiment, not a promised production algorithm. If it becomes a full command recorder, a second visibility engine, or repeated material/state repair, stop and reopen the architecture with evidence and deletion opportunities.
 
 ## Logical stereo frame contract
 

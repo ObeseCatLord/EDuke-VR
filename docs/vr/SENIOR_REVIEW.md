@@ -70,4 +70,32 @@ The first integrated result submitted 60 actual Duke-world frames to simulated M
 | CON animation and display-end observers inherit right-eye camera/aspect | Adopted. Restore native viewport/aspect and common renderer camera before animation and after frame completion, preserving script-visible state changes. |
 | Camera-only mask preparation clears buffers in wireframe/point modes | Adopted. Pass an explicit no-clear setting through factored camera setup. Ordinary native opaque setup retains its debug clear. |
 
-The reviewer verified all but the pending list-cleanup patch directly during its review; the main agent then applied the accepted cleanup and passed both final opaque/masks failure regressions, each with ten bounded animation-input samples and native recovery. The independent numerical projection check covers 1000 mixed pose/asymmetric-FOV cases with maximum NDC error below 4e-16. This derivation check does not replace real visibility, callback, portal or headset tests. Zero-IPD pixel equivalence, portal eye-only sprites and arbitrary CON callback semantics remain open acceptance gates.
+The reviewer verified all but the pending list-cleanup patch directly during its review; the main agent then applied the accepted cleanup and passed both final opaque/masks failure regressions, each with ten bounded animation-input samples and native recovery. The independent numerical projection check covers 1000 mixed pose/asymmetric-FOV cases with maximum NDC error below 4e-16. This derivation check does not replace real visibility, callback, portal or headset tests. Strict matched-target zero-IPD pixel/event equivalence now passes in the deterministic ordinary-room fixture. Portal eye-only sprite membership and arbitrary CON callback semantics remain open acceptance gates.
+
+## Single-pass collection boundary review — 2026-10-16
+
+A fresh Astra/xhigh senior review verified the final vertex/material submission path. Effective model and effort were checked from that reviewer's exact turn metadata. The demonstrated incompatibility is eye-specific CPU clipping followed by order-dependent GL_ALWAYS drawing; a shader-only center-view broadcast cannot preserve the reference.
+
+| Recommendation | Disposition |
+|---|---|
+| Capture final vertices and already-resolved typed shader/material inputs instead of extracting all native material preparation | Adopted for the bounded prototype. Native resolution/setters/cleanup remain authoritative; no second material resolver. |
+| Isolate replay in a separate program/location table and leave native uniform mirrors/hidden caches intact | Adopted. Shader compatibility is the first executable check. A reusable replay VBO may transport vertices; native stream offsets/fences stay owned by their existing code. |
+| Capture native projection at construction and rotation at accepted emission, before drawrooms resets it | Implemented in collection: projection at construction and rotation at emission. Saving rotation after the room render would lose pitch/roll. |
+| Merge only compatible packet heads; filtering by eye must reproduce every original packet/triangle in order | Adopted. No global sort or depth-policy change. Pairing saves submission calls; it does not prove shared CPU traversal, shared geometry work, or improved GPU time. |
+| Probe existing GLSL120 fragment policy with the multiview vertex variant before collection | Implemented as an opt-in actual-context compile/link probe; runtime result recorded in VALIDATION.md after testing. Any required version wrapper uses the same fragment body. |
+| Retry unsupported candidate collection with the two-pass opaque oracle inside the same ready frame, before animation | Implemented in integration. Rejected candidates rerun opaque traversals before animation in the same ready frame; no callback replay after animation begins. |
+| Limit this to three implementation slices and reopen if it requires general GL interception, traversal snapshots, state serialization or material-policy duplication | Adopted: shader/state handoff, collection/replay, then transaction integration/differential fixtures. |
+
+The first promoted family is ordinary indexed ART opaque geometry with shade-table rendering and supported sampler/texture state. Sky, recursive passes, mutable textures, models, masks and unsupported material branches remain explicit exclusions until individually qualified. Complete single-pass world rendering remains the requested endpoint; a paired opaque batch alone does not close it.
+
+## Bounded opaque implementation correctness review
+
+A separate fresh reviewer explicitly selected `gpt-6-astra` at `xhigh`; its exact turn metadata was checked before relying on the result. It verified stream ordering/right-eye transform handling, qualification, native cache restoration and the pre-animation retry boundary. One actionable finding was adopted:
+
+| Finding | Disposition |
+|---|---|
+| Replay initialization errors escape the owned GL-error interval; a program can be cached before successful VBO creation | Fixed. Initialize inside the owned interval, drain errors before retry, delete partial objects, and publish program/VBO together. An injected invalid-target GL error plus simulated VBO failure exercises cleanup; the same frame falls back and later frames replay successfully, with exact pixels and unchanged CON counts. |
+
+Main integration checks additionally required explicit texture-client unit zero, separate matrix-array locations, program/cache truth restoration without native uniform setters, and qualification of actual program/depth/blend/alpha/color-write/modelview/texture state. These were implemented before final fixture tests. The reviewer did not run tests or fully review the subsequently added asymmetric fixture; runtime evidence and final integration checks remain the main agent's responsibility. Main integration then removed the duplicated right-only draw body: paired and either-eye packets now share one upload/draw helper, with the unequal-coverage fixture exercising both unpaired branches.
+
+Results: zero-IPD uses 18 paired calls/216 vertices; nonzero symmetric-coverage stereo uses 30 paired calls/342 vertices. Unequal coverage deliberately leaves all 60 calls unpaired because shader-effective visibility differs. All three cases preserve exact reference pixels and CON counts. This qualifies the restricted adapter; it does not establish complete world single-pass, shared geometry work, lower frame time, or full CON/mod compatibility.
