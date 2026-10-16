@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Controlled native weapon selection plus observations; owned GAME.CON retains
+// native firing/damage. Runner substitutes the requested weapon/ranges only.
+include hand_test.con
+gamevar vrscan_weapon 1 0
+gamevar vrscan_given 0 1
+gamevar vrscan_ammo 0 1
+gamevar vrscan_player 0 1
+gamevar vrscan_pre 0 1
+gamevar vrscan_range 0 1
+gamevar vrscan_auto 0 1
+onevent EVENT_PROCESSINPUT
+    // Appended CON event blocks run before the included RPG initializer.
+    // Select after its first completed tick, so it cannot overwrite this setup.
+    ifvare vraim_given 1
+    ifvare vrscan_given 0
+    {
+        setplayer[THISACTOR].gotweapon vrscan_weapon 1
+        setplayer[THISACTOR].ammo_amount vrscan_weapon 80
+        setplayer[THISACTOR].curr_weapon vrscan_weapon
+        setplayer[THISACTOR].last_weapon -1
+        setplayer[THISACTOR].weapon_pos 0
+        setplayer[THISACTOR].knuckle_incs 0
+        setvar vrscan_given 1
+    }
+    getactor[THISACTOR].yvel vrscan_player
+    getplayer[THISACTOR].ammo_amount vrscan_weapon vrscan_ammo
+    addlog vrscan_player
+    addlog vrscan_ammo
+endevent
+onevent EVENT_PREWEAPONSHOOT
+    addvar vrscan_pre 1
+    addlog vrscan_pre
+endevent
+onevent EVENT_GETAUTOAIMANGLE
+    addvar vrscan_auto 1
+    addlog vrscan_auto
+endevent
+onevent EVENT_GETSHOTRANGE
+    setvar ANGRANGE 0
+    setvar ZRANGE 0
+    addvar vrscan_range 1
+    addlog vrscan_range
+endevent
+gamevar vrscan_owner 0 0
+gamevar vrscan_shooter 0 0
+gamevar vrscan_tile 0 0
+gamevar vrscan_sector 0 0
+gamevar vrscan_x 0 0
+gamevar vrscan_y 0 0
+gamevar vrscan_z 0 0
+onevent EVENT_EGS
+    getactor[THISACTOR].picnum vrscan_tile
+    ifvare vrscan_tile GROWSPARK setvar vrscan_tile SHOTSPARK1
+    ifvare vrscan_tile SHOTSPARK1
+    {
+        getactor[THISACTOR].owner vrscan_owner
+        getactor[vrscan_owner].yvel vrscan_shooter
+        getactor[THISACTOR].sectnum vrscan_sector
+        getactor[THISACTOR].x vrscan_x
+        getactor[THISACTOR].y vrscan_y
+        getactor[THISACTOR].z vrscan_z
+        addlog vrscan_shooter
+        addlog vrscan_sector
+        addlog vrscan_x
+        addlog vrscan_y
+        addlog vrscan_z
+    }
+endevent
+// Native grow behavior is distinct from ordinary bullet health loss.
+gamevar vrscan_target_xrepeat 0 0
+gamevar vrscan_target_yrepeat 0 0
+onevent EVENT_PROCESSINPUT
+    getactor[vrtarget_index].xrepeat vrscan_target_xrepeat
+    getactor[vrtarget_index].yrepeat vrscan_target_yrepeat
+    addlog vrscan_target_xrepeat
+    addlog vrscan_target_yrepeat
+endevent
+
+gamevar vrscan_target_z 0 0
+onevent EVENT_PROCESSINPUT
+    getactor[vrtarget_index].z vrscan_target_z
+    addlog vrscan_target_z
+endevent
+gamevar vrscan_wall 5 0
+gamevar vrscan_switch 0 0
+onevent EVENT_PROCESSINPUT
+    getwall[vrscan_wall].picnum vrscan_switch
+    addlog vrscan_switch
+endevent
+gamevar vrscan_decal 0 0
+onevent EVENT_EGS
+    ifactor BULLETHOLE
+    {
+        setvar vrscan_decal 1
+        addlog vrscan_decal
+    }
+endevent

@@ -344,14 +344,16 @@ Without the hand-shot flag below, shots retain the native player origin and
 native pitch limits. World occlusion, per-weapon pivots/two-hand behavior, other
 weapon/face-action families and physical-headset ergonomics remain required.
 
-## Experimental authoritative hand-origin RPG
+## Experimental authoritative hand-origin weapons
 
 `EDUKE32_XR_HAND_SHOTS=1` with `EDUKE32_XR_AIM=right` or `left` enables
-independent hand-origin/full-vector firing for the ordinary hardcoded RPG only.
+independent hand-origin/full-vector firing for ordinary hardcoded pistol,
+shotgun, chaingun, grow and RPG weapons.
 The existing native server creates projectiles, applies damage and replicates
-actors. Other weapons/custom projectiles retain their native origins. This flag
-is optional and requires an upgraded server; an unsupported server suppresses
-hand-mode fire while native movement continues.
+actors. Other weapons and custom projectile replacements retain native origins. This flag
+is optional and requires the corresponding server capability. RPG-only hand
+servers retain RPG support; unsupported hand hitscan is suppressed while native
+movement continues. A separate optional feature upgrade qualifies hitscan.
 
 ```sh
 EDUKE32_XR=1 EDUKE32_XR_SINGLE_PASS=1 EDUKE32_XR_UI=2 \
@@ -366,10 +368,16 @@ python3 tools/vr/smoke_hand_shots.py --binary ./eduke32 \
 
 The negotiated 14-byte tail travels with the existing native movement/fire
 update. Both sides constrain its body-relative position to two metres, trace
-body-to-hand obstruction and resolve the actual origin sector. The RPG card uses
+body-to-hand obstruction and resolve the actual origin sector. The eligible weapon card uses
 the locally constrained origin; static fixtures compare it with server authority.
 Samples expire after 250ms on the native clock; invalidity/expiry requires a
 trigger release before recovery can fire. No player body is temporarily moved.
+
+Tracked hitscan keeps native shot events, random sampling, damage, switches and
+decals. A finite local spread cone supports vertical shots; it is an explicit
+physical interpretation of native ranges at pitched rays. An accurate free-aim
+pistol hit still suppresses spread without replacing its hand ray. CON forced
+slopes retain precedence, including postfire ceiling/floor classification.
 
 Tracked RPG velocity has constant physical 3D speed 644, so steep shots have less
 horizontal speed than native body firing. Native autoaim selection/events remain;
@@ -380,3 +388,9 @@ placement, not a calibrated 3D barrel. Dynamic-world prediction, loss/reordering
 all weapon families and full multiplayer combat/respawn/map-change coverage
 remain open. See [the protocol and invariants](docs/vr/HAND_SHOTS.md) and
 [validation](docs/vr/VALIDATION.md).
+
+```sh
+python3 tools/vr/smoke_hitscan.py --binary ./eduke32 --client-binary ./eduke32-xr \
+  --grp /path/to/owned/DUKE3D.GRP --work-dir work/hitscan \
+  --display :1 --remote-port 29427 --weapon shotgun --case spread
+```

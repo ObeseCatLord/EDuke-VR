@@ -1,8 +1,10 @@
 # Experimental native hand-shot authority
 
 Updated 2026-10-16. Opt-in `EDUKE32_XR_HAND_SHOTS=1`, with right/left tracked aim.
-Only the ordinary hardcoded RPG selected as WorksLike RPG uses this origin and
-full vector. Other weapons/custom projectiles retain their native firing paths.
+Ordinary hardcoded pistol, shotgun, chaingun, grow and RPG use this origin and
+full vector when the selected WorksLike family, configured Shoots tile and actual
+shot tile agree. Custom-projectile replacements are excluded by the same shared
+firing/card/crosshair predicate. Other weapons retain their native firing paths.
 This is an incremental native adapter, not full weapon or multiplayer completion.
 
 ## Authority and wire boundary
@@ -15,7 +17,7 @@ body or temporary player-struct replacement is maintained.
 
 The native `NETVERSION=1`, `input_t=20`, `playerupdate_t=56`, and
 `clientupdate_t=81` are unchanged. Compile-time ABI assertions enforce those
-sizes. Upgraded clients send one reliable nine-byte optional capability on
+sizes. Upgraded clients begin with the original reliable nine-byte optional capability on
 existing CHAN_MISC after authentication/player-index assignment:
 
 | Byte | Value |
@@ -23,7 +25,7 @@ existing CHAN_MISC after authentication/player-index assignment:
 | 0 | Packet ID 200, appended explicitly without renumbering native IDs |
 | 1–4 | ASCII EDVR |
 | 5 | Version 1 |
-| 6 | Feature 1: hand-shot tail |
+| 6 | Feature mask: RPG/tail 1, hitscan 2; root bit 1 required |
 | 7 | Kind 0 request,1 acknowledgement |
 | 8 | Native assigned player ID |
 
@@ -33,6 +35,16 @@ unknown MISC packet and retain the base movement update. An upgraded client
 waits for the acknowledgement before extending packets. Hand mode suppresses
 fire against an unsupported server; it never silently substitutes a body shot.
 Ordinary flat clients continue sending native packets even when upgraded.
+
+The original request/ack uses mask1. A new client then requests mask3 on the
+same reliable channel; a new server echoes that mask, while an RPG-only server
+ignores the unsupported upgrade and retains mask1. Old clients request only1
+and receive the original acknowledgement. Capabilities never downgrade within
+a connection. Server firing gates hitscan by the authenticated peer's mask;
+client input/card availability uses the required selected-weapon feature.
+Against an RPG-only hand server, a new client can still fire hand-origin RPGs,
+but suppresses unsupported hand hitscan while movement continues. A valid tail
+alone does not grant a peer additional weapon capability.
 
 Once negotiated, an enabled hand-mode client appends exactly 14 bytes to its
 existing PACKET_SLAVE_TO_MASTER on CHAN_MOVE, producing95 bytes. Fire and pose
@@ -63,7 +75,7 @@ RPG creation also checks readiness. Native CON EVENT_PROCESSINPUT still runs
 at its original boundary after the input filter. Explicit CON behavior can
 still alter native input; this is not a script sandbox.
 
-At the RPG start boundary, both client preview and authoritative server trace
+At qualified native shot boundaries, both client preview and authoritative server trace
 from body eye (`pos + pyoff`) to the requested hand using native hitscan with
 owner blocking temporarily disabled and immediately restored. The result backs
 away from a first obstruction, resolves the actual sector using updatesectorz,
@@ -111,3 +123,64 @@ inventory after a native server-side CON mutation in the sparse 0,2 update.
 Private-runtime primary selection uses owned libmonado clients, never desktop
 focus. Final results, retained failed hypotheses and limitations are recorded in
 VALIDATION.md and the bounded sibling evidence JSON.
+
+
+## Native full-vector hitscan
+
+One optional local sector/ray context passes through P_PreFireHitscan and
+Proj_DoHitscan for qualified hardcoded bullet/grow shots. It resolves the hand
+once and omits the body-only ZOFFSET6 subtraction. The accurate probe and final
+native hitscan use the same resolved sector/ray; owner cstat is restored exactly.
+Custom, actor and knee calls retain the original no-context path.
+
+Immediately after native GetAutoAimAng, only its actual target return permits
+native corrected yaw/zvel to replace the physical hand base. A later accurate
+free-aim actor hit controls spread suppression only. Native GETAUTOAIMANGLE,
+GETSHOTRANGE and per-pellet weapon events remain ordered and native conditional
+random draws remain unchanged.
+
+The two native sampled offsets produce a bounded physical local cone:
+`V = F*cos(a) + R*sin(a) + cross(F,R)*b`, where F is normalized physical forward,
+R horizontal right, a the sampled angle in native angle units and b the sampled
+z offset/4096. Retained native yaw defines R at the exact pole. Normalize V and
+encode physical X/Y at16384 and physical Z at262144 in Build ray units. This
+preserves the ideal horizontal azimuth/slope relation and stays finite at large
+CON ranges and vertical pitch. Pitched-ray spread is an intentional physical
+interpretation; exact native integer equivalence is not claimed.
+
+Explicit CON zshoot overrides that cone with the native absolute slope and
+sampled native yaw. The effective ray supplies final impact yaw and vertical
+sign to existing native postfire code, so ceiling/floor damage policy agrees
+with forced flight. Water tracers begin from the resolved origin sector. Native
+shotspark/grow impact, damage, switch, decal and sound paths are reused.
+
+Initial/rebase actor snapshots now encode every native actor field, including
+zero, in the existing codec. Server/client bootstrap sprites differ; a delta
+against different initial arrays otherwise retains ghost player actors and
+alternates player binding. Subsequent native actor packets remain ordinary
+deltas. No layout/version/identity stream is added; old native readers already
+understand these field-change bits. Actual compatibility remains a runtime gate.
+
+`smoke_hitscan.py` observes real native hitscan results, native CON impact
+sprites/events/ammo, target health/grow state and actual two-eye card pixels.
+`smoke_hitscan_native.py` compares an actual native dedicated/client pistol run
+with a pre-change binary, with hand mode/OpenXR absent. The horizontal portal
+fixture does not qualify overlapping-XY/YAX sector transitions. Full-pitch
+world rendering, native full-pitch autoaim selection and broad CON/mod weapon
+families remain open.
+
+The native readiness wait also now detects any change in its byte-sized ping
+counter, including wrap, rather than requiring a greater value. At the maximum
+byte value the old condition could never finish. It sends one immediate request
+then at most one per native simulation tick, retaining event/network pumping.
+Test-only EDUKE32_XR_TEST_READY_WRAP=1 starts the owned client's wait at its
+actual counter maximum; real native replies must still lead to gameplay, stereo
+submission and a real hitscan. This is not a simulated readiness acknowledgement.
+The older-peer smoke is bounded compatibility evidence; it cannot repair an old
+peer executable's own readiness-counter bug.
+
+Grow's native CON effect begins only after grow damage exhausts target health.
+The growth test therefore uses repeated actual trigger presses, leaving native
+health/action/scale untouched. Dead-state replication compares the native final
+dead state rather than requiring the client to capture a short-lived negative
+health value between snapshots.

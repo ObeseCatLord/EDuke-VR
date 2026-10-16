@@ -56,3 +56,12 @@ and observation wrappers are original fixtures; owned GAME.CON/ART are read
 from the caller's GRP, never redistributed. The native player-sprite binding
 and sparse inventory-index fixes address failures reproduced in this pinned
 EDuke baseline, independently of OpenXR linkage.
+
+The hitscan extension is original native adapter code. It reuses EDuke's own
+prefire, random sampling, CON events, impact and damage paths. The finite spread
+mapping was refined by the verified Astra design review; it is explicitly a
+physical pitched-ray interpretation. Initial actor-field completeness and byte
+readiness-counter fixes address reproduced native networking failures without
+copying a Raze protocol or adding a second simulation. Owned GAME.CON was read
+locally to verify native grow's health threshold; no proprietary script is
+redistributed with these test wrappers.

@@ -36,6 +36,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "input.h"
 #include "vrshoot.h"
 #include <cstdlib>
+#include <limits>
 
 #include "enet.h"
 #include "lz4.h"
@@ -51,9 +52,20 @@ enet_uint16 g_netPort       = 23513;
 int32_t     g_netDisconnect = 0;
 char        g_netPassword[32];
 int32_t     g_networkMode       = NET_CLIENT;
-static bool vrServerCapability;
-static bool vrClientCapability[MAXPLAYERS];
-bool Net_VRShotAvailable() { return !g_netClient || vrServerCapability; }
+static uint8_t vrServerCapability;
+static uint8_t vrClientCapability[MAXPLAYERS];
+bool Net_VRShotAvailable(int player, uint8_t feature)
+{
+    if (player<0) player=myconnectindex;
+    if (unsigned(player)>=MAXPLAYERS) return false;
+    if (!feature)
+    {
+        feature=G_VRHandShotFeature(player);
+        if (!feature) feature=VRShotFeatureRPG;
+    }
+    if (g_netClient) return (vrServerCapability&feature)==feature;
+    return !g_netServer || player==0 || (vrClientCapability[player]&feature)==feature;
+}
 
 
 // to support (gcc only) -f-strict-aliasing, the netcode needs to specify that its 32 bit chunks to and from the
@@ -1116,8 +1128,8 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
         if (isPlayerSprite)
         {
             if (g_player[player].ps->i!=actorIndex && std::getenv("EDUKE32_XR_TEST_SHOTS"))
-                LOG_F(INFO,"VR snapshot player binding restored: player=%d oldSprite=%d snapshotSprite=%d.",
-                      player,g_player[player].ps->i,actorIndex);
+                LOG_F(INFO,"VR snapshot player binding restored: player=%d oldSprite=%d snapshotSprite=%d cstat=%d owner=%d repeat=%d,%d.",
+                      player,g_player[player].ps->i,actorIndex,srvActor->spr_cstat,srvActor->spr_owner,srvActor->spr_xrepeat,srvActor->spr_yrepeat);
             g_player[player].ps->i=actorIndex;
         }
         int status = memcmp(srvActor, clActor, sizeof(netactor_t));
@@ -1773,25 +1785,33 @@ static void Net_ReceiveClientUpdate(ENetEvent *event)
 
 // One optional reliable request/ack after native authentication/index assignment.
 // CHAN_MISC prevents native broadcast routing; no movement format changes until ACK.
-static void Net_SendVRCapability(ENetPeer *peer, bool reply, int player)
+static void Net_SendVRCapability(ENetPeer *peer, bool reply, int player, uint8_t features=VRShotFeatureRPG)
 {
-    uint8_t bytes[9]={PACKET_VR_CAPABILITIES,'E','D','V','R',1,1,uint8_t(reply),uint8_t(player)};
+    uint8_t bytes[9]={PACKET_VR_CAPABILITIES,'E','D','V','R',1,features,uint8_t(reply),uint8_t(player)};
     enet_peer_send(peer,CHAN_MISC,enet_packet_create(bytes,sizeof(bytes),ENET_PACKET_FLAG_RELIABLE));
 }
 static void Net_ReceiveVRCapability(ENetEvent *event, bool server)
 {
     if (event->channelID!=CHAN_MISC || event->packet->dataLength!=9 || (!server && event->peer!=g_netClientPeer)) return;
     auto const bytes=event->packet->data;
-    if (Bmemcmp(bytes+1,"EDVR",4) || bytes[5]!=1 || bytes[6]!=1 || bytes[7]!=(server ? 0 : 1)) return;
+    if (Bmemcmp(bytes+1,"EDVR",4) || bytes[5]!=1 || !(bytes[6]&VRShotFeatureRPG) || (bytes[6]&~(VRShotFeatureRPG|VRShotFeatureHitscan)) || bytes[7]!=(server ? 0 : 1)) return;
     int const player=server ? int(intptr_t(event->peer->data)) : myconnectindex;
     if (player<=0 || player>=MAXPLAYERS || bytes[8]!=player || !g_player[player].playerquitflag) return;
     if (server)
     {
-        vrClientCapability[player]=true;
-        Net_SendVRCapability(event->peer,true,player);
+        vrClientCapability[player]|=bytes[6];
+        Net_SendVRCapability(event->peer,true,player,bytes[6]);
     }
-    else vrServerCapability=true;
-    LOG_F(INFO,"VR native hand-shot capability: %s player=%d version=1.",server ? "accepted" : "acknowledged",player);
+    else
+    {
+        bool const first=!vrServerCapability;
+        vrServerCapability|=bytes[6];
+        // Preserve the original RPG-only request/ack for old peers. Upgrade
+        // only after that exchange; old servers safely ignore the new mask.
+        if (first && !(vrServerCapability&VRShotFeatureHitscan))
+            Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan);
+    }
+    LOG_F(INFO,"VR native hand-shot capability: %s player=%d version=1 features=%u.",server ? "accepted" : "acknowledged",player,unsigned(bytes[6]));
 }
 
 static void Net_Server_SetupPlayer(int playerindex)
@@ -3252,7 +3272,7 @@ static void NetBuffer_WriteDeltaNetSector(NetBuffer_t *netBuffer, const netSecto
     }
 }
 
-static void NetBuffer_WriteDeltaNetActor(NetBuffer_t* netBuffer, const netactor_t *from, const netactor_t* to, int8_t writeDeletedActors)
+static void NetBuffer_WriteDeltaNetActor(NetBuffer_t* netBuffer, const netactor_t *from, const netactor_t* to, bool forceFields)
 {
     const   int32_t         cMaxStructs = MAXSPRITES;
     const   int32_t         cFieldsInStruct = ARRAY_SIZE(ActorFields);
@@ -3297,38 +3317,21 @@ static void NetBuffer_WriteDeltaNetActor(NetBuffer_t* netBuffer, const netactor_
         return;
     }
 
-    maxChgIndex = 0;
+    maxChgIndex = forceFields ? cFieldsInStruct : 0;
 
     for (fieldIndex = 0, fieldPtr = ActorFields; fieldIndex < cFieldsInStruct; fieldIndex++, fieldPtr++)
     {
         fromField   = (int32_t const *)((int8_t const *)from    + fieldPtr->offset);
         toField     = (int32_t const *)((int8_t const *)to      + fieldPtr->offset);
 
-        if (*fromField != *toField)
+        if (!forceFields && *fromField != *toField)
         {
             maxChgIndex = fieldIndex + 1;
         }
     }
 
     if (maxChgIndex == 0)
-    {
-
-        if (!writeDeletedActors)
-        {
-            // no fields changed, if we're not forcing a write for each actor then we're done
-            return;
-        }
-
-        // write two bits for no change
-        // as in, write {0,0} to indicate that the entity still exists,
-        // but has not changed.
-        NetBuffer_WriteBits(netBuffer, to->netIndex, NETINDEX_BITS);                    // {<NetIndex>}         sprite index
-        NetBuffer_WriteBits(netBuffer, 0, 1);                                           // {<NetIndex>, 0}      sprite NOT deleted
-        NetBuffer_WriteBits(netBuffer, 0, 1);                                           // {<NetIndex>, 0,0}    sprite has NOT changed.
-
         return;
-
-    }
 
     // if we got to this point, the sprite / actor exists and has changed
     NetBuffer_WriteBits(netBuffer, to->netIndex, NETINDEX_BITS);                        // {<NetIndex>}         sprite index
@@ -3349,7 +3352,7 @@ static void NetBuffer_WriteDeltaNetActor(NetBuffer_t* netBuffer, const netactor_
         fromField   = (int32_t const *)((int8_t const *)from    + fieldPtr->offset);
         toField     = (int32_t const *)((int8_t const *)to      + fieldPtr->offset);
 
-        if (*fromField == *toField)
+        if (!forceFields && *fromField == *toField)
         {
             NetBuffer_WriteBits(netBuffer, 0, 1);                                       // {0}              field not changed
             continue;
@@ -3386,7 +3389,7 @@ static void NetBuffer_WriteDeltaNetActor(NetBuffer_t* netBuffer, const netactor_
 }
 
 
-static void Net_WriteNetActorsToBuffer(NetBuffer_t* netBuffer, const netmapstate_t* from, const netmapstate_t* to)
+static void Net_WriteNetActorsToBuffer(NetBuffer_t* netBuffer, const netmapstate_t* from, const netmapstate_t* to, bool completeActors)
 {
     Bassert(from != nullptr);
     Bassert(to != nullptr);
@@ -3445,7 +3448,7 @@ static void Net_WriteNetActorsToBuffer(NetBuffer_t* netBuffer, const netmapstate
             }
         }
 
-        NetBuffer_WriteDeltaNetActor(netBuffer, fromActor, toActor, 0);
+        NetBuffer_WriteDeltaNetActor(netBuffer, fromActor, toActor, completeActors);
 
         actorIndex++;
 
@@ -3453,7 +3456,7 @@ static void Net_WriteNetActorsToBuffer(NetBuffer_t* netBuffer, const netmapstate
 }
 
 
-static void Net_WriteWorldToBuffer(NetBuffer_t* netBuffer, const netmapstate_t* fromSnapshot, const netmapstate_t* toSnapshot)
+static void Net_WriteWorldToBuffer(NetBuffer_t* netBuffer, const netmapstate_t* fromSnapshot, const netmapstate_t* toSnapshot, bool completeActors)
 {
     Bassert(fromSnapshot != nullptr);
     Bassert(toSnapshot != nullptr);
@@ -3487,7 +3490,7 @@ static void Net_WriteWorldToBuffer(NetBuffer_t* netBuffer, const netmapstate_t* 
 
     NetBuffer_WriteBits(netBuffer, cSTOP_PARSING_CODE, NETINDEX_BITS);
 
-    Net_WriteNetActorsToBuffer(netBuffer, fromSnapshot, toSnapshot);
+    Net_WriteNetActorsToBuffer(netBuffer, fromSnapshot, toSnapshot, completeActors);
 
     NetBuffer_WriteBits(netBuffer, cSTOP_PARSING_CODE, NETINDEX_BITS); // end of actors/sprites
 
@@ -4288,7 +4291,12 @@ static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevision
     NetBuffer_WriteDword(bufferPtr, fromRevisionNumberToSend);
     NetBuffer_WriteDword(bufferPtr, toRevisionNumber);
 
-    Net_WriteWorldToBuffer(bufferPtr, fromMapState, toMapState);
+    // Map-entry player/bootstrap sprites differ between native server/client.
+    // Initial/rebase actor fields must be self-contained; an unchanged server
+    // field cannot be decoded against a different client-side initial actor.
+    // Same native codec/layout, including legacy readers; later revisions delta.
+    bool const completeActors=fromRevisionNumberToSend==cInitialMapStateRevisionNumber;
+    Net_WriteWorldToBuffer(bufferPtr, fromMapState, toMapState, completeActors);
 
     if (sendToPlayerIndex > ((int32_t) g_netServer->peerCount))
     {
@@ -4728,12 +4736,19 @@ void Net_SpawnPlayer(int32_t player)
 
 void Net_WaitForServer(void)
 {
-    int32_t serverReady = g_player[0].pingcnt;
-
     if (numplayers < 2 || g_netServer)
         return;
 
+    auto const wrapTest=std::getenv("EDUKE32_XR_TEST_READY_WRAP");
+    if (wrapTest && !Bstrcmp(wrapTest,"1"))
+        g_player[0].pingcnt=std::numeric_limits<decltype(g_player[0].pingcnt)>::max();
+    int32_t const serverReady = g_player[0].pingcnt;
+
     P_SetGamePalette(g_player[myconnectindex].ps, TITLEPAL, 8 + 2 + 1);
+    bool const trace=std::getenv("EDUKE32_XR_TEST_SHOTS");
+    uint32_t const started=uint32_t(totalclock);
+    uint32_t lastTrace=started, lastPing=started-TICSPERFRAME, requests=0;
+    if (trace) LOG_F(INFO,"VR native readiness wait: begin baseline=%d.",serverReady);
 
     do
     {
@@ -4747,12 +4762,14 @@ void Net_WaitForServer(void)
             videoNextPage();
         }
 
-        // XXX: this looks like something that should be rate limited...
-        packbuf[0] = PACKET_PLAYER_PING;
-        packbuf[1] = myconnectindex;
-
-        if (g_netClientPeer)
+        // One immediate request, then at most one per native simulation tick.
+        // An unbounded reliable stream floods the byte-sized response counter.
+        if (g_netClientPeer && uint32_t(uint32_t(totalclock)-lastPing)>=TICSPERFRAME)
         {
+            lastPing=uint32_t(totalclock);
+            ++requests;
+            packbuf[0] = PACKET_PLAYER_PING;
+            packbuf[1] = myconnectindex;
             enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
             Dbg_PacketSent(PACKET_PLAYER_PING);
         }
@@ -4760,8 +4777,19 @@ void Net_WaitForServer(void)
 
         gameHandleEvents();
 
-        if (g_player[0].pingcnt > serverReady)
+        if (trace && uint32_t(uint32_t(totalclock)-lastTrace)>=120)
         {
+            lastTrace=uint32_t(totalclock);
+            LOG_F(INFO,"VR native readiness wait: baseline=%d observed=%d queued=%zu sent=%zu.",serverReady,g_player[0].pingcnt,
+                  g_netClientPeer ? size_t(enet_list_size(&g_netClientPeer->outgoingReliableCommands)) : 0,
+                  g_netClientPeer ? size_t(enet_list_size(&g_netClientPeer->sentReliableCommands)) : 0);
+        }
+        // Any fresh reply proves readiness, including byte-counter wrap. At
+        // CHAR_MAX the old greater-than condition could never become true.
+        if (g_player[0].pingcnt != serverReady)
+        {
+            if (trace) LOG_F(INFO,"VR native readiness wait: complete observed=%d requests=%u ticks=%u.",
+                             g_player[0].pingcnt,requests,uint32_t(uint32_t(totalclock)-started));
             P_SetGamePalette(g_player[myconnectindex].ps, BASEPAL, 8 + 2 + 1);
             return;
         }

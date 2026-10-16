@@ -447,7 +447,7 @@ bool G_XRCrosshairPosition(vec2_t &position)
     auto const flat=ray(logical,pitchRoll(nativePitch(logical.horizon),logical.roll));
     auto const head=multiply(multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw),rawInput.headPose.orientation);
     auto tracked=ray(body,head);
-    if (handShotsRequested() && PWEAPON(myconnectindex,p->curr_weapon,WorksLike)==RPG_WEAPON)
+    if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
     {
         if (!G_VRShotReady(myconnectindex)) return false;
         auto const shot=G_VRGetShotInput(myconnectindex);
@@ -586,8 +586,7 @@ void G_XREndWeapon(bool captured)
     if (hand<0) return;
     XrPosef pose=rawInput.hands[hand].aimPose;
     bool visible=aimPoseUsable();
-    auto const p=g_player[myconnectindex].ps;
-    if (handShotsRequested() && PWEAPON(myconnectindex,p->curr_weapon,WorksLike)==RPG_WEAPON)
+    if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
     {
         vec3_t position; int16_t sector; bool clamped;
         visible=visible && Net_VRShotAvailable() && G_VRResolveShot(myconnectindex,position,sector,clamped);

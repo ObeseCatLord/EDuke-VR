@@ -475,9 +475,37 @@ static int A_GetShootZvel(int defaultZvel)
     return g_overrideShootZvel ? g_shootZvel : defaultZvel;
 }
 
+// One optional resolved sector/effective Build ray, private to native hitscan.
+// No extra per-player state or alternative weapon simulation.
+struct HandHitscan { int16_t sector; vec3_t ray; };
+
+static vec3_t P_HandHitscanRay(vec3_t const &forward, int angle, int spreadZ, int spreadAngle)
+{
+    if (g_overrideShootZvel)
+        return {sintable[(angle+spreadAngle+512)&2047],sintable[(angle+spreadAngle)&2047],g_shootZvel*64};
+    double const length=std::sqrt(double(forward.x)*forward.x+double(forward.y)*forward.y+double(forward.z)*forward.z);
+    double const x=forward.x/length, y=forward.y/length, z=forward.z/length;
+    double const horizontal=std::hypot(x,y);
+    double const yaw=angle*(3.14159265358979323846/1024.);
+    double const rx=horizontal>0. ? -y/horizontal : -std::sin(yaw);
+    double const ry=horizontal>0. ? x/horizontal : std::cos(yaw);
+    // Bounded local cone: native random samples/ranges, finite at every pitch
+    // and at arbitrarily large CON angle ranges. At the pole retained yaw
+    // defines the spread basis. D=cross(F,R) points physically down at horizon.
+    double const a=(spreadAngle&2047)*(3.14159265358979323846/1024.);
+    double const b=spreadZ/4096.;
+    double const vx=x*std::cos(a)+rx*std::sin(a)-z*ry*b;
+    double const vy=y*std::cos(a)+ry*std::sin(a)+z*rx*b;
+    double const vz=z*std::cos(a)+(x*ry-y*rx)*b;
+    double const scale=16384./std::sqrt(vx*vx+vy*vy+vz*vz);
+    return {int32_t(std::lround(vx*scale)),int32_t(std::lround(vy*scale)),int32_t(std::lround(vz*scale*16.))};
+}
+static int Proj_DoHitscan(int spriteNum, int32_t cstatmask, vec3_t const *srcVect, int zvel,
+                          int shootAng, hitdata_t *hitData, HandHitscan const *hand=nullptr);
+
 // Prepare hitscan weapon fired from player p.
 static void P_PreFireHitscan(int spriteNum, int playerNum, int projecTile, vec3_t *srcVect, int32_t *zvel, int *shootAng,
-                             int accurateAim, int doSpread)
+                             int accurateAim, int doSpread, HandHitscan *hand=nullptr)
 {
     int angRange  = 32;
     int zRange    = 256;
@@ -492,6 +520,40 @@ static void P_PreFireHitscan(int spriteNum, int playerNum, int projecTile, vec3_
 
     angRange = Gv_GetVar(g_angRangeVarID, spriteNum, playerNum);
     zRange   = Gv_GetVar(g_zRangeVarID, spriteNum, playerNum);
+
+    if (hand)
+    {
+        // Only GetAutoAimAng's own result denotes a correction. A successful
+        // accurate free-aim probe below means suppress spread, not replace aim.
+        auto const sample=G_VRGetShotInput(playerNum);
+        vec3_t base={sample.direction[0],sample.direction[1],sample.direction[2]};
+        if (aimSprite>=0)
+            base={sintable[(*shootAng+512)&2047],sintable[*shootAng&2047],*zvel*4};
+        else if (base.x || base.y) *shootAng=getangle(base.x,base.y);
+        int const baseAngle=*shootAng;
+        hand->ray=P_HandHitscanRay(base,baseAngle,0,0);
+        if (accurateAim && !pPlayer->auto_aim)
+        {
+            hitdata_t hit;
+            Proj_DoHitscan(spriteNum,257,srcVect,0,baseAngle,&hit,hand);
+            if (hit.sprite>=0)
+            {
+                int const stats=(1<<STAT_ACTOR)|(1<<STAT_ZOMBIEACTOR)|(1<<STAT_PLAYER)|(1<<STAT_DUMMYPLAYER);
+                unsigned const stat=sprite[hit.sprite].statnum;
+                if (stat<=30 && (stats&(1<<stat))) aimSprite=hit.sprite;
+            }
+        }
+        int deltaZ=0, deltaAngle=0;
+        Proj_MaybeAddSpread(doSpread && (!accurateAim || aimSprite<0),&deltaZ,&deltaAngle,zRange,angRange);
+        hand->ray=P_HandHitscanRay(base,baseAngle,deltaZ,deltaAngle);
+        if (hand->ray.x || hand->ray.y) *shootAng=getangle(hand->ray.x,hand->ray.y);
+        // Native postfire uses its sign for ceiling/floor policy, including a
+        // CON-forced slope pointing opposite to the physical hand.
+        *zvel=hand->ray.z;
+        if (std::getenv("EDUKE32_XR_TEST_SHOTS"))
+            LOG_F(INFO,"VR hitscan spread: player=%d spread=%d,%d auto=%d forced=%d.",playerNum,deltaZ,deltaAngle,aimSprite,g_overrideShootZvel);
+        return; // physical hand origin has no native body ZOFFSET6 adjustment
+    }
 
     if (accurateAim)
     {
@@ -549,10 +611,18 @@ static void A_PreFireHitscan(const spritetype *pSprite, vec3_t * const srcVect, 
     Proj_MaybeAddSpread(doSpread, zvel, shootAng, 256, 128 >> (uint8_t)(pSprite->picnum != BOSS1));
 }
 
-static int Proj_DoHitscan(int spriteNum, int32_t const cstatmask, const vec3_t * const srcVect, int zvel, int const shootAng, hitdata_t * const hitData)
+static int Proj_DoHitscan(int spriteNum, int32_t const cstatmask, const vec3_t * const srcVect, int zvel, int const shootAng, hitdata_t * const hitData, HandHitscan const *hand)
 {
     auto const pSprite = &sprite[spriteNum];
 
+    if (hand)
+    {
+        auto const cstat=pSprite->cstat;
+        pSprite->cstat &= ~cstatmask;
+        hitscan(srcVect,hand->sector,hand->ray.x,hand->ray.y,hand->ray.z,hitData,CLIPMASK1);
+        pSprite->cstat=cstat;
+        return hitData->sect<0;
+    }
     pSprite->cstat &= ~cstatmask;
     zvel = A_GetShootZvel(zvel);
     int16_t sectnum = pSprite->sectnum;
@@ -1127,8 +1197,19 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
     int const spriteSectnum = pSprite->sectnum;
     int32_t Zvel;
     int vel;
+    HandHitscan resolved;
+    HandHitscan *hand=nullptr;
+    bool clamped=false;
+    auto const mapping=tileGetMapping(projecTile);
+    if ((mapping==SHOTSPARK1__ || mapping==SHOTGUN__ || mapping==CHAINGUN__ || mapping==GROWSPARK__)
+        && playerNum>=0 && G_VRShotEnabled(playerNum) && G_VRHandShotFeature(playerNum,projecTile)
+        && Net_VRShotAvailable(playerNum,VRShotFeatureHitscan))
+    {
+        if (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,resolved.sector,clamped)) return -1;
+        hand=&resolved;
+    }
 
-    switch (tileGetMapping(projecTile))
+    switch (mapping)
     {
         case BLOODSPLAT1__:
         case BLOODSPLAT2__:
@@ -1204,15 +1285,20 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
 
             if (playerNum >= 0)
                 P_PreFireHitscan(spriteNum, playerNum, projecTile, &startPos, &Zvel, &shootAng,
-                    projecTile == SHOTSPARK1__ && !WW2GI, 1);
+                    projecTile == SHOTSPARK1__ && !WW2GI, 1, hand);
             else
                 A_PreFireHitscan(pSprite, &startPos, &Zvel, &shootAng, 1);
 
-            if (Proj_DoHitscan(spriteNum, 256 + 1, &startPos, Zvel, shootAng, &hitData))
+            if (Proj_DoHitscan(spriteNum, 256 + 1, &startPos, Zvel, shootAng, &hitData, hand))
                 return -1;
 
+            if (hand && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR native hitscan: player=%d tile=%d origin=%d,%d,%d sector=%d clamped=%d ray=%d,%d,%d hit=%d,%d,%d hitsect=%d wall=%d sprite=%d.",
+                      playerNum,projecTile,startPos.x,startPos.y,startPos.z,hand->sector,clamped,hand->ray.x,hand->ray.y,hand->ray.z,
+                      hitData.x,hitData.y,hitData.z,hitData.sect,hitData.wall,hitData.sprite);
+
             if ((krand() & 15) == 0 && sector[hitData.sect].lotag == ST_2_UNDERWATER)
-                Proj_DoWaterTracers(hitData.xyz, &startPos, 8 - (ud.multimode >> 1), pSprite->sectnum);
+                Proj_DoWaterTracers(hitData.xyz, &startPos, 8 - (ud.multimode >> 1), hand ? hand->sector : pSprite->sectnum);
 
             int spawnedSprite;
 
@@ -1237,12 +1323,17 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
         case GROWSPARK__:
         {
             if (playerNum >= 0)
-                P_PreFireHitscan(spriteNum, playerNum, projecTile, &startPos, &Zvel, &shootAng, 1, 1);
+                P_PreFireHitscan(spriteNum, playerNum, projecTile, &startPos, &Zvel, &shootAng, 1, 1, hand);
             else
                 A_PreFireHitscan(pSprite, &startPos, &Zvel, &shootAng, 1);
 
-            if (Proj_DoHitscan(spriteNum, 256 + 1, &startPos, Zvel, shootAng, &hitData))
+            if (Proj_DoHitscan(spriteNum, 256 + 1, &startPos, Zvel, shootAng, &hitData, hand))
                 return -1;
+
+            if (hand && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR native hitscan: player=%d tile=%d origin=%d,%d,%d sector=%d clamped=%d ray=%d,%d,%d hit=%d,%d,%d hitsect=%d wall=%d sprite=%d.",
+                      playerNum,projecTile,startPos.x,startPos.y,startPos.z,hand->sector,clamped,hand->ray.x,hand->ray.y,hand->ray.z,
+                      hitData.x,hitData.y,hitData.z,hitData.sect,hitData.wall,hitData.sprite);
 
             int const otherSprite = A_InsertSprite(hitData.sect, hitData.x, hitData.y, hitData.z, GROWSPARK, -16, 28, 28,
                                                    shootAng, 0, 0, spriteNum, 1);
@@ -1374,7 +1465,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
 
             int j = -1;
             bool const tracked=projecTile==RPG && playerNum>=0 && G_VRShotEnabled(playerNum)
-                && PWEAPON(playerNum,pPlayer->curr_weapon,WorksLike)==RPG_WEAPON;
+                && G_VRHandShotFeature(playerNum,projecTile) && Net_VRShotAvailable(playerNum,VRShotFeatureRPG);
             int16_t originSector=spriteSectnum;
             bool clamped=false;
             if (tracked && (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,originSector,clamped))) return -1;

@@ -503,3 +503,102 @@ Other weapons/custom projectiles, full-pitch world rendering, full single-pass
 coverage, dynamic collision reconciliation, packet loss/reordering, PvP
 frag/respawn/map changes, save/demo/camera behavior, haptics/settings and physical
 headset/Windows/Quest qualification remain required. The full-port goal is active.
+
+
+## Native full-vector hitscan and multiplayer readiness — 2026-10-16
+
+The optional hand path now covers ordinary hardcoded pistol, shotgun, chaingun,
+grow and RPG when the selected family/configured Shoots/actual tile agree.
+One shared feature mapping also excludes custom projectile replacements from
+hand-origin presentation. The hitscan adapter has one private resolved-sector/
+ray context inside existing native helpers; input, CON, random sampling, impact,
+damage and actor replication remain native. HAND_SHOTS.md records the physical
+spread interpretation and protocol invariants.
+
+A fresh explicitly selected Astra/xhigh senior design review verified source;
+main checked its exact effective turn metadata before adopting it. It caught
+accurate-probe success being distinct from autoaim correction, singular spread
+math, forced-slope/postfire disagreement and presentation eligibility. A fresh
+implementation-review request hit retained thread capacity; main verification
+covers implementation and subsequent native fixes, without claiming another
+independent review.
+
+Twenty-two final hitscan cases pass under actual native dedicated server plus
+simulated Monado XR client. Each requires actual60 world/HUD submissions,
+distinct eye layers, active core validation, no core warning/error and explicit
+hitscan feature acknowledgement on both peers. Native CON events and actual
+impact sprites, ammo and damage are observed; shots are driven by real OpenXR
+remote trigger actions. The controlled fixture equips weapons and sets spread
+ranges, retaining owned GAME.CON firing/damage. It never injects a substitute
+projectile, hit result, target health or growth state.
+
+| Proof | Actual result |
+|---|---|
+| Portal origin | Pistol starts1216,4173,-8109 in neighboring sector1; actual ray15870,3373,-36481 hits8191,5655,-24145 on far wall5. Native CON shotspark has that impact. |
+| Blocked/glancing | Common resolver constrains before the wall in sector0; blocked pistol starts1125,4149,-8672 and hits1151,4154,-8734. Native wall-hit rounding can end one Build unit inside the plane. Native decals are created. |
+| Steep direct actor accuracy |75° free-aim pistol hits native actor4 at1549,4244,-28497; native target health decreases on server and client. The probe suppresses spread while preserving the full physical ray, rather than reconstructing clamped body pitch. |
+| Native autoaim | Actual target4 correction changes the effective ray; native server/client health decreases in the final fixture. Native target/event selection remains; full-pitch target-selection policy is not newly qualified. |
+| Vertical/spread | Straight-up pistol and seven-pellet shotgun hit the ceiling. Nonzero vertical shotgun dispersion has two independent horizontal axes and matches an independent analytic pole contract. Horizontal dispersion matches independent azimuth/slope arithmetic. Zero, one and INT_MAX ranges are finite and retain per-pellet native events. |
+| Forced CON slope | An upward hand forced down by zshoot8192 hits floorZ0; a downward hand forced up by zshoot-8192 hits ceilingZ-32768. Native postfire sign follows the same effective ray. |
+| Shootable switch | A real native far-wall DIPSWITCH changes162→163 on server and client after the hand-directed hit. This does not qualify every native switch/material interaction. |
+| Damage/grow | Pistol, shotgun and chaingun produce actual native enemy hits/damage and client health updates. Grow uses repeated native trigger presses until native health exhaustion starts expansion; both peers report size larger than initial40. Actual owned client screenshots before/after show the enlarged enemy. Peer samples are at different ticks, not exact instantaneous size convergence. |
+| Card pixels/depth | Applicable horizontal scenes compare both complete eye layers with an independent ray/plane/texture oracle using the static server-constrained origin, within two RGB bytes. Complete world-depth layers remain byte-identical. Card pivot/depth policy remain provisional. |
+| Native helper reference | Actual pre-change03e6344 and current native dedicated/client pistol pairs, without XR/hand mode, hit8192,4096,-9952; prefire/range/autoaim events are1/1/1 and ammo use1 in both. A native DOFIRE fixture limits each run to one real shot. |
+
+Two native networking defects required explicit investigation and narrow repairs:
+
+- Different local bootstrap actors make server/client initial actor baselines
+  unequal. Initial deltas retained two visible/self-owned APLAYER identities3
+  and8193 for player1, alternating its binding every snapshot. Initial/rebase
+  packets now explicitly encode all native actor fields, including zero, with
+  the existing codec; later packets remain native deltas. Final hitscan cases
+  require no binding oscillation. There is no new identity stream or actor
+  format. Startup/rebase traffic increases and WAN/loss costs remain unqualified.
+- Native pingcnt is one byte, but Net_WaitForServer compared it with its entry
+  value using greater-than. The maximum-counter fixture stayed in that native
+  wait despite real responses repeatedly wrapping below255; an owned debugger
+  confirmed Net_WaitForServer/G_EnterLevel on the stack. The repair detects any
+  counter change and sends at most one request per native simulation tick. The
+  same maximum-counter test now reaches actual60-frame stereo gameplay and a
+  real hit; every injected maximum-counter wait observes a smaller wrapped
+  value, with request counts within one immediate request plus one per four
+  elapsed native clock ticks. No synthetic readiness acknowledgement is supplied. This is bounded
+  proof of that failure, not a claim that all possible startup stalls are solved.
+
+Main final compatibility review also found that original capability1 promises
+RPG/tail support only. Aware clients now optionally upgrade to mask3 after the
+original mask1 request/ack. Server per-peer firing and client selected-weapon
+availability use the same feature mapping. Actual pinned03e6344 RPG-only server
+accepts hand RPGs while the new client's unsupported pistol fire is suppressed,
+with native movement and60 stereo frames retained. An actual pre-upgrade
+prototype client advertising only1 sends valid hand data to the new server;
+server pistol impact still matches the independent native body ray, proving a
+valid tail alone does not grant hitscan authority. New peers require mask3.
+Older peers keep the original exchange; this does not qualify every historical
+XR revision or repair an old peer's own readiness-counter bug.
+
+Fourteen regression/compatibility groups pass: maximum-counter recovery, native
+helper reference, RPG open/wall/vertical/timeout, pre-extension native server and
+client, true sparse0,2 inventory/controller joins, exact animated-mask stereo,
+and the four capability cases. Both sparse joins retain actual60 stereo/HUD
+frames, native movement/fire/release and server/client inventory agreement.
+Animated-mask RGB has zero changed pixels, raw nonconstant depth is exact in
+both eyes, and native/two-pass/multiview callback counts match. Native and XR
+builds, Python compilation and diff checks pass; only XR links OpenXR. Existing
+baseline allocator warnings persist. The private Monado service is stopped
+after tests.
+
+Bounded evidence: `../../../evidence/hitscan-validation.json`; inspected actual
+XR layers: `../../../evidence/hitscan-stereo.png`; actual owned client growth
+comparison: `../../../evidence/hitscan-native-growth.png`. Raw debugger/session
+logs, private configs and proprietary data files are not exported. Failed
+fixture assumptions (initial event ordering, ideal wall coordinate, one-shot
+grow and transient negative-health equality) are recorded as test corrections,
+not engine behavior changes.
+
+Remaining: other projectile/thrown/tripmine/melee families, remote tracked
+muzzle presentation, dynamic collision reconciliation, overlapping-XY/YAX and
+underwater tracer qualification, broader CON/switch/material policies, full-pitch
+world rendering, full single-pass coverage, PvP frag/respawn, map/late-join/loss,
+save/demo/camera behavior, comfort/haptics and hardware/platform qualification.
+The full port remains active and unfinished.

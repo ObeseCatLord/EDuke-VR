@@ -65,6 +65,27 @@ VRShotInput G_VRGetShotInput(int player) { return unsigned(player)<MAXPLAYERS ? 
 void G_VRResetShot(int player) { if (unsigned(player)<MAXPLAYERS) shots[player]={}; }
 void G_VRResetShots() { for (auto &state:shots) state={}; }
 bool G_VRShotEnabled(int player) { return unsigned(player)<MAXPLAYERS && (shots[player].input.flags & VRShotEnabled); }
+uint8_t G_VRHandShotFeature(int player, int tile)
+{
+#ifndef EDUKE32_STANDALONE
+    if (unsigned(player)>=MAXPLAYERS || !g_player[player].ps) return false;
+    int const weapon=g_player[player].ps->curr_weapon;
+    if (unsigned(weapon)>=MAX_WEAPONS) return false;
+    int const shoots=PWEAPON(player,weapon,Shoots);
+    if (tile<0) tile=shoots;
+    if (unsigned(tile)>=MAXTILES || tile!=shoots || A_CheckSpriteTileFlags(tile,SFLAG_PROJECTILE)) return false;
+    int const works=PWEAPON(player,weapon,WorksLike);
+    switch (tileGetMapping(tile))
+    {
+        case SHOTSPARK1__: return works==PISTOL_WEAPON ? VRShotFeatureHitscan : 0;
+        case SHOTGUN__: return works==SHOTGUN_WEAPON ? VRShotFeatureHitscan : 0;
+        case CHAINGUN__: return works==CHAINGUN_WEAPON ? VRShotFeatureHitscan : 0;
+        case GROWSPARK__: return works==GROW_WEAPON ? VRShotFeatureHitscan : 0;
+        case RPG__: return works==RPG_WEAPON ? VRShotFeatureRPG : 0;
+    }
+#endif
+    return false;
+}
 bool G_VRShotReady(int player)
 {
     return G_VRShotEnabled(player) && (shots[player].input.flags & VRShotValid)

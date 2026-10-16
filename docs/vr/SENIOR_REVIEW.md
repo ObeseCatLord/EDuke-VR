@@ -327,3 +327,50 @@ The estimate grew only at two demonstrated native replication defects; narrow
 repairs stayed in their existing functions. Before broadening weapons, obtain a
 fresh Astra review when capacity permits and challenge whether each adaptation
 can reuse existing native helpers without duplicating weapon policy.
+
+
+## Native hitscan authority design — verified Astra/xhigh, 2026-10-16
+
+Fresh review agent hitscan_authority_design ran explicitly selected gpt-6-astra
+at xhigh; main independently verified that exact turn's effective session
+metadata before relying on it. The reviewer read source and the verified brief,
+made no edits and ran no GPU tests. Main owns implementation and runtime proof.
+
+| Recommendation | Disposition |
+|---|---|
+| Separate GetAutoAimAng correction from accurate-probe success | Adopted. Select physical/native corrected base immediately after the former. The later probe only suppresses spread. A steep free-aim actor-hit test exercises the distinction. |
+| Keep a local resolved-sector/effective-ray contract | Adopted. Only a private two-field context crosses native prefire/final hitscan; no new player state, networking or damage implementation. |
+| Reject tangent singularities and arbitrary pole-threshold hybrids | Adopted. Bounded F*cos(a)+R*sin(a)+cross(F,R)*b, with retained yaw at the pole; native sample/event boundaries remain. Physical pitched spread is explicit. |
+| Forced slopes and native postfire must agree | Adopted. Encode the override last; derive postfire vertical sign and impact yaw from that exact ray. Opposite-hand-direction forced floor/ceiling cases qualify it. |
+| Match presentation to actual supported/default projectile | Adopted. Shared family/Shoots/actual-tile/custom-exclusion predicate is used by firing, card origin and crosshair. |
+| Verify grow separately and strengthen geometry/behavior fixtures | Adopted in tests; remaining overlapping-XY/YAX, broad native switch/material/mod and dynamic-world coverage remain explicit gates rather than inferred from the horizontal portal. |
+
+A separate explicitly selected Astra/xhigh implementation-review creation hit
+the retained thread limit. No substitute or unverified resumed review was used.
+The subsequent initial-snapshot repair was reopened independently: both duplicate
+sprites were visible/self-owned, disproving a visibility/owner heuristic. The
+native codec can send every actor field at initial/rebase revisions, preserving
+existing readers and subsequent deltas; main chose that narrow repair over a
+new identity packet or guessed sprite index. It requires runtime before/after
+and compatibility proof and is not covered by the earlier design review.
+
+Main runtime investigation additionally found a native readiness failure outside
+the reviewed hitscan design. The byte-sized pingcnt was compared with its saved
+entry value using greater-than. A maximum-counter fixture with real replies
+stayed inside Net_WaitForServer/G_EnterLevel, confirmed by an owned debugger;
+observed responses continued wrapping below255. The narrow repair compares for
+change and rate-limits reliable requests to the existing simulation tick. No new
+handshake/counter protocol or timing service is introduced. This repair likewise
+has main runtime verification, not a separate fresh Astra implementation review.
+
+
+Final main compatibility review caught a capability-version boundary: the
+previous hand server's feature1 promises RPG only. Treating that acknowledgement
+as support for new hitscan would display a hand origin while an old server fires
+from the body. Adopted an optional mask3 upgrade after the original mask1
+request/ack, with per-peer server weapon gating and selected-weapon client
+availability. Original peers retain the original exchange. Actual pinned
+RPG-only server tests require hand RPG success plus hitscan suppression/movement;
+new peers require explicit hitscan acknowledgement. This is a bounded extension
+of the existing capability field, not a separate protocol/service. It is main
+verification, outside the fresh Astra design review.

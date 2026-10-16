@@ -16,8 +16,9 @@ Status: experimental Linux OpenXR port with bounded ART multiview, native contro
 - Native ART weapon/HUD/in-game-menu capture now extends that same target with premultiplied coverage over the existing stereo world (`EDUKE32_XR_UI=2`). Actual eye/color/depth/coverage, full-eye native tint/dim, save-thumbnail cancellation, native callback reference and resize tests pass. This is a provisional 2D weapon plane, not tracked weapon aim or full native UI/material coverage.
 - Opt-in tracked orientation now feeds native authoritative aim from right/left controller or actual HMD VIEW pose, with body/view separation and projected native crosshair. Real native-server RPG direction/impact, pose recovery, pole/wrap/body movement and session-recreation proofs pass. Native wire format and shot origin remain unchanged in this slice; it does not complete tracked weapon placement/origins.
 - Controller-attached native ART now reuses the existing capture texture in sequential weapon/HUD segments (`EDUKE32_XR_WEAPON=1`). Both eye images pass an independent projection/composition oracle across ten cases, including pose loss, resize and nested weapon-scope presentation. This is a provisional foreground card, not physical hand-origin firing.
-- Opt-in ordinary RPG hand origins/full-vector shots now replicate through a negotiated native movement-update tail. Actual native server/client portal, obstruction, vertical projectile, enemy damage, expiry/release and legacy compatibility tests pass. Runtime proof also exposed and corrected native projectile/player binding and sparse-slot inventory replication bugs. This remains RPG-only; see HAND_SHOTS.md.
-- Next implementation work: extend the same authority boundary across native hitscan/projectile/thrown/melee families, preserve their CON/autoaim policies, qualify combat/respawn/map transitions, then full-pitch/tracked visibility, remaining material/draw families and texture-streaming fallback. The full multiplayer/action/platform matrix remains required.
+- Opt-in ordinary RPG hand origins/full-vector shots now replicate through a negotiated native movement-update tail. Actual native server/client portal, obstruction, vertical projectile, enemy damage, expiry/release and legacy compatibility tests pass. Runtime proof also exposed and corrected native projectile/player binding and sparse-slot inventory replication bugs. This was the RPG-only authority checkpoint; the hitscan expansion follows below in HAND_SHOTS.md.
+- Ordinary pistol/shotgun/chaingun/grow now extend the same hand authority at native hitscan helpers, with one private sector/ray context, native events/damage and a bounded full-pitch spread mapping. A fresh verified Astra/xhigh design review caught accurate-probe/autoaim overloading, singular spread math, forced-slope postfire disagreement and custom-projectile presentation eligibility. Initial/rebase actor snapshots now supply complete native fields to eliminate differing bootstrap baselines; later packets remain native deltas. Native readiness handles byte wrap and bounds ping requests. An optional mask3 upgrade distinguishes hitscan support from the original mask1 RPG promise.
+- Next implementation work: remaining native projectile/thrown/melee families, remote hand/muzzle presentation, native full-pitch target selection and mod policies, PvP combat/respawn/map transitions, full-pitch/tracked visibility, remaining material/draw families and texture-streaming fallback. The full multiplayer/action/platform matrix remains required.
 
 ## Source and behavioral reference
 
@@ -197,9 +198,14 @@ was added. Fresh independent Astra follow-up remains unavailable at retained
 thread capacity; preceding verified senior architecture guidance and main
 source/GPU/server checks are recorded, without claiming a new review.
 
-Next vertical proof: broaden the same resolver at the existing native weapon
-boundaries, beginning with hitscan and preserving spread/autoaim/CON events and
-actual hit sectors. Then test thrown weapons/tripmines/melee, PvP damage/frag and
+The next hitscan proof now uses the same resolver at native bullet/grow helpers.
+The finite local spread cone preserves native event/random sampling boundaries
+and explicitly interprets pitched ranges physically; direct actor accuracy is
+not confused with an autoaim correction. Native damage/impact policies remain.
+An initial actor delta against different bootstrap arrays was demonstrated to
+retain duplicate player identities; complete field encoding at the existing
+initial/rebase packet boundary removes that mismatch without another protocol.
+Then extend remaining projectiles/thrown weapons/tripmines/melee, PvP damage/frag and
 respawn, map change/late join, save/demo/camera transitions and packet loss. Do
 not turn an RPG-specific adapter into a second generic weapon policy engine.
 Reopen the design if native helpers require duplicated simulation or temporary
