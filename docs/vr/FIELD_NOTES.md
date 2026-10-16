@@ -20,7 +20,7 @@ The top-level game draw function also gathers input and advances persistent/scri
 
 ## Verification
 
-Shared native backend submitted 12 diagnostic frames standalone and 60 in EDuke's existing GL context, with distinct per-eye array-layer readbacks. Khronos core validation reported no errors. Native E1L1 rendering was visually checked after teardown. This proves a diagnostic substep, not game-world VR. Native dedicated startup now passes after one narrow input-poll guard; native multiplayer still stalls at its readiness barrier.
+Shared native backend submitted 12 diagnostic frames standalone and 60 in EDuke's existing GL context, with distinct per-eye array-layer readbacks. Khronos core validation reported no errors. Native E1L1 rendering was visually checked after teardown. The diagnostic remains a substep. The subsequent ordinary-room two-pass oracle submitted 60 actual E1L1 world frames and both eye images were inspected. A native dedicated server/XR client also passed join/reconnect with 60 world frames and distinct layers per join. Native dedicated startup passes after one narrow input-poll guard; the snapshot stall was corrected separately without changing readiness order or packet layout.
 
 ## Gotchas
 
@@ -33,6 +33,13 @@ Shared native backend submitted 12 diagnostic frames standalone and 60 in EDuke'
 7. Native/XR compile defines need distinct object trees. Merely adding a link library does not rebuild SDL hooks when a make option changes.
 8. Temporary invalid poses are not fatal API failures: end an empty frame and keep polling.
 
+9. A successful ping barrier can leave a stale “Waiting” image. Trace actual packet types/revisions before changing synchronization. Net_SendWorldUpdate passed &tempnetbuf when tempnetbuf was a pointer; passing tempnetbuf fixes corrupted snapshots. Remove causal trace scaffolding afterward.
+10. Polymost masked walls reconstruct geometry from ordered logical wall IDs. Two opaque views → one stable union animation → two resumed masks avoids discarded visibility prepasses and a full transient-engine snapshot. Preserve per-eye sprite membership through generated children and restore canonical animated slots before each eye, because drawing changes picnum.
+11. Native Polymost does not reset spritesortcnt before ordinary collection. Clear shared counts when aborting an XR transaction before native fallback or the next frame, or stale inputs duplicate sprite callbacks. Both injected abort points now pass bounded provenance/count regressions.
+12. Apply one rigid tracking rotation to both eye position and orientation. Native pitch * roll corresponds to XR pitch * positive-Z roll; horizontal/Z Build scales are 384/6144 units per metre, derived from historical RazeXR's 24 world units/metre and 16/256 map scales.
+13. Camera-only preparation must not clear depth/color. The native resizeglcheck debug wireframe path does, so mask/logical-camera reconstruction explicitly suppresses that clear.
+14. The native connect startup path can show its menu after level synchronization. -nologo skips animation, but G_DisplayLogo still clears ready2send and G_PlaybackDemo opens the startup menu. Automated gameplay tests wait for the barrier and finite menu fade before dismissing it; Escape during Net_WaitForServer exits the game.
+
 ## Open work
 
-Stereo-safe game transaction, real-room two-eye oracle, tracked gameplay input, single-pass world families, full presentation coverage and multiplayer readiness/action qualification. No raw session telemetry, proprietary assets or external publication accompanies this local field note.
+Zero-IPD/native callback/pixel equivalence, portal eye-only membership, real tracked-motion/full-pitch proof, tracked gameplay input, single-pass world families, full presentation coverage and complete multiplayer action/convergence qualification. No raw session telemetry, proprietary assets or external publication accompanies this local field note.

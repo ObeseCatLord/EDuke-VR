@@ -44,3 +44,30 @@ A separate bounded Astra/xhigh correctness review inspected the actual new backe
 Standalone object files and Python bytecode are ignored. The reviewer found no further concrete blocker in the reviewed distinct-layer readback, GL-state restoration or narrow dedicated-server guard; that conclusion does not establish full gameplay VR or multiplayer readiness.
 
 References for the synchronization/tracking constraints: [xrDestroySwapchain](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrDestroySwapchain.html), [Khronos hello_xr reference](https://github.com/KhronosGroup/OpenXR-SDK-Source/blob/main/src/tests/hello_xr/openxr_program.cpp).
+
+## Ordinary-room stereo design review (second implementation slice)
+
+A fresh Astra/xhigh reviewer inspected the room/masks and sprite-animation source; effective settings were verified from that reviewer's own turn metadata. The recommendation simplified the proposed renderer transaction rather than adding a renderer layer.
+
+| Recommendation | Disposition |
+|---|---|
+| Replace two discarded visibility prepasses plus two real renders with two actual opaque draws, one animation transaction, then two resumed mask draws | Adopted. Opaque geometry remains before CON animation for both eyes, matching native ordering. |
+| Restore ordered logical masked-wall IDs, not an opaque-engine snapshot | Adopted. Native Polymost reconstructs mask geometry from wall IDs; no copy of domost/occlusion state. |
+| Preserve per-eye sprite membership through animation and generated children | Adopted. Stable canonical slots, explicit parent membership at weapon/chat/shadow appends, pristine animated list restored before each eye. |
+| Treat projection correctness separately from full-pitch visibility coverage | Adopted. Exact asymmetric crop is installed in native projection setup. Unsupported yaw-forward coverage is logged and rejected by this experimental oracle, with full-pitch support still required. |
+| Keep YAX, mirrors and arbitrary-CON equivalence as explicit follow-up proofs | Adopted. The first result demonstrates ordinary E1L1 room pixels only; it is not full presentation coverage. |
+| Detect both collection and generated-list capacity loss | Adopted. Collection/union capacity is checked; the three native append capacity checks now report saturation to the transaction. |
+
+The first integrated result submitted 60 actual Duke-world frames to simulated Monado, with distinct left/right rooftop images. The implementation is a **two-pass reference**, not the final single-pass world renderer. An independent Astra/xhigh correctness review of the implemented transaction and shared frame API also completed; effective settings were verified again.
+
+
+## Implemented world transaction correctness review
+
+| Finding | Disposition |
+|---|---|
+| Aborted opaque/union passes leave sprites that native fallback appends to; aborted post-animation passes contaminate the next frame | Adopted. Clear sprite and masked-wall counts on every touched transaction exit. Added one-time opaque/masks fault injection and bounded input-provenance/count evidence. |
+| Position and orientation used different body-pitch/roll transforms | Adopted. One `(bodyPitch * bodyRoll) * inverseYaw` rigid rotation applies to both, then Build's unequal horizontal/Z units. Native positive roll maps to XR +Z. |
+| CON animation and display-end observers inherit right-eye camera/aspect | Adopted. Restore native viewport/aspect and common renderer camera before animation and after frame completion, preserving script-visible state changes. |
+| Camera-only mask preparation clears buffers in wireframe/point modes | Adopted. Pass an explicit no-clear setting through factored camera setup. Ordinary native opaque setup retains its debug clear. |
+
+The reviewer verified all but the pending list-cleanup patch directly during its review; the main agent then applied the accepted cleanup and passed both final opaque/masks failure regressions, each with ten bounded animation-input samples and native recovery. The independent numerical projection check covers 1000 mixed pose/asymmetric-FOV cases with maximum NDC error below 4e-16. This derivation check does not replace real visibility, callback, portal or headset tests. Zero-IPD pixel equivalence, portal eye-only sprites and arbitrary CON callback semantics remain open acceptance gates.

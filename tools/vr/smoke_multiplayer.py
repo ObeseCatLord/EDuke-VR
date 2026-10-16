@@ -247,21 +247,24 @@ def main():
         x11 = X11(args.display)
         client_log = (client_lab / 'client.log').open('w')
         client_log_paths.append(client_lab / 'client.log')
-        client_command = [str(client_binary), '-usecwd', '-nosetup', '-noautoload', '-connect', f'127.0.0.1:{args.port}']
+        client_command = [str(client_binary), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-connect', f'127.0.0.1:{args.port}']
         if args.direct_grp:
             client_command.extend(('-g', str(grp)))
         client = start(client_command,
                        cwd=client_lab, env=client_env, stdout=client_log, stderr=subprocess.STDOUT)
 
         def enter_game(process, log_path):
-            # A connect leaves the client startup menu open. Close it before
-            # timing world frames; an alive menu is not a gameplay/XR gate.
+            # Skip the native intro with -nologo, then wait for the actual
+            # existing level barrier. Never use Escape to bypass a network wait.
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline and process.poll() is None:
                 if 'Multiplayer client level synchronization complete.' in log_path.read_text(errors='replace'):
                     candidate, _ = x11.owned_window(process.pid)
                     if candidate:
-                        time.sleep(.3)
+                        # G_DisplayLogo resets ready2send even with -nologo,
+                        # then G_PlaybackDemo opens the native startup menu.
+                        # Let that finite fade finish before dismissing it.
+                        time.sleep(1.5)
                         candidate, _ = x11.owned_window(process.pid)
                         if candidate is None:
                             continue
