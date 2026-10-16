@@ -442,6 +442,18 @@ struct Runtime::Impl
         clearMenuPresentation();
     }
 
+    bool ensureViewSpace(std::string &error)
+    {
+        if (viewSpace!=XR_NULL_HANDLE) return true;
+        XrReferenceSpaceCreateInfo info {XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        info.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;
+        info.poseInReferenceSpace.orientation.w=1;
+        auto result=xrCreateReferenceSpace(session,&info,&viewSpace);
+        if (XR_SUCCEEDED(result)) return true;
+        error=xrError(instance,result,"xrCreateReferenceSpace view");
+        return false;
+    }
+
     bool ensureMenuProgram(std::string &error)
     {
         if (menuProgram && menuFlatProgram && menuVao && menuVbo && viewSpace != XR_NULL_HANDLE) return true;
@@ -451,15 +463,7 @@ struct Runtime::Impl
             viewSpace=XR_NULL_HANDLE;
             return false;
         };
-        XrReferenceSpaceCreateInfo info { XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
-        info.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_VIEW;
-        info.poseInReferenceSpace.orientation.w=1;
-        XrResult const result=xrCreateReferenceSpace(session,&info,&viewSpace);
-        if (XR_FAILED(result))
-        {
-            error=xrError(instance,result,"xrCreateReferenceSpace view");
-            return fail();
-        }
+        if (!ensureViewSpace(error)) return fail();
         std::string shaderError;
         char const *menuVert = "#version 410 compatibility\n#extension GL_OVR_multiview2 : require\nlayout(num_views=2) in; layout(location=0) in vec3 p; "
                                "layout(location=1) in vec2 uv; uniform mat4 uViewProj[2]; uniform int uMode; out vec2 texcoord; void main(){ gl_Position=uMode==2 ? vec4(p,1) : uViewProj[gl_ViewID_OVR]*vec4(p,1); texcoord=uv; }";
@@ -1516,8 +1520,8 @@ bool Runtime::completeMenuPresentation(std::string &error, char const *capturePr
         if (!m_impl->menuOverlay) glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         else { glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD); glBlendFuncSeparate(GL_ONE,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA); }
         glDepthMask(GL_FALSE);
-        float headMatrix[16], translate[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1.5f, 1 };
-        float scale[16] = { .9f, 0, 0, 0, 0, .9f * float(m_impl->menuHeight) / m_impl->menuWidth, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        float headMatrix[16], translate[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -PanelDistance, 1 };
+        float scale[16] = { PanelHalfWidth, 0, 0, 0, 0, PanelHalfWidth * float(m_impl->menuHeight) / m_impl->menuWidth, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
         float world[16], model[16], matrices[kViewCount][16];
         poseMatrix(head.pose, headMatrix);
         multiply(world, headMatrix, translate);
@@ -1799,6 +1803,16 @@ bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &erro
 
     ActionInput sample {};
     sample.focused = true;
+    if (atTime)
+    {
+        if (!m_impl->ensureViewSpace(error)) return false;
+        XrSpaceLocation head {XR_TYPE_SPACE_LOCATION};
+        result=xrLocateSpace(m_impl->viewSpace,m_impl->space,atTime,&head);
+        if (XR_FAILED(result)) { error=xrError(m_impl->instance,result,"OpenXR head pose query"); return false; }
+        sample.headValid=(head.locationFlags & (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT))
+            == (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT);
+        if (sample.headValid) sample.headPose=head.pose;
+    }
     auto boolean = [&](XrAction action, XrPath hand, XrActionStateBoolean &state)
     {
         XrActionStateGetInfo info { XR_TYPE_ACTION_STATE_GET_INFO };

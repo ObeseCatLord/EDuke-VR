@@ -22,3 +22,14 @@ Primary API references:
 [xrSyncActions](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrSyncActions.html),
 [xrSuggestInteractionProfileBindings](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrSuggestInteractionProfileBindings.html),
 [xrGetActionStateBoolean](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrGetActionStateBoolean.html).
+
+
+Tracked-orientation investigation also inspected RazeXR engine history at
+`e243dda6690b703146293437a13fcc71c5f3a80a` (parent of the engine-removal commit).
+`Projects/Android/jni/Raze/source/games/duke/src/player_d.cpp:1000` temporarily
+replaces/restores the player struct in `shoot_d_override` using local controller
+position/angle data from `VrInputDefault.cpp`. That mechanism alone does not
+replicate authoritative remote aim in EDuke32. The new orientation adapter feeds
+native angle updates and existing absolute player-update fields instead; it
+copies no Raze renderer or temporary player-struct shot override. Independent
+hand-origin authority remains a required next slice, not a permanent omission.

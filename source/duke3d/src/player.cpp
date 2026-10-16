@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "duke3d.h"
 #include "enet.h"
 #include "input.h"
+#include "vr.h"
 #include "savegame.h"
 
 #ifdef __ANDROID__
@@ -3465,6 +3466,13 @@ void P_GetInput(int const playerNum)
     input.bits = localInput.bits;
     input.extbits = localInput.extbits;
 
+#ifdef USE_OPENXR
+    if (!ud.recstat && playerNum==myconnectindex)
+    {
+        int const locked=P_CheckLockedMovement(playerNum);
+        G_XRApplyAim(input,!(locked & IL_NOANGLE),!(locked & IL_NOHORIZ));
+    }
+#endif
     if (!ud.recstat)
         P_UpdateAngles(playerNum, input);
 

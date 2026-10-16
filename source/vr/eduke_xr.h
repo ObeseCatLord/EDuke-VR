@@ -11,6 +11,7 @@ struct SDL_Window;
 
 namespace eduke_xr
 {
+constexpr float PanelDistance=1.5f, PanelHalfWidth=.9f;
 enum HandButton : uint32_t
 {
     ButtonSelect     = 1u << 0,
@@ -33,6 +34,8 @@ struct HandInput
 struct ActionInput
 {
     bool      focused = false;
+    XrPosef   headPose {};
+    bool      headValid = false;
     HandInput hands[2] {};
 };
 

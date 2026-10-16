@@ -325,3 +325,55 @@ design and main source/GPU verification. Tracked aim/3D weapon alignment,
 haptics/settings, full pitch/room-scale/camera families, general materials and
 HUD models/custom blends, pre-world CON drawing/help, real context loss/platform
 ports and full multiplayer combat/host/map-change coverage remain open.
+
+## Authoritative tracked orientation — 2026-10-16
+
+`EDUKE32_XR_AIM=right|left|head` opts into orientation adapted at native
+`P_GetInput` before `P_UpdateAngles`. Existing native angles, input records,
+packets and weapon simulation remain authoritative. Two applied offsets recover
+body direction for locomotion and the HMD camera. There is no temporary local
+shot override or new pose protocol. Independent physical hand origins remain
+required future work.
+
+| Case | Actual result |
+|---|---|
+| Native dedicated server + right aim |24 checks pass in the final run. A tracked12° yaw/8° pitch produces server deltas12.000002°/8.000000°; holding the pose does not accumulate rotation. |
+| Left and head sources |Both source modes pass native authority, actual RPG/impact, stereo camera, crosshair and core-validation checks. Left selects the pose source; the provisional physical fire binding remains the right trigger. |
+| Actual native RPG |Server spawns angle68, zvel-1458 from its native player authority. Actual far-wall explosion is(8175,5626,-26316). Independently predicted impact differs by15.76 horizontal and606.64 vertical Build units, within one native discrete movement step plus wall clearance. Autoaim is disabled only in this controlled fixture. |
+| Independent HMD |Controller stays12°right/8°up while HMD turns18°left/6°up and translates(.08,-.02,-.05)m. Native server aim is unchanged. Actual left/right camera yaw is-.314159rad and pitch.104720rad, so head orientation is applied once. Head-aim mode also passes the no-double-rotation check. |
+| Direction marker |Native authoritative angle/horizon projects onto the shared head-relative panel at(.856192,.084329)m, matching an independent basis calculation. Actual UI pixels contain the crosshair at the predicted position. This is a direction marker, not a world-depth hit indicator. |
+| Tracking availability |Selected hand can be inactive before the first world frame and join later without calibrating from an eye quaternion. Loss/recovery while the trigger is held produces no extra shot; release/repress fires again. Native look ownership remains active during unavailable poses, preventing legacy centering from tilting the recovered body. |
+| Runtime generation replacement |Actual640x480→800x600 native resize recreates XR at the existing frame boundary. Native aim, both eye angles and nonzero translated eye positions remain unchanged: left(1039,4115,-9829), right(1047,4138,-9829). Replacement reaches another60 world/HUD submissions. This is session replacement in a retained GL context, not real context destruction/loss. |
+| Native limits and body controls |Vertical controller pose reaches native horizon299 without stale pitch/undefined yaw.179°→-179° follows the shortest2° displacement. Forward motion remains along body heading when the hand points backward. Sustained native stick look keeps the virtual body within native pitch limits. |
+| Rendering/UI regressions |Animated-mask asymmetric stereo retains exact native two-pass RGB and complete nonconstant depth; callback counts14/112/14 match. HUD console/depth/coverage and cold-menu console/resize checks pass. |
+| Existing multiplayer/actions |Original and replacement native joins still pass movement, firing/ammo, stable release,60 world/HUD submissions and distinct eyes. Prior focus/IO/held-action lifecycle suite passes all12 checks with tracked aim unset. Its restartvid case retains the GL context. |
+| Builds/API validation |Native, XR and standalone builds pass; native executable has no OpenXR dependency. Python syntax/diff checks pass. All three tracked-source tests and the standalone12-frame run have core validation active with no warning/error. |
+
+`tools/vr/smoke_aim.py --mode right --late-controller --resize` is the strongest
+combined scenario; `--mode left` and `--mode head` select the other sources.
+The runner uses a generated local room with four native multiplayer spawn
+points, a CON observation fixture and actual Monado remote poses/actions. It
+observes native server logs and real texture readbacks; it does not inject game
+packets, override shots or write owned game assets. The existing join helper now
+dismisses a startup menu only when native state actually reports one.
+
+Early fixture attempts omitted multiplayer spawn points, unconditionally opened
+a menu with Escape, or captured before the independent HMD sweep. Those harness
+errors were corrected without changing native connection/simulation policy.
+Runtime testing also found and fixed real pose-recovery centering, pole-pitch
+and calibration-loss cases; native pitch limits now also constrain recovered
+virtual body pitch. Failed runs remain local rather than being counted as proof.
+
+Bounded results are `../../../evidence/tracked-aim-validation.json`; actual final
+eye layers are shown in `../../../evidence/tracked-aim-stereo.png`. A fresh
+explicitly selected Astra/xhigh review could not start at the retained
+agent-thread limit. No substitute or unverified resumed review was used; this
+slice has main source/runtime verification and preceding Astra architecture
+guidance, not a fresh independent implementation review.
+
+The native2D weapon remains on the head-relative HUD. True controller-attached
+weapons and authoritative hand-origin/collision/replication, full pitch,
+demo/record/save-load/CON-angle rewrites and other cameras remain unqualified.
+The full VR-host/native-client/two-VR combat, damage/frag/respawn/map-change and
+loss matrix remains open. Null-compositor captures do not qualify physical
+headset optics, comfort or performance.

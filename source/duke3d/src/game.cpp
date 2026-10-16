@@ -6597,7 +6597,11 @@ void dukeFillInputForTic(void)
 {
     // this is where we fill the input_t struct that is actually processed by P_ProcessInput()
     auto const pPlayer = g_player[myconnectindex].ps;
-    auto const q16ang  = fix16_to_int(pPlayer->q16ang);
+#ifdef USE_OPENXR
+    auto const q16ang=fix16_to_int(G_XRMovementAngle(pPlayer->q16ang));
+#else
+    auto const q16ang=fix16_to_int(pPlayer->q16ang);
+#endif
     auto& input   = inputfifo[0][myconnectindex];
 
     input = localInput;

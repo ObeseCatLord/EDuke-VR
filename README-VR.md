@@ -1,6 +1,6 @@
 # EDuke32 VR work in progress
 
-This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, tracked aiming, tracked weapon presentation and complete multiplayer qualification remain open. OpenXR controllers now feed native movement, turning, gameplay buttons and menus, with simulated runtime and native server authority tests.
+This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, tracked weapon presentation/origins and complete multiplayer qualification remain open. OpenXR controllers now feed native movement, turning, gameplay buttons and menus, with simulated runtime and native server authority tests.
 
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
@@ -158,9 +158,10 @@ it first becomes active, reconnects or regains focus requires release before
 it can act. Native input-clearing also suppresses held buttons across menu
 transitions. OpenXR focus is independent of desktop window focus.
 
-Aim/grip poses are collected at the predicted display time, but tracked aiming,
-hand-position firing, visible tracked weapons, haptics and comfort settings are
-still required. Current aim and shot origin remain the native player values.
+Aim/grip and HMD VIEW poses are collected at predicted display time. The
+opt-in tracked-orientation mode below feeds native authoritative aim; hand-position
+firing, visible tracked weapons, haptics and comfort settings remain required.
+Shot origin remains native in this orientation checkpoint.
 The control map is an initial fixed mapping, pending user settings.
 
 The test tools require an already-running **private** Monado remote-driver
@@ -226,8 +227,8 @@ and real headset comfort remain open. Physical size/distance are provisional.
 in-game menus, and console over the stereo world. Native UI runs once, then one
 multiview plane composites it into both existing eye layers at a provisional
 1.5 m distance. This preserves independent world parallax. These are the native
-2D weapon sprites; controller-tracked weapon models and authoritative tracked
-shot direction remain unfinished.
+2D weapon sprites; controller-attached weapon presentation and true hand-origin
+shots remain unfinished. Tracked native aim is separately opt-in below.
 
 ```sh
 SDL_VIDEODRIVER=x11 EDUKE32_XR=1 EDUKE32_XR_SINGLE_PASS=1 EDUKE32_XR_UI=2 \
@@ -261,3 +262,47 @@ python3 tools/vr/smoke_hud.py --binary ./eduke32-xr --display :1 \
 The fixture creates its own tiny ART tiles and observes native CON callbacks.
 It compares actual eye/depth/coverage readbacks and a separate native flat run.
 This is simulated-runtime evidence; real-headset comfort remains untested.
+
+
+## Experimental authoritative tracked orientation
+
+Add `EDUKE32_XR_AIM=right` to the world/HUD command for orientation from the right
+controller's actual aim pose. `left` selects the left aim pose; `head` selects
+HMD direction. These select the aim source; the initial button bindings above
+remain fixed. Tracking is one-to-one and independent of virtual stick turning.
+Movement uses the recovered body heading, so pointing a controller backward does
+not reverse forward movement.
+
+Native player angle updates and unchanged packets carry this orientation to the
+server. HMD rendering removes the applied aim offset before applying head poses,
+so the controller does not rotate the world and head rotation is applied once.
+The native crosshair event still runs once; its resulting marker is projected
+onto the existing head-relative panel from native authoritative angles. Markers
+behind/outside that finite panel are hidden. This is a direction marker, not yet
+a world-depth hit indicator or a tracked gun mesh. Native weapon auto-aim/spread
+settings remain unchanged; the deterministic RPG fixture disables auto-aim.
+
+Source loss suppresses firing and requires release before a held trigger can
+act after recovery. XR retains native look-mode ownership during pose loss so
+legacy gamepad centering cannot tilt the recovered view. New runtime generations
+invalidate action samples/buttons while rebasing the existing tracking
+calibration to preserve virtual view, room-scale offset and native aim. Native
+local-player resets start a fresh calibration.
+
+```sh
+SDL_VIDEODRIVER=x11 EDUKE32_XR=1 EDUKE32_XR_SINGLE_PASS=1 \
+EDUKE32_XR_UI=2 EDUKE32_XR_AIM=right \
+./eduke32-xr -usecwd -nosetup -noautoload -g /path/to/owned/DUKE3D.GRP -v1 -l1 -s1
+
+python3 tools/vr/smoke_aim.py --binary ./eduke32 --client-binary ./eduke32-xr \
+  --grp /path/to/owned/DUKE3D.GRP --work-dir work/aim --display :1 \
+  --remote-port 29427 --mode right --late-controller --resize
+# Also run --mode left and --mode head against your private remote runtime.
+```
+
+Actual server RPG spawn angles, velocity and far-wall impact pass; head/controller
+independence, projected UI pixels, pole/yaw-wrap behavior, body movement and
+nonzero-pose window/session recreation pass in simulated Monado. This remains a
+bounded vanilla-Duke orientation step. Native pitch limits remain; true tracked
+weapon placement/hand-origin authority, full-pitch visibility, recording/save-load,
+other cameras/angle-rewriting CON and physical headset behavior remain open.

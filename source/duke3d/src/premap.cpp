@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "menus.h"
 #include "savegame.h"
 #include "sbar.h"
+#include "vr.h"
 
 #include "vfs.h"
 
@@ -604,6 +605,9 @@ void G_UpdateScreenArea(void)
 
 void P_MoveToRandomSpawnPoint(int playerNum)
 {
+#ifdef USE_OPENXR
+    G_XRResetAim(playerNum);
+#endif
     auto &p = *g_player[playerNum].ps;
     int i = playerNum;
 
@@ -688,6 +692,9 @@ void P_ResetExtents(DukePlayer_t* const pPlayer)
 
 void P_ResetMultiPlayer(int playerNum)
 {
+#ifdef USE_OPENXR
+    G_XRResetAim(playerNum);
+#endif
     auto &p = *g_player[playerNum].ps;
 
     Bassert((unsigned)p.i < MAXSPRITES);
@@ -758,6 +765,9 @@ void P_ResetMultiPlayer(int playerNum)
 
 void P_ResetPlayer(int playerNum)
 {
+#ifdef USE_OPENXR
+    G_XRResetAim(playerNum);
+#endif
     auto &thisPlayer = g_player[playerNum];
     auto &p          = *thisPlayer.ps;
 

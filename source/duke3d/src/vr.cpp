@@ -102,12 +102,39 @@ static eduke_xr::Runtime *menuRuntime;
 static uint64_t menuGeneration, menuOwner;
 static eduke_xr::ActionInput rawInput;
 static std::array<uint32_t,2> activeInputButtons{}, blockedInputButtons{};
+static float aimYawOffset, aimPitchOffset;
+static bool aimPoseWasValid;
+
+// Opt-in while tracked weapon presentation and the full authority matrix develop.
+static int aimHand()
+{
+    auto mode=std::getenv("EDUKE32_XR_AIM");
+    if (!mode) return -2;
+    if (!Bstrcmp(mode,"head")) return -1;
+    if (!Bstrcmp(mode,"left")) return 0;
+    return !Bstrcmp(mode,"right") ? 1 : -2;
+}
 
 static bool inputValid()
 {
     // Native polling may recreate the SDL context after this sample was taken.
     // This callback reads identity only; it never polls or initializes XR.
     return inputRuntime && inputRuntime->generation() == inputGeneration && rawInput.focused;
+}
+
+static bool validPose(XrPosef pose)
+{
+    auto const q=pose.orientation;
+    float const length=q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w;
+    return std::isfinite(length) && length>.9f && length<1.1f
+        && std::isfinite(pose.position.x) && std::isfinite(pose.position.y) && std::isfinite(pose.position.z);
+}
+
+static bool aimPoseUsable()
+{
+    int const hand=aimHand();
+    return hand!=-2 && inputValid() && rawInput.headValid && validPose(rawInput.headPose)
+        && (hand<0 || (rawInput.hands[hand].aimValid && validPose(rawInput.hands[hand].aimPose)));
 }
 
 static XrVector2f inputStick(eduke_xr::HandInput const &hand)
@@ -131,6 +158,17 @@ static void publishInput()
         blockedInputButtons[hand] &= held;
         activeInputButtons[hand]=active;
         down[hand]=held & ~blockedInputButtons[hand];
+    }
+    if (aimHand()!=-2)
+    {
+        bool const valid=aimPoseUsable();
+        // Pose recovery is not a new trigger press. Hold fire until release.
+        if (!valid || !aimPoseWasValid)
+        {
+            blockedInputButtons[1] |= rawInput.hands[1].buttons & ButtonSelect;
+            down[1] &= ~ButtonSelect;
+        }
+        aimPoseWasValid=valid;
     }
     auto const move=inputStick(rawInput.hands[0]), turn=inputStick(rawInput.hands[1]);
     ControlInfo analog{};
@@ -174,7 +212,56 @@ static void publishInput()
 
 static XrVector3f origin;
 static XrQuaternionf inverseYaw;
-static bool recentered;
+static bool recentered, trackingRebase, lastHeadValid;
+static XrPosef lastHeadPose;
+
+static void setTrackingReference(XrPosef const &head)
+{
+    auto const forward=rotate(head.orientation,{0,0,-1});
+    float yaw=std::atan2(-forward.x,-forward.z);
+    XrVector3f displacement{};
+    if (trackingRebase && lastHeadValid)
+    {
+        // LOCAL can acquire a different origin/yaw in a replacement session.
+        // Retain virtual calibration, not stale action validity or a second body.
+        auto const previous=rotate(inverseYaw,rotate(lastHeadPose.orientation,{0,0,-1}));
+        yaw+=std::atan2(previous.x,-previous.z);
+        displacement=rotate(inverseYaw,{lastHeadPose.position.x-origin.x,
+                                       lastHeadPose.position.y-origin.y,lastHeadPose.position.z-origin.z});
+    }
+    inverseYaw={0,-std::sin(yaw*.5f),0,std::cos(yaw*.5f)};
+    auto const localDisplacement=rotate({-inverseYaw.x,-inverseYaw.y,-inverseYaw.z,inverseYaw.w},displacement);
+    origin={head.position.x-localDisplacement.x,head.position.y-localDisplacement.y,head.position.z-localDisplacement.z};
+    recentered=true; trackingRebase=false; lastHeadValid=true; lastHeadPose=head;
+}
+
+static float wrapRadians(float angle) { return std::remainder(angle,2.f*Pi); }
+static float nativePitch(fix16_t horizon) { return std::atan((fix16_to_float(horizon)-100.f)/128.f); }
+static float clampNativePitch(float pitch)
+{
+    return std::max(nativePitch(F16(HORIZ_MIN)),std::min(pitch,nativePitch(F16(HORIZ_MAX))));
+}
+static XrQuaternionf pitchRoll(float pitch, float roll)
+{
+    return multiply({std::sin(pitch*.5f),0,0,std::cos(pitch*.5f)},
+                    {0,0,std::sin(roll*.5f),std::cos(roll*.5f)});
+}
+static bool localAimCamera()
+{
+    auto const p=g_player[myconnectindex].ps;
+    return aimHand()!=-2 && inputRuntime && inputRuntime->generation()==inputGeneration
+        && screenpeek==myconnectindex && !ud.recstat && (p->gm & MODE_GAME)
+        && p->newowner<0 && ud.camerasprite<0 && !p->over_shoulder_on;
+}
+static Camera aimBodyCamera(Camera c)
+{
+    if (localAimCamera())
+    {
+        c.angle=(c.angle-fix16_from_float(aimYawOffset*1024.f/Pi)) & 0x7FFFFFF;
+        c.horizon=fix16_from_float(100.f+128.f*std::tan(nativePitch(c.horizon)-aimPitchOffset));
+    }
+    return c;
+}
 
 bool testFailure(char const *point)
 {
@@ -244,6 +331,90 @@ void eyeState(Eye const &eye)
     polymost_xrProjection(eye.left,eye.right,eye.down,eye.up);
 }
 } // namespace
+
+void G_XRResetAim(int playerNum)
+{
+    if (playerNum!=myconnectindex || aimHand()==-2) return;
+    aimYawOffset=aimPitchOffset=0;
+    aimPoseWasValid=false;
+    recentered=trackingRebase=lastHeadValid=false;
+}
+
+void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
+{
+    if (!localAimCamera()) return;
+    // Native centering must not reactivate merely because a tracked source is
+    // temporarily unavailable. The XR context retains look-mode ownership.
+    input.bits|=uint32_t(1)<<SK_AIMMODE;
+    input.extbits &= ~(BIT(EK_GAMEPAD_CENTERING)|BIT(EK_GAMEPAD_AIM_ASSIST));
+    if (!aimPoseUsable()) return;
+    if (!recentered) setTrackingReference(rawInput.headPose);
+    auto const p=g_player[myconnectindex].ps;
+    // Recover the independent body from native authority, retaining native
+    // joystick/mouse turning. Tracking deltas are displacements, not rates.
+    float const bodyYaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset+fix16_to_float(input.q16avel)*Pi/1024.f;
+    float const oldPitch=nativePitch(p->q16horiz);
+    float const nativePitchDelta=fix16_to_float(input.q16horz)*Pi/512.f;
+    float const bodyPitch=clampNativePitch(oldPitch-aimPitchOffset+(pitchAllowed ? nativePitchDelta : 0.f));
+    int const hand=aimHand();
+    auto const pose=hand<0 ? rawInput.headPose : rawInput.hands[hand].aimPose;
+    auto const q=multiply(multiply(pitchRoll(bodyPitch,gtang),inverseYaw),pose.orientation);
+    auto const forward=rotate(q,{0,0,-1});
+    float const horizontal=std::hypot(forward.x,forward.z);
+    // Yaw is undefined at the pole; retain its last value while native pitch
+    // still reaches its supported limit. Never leave a vertical pose stale.
+    float const yaw=horizontal<1e-4f ? aimYawOffset : std::atan2(forward.x,-forward.z);
+    float const pitch=std::atan2(forward.y,horizontal);
+    if (yawAllowed)
+    {
+        input.q16avel=fix16_sadd(input.q16avel,fix16_from_float(wrapRadians(yaw-aimYawOffset)*1024.f/Pi));
+        aimYawOffset=yaw;
+    }
+    if (pitchAllowed)
+    {
+        float const target=clampNativePitch(pitch);
+        input.q16horz=fix16_from_float((target-oldPitch)*512.f/Pi);
+        aimPitchOffset=target-bodyPitch;
+    }
+    if (std::getenv("EDUKE32_XR_TEST_AIM"))
+        LOG_F(INFO,"OpenXR aim: yawOffset=%.6f pitchOffset=%.6f bodyYaw=%.6f bodyPitch=%.6f inputYaw=%d inputPitch=%d hand=%d.",
+              aimYawOffset,aimPitchOffset,bodyYaw,bodyPitch,
+              input.q16avel,input.q16horz,hand);
+}
+
+fix16_t G_XRMovementAngle(fix16_t nativeAngle)
+{
+    return localAimCamera() ? (nativeAngle-fix16_from_float(aimYawOffset*1024.f/Pi)) & 0x7FFFFFF : nativeAngle;
+}
+
+bool G_XRCrosshairPosition(vec2_t &position)
+{
+    if (!localAimCamera() || !inputRuntime) return true;
+    if (!aimPoseUsable() || !recentered) return false;
+    auto const logical=camera(), body=aimBodyCamera(logical);
+    auto const p=g_player[myconnectindex].ps;
+    float const pitch=nativePitch(p->q16horiz+p->q16horizoff);
+    auto const ray=[&](Camera const &base, XrQuaternionf view) {
+        float const yaw=fix16_to_float(p->q16ang-base.angle)*Pi/1024.f;
+        XrVector3f const direction{std::sin(yaw)*std::cos(pitch),std::sin(pitch),-std::cos(yaw)*std::cos(pitch)};
+        return rotate({-view.x,-view.y,-view.z,view.w},direction);
+    };
+    auto const flat=ray(logical,pitchRoll(nativePitch(logical.horizon),logical.roll));
+    auto const head=multiply(multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw),rawInput.headPose.orientation);
+    auto const tracked=ray(body,head);
+    if (flat.z>=-.001f || tracked.z>=-.001f) return false;
+    float const x=-eduke_xr::PanelDistance*tracked.x/tracked.z;
+    float const y=-eduke_xr::PanelDistance*tracked.y/tracked.z;
+    if (std::fabs(x)>eduke_xr::PanelHalfWidth || std::fabs(y)>eduke_xr::PanelHalfWidth*ydim/xdim) return false;
+    float const flatX=-eduke_xr::PanelDistance*flat.x/flat.z, flatY=-eduke_xr::PanelDistance*flat.y/flat.z;
+    // Native 320x200 ART coordinates use a 4:3 subregion of a wide window.
+    position.x+=fix16_from_float((x-flatX)*float(xdim)/ydim*120.f/eduke_xr::PanelHalfWidth);
+    position.y-=fix16_from_float((y-flatY)*float(xdim)/ydim*100.f/eduke_xr::PanelHalfWidth);
+    if (worldFrames==59 && std::getenv("EDUKE32_XR_TEST_AIM"))
+        LOG_F(INFO,"OpenXR aim crosshair: nativeX=%.6f nativeY=%.6f panelX=%.6f panelY=%.6f.",
+              fix16_to_float(position.x),fix16_to_float(position.y),x,y);
+    return true;
+}
 
 void G_XRClearInput()
 {
@@ -401,8 +572,21 @@ void G_XRBeginFrame()
         G_XREndFrame(); neutral(); sdlayer_xr_disableWorld(error.c_str()); return;
     }
     if (inputRuntime != runtime || inputGeneration != pendingGeneration)
-    { activeInputButtons={}; blockedInputButtons={}; }
+    {
+        activeInputButtons={}; blockedInputButtons={};
+        if (aimHand()!=-2)
+        {
+            trackingRebase=trackingRebase || (recentered && lastHeadValid);
+            if (!trackingRebase) aimYawOffset=aimPitchOffset=0;
+            aimPoseWasValid=false; recentered=false;
+        }
+    }
     inputRuntime=runtime; inputGeneration=pendingGeneration; rawInput=sample;
+    if (aimHand()!=-2 && rawInput.headValid && validPose(rawInput.headPose))
+    {
+        if (trackingRebase) setTrackingReference(rawInput.headPose);
+        if (recentered) { lastHeadPose=rawInput.headPose; lastHeadValid=true; }
+    }
     publishInput();
 }
 
@@ -507,7 +691,7 @@ void G_XRInheritSprite(int32_t destination, int32_t parent)
 bool G_XRDrawRooms(int32_t smoothRatio)
 {
     // Initial renderer oracle deliberately excludes multi-view sector effects.
-    // The complete VR port still requires those paths and the weapon/HUD/input.
+    // Further camera/draw families and tracked weapon origins remain required.
     if (videoGetRenderMode() != REND_POLYMOST || g_screenCapture
 #ifdef YAX_ENABLE
         || numyaxbunches
@@ -522,9 +706,21 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     if (runtime != previousRuntime || worldGeneration != runtime->generation())
     {
         previousRuntime=runtime; worldGeneration=runtime->generation();
-        recentered=false; worldFrames=0;
+        if (aimHand()==-2) recentered=false;
+        worldFrames=0;
         worldMultiviewFrames=worldOracleFrames=0;
         worldMaskMultiviewFrames=worldMaskOracleFrames=worldFullMultiviewFrames=0;
+    }
+    if (!recentered && aimHand()!=-2)
+    {
+        // A hand may connect after the first world frame. Never initialize
+        // tracked authority from a possibly canted eye in that interval.
+        if (!rawInput.headValid || !validPose(rawInput.headPose))
+        {
+            if (!runtime->finishFrame(false,error)) sdlayer_xr_disableWorld(error.c_str());
+            return false;
+        }
+        setTrackingReference(rawInput.headPose);
     }
     if (!recentered)
     {
@@ -536,6 +732,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         recentered = true;
     }
     Camera logical = camera();
+    Camera const body=aimBodyCamera(logical);
     std::array<Eye,2> eyes;
     char const *zeroValue=std::getenv("EDUKE32_XR_TEST_ZERO_IPD");
     bool const zeroTest=zeroValue && !Bstrcmp(zeroValue,"1");
@@ -579,7 +776,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     }
     else
         for (unsigned i=0;i<2;++i)
-            if (!makeEye(frame.views[i],logical,float(frame.width)/frame.height,eyes[i]))
+            if (!makeEye(frame.views[i],body,float(frame.width)/frame.height,eyes[i]))
             {
                 static bool warned;
                 if (!warned)
@@ -588,6 +785,15 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 runtime->finishFrame(false,error);
                 return false;
             }
+    if (!fixtureTest && worldFrames==59 && std::getenv("EDUKE32_XR_TEST_AIM"))
+    {
+        LOG_F(INFO,"OpenXR aim camera: authorityYaw=%.6f bodyYaw=%.6f leftYaw=%.6f leftPitch=%.6f rightYaw=%.6f rightPitch=%.6f.",
+              fix16_to_float(logical.angle)*Pi/1024.f,fix16_to_float(body.angle)*Pi/1024.f,
+              fix16_to_float(eyes[0].camera.angle)*Pi/1024.f,nativePitch(eyes[0].camera.horizon),
+              fix16_to_float(eyes[1].camera.angle)*Pi/1024.f,nativePitch(eyes[1].camera.horizon));
+        auto const &left=eyes[0].camera.pos, &right=eyes[1].camera.pos;
+        LOG_F(INFO,"OpenXR aim eye positions: left=%d,%d,%d right=%d,%d,%d.",left.x,left.y,left.z,right.x,right.y,right.z);
+    }
     vec2_t const oldStart=windowxy1, oldEnd=windowxy2;
     int const oldRange=viewingrange, oldAspect=yxaspect;
     int const frozenVisibility=g_visibility, frozenParallax=parallaxvisibility;

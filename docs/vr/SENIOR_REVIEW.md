@@ -244,3 +244,31 @@ threads exhausted capacity. The supported app messaging route also rejects
 model-selected input to these subagents. No substitute or unverified resumed
 review was used. This slice has the preceding verified Astra design review and
 main source/GPU verification, not a fresh independent implementation review.
+
+
+## Authoritative tracked orientation — main verification, 2026-10-16
+
+A fresh explicitly selected Astra/xhigh design review was requested against a
+verified brief. Creation again failed at the retained agent-thread limit. No
+unverified resumed/substitute review was used. The preceding Astra architecture
+review requires native authority, correct camera/shot agreement and a narrow
+adapter; main source/GPU/native-server verification supplies this bounded slice.
+This is not claimed as a fresh independent implementation review.
+
+| Decision | Main disposition and evidence |
+|---|---|
+| Copy RazeXR temporary local shot override | Rejected for this authority boundary. Historical `shoot_d_override` restores local player state; EDuke's server fires remote RPGs from native replicated player angles. Existing `playerupdate_t` already carries the needed orientation. |
+| New pose protocol or parallel player/controller simulation now | Deferred until independent hand origins. Orientation uses native `P_GetInput` → `P_UpdateAngles` and existing packets. Two applied angular offsets recover an independent body from native authority, rather than duplicating absolute body/player state. |
+| Drive the camera directly from authoritative controller aim | Rejected. Remove applied offsets from the ordinary camera base, then use actual HMD eye poses. Both actual eye-camera inputs and GPU crosshair pixels are verified; head mode is tested against double rotation. |
+| Use an eye quaternion as HMD calibration | Rejected for tracked authority because eyes can be canted. Reuse the actual VIEW space/pose before hand acquisition; no second space or XR lifecycle. |
+| Treat a missing pose as loss of native look ownership | Rejected after runtime evidence: this re-enabled centering and shifted body pitch during recovery. Look ownership follows the live XR context; unavailable poses gate aim/fire updates, while native ticks/control flow continue. |
+| Clear calibration/angular offsets on every runtime generation | Adapted. New action samples/buttons invalidate normally. A last valid HMD pose rebases existing origin/yaw calibration when LOCAL is recreated, preserving virtual view/body aim without another body or lifecycle state. Actual nonzero-pose resize/session replacement passes. Native player reset deliberately starts a fresh calibration. |
+| Leave the native head-center crosshair for controller aim | Rejected. Preserve its event/script offset and add tracked-versus-native projection correction using actual authoritative angle/horizon, sharing existing panel dimensions. The finite panel and native auto-aim/spread remain explicit limits. |
+
+The estimate remained bounded: existing native frame/input/render boundaries,
+one shared VIEW resource, one calibration sample and two angular offsets; no
+new service, renderer, actor simulation or wire format. Direct verification also
+covers native pitch clamp at a vertical controller pose, shortest yaw wrap and
+body locomotion with the controller pointing backward. Full tracked weapons,
+hand-origin authority, full-pitch rendering and broad mod/demo/camera behavior
+remain required, not substituted by this orientation checkpoint.

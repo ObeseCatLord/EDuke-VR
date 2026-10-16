@@ -18,7 +18,7 @@ import tempfile
 import time
 
 from monado_remote import Remote
-from smoke_actions import Observer, samples
+from smoke_actions import Observer, samples, traces
 from smoke_multiplayer import X11, setup_lab, stop
 
 
@@ -93,7 +93,12 @@ def wait_for_join_barrier(x11, process, client_log, server_observer):
     window, geometry = x11.owned_window(process.pid)
     if window is None:
         raise RuntimeError('no owned XR client window after synchronization barrier')
-    x11.press(window, 'Escape', .06, True)
+    current=traces(client_log.read_text(errors='replace'))
+    if not current: raise RuntimeError('native XR input context unavailable at join barrier')
+    # User maps can enter gameplay directly; Escape would open a menu there.
+    # Dismiss only a menu actually observed in the native input context.
+    menu_dismissed=bool(current[-1]['mode'] & 1)
+    if menu_dismissed: x11.press(window, 'Escape', .06, True)
     deadline = time.monotonic() + 12
     assigned_player = None
     while time.monotonic() < deadline:
@@ -105,7 +110,7 @@ def wait_for_join_barrier(x11, process, client_log, server_observer):
         time.sleep(.05)
     if assigned_player is None or not player_samples(server_observer.text(), assigned_player):
         raise RuntimeError('post-menu native myconnectindex or matching server samples missing')
-    return {'synchronized': True, 'fade_seconds': 1.5,
+    return {'synchronized': True, 'fade_seconds': 1.5,'observed_menu_dismissed':menu_dismissed,
             'owned_client_window': window, 'client_geometry': geometry,
             'server_player': assigned_player,
             'server_player_samples_at_barrier': len(player_samples(server_observer.text(), assigned_player))}

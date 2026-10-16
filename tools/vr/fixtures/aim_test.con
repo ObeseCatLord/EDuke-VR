@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Controlled native RPG fixture. No game packet, shot, or angle override.
+include controller_test.con
+gamevar vraim_given 0 1
+gamevar vraim_tick 0 1
+gamevar vraim_player 0 1
+gamevar vraim_angle 0 1
+gamevar vraim_horizon 0 1
+gamevar vraim_bits 0 1
+gamevar vraim_x 0 1
+gamevar vraim_y 0 1
+gamevar vraim_ammo 0 1
+onevent EVENT_PROCESSINPUT
+    getactor[THISACTOR].yvel vraim_player
+    ifvare vraim_given 0
+    {
+        // Controlled initial positions in one tall, flat fixture sector. Keep
+        // the native server's dummy player out of the projectile trajectory.
+        setplayer[THISACTOR].posx 1024
+        setplayer[THISACTOR].oposx 1024
+        setactor[THISACTOR].x 1024
+        ifvare vraim_player 0
+        {
+            setplayer[THISACTOR].posy 1024
+            setplayer[THISACTOR].oposy 1024
+            setactor[THISACTOR].y 1024
+        }
+        else
+        {
+            setplayer[THISACTOR].posy 4096
+            setplayer[THISACTOR].oposy 4096
+            setactor[THISACTOR].y 4096
+        }
+        setplayer[THISACTOR].gotweapon 4 1
+        setplayer[THISACTOR].ammo_amount 4 20
+        setplayer[THISACTOR].curr_weapon 4
+        setplayer[THISACTOR].last_weapon -1
+        setplayer[THISACTOR].weapon_pos 0
+        setplayer[THISACTOR].knuckle_incs 0
+        setplayer[THISACTOR].auto_aim 0
+        setvar vraim_given 1
+    }
+    addvar vraim_tick 1
+    getactor[THISACTOR].yvel vraim_player
+    getplayer[THISACTOR].q16ang vraim_angle
+    getplayer[THISACTOR].q16horiz vraim_horizon
+    getinput[THISACTOR].bits vraim_bits
+    getplayer[THISACTOR].posx vraim_x
+    getplayer[THISACTOR].posy vraim_y
+    getplayer[THISACTOR].ammo_amount 4 vraim_ammo
+    addlog vraim_tick
+    addlog vraim_player
+    addlog vraim_angle
+    addlog vraim_horizon
+    addlog vraim_bits
+    addlog vraim_x
+    addlog vraim_y
+    addlog vraim_ammo
+    addlog myconnectindex
+endevent
+
+gamevar vrshot_owner 0 0
+gamevar vrshot_player 0 0
+gamevar vrshot_angle 0 0
+gamevar vrshot_zvel 0 0
+gamevar vrshot_native_angle 0 0
+gamevar vrshot_native_horizon 0 0
+gamevar vrshot_native_offset 0 0
+gamevar vrshot_x 0 0
+gamevar vrshot_y 0 0
+gamevar vrshot_z 0 0
+gamevar vrshot_speed 0 0
+onevent EVENT_EGS
+    ifactor RPG
+    {
+        getactor[THISACTOR].owner vrshot_owner
+        getactor[vrshot_owner].yvel vrshot_player
+        getactor[THISACTOR].ang vrshot_angle
+        getactor[THISACTOR].zvel vrshot_zvel
+        getactor[THISACTOR].x vrshot_x
+        getactor[THISACTOR].y vrshot_y
+        getactor[THISACTOR].z vrshot_z
+        getactor[THISACTOR].xvel vrshot_speed
+        getplayer[vrshot_player].q16ang vrshot_native_angle
+        getplayer[vrshot_player].q16horiz vrshot_native_horizon
+        getplayer[vrshot_player].q16horizoff vrshot_native_offset
+        addlog vrshot_player
+        addlog vrshot_angle
+        addlog vrshot_zvel
+        addlog vrshot_native_angle
+        addlog vrshot_native_horizon
+        addlog vrshot_x
+        addlog vrshot_y
+        addlog vrshot_z
+        addlog vrshot_speed
+        addlog vrshot_native_offset
+    }
+endevent
+
+
+gamevar vrimpact_x 0 0
+gamevar vrimpact_y 0 0
+gamevar vrimpact_z 0 0
+onevent EVENT_EGS
+    ifactor EXPLOSION2
+    {
+        getactor[THISACTOR].x vrimpact_x
+        getactor[THISACTOR].y vrimpact_y
+        getactor[THISACTOR].z vrimpact_z
+        addlog vrimpact_x
+        addlog vrimpact_y
+        addlog vrimpact_z
+    }
+endevent

@@ -2,11 +2,16 @@
 #pragma once
 #include <cstdint>
 #ifdef USE_OPENXR
+#include "player.h"
 // Called once by each ordinary native display loop, before controls and after
 // its intended world draw. Auxiliary room draws never acquire another XR frame.
 void G_XRBeginFrame();
 void G_XREndFrame();
 void G_XRClearInput();
+void G_XRResetAim(int playerNum);
+void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
+fix16_t G_XRMovementAngle(fix16_t nativeAngle);
+bool G_XRCrosshairPosition(vec2_t &position);
 void G_XRArmWorldDraw();
 bool G_XRConsumeWorldDraw();
 void G_XRBeginMenuPresentation();

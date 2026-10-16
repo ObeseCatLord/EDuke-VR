@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "compat.h"
 #include "demo.h"
 #include "duke3d.h"
+#include "vr.h"
 #include "input.h"
 #include "mdsprite.h"
 #include "microprofile.h"
@@ -1237,7 +1238,10 @@ void G_DisplayRest(int32_t smoothratio)
                 renderSetAspect(viewingrange, 65536);
             }
 
-            rotatesprite_win(crosshairpos.x, crosshairpos.y, crosshair_scale, 0, a, 0, crosshair_pal, crosshair_o);
+#ifdef USE_OPENXR
+            if (G_XRCrosshairPosition(crosshairpos))
+#endif
+                rotatesprite_win(crosshairpos.x, crosshairpos.y, crosshair_scale, 0, a, 0, crosshair_pal, crosshair_o);
 
             if (FURY)
                 renderSetAspect(viewingrange, oyxaspect);

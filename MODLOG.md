@@ -96,3 +96,13 @@ Synthesize senior review into docs/vr/PLAN.md with dispositions and test gates; 
 - Actual GPU proof covers transparent overlaps, opaque index255 ART, unchanged world depth, corrected/clamped full-eye tint, in-game menu/save thumbnail, nested swaps, temporary pose loss and resize. Callback counts match separate native runs, including the extra native thumbnail room/readback on framebuffer0.
 - Exact animated-mask stereo, cold-menu/console and mixed native server/XR controller movement/fire/release/replacement regressions pass. Native/XR/standalone builds pass. Main follows prior verified Astra target-A design; a fresh implementation review remains unavailable due agent-thread capacity.
 - Native 2D weapon placement is provisional. Authoritative tracked aim, 3D weapon alignment/haptics/settings, broad camera/material/platform coverage, real hardware and the full multiplayer matrix remain required; full VR goal stays active.
+
+
+## 2026-10-16 — native authoritative tracked orientation
+
+- Investigated RazeXR historical shot override and EDuke native input/absolute player updates. Kept native shot authority and wire format; no temporary player-state replacement or local-only shot hook.
+- Added opt-in right/left/head orientation into native angle updates, with applied-offset body/view separation, body-oriented movement and crosshair projection from native authority. Shared actual VIEW pose/calibration with rendering; native 2D weapon presentation remains provisional.
+- Pose/source loss gates fire and held recovery while preserving native look ownership. Runtime testing caught and fixed legacy centering returning during unavailable poses. Vertical pose reaches native pitch clamp; yaw wrap and backward-hand forward movement pass.
+- Existing calibration rebases across recreated LOCAL/session coordinates; action validity/buttons still invalidate on generation change. Actual HMD/controller divergence plus native window resize preserves server aim and both eye directions at the new extent.
+- Controlled local map/CON fixtures prove all three aim sources through the native server build's unchanged RPG simulation and far-wall impact, plus actual stereo HUD/crosshair captures. Initial fixture lacked enough native player starts; join helper also incorrectly sent Escape in already-entered user-map gameplay. Fixed only fixture/setup, with observed native menu context.
+- Fresh Astra design request hit retained agent-thread capacity. Main verified the implementation against preceding native-authority architecture requirements. Full tracked weapon placement/origin, haptics/settings, full rendering/physics/platform and multiplayer matrices remain required; full VR goal stays active.
