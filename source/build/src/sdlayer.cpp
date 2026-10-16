@@ -206,12 +206,19 @@ static void sdlayer_xr_presentMenu()
     { generation=sdl_xr.generation(); counts[0]=counts[1]=0; }
     bool const armed=sdl_xr.menuPresentationArmed();
     char const *capture=armed && submitted==59 ? std::getenv(overlay ? "EDUKE32_XR_HUD_OUTPUT" : "EDUKE32_XR_MENU_OUTPUT") : nullptr;
+    // Test-only late stereo evidence through the same acquired UI frame/receipt;
+    // no independent screenshot owner or synthetic submission counter.
+    std::string periodicCapture;
+    if (overlay && armed && submitted>=119 && submitted%60==59 && std::getenv("EDUKE32_XR_TEST_PVP"))
+        if (auto prefix=std::getenv("EDUKE32_XR_HUD_OUTPUT"))
+        { periodicCapture=std::string(prefix)+"-"+std::to_string(submitted+1); capture=periodicCapture.c_str(); }
     uint64_t const before=sdl_xr.submittedFrames();
     std::string error;
     if (!sdl_xr.completeMenuPresentation(error,capture))
         sdlayer_xr_disableWorld(error.c_str());
     else if (sdl_xr.submittedFrames()>before)
     {
+        if (!periodicCapture.empty()) LOG_F(INFO,"OpenXR PvP frame: submitted=%u captured=1.",unsigned(submitted+1));
         if (auto test=std::getenv("EDUKE32_XR_TEST_MENU_VIEWPORT"))
             if (!std::strcmp(test,"1"))
             {

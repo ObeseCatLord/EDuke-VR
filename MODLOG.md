@@ -165,3 +165,21 @@ Synthesize senior review into docs/vr/PLAN.md with dispositions and test gates; 
   native events/weapon ray-plane and exact animated-mask proofs still pass.
 - No fresh independent review at retained agent capacity; main verification.
   Full port/SPS/multiplayer goal remains active, with older peers out of scope.
+
+
+### Native PvP and driver-fault checkpoint
+- Native dedicated +flat/XR clients pass actual pistol kill/frag/death, native
+  Use respawn and recovered movement/fire in both victim roles. XR held fire
+  remains suppressed through reset until release/new press.
+- Corrected the existing native spawn packet's old-position copy offset. Actual
+  before/after payloads prove the repair; packet size/receiver/ENet are retained.
+- Added test-only late readbacks from the existing acquired HUD/stereo frame
+  and a private two-client PvP fixture, without a new combat/reset state machine.
+- NVIDIA Xid51/154 occurred after the two good runs. Later graphics failures
+  and final harness edits are unqualified; GPU tests and all owned runtimes are
+  stopped. A trial streaming fallback was removed from production source.
+- Fresh independently verified Astra/xhigh review accepts the packet fix and
+  catches score-regression and fixed-ammo harness issues; both corrected with
+  passing CPU observation tests. Unqualified dual-runtime/fallback branches removed.
+- Native/XR CPU builds pass. Complete two-VR/host/map/loss qualification,
+  remaining weapons, full-pitch/full SPS/camera/platform work remain open.

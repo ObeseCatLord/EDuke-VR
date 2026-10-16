@@ -688,3 +688,66 @@ Fresh independent review could not run at retained agent capacity; this is main
 source/runtime verification. Full-pitch world visibility, broad custom camera,
 model/material/CON behavior and current-build multiplayer combat/respawn/map/
 loss qualification remain required for the full port.
+
+
+## Native PvP death/respawn checkpoint — 2026-10-16
+
+Two real current clients join the native dedicated DukeMatch server: a flat
+client and an XR client with constrained hand shots. Both role assignments
+passed before the GPU driver fault at09:05:21 local. These are bounded pistol
+combat proofs; two independent VR players, VR hosting, map transitions and
+loss/latency remain open. Older-peer compatibility is not required.
+
+| Case | Actual result before driver fault |
+|---|---|
+| XR kills flat | Native pistol hits the actual victim sprite, reduces health100→0, and replicates native death. Killer frag1, victim deaths1, no self-frag on server and both clients. |
+| Flat kills XR | Same native health/score/death convergence; XR keeps submitting actual distinct stereo layers while dead. |
+| Native Use respawn | Both victim roles use actual native Open/Use and GAME.CON resetplayer. Server EVENT_RESETPLAYER increases once, health100/dead0 and scores converge; movement and firing resume with replicated ammo. No injected damage/health/reset/scores or post-respawn teleport. |
+| XR held trigger through death/reset | Held fire produces no server hand ray, native fire bit or ammo consumption after respawn. Releasing and pressing again fires normally. |
+| Late actual stereo evidence | XR-shooter death/respawn frames180/240; XR-victim180/300. These are acquired projection layers read through the existing completed HUD presentation, with distinct eye images and clean active core validation. |
+| Private capture/input | Both clients remain unmapped with no desktop focus; dedicated server has no mapped game window. Native owned F12 captures and final GPU eye images are nonconstant. No map/raise/focus/global input. |
+| Native spawn payload | Before: all three actual sends decoded old-position as(0,0,0), although native opos was nonzero. After: initial player1/player2 and victim respawn payloads match pos/opos. Existing packet size27 and receiver layout are retained. |
+| Scores | Retained complete samples show maximum killer frag1 and victim death1 on every peer. No reproduced double-counting; no score-policy replacement was made. |
+
+The original sender copied both vectors at offset2, overwriting position and
+leaving the existing old-position field at14 unset. The correction writes the
+second vector at byteOffset+sizeof(vec3_t). Before-fix gameplay recovered in the
+observed native movement path, so the evidence proves an invalid payload, not a
+permanent visible desync in that run. Its JSON does not prove post-respawn firing.
+
+A fresh verified Astra/xhigh read-only review accepted the packet fix and caught
+two harness issues. Score stability now rejects later regressions; held-fire
+checks allow native ammo pickups. Two CPU regression tests pass. Final death
+and recovery images must also differ, rejecting a frozen stereo pair. The
+unqualified dual-runtime option and removed-fallback assertion were deleted.
+See SENIOR_REVIEW.md for dispositions.
+
+Native and XR source builds pass after restoring the unchanged renderer; native
+linkage remains free of OpenXR. Final test-only harness changes (peer1 naming,
+native gm startup barrier, stronger movement/score/held-fire
+assertions and full-run core scan) require a healthy-driver rerun. Earlier
+passing results must not be presented as execution of those later changes.
+
+### Driver fault and testing limit
+
+Kernel evidence shows NVIDIA Xid51 BAD_TSG, then Xid154 PF FLR and repeated
+NV_ERR_RESET_REQUIRED. Cause is unresolved. A second private Monado failed
+vkCreateDevice, and a later native client crashed writing through a null
+persistent streaming map. A byte-identical unstripped relink identifies
+polymost_bufferVert→polymost_drawpoly→G_DoLoadScreen at that native crash.
+A trial mutable fallback was built, but its subsequent runtime attempts timed
+out on the faulted driver; it was removed from production source and retained
+only as an unqualified local patch. Those failures cannot qualify networking or
+normal renderer behavior. No GPU reset or desktop/session changes were made.
+
+All owned game/Monado processes are stopped. GPU tests stay off pending graphics
+recovery. A hidden window still shares the user's GPU. Future qualification
+uses one private runtime, bounded sequential cases, and stops immediately at
+the first kernel/graphics error. Independent two-VR qualification should use
+separate recovered machines/runtimes rather than repeating the failing local
+dual-service experiment.
+
+Bounded records and actual pre-fault images: `../../../evidence/pvp-validation.json`
+and `../../../evidence/pvp-xr-victim-death-stereo.png` /
+`../../../evidence/pvp-xr-victim-respawn-stereo.png`. The full VR/SPS/multiplayer
+goal remains active.

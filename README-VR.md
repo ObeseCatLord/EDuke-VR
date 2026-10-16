@@ -444,3 +444,20 @@ XSendEvent or the private Monado actions; the helper refuses focus-changing
 input in this mode. Use framebuffer eye captures instead of desktop screenshots.
 The crosshair runner verifies actual X11 unmapped/focus state as part of the
 proof. Normal game launches omit this test-only flag.
+
+
+## Native PvP checkpoint and current graphics-test hold
+
+The native dedicated server with current flat/XR clients has passed real pistol
+kill, native frag/death convergence, Use respawn and recovered controls in both
+victim roles. The XR victim also passes held-fire suppression through respawn
+until release/new press. A native spawn-packet copy offset is corrected without
+a new protocol or simulation. See [validation](docs/vr/VALIDATION.md) for the
+precise scope and actual pre-fault eye images.
+
+Graphics tests are currently stopped after a confirmed NVIDIA driver fault.
+All test games and private Monado services were stopped; no GPU reset was
+attempted. Hidden windows isolate focus, while still sharing GPU resources.
+The final PvP harness changes remain pending healthy-driver qualification.
+Do not repeat the local dual-Monado experiment on the unrecovered desktop.
+Full VR/SPS and multiplayer qualification remain incomplete.

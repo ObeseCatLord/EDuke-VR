@@ -79,3 +79,11 @@ matrices. It extends the existing native-segment multiview draw with depth
 testing, without copying another renderer or adding a network simulation.
 The private-window test flag changes only explicitly opted-in test processes;
 ordinary native window/input/gamma behavior remains on its existing branches.
+
+
+The PvP checkpoint reuses native pistol damage, frag/death accounting, GAME.CON
+respawn and ENet. A one-offset native spawn-packet correction preserves its
+existing size/receiver. New test wrappers initialize controlled positions and
+weapons, then observe native state; they include the caller's owned GAME.CON
+without redistributing it. Late stereo images reuse the existing acquired
+projection/HUD frame. No RazeXR source was copied for this checkpoint.

@@ -4726,10 +4726,18 @@ void Net_SpawnPlayer(int32_t player)
     packbuf[byteOffset++] = player;
 
     Bmemcpy(&packbuf[byteOffset], &g_player[player].ps->pos, sizeof(vec3_t));
-    Bmemcpy(&packbuf[byteOffset], &g_player[player].ps->opos, sizeof(vec3_t));
+    Bmemcpy(&packbuf[byteOffset+sizeof(vec3_t)], &g_player[player].ps->opos, sizeof(vec3_t));
     byteOffset += sizeof(vec3_t) * 2;
 
     packbuf[byteOffset++] = 0;
+    if (std::getenv("EDUKE32_XR_TEST_PVP"))
+    {
+        vec3_t packetPos, packetOld;
+        Bmemcpy(&packetPos,packbuf+2,sizeof(packetPos)); Bmemcpy(&packetOld,packbuf+14,sizeof(packetOld));
+        auto const p=g_player[player].ps;
+        LOG_F(INFO,"Native spawn payload: player=%d pos=%d,%d,%d old=%d,%d,%d packet=%d,%d,%d packetOld=%d,%d,%d.",
+              player,p->pos.x,p->pos.y,p->pos.z,p->opos.x,p->opos.y,p->opos.z,packetPos.x,packetPos.y,packetPos.z,packetOld.x,packetOld.y,packetOld.z);
+    }
 
     enet_host_broadcast(g_netServer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], byteOffset, ENET_PACKET_FLAG_RELIABLE));
 

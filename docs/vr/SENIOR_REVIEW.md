@@ -412,3 +412,28 @@ requests hit the same limit. No fresh review or substitute-model review ran.
 The central ray is a preview, not another implementation of native autoaim,
 weapon spread/CON fire events or ballistic simulation. Those callbacks are not
 replayed for the reticle. User no longer requires older-peer interoperability.
+
+
+## Native PvP checkpoint — verified Astra/xhigh read-only review
+
+A fresh reviewer ran with explicit `gpt-6-astra` / `xhigh`; parent independently
+verified those effective settings in this review turn's metadata. Scope was the
+small native spawn writer, existing receiver/reset references, late submission
+receipt, private fixture and before/after local JSON. No GPU work, services,
+builds or edits were delegated. The reviewer accepted the one-offset packet
+correction and its unchanged27-byte/native-receiver contract.
+
+| Recommendation | Disposition |
+|---|---|
+| Historical score maxima can hide1→0 regression after convergence | Adopted. Retain maxima, then require every observed sample after the established kill checkpoint to preserve expected frag/death/self values on all peers. A CPU regression test rejects the false positive; retained complete pre-fault logs also pass this stronger interpretation. |
+| Fixed48-round post-reset oracle can reject native pickups | Adopted. Require no actual victim rays, no observed Fire bits and no ammo consumption during the held interval; allow native pickup increases. CPU cases accept48→96 and reject consumption, Fire input, shots or empty observations. |
+| Pre-fix recovered-controls claim exceeds its JSON | Adopted. Before-fix record proves recovered movement, not post-respawn fire. The two corrected records do include resumed fire/ammo convergence. |
+| Distinct stereo pairs alone can be frozen images | Adapted. Require actual image changes between death and recovery as well as submission receipts. Saved XR-victim frames were visually inspected for native death/zero-health versus recovered100-health HUD. This is bounded fixture evidence, not general renderer correctness. |
+| Defer unqualified dual-runtime branch and remove obsolete fallback assertion | Adopted. Both removed from the checked-in harness; experimental copies remain only in ignored local work. No second runtime is needed for this mixed-client checkpoint. |
+
+The final harness revisions have CPU observation tests and syntax checks, but
+remain pending a healthy-driver runtime rerun. Earlier passing mixed-client
+records are explicitly historical fixtures, not execution of the later changes.
+NVIDIA Xid51/154 caused the graphics-test hold; root cause remains unknown.
+This review does not close independent two-VR, VR host/maps/loss, or the full
+port/SPS/multiplayer goal.

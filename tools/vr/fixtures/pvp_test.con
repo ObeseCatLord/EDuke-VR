@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Controlled initial state, native combat/resetplayer, read-only observations.
+include controller_test.con
+gamevar vrcombat_victim 1 0
+gamevar vrcombat_given 0 1
+gamevar vrcombat_clock 0 1
+gamevar vrcombat_spawns 0 1
+gamevar vrcombat_player 0 1
+gamevar vrcombat_index 0 1
+gamevar vrcombat_health 0 1
+gamevar vrcombat_dead 0 1
+gamevar vrcombat_frag 0 1
+gamevar vrcombat_deaths 0 1
+gamevar vrcombat_self 0 1
+gamevar vrcombat_ammo 0 1
+gamevar vrcombat_x 0 1
+gamevar vrcombat_y 0 1
+gamevar vrcombat_z 0 1
+gamevar vrcombat_oldx 0 1
+gamevar vrcombat_oldy 0 1
+gamevar vrcombat_oldz 0 1
+gamevar vrcombat_sector 0 1
+gamevar vrcombat_bits 0 1
+gamevar vrcombat_gm 0 1
+onevent EVENT_PROCESSINPUT
+    getactor[THISACTOR].yvel vrcombat_player
+    setplayer[THISACTOR].auto_aim 0
+    ifvare vrcombat_given 0
+    {
+        ifvarvare vrcombat_player vrcombat_victim
+        {
+            setplayer[THISACTOR].posx 4096
+            setplayer[THISACTOR].oposx 4096
+            setactor[THISACTOR].x 4096
+            setplayer[THISACTOR].cursectnum 1
+            changespritesect THISACTOR 1
+            setplayer[THISACTOR].q16ang 67108864
+            setplayer[THISACTOR].oq16ang 67108864
+        }
+        else
+        {
+            setplayer[THISACTOR].posx 1024
+            setplayer[THISACTOR].oposx 1024
+            setactor[THISACTOR].x 1024
+            setplayer[THISACTOR].cursectnum 0
+            changespritesect THISACTOR 0
+            setplayer[THISACTOR].q16ang 0
+            setplayer[THISACTOR].oq16ang 0
+        }
+        setplayer[THISACTOR].posy 4096
+        setplayer[THISACTOR].oposy 4096
+        setactor[THISACTOR].y 4096
+        ifvare vrcombat_player 0
+        {
+            setplayer[THISACTOR].posy 1024
+            setplayer[THISACTOR].oposy 1024
+            setactor[THISACTOR].y 1024
+        }
+        setplayer[THISACTOR].q16horiz 6553600
+        setplayer[THISACTOR].q16horizoff 0
+        setplayer[THISACTOR].shield_amount 0
+        setplayer[THISACTOR].gotweapon 1 1
+        setplayer[THISACTOR].ammo_amount 1 120
+        setplayer[THISACTOR].curr_weapon 1
+        setplayer[THISACTOR].last_weapon -1
+        setplayer[THISACTOR].weapon_pos 0
+        setplayer[THISACTOR].knuckle_incs 0
+        setvar vrcombat_given 1
+    }
+    addvar vrcombat_clock 1
+    ifvarg vrcombat_clock 2
+    {
+        setvar vrcombat_clock 0
+        getplayer[THISACTOR].i vrcombat_index
+        getactor[THISACTOR].extra vrcombat_health
+        getplayer[THISACTOR].dead_flag vrcombat_dead
+        getplayer[THISACTOR].frag vrcombat_frag
+        getplayer[THISACTOR].deaths vrcombat_deaths
+        getplayer[THISACTOR].fraggedself vrcombat_self
+        getplayer[THISACTOR].ammo_amount 1 vrcombat_ammo
+        getplayer[THISACTOR].posx vrcombat_x
+        getplayer[THISACTOR].posy vrcombat_y
+        getplayer[THISACTOR].posz vrcombat_z
+        getplayer[THISACTOR].oposx vrcombat_oldx
+        getplayer[THISACTOR].oposy vrcombat_oldy
+        getplayer[THISACTOR].oposz vrcombat_oldz
+        getplayer[THISACTOR].cursectnum vrcombat_sector
+        getinput[THISACTOR].bits vrcombat_bits
+        getplayer[THISACTOR].gm vrcombat_gm
+        addlog vrcombat_player
+        addlog vrcombat_index
+        addlog vrcombat_health
+        addlog vrcombat_dead
+        addlog vrcombat_frag
+        addlog vrcombat_deaths
+        addlog vrcombat_self
+        addlog vrcombat_ammo
+        addlog vrcombat_x
+        addlog vrcombat_y
+        addlog vrcombat_z
+        addlog vrcombat_oldx
+        addlog vrcombat_oldy
+        addlog vrcombat_oldz
+        addlog vrcombat_sector
+        addlog vrcombat_bits
+        addlog vrcombat_gm
+        addlog vrcombat_spawns
+    }
+endevent
+onevent EVENT_RESETPLAYER
+    addvar vrcombat_spawns 1
+endevent
+onevent EVENT_GETSHOTRANGE
+    setvar ANGRANGE 0
+    setvar ZRANGE 0
+endevent
+gamevar vrcombat_mode 0 0
+onevent EVENT_DISPLAYREST
+    getplayer[THISACTOR].gm vrcombat_mode
+    addlog vrcombat_mode
+    addlog myconnectindex
+endevent
