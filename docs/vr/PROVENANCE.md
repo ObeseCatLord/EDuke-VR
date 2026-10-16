@@ -32,7 +32,7 @@ position/angle data from `VrInputDefault.cpp`. That mechanism alone does not
 replicate authoritative remote aim in EDuke32. The new orientation adapter feeds
 native angle updates and existing absolute player-update fields instead; it
 copies no Raze renderer or temporary player-struct shot override. Independent
-hand-origin authority remains a required next slice, not a permanent omission.
+hand-origin authority is now an original negotiated native RPG adapter; other weapon families remain required.
 
 
 ### Native weapon presentation reference
@@ -45,3 +45,14 @@ transplanting the Raze scene renderer. EDuke's controller card instead uses the
 already-owned OpenXR aim pose, exact located views and its existing multiview UI
 program/texture. The new adapter is original code under the repository's VR
 license; it copies no game art or Raze renderer implementation.
+
+### Hand-origin authority
+
+RazeXR's historical local shot override informed the required physical offset,
+but its temporary local player replacement was not copied. EDuke's new
+`vrshoot` module and optional movement-update capability are original code,
+keeping native server simulation/CON and actual sector resolution. Test maps
+and observation wrappers are original fixtures; owned GAME.CON/ART are read
+from the caller's GRP, never redistributed. The native player-sprite binding
+and sparse inventory-index fixes address failures reproduced in this pinned
+EDuke baseline, independently of OpenXR linkage.

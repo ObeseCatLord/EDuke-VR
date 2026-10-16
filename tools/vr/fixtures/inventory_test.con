@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Native server-only inventory change, proving sparse player-ID replication.
+include controller_test.con
+gamevar vrinventory_tick 0 1
+gamevar vrinventory_player 0 1
+gamevar vrinventory_ammo 0 1
+gamevar vrinventory_done 0 1
+onevent EVENT_PROCESSINPUT
+    addvar vrinventory_tick 1
+    getactor[THISACTOR].yvel vrinventory_player
+    ifvare myconnectindex 0
+    ifvarg vrinventory_player 0
+    ifvare vrinventory_tick 120
+    {
+        getplayer[THISACTOR].ammo_amount 1 vrinventory_ammo
+        subvar vrinventory_ammo 7
+        setplayer[THISACTOR].ammo_amount 1 vrinventory_ammo
+        setvar vrinventory_done 1
+        addlog vrinventory_done
+    }
+endevent

@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "savegame.h"
 #include "sbar.h"
 #include "vr.h"
+#include "vrshoot.h"
 
 #include "vfs.h"
 
@@ -605,6 +606,7 @@ void G_UpdateScreenArea(void)
 
 void P_MoveToRandomSpawnPoint(int playerNum)
 {
+    G_VRResetShot(playerNum);
 #ifdef USE_OPENXR
     G_XRResetAim(playerNum);
 #endif
@@ -692,6 +694,7 @@ void P_ResetExtents(DukePlayer_t* const pPlayer)
 
 void P_ResetMultiPlayer(int playerNum)
 {
+    G_VRResetShot(playerNum);
 #ifdef USE_OPENXR
     G_XRResetAim(playerNum);
 #endif
@@ -765,6 +768,7 @@ void P_ResetMultiPlayer(int playerNum)
 
 void P_ResetPlayer(int playerNum)
 {
+    G_VRResetShot(playerNum);
 #ifdef USE_OPENXR
     G_XRResetAim(playerNum);
 #endif
@@ -1908,6 +1912,7 @@ static void G_CheckIfStateless()
 
 int G_EnterLevel(int gameMode)
 {
+    G_VRResetShots();
     vote_map = vote_episode = voting = -1;
 
     ud.respawn_monsters  = ud.m_respawn_monsters;

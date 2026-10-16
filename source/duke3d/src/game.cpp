@@ -6605,6 +6605,9 @@ void dukeFillInputForTic(void)
     auto& input   = inputfifo[0][myconnectindex];
 
     input = localInput;
+#ifdef USE_OPENXR
+    G_XRUpdateShotInput();
+#endif
     input.fvel = mulscale9(localInput.fvel, sintable[(q16ang + 2560) & 2047]) +
         mulscale9(localInput.svel, sintable[(q16ang + 2048) & 2047]);
     input.svel = mulscale9(localInput.fvel, sintable[(q16ang + 2048) & 2047]) +

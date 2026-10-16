@@ -48,6 +48,8 @@ class Observer:
         if self.process.poll() is not None:
             raise RuntimeError('owned game exited during controller test')
         value = self.path.read_text(errors='replace')
+        if re.search(r'Found \d+ warning\(s\), [1-9]\d* error\(s\)',value):
+            raise RuntimeError('native CON compilation failed; inspect owned test log')
         if 'OpenXR world stopped:' in value or 'OpenXR world initialization failed:' in value:
             raise RuntimeError('XR stopped; inspect owned test log')
         return value

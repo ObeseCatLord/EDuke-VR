@@ -4,6 +4,8 @@
 #include "duke3d.h"
 #include "sdlayer.h"
 #include "vr.h"
+#include "vrshoot.h"
+#include "network.h"
 #include "menus.h"
 #include "../../vr/eduke_xr.h"
 #include <algorithm>
@@ -103,7 +105,12 @@ static uint64_t menuGeneration, menuOwner;
 static eduke_xr::ActionInput rawInput;
 static std::array<uint32_t,2> activeInputButtons{}, blockedInputButtons{};
 static float aimYawOffset, aimPitchOffset;
-static bool aimPoseWasValid;
+static bool aimPoseWasValid, shotLookAllowed=true;
+static bool handShotsRequested()
+{
+    auto mode=std::getenv("EDUKE32_XR_HAND_SHOTS");
+    return mode && !Bstrcmp(mode,"1");
+}
 
 // Opt-in while tracked weapon presentation and the full authority matrix develop.
 static int aimHand()
@@ -161,7 +168,7 @@ static void publishInput()
     }
     if (aimHand()!=-2)
     {
-        bool const valid=aimPoseUsable();
+        bool const valid=aimPoseUsable() && (!handShotsRequested() || Net_VRShotAvailable());
         // Pose recovery is not a new trigger press. Hold fire until release.
         if (!valid || !aimPoseWasValid)
         {
@@ -343,6 +350,7 @@ void G_XRResetAim(int playerNum)
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
 {
     if (!localAimCamera()) return;
+    shotLookAllowed=yawAllowed && pitchAllowed;
     // Native centering must not reactivate merely because a tracked source is
     // temporarily unavailable. The XR context retains look-mode ownership.
     input.bits|=uint32_t(1)<<SK_AIMMODE;
@@ -382,6 +390,43 @@ void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
               input.q16avel,input.q16horz,hand);
 }
 
+void G_XRUpdateShotInput()
+{
+    VRShotInput input;
+    if (handShotsRequested())
+    {
+        input.flags=VRShotEnabled;
+        int const hand=aimHand();
+        if (hand>=0 && localAimCamera() && aimPoseUsable() && recentered && shotLookAllowed && Net_VRShotAvailable())
+        {
+            auto const p=g_player[myconnectindex].ps;
+            float const bodyYaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset;
+            float const co=std::cos(bodyYaw), si=std::sin(bodyYaw);
+            auto const tracking=multiply(pitchRoll(nativePitch(p->q16horiz)-aimPitchOffset,gtang),inverseYaw);
+            auto const &pose=rawInput.hands[hand].aimPose;
+            auto const local=rotate(tracking,{pose.position.x-origin.x,pose.position.y-origin.y,pose.position.z-origin.z});
+            auto const forward=rotate(multiply(tracking,pose.orientation),{0,0,-1});
+            float const offsets[3]={(-local.z*co-local.x*si)*UnitsPerMetre,(-local.z*si+local.x*co)*UnitsPerMetre,-local.y*ZUnitsPerMetre};
+            float const direction[3]={-forward.z*co-forward.x*si,-forward.z*si+forward.x*co,-forward.y};
+            bool bounded=true;
+            for (int i=0;i<3;++i)
+            {
+                bounded=bounded && std::isfinite(offsets[i]) && std::fabs(offsets[i])<32767.f;
+                if (bounded) input.offset[i]=int16_t(std::lround(offsets[i]));
+                input.direction[i]=int16_t(std::lround(std::max(-1.f,std::min(1.f,direction[i]))*32767.f));
+            }
+            input.flags|=VRShotValid;
+            if (!bounded || !G_VRValidateShot(input)) { input={}; input.flags=VRShotEnabled; }
+        }
+        else if (!Net_VRShotAvailable())
+        {
+            static bool reported;
+            if (!reported) { reported=true; LOG_F(WARNING,"VR hand shots waiting for server capability; firing is suppressed until supported."); }
+        }
+    }
+    G_VRSetShotInput(myconnectindex,input);
+}
+
 fix16_t G_XRMovementAngle(fix16_t nativeAngle)
 {
     return localAimCamera() ? (nativeAngle-fix16_from_float(aimYawOffset*1024.f/Pi)) & 0x7FFFFFF : nativeAngle;
@@ -401,7 +446,16 @@ bool G_XRCrosshairPosition(vec2_t &position)
     };
     auto const flat=ray(logical,pitchRoll(nativePitch(logical.horizon),logical.roll));
     auto const head=multiply(multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw),rawInput.headPose.orientation);
-    auto const tracked=ray(body,head);
+    auto tracked=ray(body,head);
+    if (handShotsRequested() && PWEAPON(myconnectindex,p->curr_weapon,WorksLike)==RPG_WEAPON)
+    {
+        if (!G_VRShotReady(myconnectindex)) return false;
+        auto const shot=G_VRGetShotInput(myconnectindex);
+        float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+        XrVector3f const direction={(-shot.direction[0]*si+shot.direction[1]*co)/32767.f,-shot.direction[2]/32767.f,
+                                   (-shot.direction[0]*co-shot.direction[1]*si)/32767.f};
+        tracked=rotate({-head.x,-head.y,-head.z,head.w},direction);
+    }
     if (flat.z>=-.001f || tracked.z>=-.001f) return false;
     float const x=-eduke_xr::PanelDistance*tracked.x/tracked.z;
     float const y=-eduke_xr::PanelDistance*tracked.y/tracked.z;
@@ -418,6 +472,8 @@ bool G_XRCrosshairPosition(vec2_t &position)
 
 void G_XRClearInput()
 {
+    VRShotInput shot; if (handShotsRequested()) shot.flags=VRShotEnabled;
+    G_VRSetShotInput(myconnectindex,shot);
     for (unsigned hand=0;hand<2;++hand)
         blockedInputButtons[hand] |= rawInput.hands[hand].buttons;
     CONTROL_SetExternalInput(nullptr,0,nullptr);
@@ -529,11 +585,29 @@ void G_XREndWeapon(bool captured)
     auto const hand=aimHand();
     if (hand<0) return;
     XrPosef pose=rawInput.hands[hand].aimPose;
+    bool visible=aimPoseUsable();
+    auto const p=g_player[myconnectindex].ps;
+    if (handShotsRequested() && PWEAPON(myconnectindex,p->curr_weapon,WorksLike)==RPG_WEAPON)
+    {
+        vec3_t position; int16_t sector; bool clamped;
+        visible=visible && Net_VRShotAvailable() && G_VRResolveShot(myconnectindex,position,sector,clamped);
+        if (visible)
+        {
+            auto const body=aimBodyCamera(camera());
+            float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+            float const dx=float(position.x-body.pos.x)/UnitsPerMetre, dy=float(position.y-body.pos.y)/UnitsPerMetre;
+            XrVector3f const relative={-dx*si+dy*co,-float(position.z-body.pos.z)/ZUnitsPerMetre,-dx*co-dy*si};
+            auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+            auto const local=rotate({-tracking.x,-tracking.y,-tracking.z,tracking.w},relative);
+            pose.position={origin.x+local.x,origin.y+local.y,origin.z+local.z};
+            if (worldFrames==59 && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"OpenXR resolved hand: pos=%d,%d,%d sector=%d clamped=%d.",position.x,position.y,position.z,sector,clamped);
+        }
+    }
     // Native ART is a perspective weapon card. Provisional grip pivot is native
     // (192,180) in its 320x200, 4:3 subregion. Animation/palette/CON remain native.
     auto const offset=rotate(pose.orientation,{-.08f,.24f,-.15f});
     pose.position.x+=offset.x; pose.position.y+=offset.y; pose.position.z+=offset.z;
-    bool const visible=aimPoseUsable();
     char const *prefix=worldFrames==59 ? std::getenv("EDUKE32_XR_WEAPON_OUTPUT") : nullptr;
     if (prefix)
     {

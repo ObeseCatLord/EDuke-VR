@@ -299,3 +299,31 @@ The initial ideal-edge/rounded-pose oracle disagreed at one boundary pixel in a
 head-motion case; correct raster coverage resolved it without relaxing RGB
 limits. Foreground depth, native pitch limits, per-weapon pivots and unchanged
 body shot origin remain explicit prototype limits.
+
+
+## Hand-origin RPG authority — main verification, 2026-10-16
+
+A verified brief compared a negotiated movement tail with a global version
+rewrite, separate pose stream and temporary Raze-style player replacement.
+Fresh explicitly selected Astra/xhigh creation again failed at the retained
+agent-thread limit. No substitute model or unverified resumed review was used.
+This change follows preceding verified Astra native-authority/incremental
+architecture requirements plus main source/GPU/native-server verification;
+a fresh independent implementation review remains outstanding.
+
+| Decision | Main disposition and actual evidence |
+|---|---|
+| Replace networking or introduce another player simulation | Rejected. Same ENet peer, native input/fire prefix and actor replication; only an optional acknowledged14-byte tail. |
+| Send pose independently of fire | Rejected. Same movement packet carries both; malformed tails reject before applying any prefix. Seven actual malformed ENet cases plus missing capability pass. |
+| Reuse body sector for a physical hand across a portal | Rejected. Common native trace/updatesectorz/pushmove/cansee resolves the start sector; actual RPG starts in neighbor sector1 while body remains on the other side. Closed/glancing fixtures constrain the origin. |
+| Permit stale held fire after loss | Rejected. Native-clock expiry and release gate qualify actual stopped-client timeout/recovery, not only local pose validity. |
+| Add a second autoaim/damage implementation | Rejected. Native events/target choice/ownership/damage retained. Opt-in RPG velocity normalization is explicit; actual enemy collision/death and separate autoaim preference pass. |
+| Treat successful server spawn as client replication proof | Rejected after failure. Actual client EVENT_GAME found no live RPG; native cached player0 index misclassified incoming projectile8192. Bind actual snapshot APLAYER/STAT_PLAYER identity, retain native player prediction copy, and repair same-stat sector links. Live client RPG fields now agree. |
+| Treat contiguous player records as arbitrary-slot proof | Rejected after failure. Real slot1 disconnect left sparse0,2 updates; server ammo36/client44 exposed ordinal indexing. Receiver now uses the validated record player ID; both server and actual slot2 client report36. |
+| Generalize all weapons before one complete proof | Rejected. RPG-only opt-in end-to-end slice first. Other native weapon families and multiplayer combat/respawn/map/loss gates remain required. |
+
+No renderer, protocol service, actor packet or absolute body state was added.
+The estimate grew only at two demonstrated native replication defects; narrow
+repairs stayed in their existing functions. Before broadening weapons, obtain a
+fresh Astra review when capacity permits and challenge whether each adaptation
+can reuse existing native helpers without duplicating weapon policy.

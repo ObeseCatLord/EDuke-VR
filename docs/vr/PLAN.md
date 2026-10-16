@@ -16,7 +16,8 @@ Status: experimental Linux OpenXR port with bounded ART multiview, native contro
 - Native ART weapon/HUD/in-game-menu capture now extends that same target with premultiplied coverage over the existing stereo world (`EDUKE32_XR_UI=2`). Actual eye/color/depth/coverage, full-eye native tint/dim, save-thumbnail cancellation, native callback reference and resize tests pass. This is a provisional 2D weapon plane, not tracked weapon aim or full native UI/material coverage.
 - Opt-in tracked orientation now feeds native authoritative aim from right/left controller or actual HMD VIEW pose, with body/view separation and projected native crosshair. Real native-server RPG direction/impact, pose recovery, pole/wrap/body movement and session-recreation proofs pass. Native wire format and shot origin remain unchanged in this slice; it does not complete tracked weapon placement/origins.
 - Controller-attached native ART now reuses the existing capture texture in sequential weapon/HUD segments (`EDUKE32_XR_WEAPON=1`). Both eye images pass an independent projection/composition oracle across ten cases, including pose loss, resize and nested weapon-scope presentation. This is a provisional foreground card, not physical hand-origin firing.
-- Next implementation work: authoritative hand-origin/full-pitch shots and collision, per-weapon placement, full-pitch/tracked visibility, remaining material/draw families and demonstrated texture-streaming fallback within the existing resource boundary. The full multiplayer/action/platform matrix remains required.
+- Opt-in ordinary RPG hand origins/full-vector shots now replicate through a negotiated native movement-update tail. Actual native server/client portal, obstruction, vertical projectile, enemy damage, expiry/release and legacy compatibility tests pass. Runtime proof also exposed and corrected native projectile/player binding and sparse-slot inventory replication bugs. This remains RPG-only; see HAND_SHOTS.md.
+- Next implementation work: extend the same authority boundary across native hitscan/projectile/thrown/melee families, preserve their CON/autoaim policies, qualify combat/respawn/map transitions, then full-pitch/tracked visibility, remaining material/draw families and texture-streaming fallback. The full multiplayer/action/platform matrix remains required.
 
 ## Source and behavioral reference
 
@@ -168,23 +169,40 @@ provisional grip pivot and foreground-depth policy, not a solid gun model or a
 physical muzzle. Full pitch, per-weapon pivots/two-hand behavior and collision
 remain required.
 
-Independent hand-origin shots need an explicit native authority extension.
-`clientupdate_t` currently has an exact-size receiver, and `playerupdate_t` has
-no hand position. Appending bytes unconditionally would drop legacy movement
-updates; a separate unsynchronized pose stream could pair a shot with the wrong
-origin. The next design proof should compare a negotiated, bounded extension of
-the existing movement update against a globally versioned format change. Keep
-native client updates unchanged for peers without the capability; correlate any
-hand offset with the input it accompanies. Do not replace ENet, add a second
-simulation, or reuse player body position as permanent hand authority.
+The initial authority proof is now implemented for the ordinary hardcoded RPG.
+A globally versioned movement rewrite was compared with a negotiated extension:
+the latter preserves the existing 81-byte client prefix, native input_t and ENet
+simulation, while carrying a bounded 14-byte hand origin/direction sample in the
+same update as fire. A separate pose stream was rejected because it could pair
+fire with another sample. A reliable optional capability on existing CHAN_MISC
+keeps non-capable peers on the base update. See HAND_SHOTS.md for exact format.
 
-The server must constrain/revalidate the offset and trace the body-to-hand path,
-resolve the actual origin sector and invalidate it on spawn/disconnect/map
-transitions. `A_ShootWithZvel` supplies the narrow start-position boundary, but
-`A_ShootHardcoded`, custom projectiles and some autoaim/hitscan helpers still use
-the body sprite's sector. A local position override alone is insufficient at a
-portal. Begin with actual replicated RPG shots on both sides of a portal and
-against an intervening wall, then cover hitscan, thrown weapons/tripmines,
-spread/autoaim/CON semantics and remote damage/respawn. Presentation must expose
-the server-constrained origin rather than promising an unconstrained physical
-muzzle. This protocol/gameplay change remains unimplemented at this checkpoint.
+The common native module validates two-metre reach and direction, expires samples
+on the existing clock, gates recovery until release, traces the body-to-hand path,
+resolves sectors across portals and applies native radius clearance. Server and
+local card preview share that constraint; neither moves the body. The initial
+vertical proof is actual server RPG spawn/flight/impact and native client actor
+replication, plus native enemy damage/death, rather than pose counters alone.
+The card's actual two-eye pixels match an independent projection of the static
+server-constrained origin. Full-pitch projectile direction bypasses the native
+horizon cap only for this opt-in RPG; the world renderer's full-pitch gate stays
+open.
+
+Two demonstrated native incompatibilities required narrow fixes: stale cached
+player sprite indices misclassified an incoming RPG as player data, and server
+inventory records were applied by ordinal rather than actual player ID when a
+slot disconnected. Actual client actors and a real sparse0,2 peer fixture prove
+the corrections. No actor packet, renderer, service or second player simulation
+was added. Fresh independent Astra follow-up remains unavailable at retained
+thread capacity; preceding verified senior architecture guidance and main
+source/GPU/server checks are recorded, without claiming a new review.
+
+Next vertical proof: broaden the same resolver at the existing native weapon
+boundaries, beginning with hitscan and preserving spread/autoaim/CON events and
+actual hit sectors. Then test thrown weapons/tripmines/melee, PvP damage/frag and
+respawn, map change/late join, save/demo/camera transitions and packet loss. Do
+not turn an RPG-specific adapter into a second generic weapon policy engine.
+Reopen the design if native helpers require duplicated simulation or temporary
+absolute body replacement. Physical muzzle calibration, per-weapon/two-hand
+placement, dynamic collision reconciliation and real hardware remain separate
+qualification gates.

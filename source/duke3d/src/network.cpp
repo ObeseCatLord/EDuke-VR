@@ -34,6 +34,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "premap.h"
 #include "savegame.h"
 #include "input.h"
+#include "vrshoot.h"
+#include <cstdlib>
 
 #include "enet.h"
 #include "lz4.h"
@@ -49,6 +51,10 @@ enet_uint16 g_netPort       = 23513;
 int32_t     g_netDisconnect = 0;
 char        g_netPassword[32];
 int32_t     g_networkMode       = NET_CLIENT;
+static bool vrServerCapability;
+static bool vrClientCapability[MAXPLAYERS];
+bool Net_VRShotAvailable() { return !g_netClient || vrServerCapability; }
+
 
 // to support (gcc only) -f-strict-aliasing, the netcode needs to specify that its 32 bit chunks to and from the
 // packet code should not be subject to strict aliasing optimizations
@@ -164,6 +170,8 @@ typedef struct clientupdate_s
     playerupdate_t player;
 } clientupdate_t;
 #pragma pack(pop)
+static_assert(sizeof(input_t)==20 && sizeof(playerupdate_t)==56 && sizeof(clientupdate_t)==81,
+              "native movement prefix ABI must remain unchanged");
 
 
 // Client player ready for world updates (player spawned and ready)
@@ -760,7 +768,7 @@ static void Net_UpdateSpriteLinkedLists(int16_t spriteIndex, const netactor_t* s
 
 
     // [1]
-    if (snapActor->spr_statnum == oldGameStatnum)
+    if (snapActor->spr_statnum == oldGameStatnum && snapActor->spr_sectnum == sprite[spriteIndex].sectnum)
     {
         return;
     }
@@ -1099,7 +1107,21 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
         const netactor_t*       srvActor = &(srv_snapshot->actor[actorIndex]);
         const netactor_t*       clActor  = &(cl_snapshot->actor[actorIndex]);
 
+        int const player=srvActor->spr_yvel;
+        bool const isPlayerSprite=srvActor->spr_picnum==APLAYER && srvActor->spr_statnum==STAT_PLAYER
+            && unsigned(player)<MAXPLAYERS && g_player[player].ps;
+        // Local bootstrap/scratch sprites need not have the server's indices.
+        // Bind from authoritative role/identity even when fields compare equal;
+        // a stale cached player index must never classify a projectile as player.
+        if (isPlayerSprite)
+        {
+            if (g_player[player].ps->i!=actorIndex && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR snapshot player binding restored: player=%d oldSprite=%d snapshotSprite=%d.",
+                      player,g_player[player].ps->i,actorIndex);
+            g_player[player].ps->i=actorIndex;
+        }
         int status = memcmp(srvActor, clActor, sizeof(netactor_t));
+        bool const traceRPG=srvActor->spr_picnum==RPG && srvActor->spr_statnum==4 && std::getenv("EDUKE32_XR_TEST_SHOTS");
 
         if(status == 0)
         {
@@ -1124,26 +1146,22 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
 
         NET_75_CHECK++; // Need to make sure this will not effect swimming legs, holodukes, or start points negatively
 
-        bool              isAnyOtherPlayerSprite = (snapshotActor->spr_picnum == APLAYER) && (snapshotActor->spr_yvel > 0);
-
-        bool              isPlayer0Sprite = (actorIndex == g_player[0].ps->i);
-
-
-        // it's better to let P_ProcessInput update some fields of the player's sprite.
-
-
-        if (isPlayer0Sprite || isAnyOtherPlayerSprite)
+        // Preserve native player position/angle prediction only for actual
+        // snapshot player sprites, not for an unrelated cached sprite index.
+        if (isPlayerSprite)
         {
             NET_75_CHECK++; // Net_CopyPlayerActorDataFromNet() may be a good place to handle checking the player's new position
                             // this will also need updating when we support a dynamic number of player sprites...
             Net_CopyPlayerActorDataFromNet(snapshotActor, gameSprite, gameActor, gameExt, gameSm);
-
+            Net_UpdateSpriteLinkedLists(actorIndex,snapshotActor);
             continue;
         }
 
         Net_CopyAllActorDataFromNet(snapshotActor, gameSprite, gameActor, gameExt, gameSm);
 
         Net_UpdateSpriteLinkedLists(actorIndex, snapshotActor);
+        if (traceRPG) LOG_F(INFO,"VR snapshot RPG applied: index=%d sector=%d stat=%d angle=%d speed=%d zvel=%d flags=%d.",
+                           actorIndex,gameSprite->sectnum,gameSprite->statnum,gameSprite->ang,gameSprite->xvel,int16_t(gameSprite->zvel),gameActor->flags);
 
 
         if (!snapSpriteIsDeleted)
@@ -1454,6 +1472,8 @@ static void P_RemovePlayer(int32_t p)
     if (p <= 0) return;
 
     g_player[p].playerquitflag = 0;
+    vrClientCapability[p]=false;
+    G_VRResetShot(p);
 
     Bsprintf(recbuf,"%s^00 is history!",g_player[p].user_name);
     G_AddUserQuote(recbuf);
@@ -1544,6 +1564,8 @@ static void Net_SyncPlayer(ENetEvent *event)
 
     NET_75_CHECK++; // is it necessary to se event->peer->data to the new player index in Net_SyncPlayer?
     event->peer->data = (void *)(intptr_t)newPlayerIndex;
+    vrClientCapability[newPlayerIndex]=false;
+    G_VRResetShot(newPlayerIndex);
 
     g_player[newPlayerIndex].netsynctime = (int32_t) totalclock;
     g_player[newPlayerIndex].playerquitflag = 1;
@@ -1584,6 +1606,9 @@ static void display_betascreen(void)
 
 static void Net_Disconnect(void)
 {
+    vrServerCapability=false;
+    Bmemset(vrClientCapability,0,sizeof(vrClientCapability));
+    G_VRResetShots();
     if (g_netClient)
     {
         ENetEvent event;
@@ -1724,27 +1749,49 @@ static void Net_ExtractPlayerUpdate(playerupdate_t *update, int32_t type)
 // Server only
 static void Net_ReceiveClientUpdate(ENetEvent *event)
 {
-    int32_t        playeridx;
+    int const playeridx=int(intptr_t(event->peer->data));
+    auto const reject=[&](char const *reason) {
+        if (std::getenv("EDUKE32_XR_TEST_SHOTS")) LOG_F(INFO,"VR update rejected: player=%d reason=%s.",playeridx,reason);
+    };
+    if (playeridx<=0 || playeridx>=MAXPLAYERS || !g_player[playeridx].playerquitflag) { reject("peer"); return; }
+    if (event->channelID!=CHAN_MOVE) { reject("channel"); return; }
+    size_t const length=event->packet->dataLength;
+    bool const extended=length==sizeof(clientupdate_t)+VRShotWireSize;
+    if (length!=sizeof(clientupdate_t) && !extended) { reject("size"); return; }
+    VRShotInput shot;
+    if (extended && !vrClientCapability[playeridx]) { reject("capability"); return; }
+    if (extended && !G_VRDecodeShot(event->packet->data+sizeof(clientupdate_t),VRShotWireSize,shot)) { reject("payload"); return; }
     clientupdate_t update;
+    Bmemcpy(&update,event->packet->data,sizeof(update));
+    // Never let a new pose/input extension name another player's authority.
+    if (update.player.playerindex!=playeridx) { reject("identity"); return; }
+    g_player[playeridx].revision=update.RevisionNumber;
+    inputfifo[0][playeridx]=update.nsyn;
+    Net_ExtractPlayerUpdate(&update.player,PACKET_SLAVE_TO_MASTER);
+    G_VRSetShotInput(playeridx,shot); // a base update explicitly leaves VR mode
+}
 
-    if (event->packet->dataLength != sizeof(clientupdate_t))
+// One optional reliable request/ack after native authentication/index assignment.
+// CHAN_MISC prevents native broadcast routing; no movement format changes until ACK.
+static void Net_SendVRCapability(ENetPeer *peer, bool reply, int player)
+{
+    uint8_t bytes[9]={PACKET_VR_CAPABILITIES,'E','D','V','R',1,1,uint8_t(reply),uint8_t(player)};
+    enet_peer_send(peer,CHAN_MISC,enet_packet_create(bytes,sizeof(bytes),ENET_PACKET_FLAG_RELIABLE));
+}
+static void Net_ReceiveVRCapability(ENetEvent *event, bool server)
+{
+    if (event->channelID!=CHAN_MISC || event->packet->dataLength!=9 || (!server && event->peer!=g_netClientPeer)) return;
+    auto const bytes=event->packet->data;
+    if (Bmemcmp(bytes+1,"EDVR",4) || bytes[5]!=1 || bytes[6]!=1 || bytes[7]!=(server ? 0 : 1)) return;
+    int const player=server ? int(intptr_t(event->peer->data)) : myconnectindex;
+    if (player<=0 || player>=MAXPLAYERS || bytes[8]!=player || !g_player[player].playerquitflag) return;
+    if (server)
     {
-        return;
+        vrClientCapability[player]=true;
+        Net_SendVRCapability(event->peer,true,player);
     }
-
-    Bmemcpy(&update, (char *)event->packet->data, sizeof(clientupdate_t));
-
-    playeridx = (int32_t)(intptr_t)event->peer->data;
-
-    if (playeridx < 0 || playeridx >= MAXPLAYERS)
-    {
-        return;
-    }
-
-    g_player[playeridx].revision = update.RevisionNumber;
-    inputfifo[0][playeridx]      = update.nsyn;
-
-    Net_ExtractPlayerUpdate(&update.player, PACKET_SLAVE_TO_MASTER);
+    else vrServerCapability=true;
+    LOG_F(INFO,"VR native hand-shot capability: %s player=%d version=1.",server ? "accepted" : "acknowledged",player);
 }
 
 static void Net_Server_SetupPlayer(int playerindex)
@@ -2074,6 +2121,9 @@ static void Net_ParseClientPacket(ENetEvent *event)
 #endif
     switch (pbuf[0])
     {
+        case PACKET_VR_CAPABILITIES:
+            Net_ReceiveVRCapability(event,true);
+            break;
         case PACKET_SLAVE_TO_MASTER:  //[1] (receive slave sync buffer)
             Net_ReceiveClientUpdate(event);
             break;
@@ -2219,13 +2269,13 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
     serverupdate_t       serverupdate;
     serverplayerupdate_t playerupdate;
 
-    if (((event->packet->dataLength - sizeof(serverupdate_t)) % sizeof(serverplayerupdate_t)) != 0)
-    {
-        return;
-    }
+    size_t const length=event->packet->dataLength;
+    if (length<sizeof(serverupdate_t) || (length-sizeof(serverupdate_t))%sizeof(serverplayerupdate_t)) return;
+    size_t const records=(length-sizeof(serverupdate_t))/sizeof(serverplayerupdate_t);
 
     uint8_t *updatebuf = (uint8_t *)event->packet->data;
     Bmemcpy(&serverupdate, updatebuf, sizeof(serverupdate_t));
+    if (records>MAXPLAYERS || serverupdate.numplayers!=records) return;
     updatebuf += sizeof(serverupdate_t);
     inputfifo[0][0] = serverupdate.nsyn;
     ud.pause_on     = serverupdate.pause_on;
@@ -2236,29 +2286,31 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
     {
         Bmemcpy(&playerupdate, updatebuf, sizeof(serverplayerupdate_t));
         updatebuf += sizeof(serverplayerupdate_t);
+        int const player=playerupdate.player.playerindex;
+        if (unsigned(player)>=MAXPLAYERS || !g_player[player].ps) return;
 
         Net_ExtractPlayerUpdate(&playerupdate.player, PACKET_MASTER_TO_SLAVE);
 
-        g_player[playerIndex].ps->gotweapon = playerupdate.gotweapon;
+        g_player[player].ps->gotweapon = playerupdate.gotweapon;
 
-        g_player[playerIndex].ps->kickback_pic = playerupdate.kickback_pic;
+        g_player[player].ps->kickback_pic = playerupdate.kickback_pic;
 
-        Bmemcpy(g_player[playerIndex].frags, playerupdate.frags, sizeof(playerupdate.frags));
-        Bmemcpy(g_player[playerIndex].ps->inv_amount, playerupdate.inv_amount, sizeof(playerupdate.inv_amount));
-        Bmemcpy(g_player[playerIndex].ps->ammo_amount, playerupdate.ammo_amount, sizeof(playerupdate.ammo_amount));
+        Bmemcpy(g_player[player].frags, playerupdate.frags, sizeof(playerupdate.frags));
+        Bmemcpy(g_player[player].ps->inv_amount, playerupdate.inv_amount, sizeof(playerupdate.inv_amount));
+        Bmemcpy(g_player[player].ps->ammo_amount, playerupdate.ammo_amount, sizeof(playerupdate.ammo_amount));
 
-        g_player[playerIndex].ps->curr_weapon    = playerupdate.curr_weapon;
-        g_player[playerIndex].ps->last_weapon    = playerupdate.last_weapon;
-        g_player[playerIndex].ps->wantweaponfire = playerupdate.wantweaponfire;
-        g_player[playerIndex].ps->weapon_pos     = playerupdate.weapon_pos;
-        g_player[playerIndex].ps->frag_ps        = playerupdate.frag_ps;
-        g_player[playerIndex].ps->frag           = playerupdate.frag;
-        g_player[playerIndex].ps->fraggedself    = playerupdate.fraggedself;
-        g_player[playerIndex].ps->last_extra     = playerupdate.last_extra;
-        g_player[playerIndex].ping               = playerupdate.ping;
+        g_player[player].ps->curr_weapon    = playerupdate.curr_weapon;
+        g_player[player].ps->last_weapon    = playerupdate.last_weapon;
+        g_player[player].ps->wantweaponfire = playerupdate.wantweaponfire;
+        g_player[player].ps->weapon_pos     = playerupdate.weapon_pos;
+        g_player[player].ps->frag_ps        = playerupdate.frag_ps;
+        g_player[player].ps->frag           = playerupdate.frag;
+        g_player[player].ps->fraggedself    = playerupdate.fraggedself;
+        g_player[player].ps->last_extra     = playerupdate.last_extra;
+        g_player[player].ping               = playerupdate.ping;
 
 
-        g_player[playerIndex].ps->newowner = playerupdate.newowner;
+        g_player[player].ps->newowner = playerupdate.newowner;
     }
 }
 
@@ -2373,11 +2425,13 @@ static void Net_ReceiveNewPlayer(uint8_t *pbuf, int32_t packbufleng)
 
 static void Net_ReceivePlayerIndex(uint8_t *pbuf, int32_t packbufleng)
 {
-    UNREFERENCED_PARAMETER(packbufleng);  // remove when this variable is used
+    if (packbufleng!=3 || pbuf[1]==0 || pbuf[1]>=MAXPLAYERS) return;
 
     myconnectindex                          = pbuf[1];
     g_player[myconnectindex].playerquitflag = 1;
     Net_SendClientInfo();
+    auto const negative=std::getenv("EDUKE32_XR_TEST_BAD_SHOT");
+    if (!negative || Bstrcmp(negative,"capability")) Net_SendVRCapability(g_netClientPeer,false,myconnectindex);
 }
 
 
@@ -2396,6 +2450,9 @@ static void Net_ParseServerPacket(ENetEvent *event)
 #endif
     switch (pbuf[0])
     {
+    case PACKET_VR_CAPABILITIES:
+        Net_ReceiveVRCapability(event,false);
+        break;
     case PACKET_MASTER_TO_SLAVE:
 
         if (!(g_player[myconnectindex].ps->gm & MODE_GAME))
@@ -4996,7 +5053,58 @@ void Net_SendClientUpdate(void)
 
     Net_FillPlayerUpdate(&update.player, myconnectindex);
 
-    enet_peer_send(g_netClientPeer, CHAN_MOVE, enet_packet_create(&update, sizeof(clientupdate_t), 0));
+    auto shot=G_VRGetShotInput(myconnectindex);
+    if ((shot.flags & VRShotEnabled) && !G_VRShotReady(myconnectindex))
+    { shot={}; shot.flags=VRShotEnabled; }
+    if (vrServerCapability && (shot.flags & VRShotEnabled))
+    {
+        uint8_t bytes[sizeof(clientupdate_t)+VRShotWireSize];
+        Bmemcpy(bytes,&update,sizeof(update));
+        G_VREncodeShot(shot,bytes+sizeof(update));
+        size_t length=sizeof(bytes); uint8_t channel=CHAN_MOVE;
+        if (auto test=std::getenv("EDUKE32_XR_TEST_BAD_SHOT"))
+        {
+            static unsigned samples; static bool injected;
+            bool const known=!Bstrcmp(test,"version") || !Bstrcmp(test,"flags") || !Bstrcmp(test,"direction")
+                || !Bstrcmp(test,"reach") || !Bstrcmp(test,"size") || !Bstrcmp(test,"channel") || !Bstrcmp(test,"identity");
+            if (known && !injected && ++samples==20)
+            {
+                injected=true;
+                auto bad=update; bad.player.pos.x=30000;
+                Bmemcpy(bytes,&bad,sizeof(bad));
+                auto tail=bytes+sizeof(update);
+                if (!Bstrcmp(test,"version")) tail[0]=2;
+                else if (!Bstrcmp(test,"flags")) tail[1]=128;
+                else if (!Bstrcmp(test,"direction")) { tail[1]=VRShotEnabled|VRShotValid; Bmemset(tail+8,0,6); }
+                else if (!Bstrcmp(test,"reach")) { tail[1]=VRShotEnabled|VRShotValid; tail[2]=255; tail[3]=127; }
+                else if (!Bstrcmp(test,"size")) --length;
+                else if (!Bstrcmp(test,"channel")) channel=CHAN_MISC;
+                else if (!Bstrcmp(test,"identity"))
+                { bad.player.playerindex=0; Bmemcpy(bytes,&bad,sizeof(bad)); }
+                LOG_F(INFO,"VR negative update fixture: %s.",test);
+            }
+        }
+        enet_peer_send(g_netClientPeer,channel,enet_packet_create(bytes,length,0));
+    }
+    else
+    {
+        bool negative=false;
+        if (auto test=std::getenv("EDUKE32_XR_TEST_BAD_SHOT"))
+            if (!Bstrcmp(test,"capability"))
+            {
+                static unsigned samples;
+                if (++samples==20)
+                {
+                    auto bad=update; bad.player.pos.x=30000;
+                    uint8_t bytes[sizeof(update)+VRShotWireSize]; Bmemcpy(bytes,&bad,sizeof(bad));
+                    VRShotInput unavailable; unavailable.flags=VRShotEnabled;
+                    G_VREncodeShot(unavailable,bytes+sizeof(update));
+                    enet_peer_send(g_netClientPeer,CHAN_MOVE,enet_packet_create(bytes,sizeof(bytes),0));
+                    LOG_F(INFO,"VR negative update fixture: capability."); negative=true;
+                }
+            }
+        if (!negative) enet_peer_send(g_netClientPeer,CHAN_MOVE,enet_packet_create(&update,sizeof(update),0));
+    }
 
     Dbg_PacketSent(PACKET_SLAVE_TO_MASTER);
 }

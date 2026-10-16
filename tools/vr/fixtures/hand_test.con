@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Native authoritative RPG/sector observations; no shot or packet overrides.
+include aim_test.con
+gamevar vrhand_given 0 1
+onevent EVENT_PROCESSINPUT
+    // Client-info packets can restore the configured autoaim after first spawn.
+    // Hold this controlled free-aim fixture's preference at the shot boundary.
+    setplayer[THISACTOR].auto_aim 0
+    ifvare vrhand_given 0
+    {
+        // Keep the observing shooter alive through the deliberate close-wall
+        // explosion. Native projectile/damage processing remains unchanged.
+        setactor[THISACTOR].extra 240
+        setplayer[THISACTOR].last_extra 240
+        setvar vrhand_given 1
+    }
+endevent
+gamevar vrhand_owner 0 0
+gamevar vrhand_player 0 0
+gamevar vrhand_sector 0 0
+gamevar vrhand_autoaim 0 0
+gamevar vrhand_x 0 0
+gamevar vrhand_y 0 0
+gamevar vrhand_z 0 0
+gamevar vrhand_pyoff 0 0
+onevent EVENT_EGS
+    ifactor RPG
+    {
+        getactor[THISACTOR].owner vrhand_owner
+        getactor[vrhand_owner].yvel vrhand_player
+        getactor[THISACTOR].sectnum vrhand_sector
+        getplayer[vrhand_player].auto_aim vrhand_autoaim
+        getplayer[vrhand_player].posx vrhand_x
+        getplayer[vrhand_player].posy vrhand_y
+        getplayer[vrhand_player].posz vrhand_z
+        getplayer[vrhand_player].pyoff vrhand_pyoff
+        addlog vrhand_player
+        addlog vrhand_sector
+        addlog vrhand_autoaim
+        addlog vrhand_x
+        addlog vrhand_y
+        addlog vrhand_z
+        addlog vrhand_pyoff
+    }
+endevent
+gamevar vrhit_owner 0 0
+gamevar vrhit_shooter 0 0
+gamevar vrhit_player 0 0
+gamevar vrhit_kind 0 0
+gamevar vrhit_sector 0 0
+gamevar vrhit_ceiling 0 0
+gamevar vrhit_z 0 0
+gamevar vrhit_x 0 0
+gamevar vrhit_y 0 0
+gamevar vrhit_oldx 0 0
+gamevar vrhit_oldy 0 0
+onevent EVENT_EGS
+    ifactor EXPLOSION2
+    {
+        getactor[THISACTOR].owner vrhit_owner
+        getactor[vrhit_owner].owner vrhit_shooter
+        getactor[vrhit_shooter].yvel vrhit_player
+        getactor[vrhit_owner].htmovflag vrhit_kind
+        getactor[vrhit_owner].sectnum vrhit_sector
+        getactor[vrhit_owner].htceilingz vrhit_ceiling
+        getactor[vrhit_owner].htbposx vrhit_oldx
+        getactor[vrhit_owner].htbposy vrhit_oldy
+        getactor[vrhit_owner].x vrhit_x
+        getactor[vrhit_owner].y vrhit_y
+        getactor[vrhit_owner].z vrhit_z
+        addlog vrhit_player
+        addlog vrhit_kind
+        addlog vrhit_sector
+        addlog vrhit_ceiling
+        addlog vrhit_oldx
+        addlog vrhit_oldy
+        addlog vrhit_x
+        addlog vrhit_y
+        addlog vrhit_z
+    }
+endevent
+
+// Observe a real replicated projectile in the client's world, without running
+// its spawn event or relying on local clientside RPG prediction.
+gamevar vrnet_logged 0 0
+gamevar vrnet_angle 0 0
+gamevar vrnet_speed 0 0
+gamevar vrnet_zvel 0 0
+gamevar vrnet_sector 0 0
+gamevar vrnet_stat 0 0
+onevent EVENT_GAME
+    ifactor RPG
+    ifvare vrnet_logged 0
+    {
+        getactor[THISACTOR].sectnum vrnet_sector
+        getactor[THISACTOR].statnum vrnet_stat
+        // Native client scratch/deleted slots can retain an RPG tile. Observe
+        // only a live projectile in one of the generated map's two sectors.
+        ifvarl vrnet_sector 2
+        ifvare vrnet_stat 4
+        {
+            getactor[THISACTOR].ang vrnet_angle
+            getactor[THISACTOR].xvel vrnet_speed
+            getactor[THISACTOR].zvel vrnet_zvel
+            addlog vrnet_angle
+            addlog vrnet_speed
+            addlog vrnet_zvel
+            addlog vrnet_sector
+            setvar vrnet_logged 1
+        }
+    }
+endevent
+
+// The optional damage map adds one native LIZTROOP at sprite4. Keep its
+// position fixed without replacing native RPG damage or native death code.
+onevent EVENT_PREGAME
+    ifactor LIZTROOP
+    {
+        setactor[THISACTOR].x 4096
+        setactor[THISACTOR].y 4790
+        setactor[THISACTOR].xvel 0
+    }
+endevent
+gamevar vrtarget_index 4 0
+gamevar vrtarget_tile 0 0
+gamevar vrtarget_health 0 0
+onevent EVENT_PROCESSINPUT
+    getactor[vrtarget_index].picnum vrtarget_tile
+    ifvarg vrtarget_tile 1679
+    ifvarl vrtarget_tile 1740
+    {
+        getactor[vrtarget_index].extra vrtarget_health
+        addlog vrtarget_health
+    }
+endevent

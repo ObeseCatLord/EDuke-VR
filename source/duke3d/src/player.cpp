@@ -25,6 +25,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "enet.h"
 #include "input.h"
 #include "vr.h"
+#include "vrshoot.h"
+#include <cmath>
+#include <cstdlib>
 #include "savegame.h"
 
 #ifdef __ANDROID__
@@ -1370,6 +1373,11 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             vel = 644;
 
             int j = -1;
+            bool const tracked=projecTile==RPG && playerNum>=0 && G_VRShotEnabled(playerNum)
+                && PWEAPON(playerNum,pPlayer->curr_weapon,WorksLike)==RPG_WEAPON;
+            int16_t originSector=spriteSectnum;
+            bool clamped=false;
+            if (tracked && (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,originSector,clamped))) return -1;
 
             if (playerNum >= 0)
             {
@@ -1404,9 +1412,33 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             if (numplayers > 1 && g_netClient)
                 return -1;
 
-            Zvel                   = A_GetShootZvel(Zvel);
-            int const returnSprite = A_InsertSprite(spriteSectnum, startPos.x + (sintable[(348 + shootAng + 512) & 2047] / 448),
-                                                    startPos.y + (sintable[(shootAng + 348) & 2047] / 448), startPos.z - (1 << 8),
+            if (tracked)
+            {
+                if (j<0)
+                {
+                    auto const shot=G_VRGetShotInput(playerNum);
+                    double const horizontal=std::hypot(double(shot.direction[0]),double(shot.direction[1]));
+                    double const length=std::hypot(horizontal,double(shot.direction[2]));
+                    if (horizontal>1.) shootAng=getangle(shot.direction[0],shot.direction[1]);
+                    vel=int(std::lround(644.*horizontal/length));
+                    Zvel=int(std::lround(644.*16.*shot.direction[2]/length));
+                }
+                else
+                {
+                    // Keep native autoaim callback/selection, normalizing its
+                    // selected 3D velocity rather than replacing weapon policy.
+                    double const factor=644./std::hypot(644.,double(Zvel)/16.);
+                    vel=int(std::lround(644.*factor)); Zvel=int(std::lround(Zvel*factor));
+                }
+                if (g_overrideShootZvel) vel=644; // explicit CON zvel remains authoritative
+            }
+            Zvel=A_GetShootZvel(Zvel);
+            vec3_t const spawn=tracked ? startPos : vec3_t{startPos.x+(sintable[(348+shootAng+512)&2047]/448),
+                                                          startPos.y+(sintable[(shootAng+348)&2047]/448),startPos.z-(1<<8)};
+            if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR authoritative RPG: player=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d.",
+                      playerNum,spawn.x,spawn.y,spawn.z,originSector,clamped,shootAng,vel,Zvel);
+            int const returnSprite = A_InsertSprite(originSector,spawn.x,spawn.y,spawn.z,
                                                     projecTile, 0, 14, 14, shootAng, vel, Zvel, spriteNum, 4);
             auto const pReturn = &sprite[returnSprite];
 
@@ -5041,6 +5073,7 @@ void P_ProcessInput(int playerNum)
 
     ++pPlayer->player_par;
 
+    G_VRFilterShotInput(playerNum,thisPlayer.input);
     VM_OnEvent(EVENT_PROCESSINPUT, pPlayer->i, playerNum);
 
     auto &pInput = thisPlayer.input;

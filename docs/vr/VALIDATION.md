@@ -432,3 +432,74 @@ agreement, physical muzzle/collision and authoritative hand-origin replication
 are unfinished. Native body-origin firing is explicit temporary behavior.
 Real headset optics/ergonomics/performance and the full multiplayer combat,
 VR-host/two-VR, damage/frag/respawn/map-change/loss matrix remain open.
+
+
+## Native hand-origin/full-vector RPG authority — 2026-10-16
+
+`EDUKE32_XR_HAND_SHOTS=1` now enables the ordinary hardcoded RPG's independent
+hand position/full physical direction, including native-server multiplayer.
+This is an optional acknowledged movement tail, not a second pose service or
+player simulation. Protocol/invariants and exact scope are in HAND_SHOTS.md.
+
+The final native and XR builds pass, and only the latter links OpenXR. Fourteen
+actual native-server/client cases and seven malformed-ENet cases pass under
+private simulated Monado remote devices. Applicable XR cases require60 actual
+world/HUD submissions, distinct eye layers, active core validation and no core
+warnings/errors. The pre-extension flat binary at5749396 is used as the actual
+legacy peer; changing only a reported version would not prove compatibility.
+
+| Proof | Actual result |
+|---|---|
+| Open portal | Body XY1024,4096; server RPG origin1216,4173,-8109 in neighboring sector1. Angle69, xvel638, zvel-1434; native far-wall impact8175,5672,-24242. Independent physical-hand transform matches; live client RPG fields also match. |
+| Blocked and glancing hand | Closed wall constrains origin1125,4149,-8672 in sector0; native RPG hits that wall. Glancing case ends at1136,4656,-8162 with native radius clearance, not behind the wall. |
+| Steep and vertical |75° gives xvel167/zvel-9953;90° gives xvel0/zvel-10304. Native ceiling-collision kind is observed in sector1. Vertical pre-impact htbpos XY remains1216,4173. Native collision advances discretely and native Proj_GetOffset backs impact XY112 units; neither is rewritten to fit an ideal ray. |
+| Left hand and translation | Actual selected left source passes. A second real RPG follows independently moved hand coordinates rather than body translation. |
+| Reach and packet timeout | A3m pose cannot fire; held recovery cannot fire until release/repress. Pausing only the owned client lets native-clock expiry stop repeated server fire/ammo use; resumed held input remains blocked, then a new press fires. |
+| Native damage/autoaim | Actual RPG collides with native target actor4; server native enemy health goes from positive to nonpositive and client receives death. Separate autoaim0/1 cases hold that preference at the shot boundary; native autoaim produces zvel-87 versus free-aim0, with normalized physical speed. No replacement damage code. |
+| Pixel agreement | Actual card pose and both complete eye RGB arrays match independent projection of static server-constrained origins, within one byte in open/blocked cases (allowed maximum2). Both complete raw world-depth layers remain byte-identical. Glancing card is outside visible coverage, so its zero-error result alone is not a visible-card proof. |
+| Legacy peers | Pre-extension native client moves/fires with native body origin and ammo. Pre-extension server receives base updates, never acknowledges the new capability; opt-in unsupported hand fire is suppressed and native movement continues. |
+| Unnegotiated/malformed | One real unnegotiated95-byte update is rejected. Seven real bad updates exercise version, flags, direction, reach, size, channel and player identity. Each sentinel-position update is rejected before native prefix application; subsequent valid hand RPG origin/impact/client actor and eye checks pass. |
+| Sparse inventory | Two actual XR peers join slots1 and2; slot1 disconnects via native F10 binding, leaving0,2. A native server CON ammo mutation reports36, and the actual slot2 client's ammo reports36. Movement/fire/release and60 stereo frames pass for both tested joins. |
+
+Actual runtime failures drove two narrow native fixes. A cached player0 sprite
+index8192 misclassified incoming server RPG8192 as player data, so server spawn
+success initially hid missing client projectiles. Authoritative snapshot role
+and player ID now restore the binding, retain native player prediction copying
+only for actual players, and update same-stat sector links. Live client
+EVENT_GAME observations prove the replicated RPG. Separately, the real sparse
+fixture failed with server ammo36/client44 because inventory fields used record
+ordinal; receiver fields now use the validated record player ID. Contiguous
+slots had passed and were insufficient evidence for this bug.
+
+Fixture corrections are retained in scratch evidence: CON actor indexing needs
+a gamevar, EVENT_GAME excludes deleted/unlinked RPG scratch slots, initial
+EVENT_EGS precedes native projectile target assignment, native fire defaults to
+right Control, and native client-info restores autoaim after spawn. Tests now
+observe actual compilation errors promptly, hold the requested autoaim setting
+through native input, and wait for the first complete server sample after the
+inventory mutation marker rather than a potentially stale pre-mutation sample.
+No baseline CON/damage/impact policy was changed to make tests pass.
+
+Post-change regressions: animated-mask multiview versus two-pass reference has
+zero changed RGB pixels and exact nonconstant raw depth in both eyes; callback
+counts14/112/14 match. HUD/console has60 actual projections, unchanged world
+depth and native callbacks61/61/60/60. Cold-menu/console resize reaches800x600
+with60 submissions and exact desktop/native UI equality. Prior non-hand tracked
+aim passes all24 native-server orientation/impact/recovery/body/resize checks.
+Shared standalone submits12 core-validated frames with one multiview draw each.
+Python compilation, native/XR builds and diff checks pass. Existing baseline
+allocator compiler warnings persist. The private runtime was stopped afterward.
+
+Bounded results: `../../../evidence/hand-shot-validation.json`; visually inspected
+actual final left/right layers: `../../../evidence/hand-shot-stereo.png`. The
+image labels distinguish an open portal and blocked wall, and call the ART card
+provisional. No raw operational logs/private configs or proprietary data files
+are exported. The source commit is pinned in the evidence after integration.
+
+Fresh explicitly selected Astra/xhigh follow-up could not start at retained
+agent-thread capacity. This has prior verified senior architecture guidance and
+main source/GPU/server checks, not a fresh independent implementation review.
+Other weapons/custom projectiles, full-pitch world rendering, full single-pass
+coverage, dynamic collision reconciliation, packet loss/reordering, PvP
+frag/respawn/map changes, save/demo/camera behavior, haptics/settings and physical
+headset/Windows/Quest qualification remain required. The full-port goal is active.

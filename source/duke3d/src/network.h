@@ -33,6 +33,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "enet.h"
 
+bool Net_VRShotAvailable();
+
 // net packet specification/compatibility version
 #define NETVERSION    1
 
@@ -90,6 +92,7 @@ enum DukePacket_t
     PACKET_MAP_VOTE,
     PACKET_MAP_VOTE_INITIATE,
     PACKET_MAP_VOTE_CANCEL,
+    PACKET_VR_CAPABILITIES=200, // optional CHAN_MISC capability; legacy IDs unchanged
 };
 
 

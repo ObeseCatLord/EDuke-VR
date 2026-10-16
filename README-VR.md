@@ -116,7 +116,7 @@ DISPLAY=:94 python tools/vr/smoke_dedicated.py \
     --work-dir /path/to/test/evidence --seconds 8
 ```
 
-Use a display you own for testing (`:94` was an isolated Xvfb here). This checks dedicated startup/level load/survival only. Multiplayer gameplay is **not** established by that test. A second native fix corrects the world-update packet payload pointer. Listen/dedicated joins and dedicated reconnect now pass startup checks, and a native client reaches rendered gameplay. A native dedicated server with an XR client also passes join/reconnect and 60-frame stereo readbacks per join. Fire/damage/map transitions, authoritative convergence and other mixed-client configurations remain qualification gates; see VALIDATION.md. No network packet layouts or versions have been changed.
+Use a display you own for testing (`:94` was an isolated Xvfb here). This checks dedicated startup/level load/survival only. Multiplayer gameplay is **not** established by that test. A second native fix corrects the world-update packet payload pointer. Listen/dedicated joins and dedicated reconnect now pass startup checks, and a native client reaches rendered gameplay. A native dedicated server with an XR client also passes join/reconnect and 60-frame stereo readbacks per join. Fire/damage/map transitions, authoritative convergence and other mixed-client configurations remain qualification gates; see VALIDATION.md. The base network version/layout remains unchanged; the optional hand-shot capability below negotiates a movement-update tail between upgraded peers.
 
 The mixed-client regression uses an already-running runtime and a supported GPU display. It waits for level synchronization, skips the native intro with `-nologo`, dismisses the startup menu after synchronization/fade, then requires eye readbacks and visible input changes on both the initial join and reconnect:
 
@@ -340,9 +340,43 @@ ray/plane/linear-sampling oracle, final HUD/tint composition, unchanged world
 depth and native callback counts. All ten cases pass under private simulated
 Monado; this does not establish real-headset comfort or performance.
 
-Shots still start at the native player origin. Native pitch limits can also
-separate the physical card direction from the supported shot direction outside
-that range. Independent authoritative hand-origin/full-pitch firing, world
-occlusion, per-weapon pivots/two-hand behavior, other weapon/face-action families
-and physical-headset ergonomics remain required. See the authority follow-through
-in [the plan](docs/vr/PLAN.md); the ART card does not replace that work.
+Without the hand-shot flag below, shots retain the native player origin and
+native pitch limits. World occlusion, per-weapon pivots/two-hand behavior, other
+weapon/face-action families and physical-headset ergonomics remain required.
+
+## Experimental authoritative hand-origin RPG
+
+`EDUKE32_XR_HAND_SHOTS=1` with `EDUKE32_XR_AIM=right` or `left` enables
+independent hand-origin/full-vector firing for the ordinary hardcoded RPG only.
+The existing native server creates projectiles, applies damage and replicates
+actors. Other weapons/custom projectiles retain their native origins. This flag
+is optional and requires an upgraded server; an unsupported server suppresses
+hand-mode fire while native movement continues.
+
+```sh
+EDUKE32_XR=1 EDUKE32_XR_SINGLE_PASS=1 EDUKE32_XR_UI=2 \
+EDUKE32_XR_AIM=right EDUKE32_XR_WEAPON=1 EDUKE32_XR_HAND_SHOTS=1 \
+SDL_VIDEODRIVER=x11 ./eduke32-xr -usecwd -nosetup -noautoload \
+  -g /path/to/owned/DUKE3D.GRP -v1 -l1 -s1
+
+python3 tools/vr/smoke_hand_shots.py --binary ./eduke32 \
+  --client-binary ./eduke32-xr --grp /path/to/owned/DUKE3D.GRP \
+  --work-dir work/hand-shots --display :1 --remote-port 29427 --case wall
+```
+
+The negotiated 14-byte tail travels with the existing native movement/fire
+update. Both sides constrain its body-relative position to two metres, trace
+body-to-hand obstruction and resolve the actual origin sector. The RPG card uses
+the locally constrained origin; static fixtures compare it with server authority.
+Samples expire after 250ms on the native clock; invalidity/expiry requires a
+trigger release before recovery can fire. No player body is temporarily moved.
+
+Tracked RPG velocity has constant physical 3D speed 644, so steep shots have less
+horizontal speed than native body firing. Native autoaim selection/events remain;
+its velocity is normalized in this mode, while explicit CON z-velocity overrides
+retain native precedence. Vertical projectiles work, but full-pitch **world
+rendering** remains incomplete. This is an aim-pose origin with provisional ART
+placement, not a calibrated 3D barrel. Dynamic-world prediction, loss/reordering,
+all weapon families and full multiplayer combat/respawn/map-change coverage
+remain open. See [the protocol and invariants](docs/vr/HAND_SHOTS.md) and
+[validation](docs/vr/VALIDATION.md).

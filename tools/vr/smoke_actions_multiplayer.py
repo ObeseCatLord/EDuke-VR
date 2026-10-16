@@ -18,6 +18,7 @@ import tempfile
 import time
 
 from monado_remote import Remote
+from smoke_action_lifecycle import Admin
 from smoke_actions import Observer, samples, traces
 from smoke_multiplayer import X11, setup_lab, stop
 
@@ -93,7 +94,13 @@ def wait_for_join_barrier(x11, process, client_log, server_observer):
     window, geometry = x11.owned_window(process.pid)
     if window is None:
         raise RuntimeError('no owned XR client window after synchronization barrier')
+    context_deadline=time.monotonic()+10
     current=traces(client_log.read_text(errors='replace'))
+    while not current and time.monotonic()<context_deadline:
+        if process.poll() is not None: raise RuntimeError('XR client exited before native input context')
+        server_observer.text()
+        time.sleep(.05)
+        current=traces(client_log.read_text(errors='replace'))
     if not current: raise RuntimeError('native XR input context unavailable at join barrier')
     # User maps can enter gameplay directly; Escape would open a menu there.
     # Dismiss only a menu actually observed in the native input context.
@@ -196,8 +203,10 @@ def main():
     parser.add_argument('--remote-port', required=True, type=int)
     parser.add_argument('--reconnect', action='store_true', help='replace the XR client and repeat the proof')
     parser.add_argument('--require-hud', action='store_true', help='require 60 actual native HUD/world projections and distinct final eye captures per join')
+    parser.add_argument('--inventory-sync',action='store_true',help='require a server-only native inventory change to reach each actual client player ID')
     args = parser.parse_args()
 
+    script='inventory_test.con' if args.inventory_sync else WRAPPER.name
     binary, client_binary, grp = (args.binary.resolve(), args.client_binary.resolve(), args.grp.resolve())
     if not binary.is_file() or not client_binary.is_file() or not grp.is_file() or not WRAPPER.is_file():
         parser.error('server binary, XR client binary, GRP, and controller wrapper must exist')
@@ -207,40 +216,74 @@ def main():
     root = Path(tempfile.mkdtemp(prefix='xr-authoritative-input-', dir=args.work_dir.resolve()))
     server = None
     client = None
+    retained_client = None
+    admin = None
     server_log = None
     client_log = None
     result = {'passed': False, 'joins': [], 'evidence_directory': str(root)}
     try:
         server_lab = setup_lab(root, 'server', grp, False)
         copy_wrapper(server_lab)
+        if args.inventory_sync:shutil.copyfile(WRAPPER.parent/'inventory_test.con',server_lab/script)
         server_log_path = server_lab / 'server.log'
         server_log = server_log_path.open('w')
         server_command = [str(binary), '-usecwd', '-nosetup', '-noautoload', '-dedicated',
-                          '-port', str(args.port), '-v1', '-l1', '-s1', '-x', WRAPPER.name]
+                          '-port', str(args.port), '-v1', '-l1', '-s1', '-x', script]
         server = subprocess.Popen(server_command, cwd=server_lab, env=runtime_env(args.display, server=True),
                                   stdin=subprocess.DEVNULL, stdout=server_log, stderr=subprocess.STDOUT)
         server_observer = Observer(server, server_log_path)
         wait_for_server(server_observer)
         x11 = X11(args.display)
 
+        if args.inventory_sync and args.reconnect:admin=Admin()
         with Remote(args.remote_port) as remote:
             for join_number in range(1, 2 + int(args.reconnect)):
                 client_lab = setup_lab(root, f'client-{join_number}', grp, False)
                 copy_wrapper(client_lab)
+                if args.inventory_sync:shutil.copyfile(WRAPPER.parent/'inventory_test.con',client_lab/script)
+                if admin:(client_lab/'settings.cfg').write_text('bind \"F10\" \"disconnect\"\n')
                 client_log_path = client_lab / 'client.log'
                 client_log = client_log_path.open('w')
                 client_command = [str(client_binary), '-usecwd', '-nosetup', '-noautoload', '-nologo',
-                                  '-ns', '-nm', '-connect', f'127.0.0.1:{args.port}', '-x', WRAPPER.name]
+                                  '-ns', '-nm', '-connect', f'127.0.0.1:{args.port}', '-x', script]
                 client_env=runtime_env(args.display)
                 if args.require_hud:
                     client_env.update(EDUKE32_XR_UI='2',EDUKE32_XR_SINGLE_PASS='1',EDUKE32_XR_HUD_OUTPUT=str(client_lab/'hud'))
+                known=admin.clients() if admin else None
                 client = subprocess.Popen(client_command, cwd=client_lab, env=client_env,
                                           stdin=subprocess.DEVNULL, stdout=client_log, stderr=subprocess.STDOUT)
                 try:
+                    if admin:
+                        client_id=admin.discover(known)
+                        admin.change('set_client_primary',client_id)
                     join = {'join': join_number}
                     join['barrier'] = wait_for_join_barrier(x11, client, client_log_path, server_observer)
                     join['server_player'] = join['barrier']['server_player']
+                    if retained_client:
+                        # Establish a real sparse connection set: join the second
+                        # owned client, then disconnect the first through its
+                        # native command binding. No synthetic server state.
+                        window,_=x11.owned_window(retained_client.pid)
+                        if not window:raise RuntimeError('retained owned client window missing')
+                        offset=len(server_observer.text())
+                        x11.press(window,'F10',.06,True)
+                        server_observer.wait(lambda text:' disconnected.' in text[offset:],timeout=8)
+                        join['sparse_player_after_native_disconnect']=join['server_player']>1
+                        if not join['sparse_player_after_native_disconnect']:raise RuntimeError('sparse player fixture unavailable')
+                        stop(retained_client);retained_client=None
+
                     join['server_authority'] = exercise_server(server_observer, remote, join['server_player'])
+                    if args.inventory_sync:
+                        player=join['server_player']
+                        changed=re.compile(r'addlog vrinventory_done \(player '+str(player)+r'\) = 1')
+                        server_observer.wait(lambda text:bool(changed.search(text)),timeout=6)
+                        marker=changed.search(server_observer.text()).end()
+                        server_observer.wait(lambda text:bool(player_samples(text[marker:],player)),timeout=3)
+                        expected=player_samples(server_observer.text()[marker:],player)[-1]['ammo']
+                        observer=Observer(client,client_log_path)
+                        observer.wait(lambda text:bool(player_samples(text,player)) and player_samples(text,player)[-1]['ammo']==expected,timeout=5)
+                        join['inventory_sync']={'passed':True,'player':player,'authoritative_ammo':expected,
+                                                'client_ammo':player_samples(observer.text(),player)[-1]['ammo']}
                     if args.require_hud:
                         observer=Observer(client,client_log_path)
                         observer.wait(lambda text: 'OpenXR HUD presentation: 60 frames;' in text
@@ -253,13 +296,16 @@ def main():
                             'core_validation_no_warning_or_error':not bool(re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',text))}
                     join['client_exit_before_cleanup'] = client.poll()
                     join['passed'] = (join['server_authority']['passed'] and join['client_exit_before_cleanup'] is None
-                                      and (not args.require_hud or all(join['presentation'].values())))
+                                      and (not args.require_hud or all(join['presentation'].values()))
+                                      and (not args.inventory_sync or join['inventory_sync']['passed']))
                 except Exception as error:
                     join = {'join': join_number, 'passed': False, 'error': str(error),
                             'client_exit_before_cleanup': client.poll()}
                 finally:
                     remote.neutral()
-                    stop(client)
+                    if admin and join_number==1 and join.get('passed'):
+                        retained_client=client
+                    else:stop(client)
                     client = None
                     client_log.close()
                     client_log = None
@@ -283,6 +329,8 @@ def main():
         if client_log:
             client_log.close()
         stop(client)
+        stop(retained_client)
+        if admin:admin.close()
         if server_log:
             server_log.close()
         stop(server)
