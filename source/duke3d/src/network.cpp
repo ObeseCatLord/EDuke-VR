@@ -2321,6 +2321,7 @@ static void Net_ReceiveNewGame(ENetEvent *event)
 
             */
             ClientPlayerReady = 1;
+            LOG_F(INFO, "Multiplayer client level synchronization complete.");
         }
     }
 
@@ -4243,7 +4244,7 @@ static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevision
 
     NET_75_CHECK++; // HACK: I Really need to keep the peer with the player instead of assuming that the peer index is the same as the (player index - 1)
     ENetPeer *const tCurrentPeer = &g_netServer->peers[sendToPlayerIndex - 1];
-    enet_peer_send(tCurrentPeer, CHAN_GAMESTATE, enet_packet_create(&tempnetbuf, bufferPtr->CurSize + 1, 0));
+    enet_peer_send(tCurrentPeer, CHAN_GAMESTATE, enet_packet_create(tempnetbuf, bufferPtr->CurSize + 1, 0));
     Dbg_PacketSent(PACKET_WORLD_UPDATE);
 
 
