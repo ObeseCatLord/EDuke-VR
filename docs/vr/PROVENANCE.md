@@ -33,3 +33,15 @@ replicate authoritative remote aim in EDuke32. The new orientation adapter feeds
 native angle updates and existing absolute player-update fields instead; it
 copies no Raze renderer or temporary player-struct shot override. Independent
 hand-origin authority remains a required next slice, not a permanent omission.
+
+
+### Native weapon presentation reference
+
+At RazeXR historical `e243dda6690b703146293437a13fcc71c5f3a80a`,
+`source/core/rendering/hw_entrypoint.cpp::RenderViewpoint` submits native weapon
+`twodpsp` separately, and `source/common/rendering/hwrenderer/data/hw_vrmodes.cpp`
+defines player-sprite projection. This supports retaining native ART rather than
+transplanting the Raze scene renderer. EDuke's controller card instead uses the
+already-owned OpenXR aim pose, exact located views and its existing multiview UI
+program/texture. The new adapter is original code under the repository's VR
+license; it copies no game art or Raze renderer implementation.

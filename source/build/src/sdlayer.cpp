@@ -216,7 +216,7 @@ static void sdlayer_xr_presentMenu()
                 }
             }
         if (++submitted==60)
-            LOG_F(INFO,"OpenXR %s presentation: 60 frames; native UI extent=%dx%d; osdRows=%d; one multiview plane per frame.",overlay ? "HUD" : "menu",xdim,ydim,OSD_GetRowsCur());
+            LOG_F(INFO,"OpenXR %s presentation: 60 frames; native UI extent=%dx%d; osdRows=%d; final UI multiview plane; sequential segments may precede.",overlay ? "HUD" : "menu",xdim,ydim,OSD_GetRowsCur());
     }
 }
 

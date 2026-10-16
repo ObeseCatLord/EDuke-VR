@@ -1465,6 +1465,87 @@ bool Runtime::cancelMenuPresentation(std::string &error, bool mirror)
     return good;
 }
 
+bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error)
+{
+    GLState state;
+    state.save();
+    bool rendered = bindMultiview(error);
+    if (rendered)
+    {
+        glViewport(0, 0, m_impl->width, m_impl->height);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_ALPHA_TEST);
+        glDisable(GL_STENCIL_TEST);
+        glDisable(GL_RASTERIZER_DISCARD);
+        glDisable(GL_FRAMEBUFFER_SRGB);
+        glDisable(GL_DITHER);
+        glClearColor(0, 0, 0, 1);
+        glClearDepth(1);
+        glClearStencil(0);
+        if (!m_impl->menuOverlay) glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        else { glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD); glBlendFuncSeparate(GL_ONE,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA); }
+        glDepthMask(GL_FALSE);
+        float placement[16], scale[16] = { halfWidth, 0, 0, 0, 0, halfHeight, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        float model[16], matrices[kViewCount][16];
+        poseMatrix(pose, placement);
+        multiply(model, placement, scale);
+        for (uint32_t i = 0; i < kViewCount; ++i)
+        {
+            float projection[16], view[16], viewProjection[16];
+            projectionMatrix(m_impl->views[i].fov, projection);
+            viewMatrix(m_impl->views[i].pose, view);
+            multiply(viewProjection, projection, view);
+            multiply(matrices[i], viewProjection, model);
+        }
+        glUseProgram(m_impl->menuProgram);
+        glUniform1i(glGetUniformLocation(m_impl->menuProgram,"uMode"),m_impl->menuOverlay ? 1 : 0);
+        glUniformMatrix4fv(glGetUniformLocation(m_impl->menuProgram, "uViewProj[0]"), kViewCount, GL_FALSE, &matrices[0][0]);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_impl->menuColor);
+        glBindSampler(0, 0);
+        glUniform1i(glGetUniformLocation(m_impl->menuProgram, "uTexture"), 0);
+        glBindVertexArray(m_impl->menuVao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        rendered = glSucceeded("drawing menu presentation", error);
+    }
+    state.restore();
+    return rendered;
+}
+
+bool Runtime::flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfHeight, bool visible,
+                              std::string &error, char const *capturePrefix)
+{
+    error.clear();
+    if (!menuOverlayTargetBound()) { error="overlay flush requires the active UI target"; return false; }
+    bool good=!visible || drawMenuCapture(pose,halfWidth,halfHeight,error);
+    if (good && capturePrefix)
+    {
+        GLint bits=0; glGetIntegerv(GL_SUBPIXEL_BITS,&bits);
+        std::fprintf(stderr,"OpenXR overlay raster: subpixelBits=%d.\n",bits);
+        std::string path=std::string(capturePrefix)+"-ui.ppm", alpha=std::string(capturePrefix)+"-coverage.pgm";
+        good=writeTexturePpm(m_impl->menuColor,m_impl->menuWidth,m_impl->menuHeight,path.c_str(),error,alpha.c_str())
+            && captureFrame(capturePrefix,false,error,true);
+    }
+    // Mirror each native segment once, in its original flat coordinates. Restore
+    // capture binding afterwards; the same owner/target continues through HUD.
+    GLState state; state.save();
+    if (good) good=m_impl->mirrorMenuToNative(error);
+    state.restore();
+    if (!good) return false;
+    glDisable(GL_SCISSOR_TEST); glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE); glDepthMask(GL_TRUE);
+    glStencilMaskSeparate(GL_FRONT,~0u); glStencilMaskSeparate(GL_BACK,~0u);
+    glClearColor(0,0,0,0); glClearDepth(1); glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
+    good=glSucceeded("clearing reused overlay capture",error);
+    state.restore();
+    return good;
+}
+
 bool Runtime::completeMenuPresentation(std::string &error, char const *capturePrefix)
 {
     error.clear();
@@ -1497,55 +1578,12 @@ bool Runtime::completeMenuPresentation(std::string &error, char const *capturePr
         != (XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
         return cancelMenuPresentation(error,true);
 
-    GLState state;
-    state.save();
-    bool rendered = bindMultiview(error);
-    if (rendered)
-    {
-        glViewport(0, 0, m_impl->width, m_impl->height);
-        glDisable(GL_SCISSOR_TEST);
-        glDisable(GL_DEPTH_TEST);
-        glDepthMask(GL_TRUE);
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        glDisable(GL_BLEND);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_ALPHA_TEST);
-        glDisable(GL_STENCIL_TEST);
-        glDisable(GL_RASTERIZER_DISCARD);
-        glDisable(GL_FRAMEBUFFER_SRGB);
-        glDisable(GL_DITHER);
-        glClearColor(0, 0, 0, 1);
-        glClearDepth(1);
-        glClearStencil(0);
-        if (!m_impl->menuOverlay) glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-        else { glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD); glBlendFuncSeparate(GL_ONE,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA); }
-        glDepthMask(GL_FALSE);
-        float headMatrix[16], translate[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -PanelDistance, 1 };
-        float scale[16] = { PanelHalfWidth, 0, 0, 0, 0, PanelHalfWidth * float(m_impl->menuHeight) / m_impl->menuWidth, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-        float world[16], model[16], matrices[kViewCount][16];
-        poseMatrix(head.pose, headMatrix);
-        multiply(world, headMatrix, translate);
-        multiply(model, world, scale);
-        for (uint32_t i = 0; i < kViewCount; ++i)
-        {
-            float projection[16], view[16], viewProjection[16];
-            projectionMatrix(m_impl->views[i].fov, projection);
-            viewMatrix(m_impl->views[i].pose, view);
-            multiply(viewProjection, projection, view);
-            multiply(matrices[i], viewProjection, model);
-        }
-        glUseProgram(m_impl->menuProgram);
-        glUniform1i(glGetUniformLocation(m_impl->menuProgram,"uMode"),m_impl->menuOverlay ? 1 : 0);
-        glUniformMatrix4fv(glGetUniformLocation(m_impl->menuProgram, "uViewProj[0]"), kViewCount, GL_FALSE, &matrices[0][0]);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_impl->menuColor);
-        glBindSampler(0, 0);
-        glUniform1i(glGetUniformLocation(m_impl->menuProgram, "uTexture"), 0);
-        glBindVertexArray(m_impl->menuVao);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        rendered = glSucceeded("drawing menu presentation", error);
-    }
-    state.restore();
+    XrPosef panel=head.pose;
+    float headMatrix[16]; poseMatrix(head.pose,headMatrix);
+    panel.position.x-=PanelDistance*headMatrix[8];
+    panel.position.y-=PanelDistance*headMatrix[9];
+    panel.position.z-=PanelDistance*headMatrix[10];
+    bool rendered=drawMenuCapture(panel,PanelHalfWidth,PanelHalfWidth*float(m_impl->menuHeight)/m_impl->menuWidth,error);
     if (!rendered)
     {
         std::string cleanup;

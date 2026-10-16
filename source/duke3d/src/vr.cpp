@@ -487,6 +487,70 @@ void G_XRBeginMenuPresentation()
         }
 }
 
+bool G_XRBeginWeapon()
+{
+    auto const enabled=std::getenv("EDUKE32_XR_WEAPON");
+    if (!enabled || Bstrcmp(enabled,"1") || aimHand()<0 || !localAimCamera()
+        || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return false;
+    XrPosef panel=rawInput.headPose;
+    auto const offset=rotate(panel.orientation,{0,0,-eduke_xr::PanelDistance});
+    panel.position.x+=offset.x; panel.position.y+=offset.y; panel.position.z+=offset.z;
+    std::string error;
+    if (!menuRuntime->flushMenuOverlay(panel,eduke_xr::PanelHalfWidth,eduke_xr::PanelHalfWidth*float(ydim)/xdim,
+                                       rawInput.headValid && validPose(rawInput.headPose),error))
+    {
+        G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false;
+    }
+    if (worldFrames==59)
+        if (auto prefix=std::getenv("EDUKE32_XR_WEAPON_OUTPUT"))
+        {
+            std::string before=std::string(prefix)+"-before";
+            if (!menuRuntime->captureFrame(before.c_str(),false,error,true))
+            { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
+        }
+    return true;
+}
+
+void G_XREndWeapon(bool captured)
+{
+    if (captured)
+        if (auto test=std::getenv("EDUKE32_XR_TEST_WEAPON_NESTED"))
+        {
+            static bool injected;
+            if (!injected && !Bstrcmp(test,"1"))
+            {
+                injected=true;
+                LOG_F(INFO,"OpenXR weapon test: injected unarmed native presentation.");
+                videoNextPage();
+            }
+        }
+    // Native callbacks may cancel the owner (auxiliary rendering/custom blend).
+    if (!captured || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
+    auto const hand=aimHand();
+    if (hand<0) return;
+    XrPosef pose=rawInput.hands[hand].aimPose;
+    // Native ART is a perspective weapon card. Provisional grip pivot is native
+    // (192,180) in its 320x200, 4:3 subregion. Animation/palette/CON remain native.
+    auto const offset=rotate(pose.orientation,{-.08f,.24f,-.15f});
+    pose.position.x+=offset.x; pose.position.y+=offset.y; pose.position.z+=offset.z;
+    bool const visible=aimPoseUsable();
+    char const *prefix=worldFrames==59 ? std::getenv("EDUKE32_XR_WEAPON_OUTPUT") : nullptr;
+    if (prefix)
+    {
+        auto const &p=pose.position; auto const &q=pose.orientation;
+        LOG_F(INFO,"OpenXR weapon card: visible=%d pos=%.9f,%.9f,%.9f quat=%.9f,%.9f,%.9f,%.9f.",visible,p.x,p.y,p.z,q.x,q.y,q.z,q.w);
+        for (int eye=0;eye<2;++eye)
+        {
+            auto const &v=pendingFrame.views[eye]; auto const &p=v.pose.position; auto const &q=v.pose.orientation;
+            LOG_F(INFO,"OpenXR weapon view: eye=%d pos=%.9f,%.9f,%.9f quat=%.9f,%.9f,%.9f,%.9f fov=%.9f,%.9f,%.9f,%.9f.",
+                  eye,p.x,p.y,p.z,q.x,q.y,q.z,q.w,v.fov.angleLeft,v.fov.angleRight,v.fov.angleUp,v.fov.angleDown);
+        }
+    }
+    std::string error;
+    if (!menuRuntime->flushMenuOverlay(pose,.3f*float(xdim)/ydim,.3f,visible,error,prefix))
+    { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
+}
+
 void G_XRArmMenuPresentation()
 {
     if (auto test=std::getenv("EDUKE32_XR_TEST_HUD_MENU"))

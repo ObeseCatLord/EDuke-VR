@@ -106,3 +106,13 @@ Synthesize senior review into docs/vr/PLAN.md with dispositions and test gates; 
 - Existing calibration rebases across recreated LOCAL/session coordinates; action validity/buttons still invalidate on generation change. Actual HMD/controller divergence plus native window resize preserves server aim and both eye directions at the new extent.
 - Controlled local map/CON fixtures prove all three aim sources through the native server build's unchanged RPG simulation and far-wall impact, plus actual stereo HUD/crosshair captures. Initial fixture lacked enough native player starts; join helper also incorrectly sent Escape in already-entered user-map gameplay. Fixed only fixture/setup, with observed native menu context.
 - Fresh Astra design request hit retained agent-thread capacity. Main verified the implementation against preceding native-authority architecture requirements. Full tracked weapon placement/origin, haptics/settings, full rendering/physics/platform and multiplayer matrices remain required; full VR goal stays active.
+
+
+## 2026-10-16 — controller-attached native ART weapon
+
+- Reused existing UI texture/owner/program sequentially for preceding head UI, tracked weapon and following head HUD. No new framebuffer/resource lifecycle, scene renderer, player-state override or packets.
+- Native weapon callbacks/animation run once; face spit/scuba remain head-relative. Left/right aim source and unavailable-pose suppression are supported. Card scale/pivot and foreground policy remain provisional.
+- Actual eye pixels match an independent ray/plane/native-texture oracle in ten scenarios. Final HUD plus full-eye native tint/dim also matches independently; both raw depth layers remain byte-identical. Native flat callback references match, including save auxiliary counts.
+- Stronger nested test cancels inside the weapon capture via a real unarmed native presentation, then recovers to60 world/HUD submissions. Initial frame-number barrier assumed a particular cold-upload fallback; corrected to observe an actual multiview draw instead.
+- Renderer/HUD/menu regressions and tracked native-server RPG impact/session-recreation pass with attached weapon enabled. Native/XR/standalone builds and standalone12-frame validation pass. Fresh Astra request again hit retained-thread capacity; no substitute review.
+- Investigated exact-size native movement updates and body-sector shot helpers. Added concrete authority follow-through to PLAN.md; independent physical hand-origin/full-pitch/collision replication remains next, not replaced by this visual card. Full port goal stays active.

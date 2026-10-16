@@ -377,3 +377,58 @@ demo/record/save-load/CON-angle rewrites and other cameras remain unqualified.
 The full VR-host/native-client/two-VR combat, damage/frag/respawn/map-change and
 loss matrix remains open. Null-compositor captures do not qualify physical
 headset optics, comfort or performance.
+
+## Controller-attached native ART card — 2026-10-16
+
+`EDUKE32_XR_WEAPON=1` with UI=2 and right/left tracked aim separates native
+weapon ART from the head HUD using the same capture texture. Preceding UI,
+weapon and subsequent HUD are sequential segments under the existing owner.
+Each segment uses one multiview draw; native callbacks are not replayed. End of
+weapon capture precedes face spit/scuba. No shot or packet behavior changes.
+
+| Case | Actual result |
+|---|---|
+| Base, translated, yaw/pitch/roll and independent HMD |Actual card pose matches the selected remote source plus the provisional grip pivot. Both complete eye RGB layers match independent CPU ray/plane/linear-texture sampling within one byte. HMD can turn15°left/6°up and translate while the physical hand remains fixed. |
+| Left hand |The left aim pose drives placement, with actual complete eye RGB matching the independent projection within one byte. This does not yet switch the provisional right-trigger fire binding. |
+| Selected pose loss |Actual native weapon ART is still captured and callbacks run normally; both eye images have exactly zero changed pixels at the weapon boundary. Final HUD contains no stale weapon. |
+| Resize |Native960x600→800x600 commits through the existing XR recreation boundary. Actual isolated weapon layers match within one/two bytes; complete final HUD composition matches within one byte. Both full world depth layers remain unchanged. |
+| Tint |Already-placed weapon becomes part of the world at the native full-eye corrected/clamped tint boundary. Independent final head-HUD plus world/tint arithmetic matches both complete eye layers within two bytes. |
+| Native save menu |Actual auxiliary room/capture cancels the owner and recovers. Complete final menu/dim/HUD composition matches within one byte. Native/XR counts62/62/60/60 agree, including the intentional extra native room. |
+| Weapon-scope nested swap |A real unarmed `videoNextPage` is injected after native weapon drawing, before card composition. It cancels the active weapon/UI capture, mirrors native pixels and later reaches60 actual world/HUD submissions. Callback counts61/61/60/60 match native, with no duplicate weapon event. |
+| Capture separation/depth |In all ten cases, actual isolated capture contains opaque native weapon ART. Its pixels are absent from the later HUD capture wherever the opaque save panel is not intentionally covering them. Both complete raw world-depth arrays are byte-identical before/after card composition. |
+| Native references |Every scenario compares observed rooms/room-end/weapon/rest counts with a separate actual native flat run; all match. Final eye composition independently includes the later head-relative HUD. |
+| Multiplayer with attached weapon |Native dedicated server plus tracked XR client passes all24 orientation/RPG trajectory, held recovery, late-controller, body control, actual stereo/crosshair and nonzero-pose session-recreation checks with attached weapon enabled. Actual server RPG angle68/zvel-1458 reaches(8175,5626,-26316). Its origin remains native body authority. |
+| Rendering/UI regression |Animated-mask asymmetric stereo retains exact two-pass RGB/depth and callback counts. Existing UI=2 console/coverage/depth test and cold-menu console/resize test pass with attachment unset. |
+| Builds/API validation |Native, optional XR and standalone builds pass; flat executable has no OpenXR loader link. Python/diff checks pass. Core validation is active without warnings/errors across all ten card cases, tracked multiplayer and the standalone12-frame multiview run. |
+
+`tools/vr/smoke_weapon.py` accepts the cases `base`, `moved`, `rotated`, `head`,
+`left`, `lost`, `resize`, `tint`, `save` and `nested`. The independent oracle uses
+actual eye FOV/poses, the test's submitted remote hand pose, native captured
+premultiplied RGBA and the queried raster subpixel grid (8 bits on this driver).
+It tests complete images with a two-byte bound for cross-implementation
+interpolation/rounding; renderer differential fixtures still use exact equality.
+Nine decimal places in pose diagnostics avoid amplifying rounded input at card
+edges. No game packets/shots, native angles or installed assets are injected.
+
+Initial harness failures assumed a particular frame's cold-upload fallback,
+looked for a validation debug line not enabled in game logging, used a broad HUD
+coverage count that included the status bar, and attempted to serialize NumPy
+booleans. Corrected checks use observed multiview readiness, actual validation
+output, isolated weapon-source coverage and plain booleans. A continuous-edge
+oracle using rounded poses also disagreed at one boundary pixel during head
+motion; actual subpixel coverage and higher pose precision resolved it without
+relaxing RGB limits. Failed experiments remain local under work/.
+
+Bounded results are `../../../evidence/tracked-weapon-validation.json`; actual
+final eye layers are `../../../evidence/tracked-weapon-stereo.png`. Visual QA
+inspected the pistol independently of the head HUD in both eyes. A fresh
+Astra/xhigh design request failed at the retained-thread limit; this slice has
+main source/GPU verification and preceding Astra guidance, not a fresh
+independent review.
+
+This remains a foreground perspective ART card. World occlusion, solid gun
+models, weapon-specific/two-hand/foot/face-action placement, full-pitch shot
+agreement, physical muzzle/collision and authoritative hand-origin replication
+are unfinished. Native body-origin firing is explicit temporary behavior.
+Real headset optics/ergonomics/performance and the full multiplayer combat,
+VR-host/two-VR, damage/frag/respawn/map-change/loss matrix remain open.

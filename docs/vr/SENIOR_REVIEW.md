@@ -272,3 +272,30 @@ covers native pitch clamp at a vertical controller pose, shortest yaw wrap and
 body locomotion with the controller pointing backward. Full tracked weapons,
 hand-origin authority, full-pitch rendering and broad mod/demo/camera behavior
 remain required, not substituted by this orientation checkpoint.
+
+
+## Controller-attached native ART — main verification, 2026-10-16
+
+A verified source brief compared reusing the sequential capture with a separate
+weapon target and a renderer/asset replacement. A fresh explicitly selected
+Astra/xhigh request failed at the retained agent-thread limit. No unverified
+resumed/substitute reviewer was used. This slice follows the existing verified
+Astra target-A ownership/coverage guidance and main source/GPU verification;
+there is no fresh independent implementation review.
+
+| Decision | Main disposition |
+|---|---|
+| Add a second weapon texture/FBO/lifecycle | Rejected as unnecessary. Existing texture is flushed, mirrored, cleared and reused sequentially under the same owner/acquired frame. |
+| Duplicate weapon rendering for each eye or for the desktop | Rejected. Native weapon/event path runs once; one multiview card draw serves both eyes, and the native flat capture is mirrored once. Actual callback counts match separate native runs. |
+| Capture face effects with the hand weapon | Narrowed. End before `P_DisplaySpit`; scuba and later HUD remain on the head panel. Other native weapon/action families still need explicit placement qualification. |
+| Move native player state to align a visual weapon | Rejected. The card uses actual LOCAL aim pose; existing native angles/shot authority remain unchanged. Independent hand-origin authority is a separate explicit native movement-update/sector/collision design. |
+| Keep full-eye tint on a panel | Rejected by preceding Astra guidance. Already-composited weapon pixels are part of the world when native tint/dimming occurs; later captured HUD preserves its own coverage/order. Independent final-image arithmetic passes. |
+| Add another owner token or presentation queue | Unnecessary. Existing cancellation/arming handles nested weapon-scope videoNextPage and native save auxiliary rendering; both recover without callback duplication. |
+
+Independent CPU ray/plane/sample and final HUD/tint oracles cover actual texture
+layers, not counters alone. Native runtime eye/card poses are logged at nine
+decimal places; triangle coverage uses the queried driver subpixel grid.
+The initial ideal-edge/rounded-pose oracle disagreed at one boundary pixel in a
+head-motion case; correct raster coverage resolved it without relaxing RGB
+limits. Foreground depth, native pitch limits, per-weapon pivots and unchanged
+body shot origin remain explicit prototype limits.

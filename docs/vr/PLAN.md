@@ -15,7 +15,8 @@ Status: experimental Linux OpenXR port with bounded ART multiview, native contro
 - Opt-in opaque cold-menu/console presentation now renders native UI once to its own target and submits a head-relative multiview plane. Actual 60-frame captures, desktop equality, temporary tracking recovery, viewport preservation, console/resize and transition to native stereo gameplay pass. This does not cover transparent HUD or in-game menu effects.
 - Native ART weapon/HUD/in-game-menu capture now extends that same target with premultiplied coverage over the existing stereo world (`EDUKE32_XR_UI=2`). Actual eye/color/depth/coverage, full-eye native tint/dim, save-thumbnail cancellation, native callback reference and resize tests pass. This is a provisional 2D weapon plane, not tracked weapon aim or full native UI/material coverage.
 - Opt-in tracked orientation now feeds native authoritative aim from right/left controller or actual HMD VIEW pose, with body/view separation and projected native crosshair. Real native-server RPG direction/impact, pose recovery, pole/wrap/body movement and session-recreation proofs pass. Native wire format and shot origin remain unchanged in this slice; it does not complete tracked weapon placement/origins.
-- Next implementation work: controller-attached weapon presentation and authoritative hand-origin shots, full-pitch/tracked visibility, remaining material/draw families and demonstrated texture-streaming fallback within the existing resource boundary. The full multiplayer/action/platform matrix remains required.
+- Controller-attached native ART now reuses the existing capture texture in sequential weapon/HUD segments (`EDUKE32_XR_WEAPON=1`). Both eye images pass an independent projection/composition oracle across ten cases, including pose loss, resize and nested weapon-scope presentation. This is a provisional foreground card, not physical hand-origin firing.
+- Next implementation work: authoritative hand-origin/full-pitch shots and collision, per-weapon placement, full-pitch/tracked visibility, remaining material/draw families and demonstrated texture-streaming fallback within the existing resource boundary. The full multiplayer/action/platform matrix remains required.
 
 ## Source and behavioral reference
 
@@ -155,3 +156,35 @@ callback reference comparisons. A finite panel alone cannot reproduce a full-eye
 damage flash. Custom destination-dependent UI blending and pre-world script
 overlays remain explicit compatibility decisions. Do not grow a general command
 recorder, material resolver or second XR lifecycle to hide those gaps.
+
+## Controller weapon / hand-origin authority follow-through
+
+The controller attachment slice reuses native `P_DisplayWeapon` and one UI
+texture sequentially: preceding UI → head panel, weapon ART → selected aim pose,
+then following HUD → head panel. It adds no swapchain, renderer or player
+simulation. The native animation/event/palette path remains the source. Face
+spit and scuba stay head-relative. This is an opt-in perspective ART card with a
+provisional grip pivot and foreground-depth policy, not a solid gun model or a
+physical muzzle. Full pitch, per-weapon pivots/two-hand behavior and collision
+remain required.
+
+Independent hand-origin shots need an explicit native authority extension.
+`clientupdate_t` currently has an exact-size receiver, and `playerupdate_t` has
+no hand position. Appending bytes unconditionally would drop legacy movement
+updates; a separate unsynchronized pose stream could pair a shot with the wrong
+origin. The next design proof should compare a negotiated, bounded extension of
+the existing movement update against a globally versioned format change. Keep
+native client updates unchanged for peers without the capability; correlate any
+hand offset with the input it accompanies. Do not replace ENet, add a second
+simulation, or reuse player body position as permanent hand authority.
+
+The server must constrain/revalidate the offset and trace the body-to-hand path,
+resolve the actual origin sector and invalidate it on spawn/disconnect/map
+transitions. `A_ShootWithZvel` supplies the narrow start-position boundary, but
+`A_ShootHardcoded`, custom projectiles and some autoaim/hitscan helpers still use
+the body sprite's sector. A local position override alone is insufficient at a
+portal. Begin with actual replicated RPG shots on both sides of a portal and
+against an intervening wall, then cover hitscan, thrown weapons/tripmines,
+spread/autoaim/CON semantics and remote damage/respawn. Presentation must expose
+the server-constrained origin rather than promising an unconstrained physical
+muzzle. This protocol/gameplay change remains unimplemented at this checkpoint.

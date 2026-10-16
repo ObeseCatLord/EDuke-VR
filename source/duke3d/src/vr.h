@@ -9,6 +9,8 @@ void G_XRBeginFrame();
 void G_XREndFrame();
 void G_XRClearInput();
 void G_XRResetAim(int playerNum);
+bool G_XRBeginWeapon();
+void G_XREndWeapon(bool captured);
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
 fix16_t G_XRMovementAngle(fix16_t nativeAngle);
 bool G_XRCrosshairPosition(vec2_t &position);

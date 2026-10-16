@@ -94,6 +94,10 @@ class Runtime
     bool        menuPresentationActive() const;
     bool        menuPresentationArmed() const;
     bool        menuOverlayTargetBound() const;
+    // Composite one sequential native segment, mirror it, then clear/reuse the
+    // same capture. The original presentation owner and acquired frame remain.
+    bool        flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfHeight, bool visible,
+                                 std::string &error, char const *capturePrefix = nullptr);
     bool        tintMenuWorld(float const *rgba, float const *correction, std::string &error);
     bool        completeMenuPresentation(std::string &error, char const *capturePrefix = nullptr);
     bool        cancelMenuPresentation(std::string &error, bool mirror = true);
@@ -107,6 +111,7 @@ class Runtime
     uint64_t    generation() const;
 
   private:
+    bool drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error);
     struct Impl;
     Impl *m_impl;
 };

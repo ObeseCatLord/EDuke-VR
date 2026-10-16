@@ -1,6 +1,6 @@
 # EDuke32 VR work in progress
 
-This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, tracked weapon presentation/origins and complete multiplayer qualification remain open. OpenXR controllers now feed native movement, turning, gameplay buttons and menus, with simulated runtime and native server authority tests.
+This repository starts from the exact requested **r10669 ec5824db8** source archive. It now has an optional Linux OpenXR backend, a single-pass stereo **diagnostic**, and an experimental two-pass renderer that submits actual Duke rooms to OpenXR, and a bounded native indexed-ART multiview path for opaque rooms, skies and ordered masks/sprites, with exact color/depth differential fixtures. It is not yet a complete playable VR port: complete single-pass coverage, complete tracked weapon/origin behavior and multiplayer qualification remain open. OpenXR controllers now feed native movement, turning, gameplay buttons and menus, with simulated runtime and native server authority tests.
 
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
@@ -306,3 +306,43 @@ nonzero-pose window/session recreation pass in simulated Monado. This remains a
 bounded vanilla-Duke orientation step. Native pitch limits remain; true tracked
 weapon placement/hand-origin authority, full-pitch visibility, recording/save-load,
 other cameras/angle-rewriting CON and physical headset behavior remain open.
+
+
+## Experimental controller-attached native ART
+
+With `EDUKE32_XR_UI=2` and `EDUKE32_XR_AIM=right` or `left`, add
+`EDUKE32_XR_WEAPON=1` to move native weapon ART off the head-relative HUD and
+attach it to that controller's aim pose. Native animation, palette and weapon
+callbacks run once. Face spit, scuba and following HUD remain head-relative.
+The same capture texture is cleared/reused between those sequential segments;
+each segment uses one multiview draw for both existing eye layers.
+
+This is a perspective ART card with a provisional native(192,180) grip pivot,
+physical scale and foreground-depth policy. It is not a solid gun model or
+collision-constrained physical muzzle. The card tracks translation, yaw, pitch
+and roll; unavailable poses hide it without stale pixels. The desktop retains
+native flat placement. `head` aim and an unset weapon flag retain the preceding
+head-panel presentation.
+
+```sh
+EDUKE32_XR=1 EDUKE32_XR_SINGLE_PASS=1 EDUKE32_XR_UI=2 \
+EDUKE32_XR_AIM=right EDUKE32_XR_WEAPON=1 SDL_VIDEODRIVER=x11 \
+./eduke32-xr -usecwd -nosetup -noautoload -g /path/to/owned/DUKE3D.GRP -v1 -l1 -s1
+
+python3 tools/vr/smoke_weapon.py --binary ./eduke32-xr \
+  --grp /path/to/owned/DUKE3D.GRP --work-dir work/weapon \
+  --display :1 --remote-port 29427 --case rotated
+```
+
+The runner also accepts `base`, `moved`, `head`, `left`, `lost`, `resize`, `tint`,
+`save` and `nested`. It compares actual eye pixels against an independent
+ray/plane/linear-sampling oracle, final HUD/tint composition, unchanged world
+depth and native callback counts. All ten cases pass under private simulated
+Monado; this does not establish real-headset comfort or performance.
+
+Shots still start at the native player origin. Native pitch limits can also
+separate the physical card direction from the supported shot direction outside
+that range. Independent authoritative hand-origin/full-pitch firing, world
+occlusion, per-weapon pivots/two-hand behavior, other weapon/face-action families
+and physical-headset ergonomics remain required. See the authority follow-through
+in [the plan](docs/vr/PLAN.md); the ART card does not replace that work.

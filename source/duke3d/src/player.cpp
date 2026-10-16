@@ -2263,6 +2263,9 @@ void P_DisplayWeapon(void)
         || (sprite[pPlayer->i].pal != 1 && sprite[pPlayer->i].extra <= 0))
         return;
 
+#ifdef USE_OPENXR
+    bool const xrWeapon=G_XRBeginWeapon();
+#endif
     int weaponX       = (160) - 90;
     int weaponY       = klabs(pPlayer->look_ang) / 9;
     int weaponYOffset = 80 - (pPlayer->weapon_pos * pPlayer->weapon_pos);
@@ -3000,6 +3003,9 @@ void P_DisplayWeapon(void)
     }
 
 enddisplayweapon:;
+#ifdef USE_OPENXR
+    G_XREndWeapon(xrWeapon);
+#endif
 #ifndef EDUKE32_STANDALONE
     P_DisplaySpit();
 #endif
