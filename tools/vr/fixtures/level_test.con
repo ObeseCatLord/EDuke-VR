@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Native map/control observations; contrast staged menu and active settings.
+include controller_test.con
+gamevar vrlevel_sector 0 0
+gamevar vrlevel_clock 0 1
+gamevar vrlevel_player 0 1
+gamevar vrlevel_floor 0 1
+gamevar vrlevel_gm 0 1
+gamevar vrlevel_volume 0 1
+gamevar vrlevel_number 0 1
+gamevar vrlevel_active 0 1
+gamevar vrlevel_staged 0 1
+gamevar vrlevel_knuckle 0 1
+gamevar vrlevel_weaponpos 0 1
+gamevar vrlevel_actor 0 1
+gamevar vrlevel_index 0 1
+gamevar vrlevel_yvel 0 1
+gamevar vrlevel_indexyvel 0 1
+gamevar vrlevel_tile 0 1
+gamevar vrlevel_stat 0 1
+gamevar vrlevel_sectorid 0 1
+gamevar vrlevel_spritesector 0 1
+gamevar vrlevel_sectors 0 1
+gamevar vrlevel_ceiling 0 1
+gamevar vrlevel_floorz 0 1
+gamevar vrlevel_z 0 1
+gamevar vrlevel_sequence 0 1
+onevent EVENT_PROCESSINPUT
+ // Stage a different menu choice only once native gameplay is processing.
+ setuserdef[THISACTOR].m_monsters_off 0
+ addvar vrlevel_clock 1
+ addvar vrlevel_sequence 1
+ ifvare vrlevel_clock 3
+ {
+  setvar vrlevel_clock 0
+  getplayer[THISACTOR].index vrlevel_player
+  setvarvar vrlevel_actor THISACTOR
+  getplayer[THISACTOR].i vrlevel_index
+  getactor[THISACTOR].yvel vrlevel_yvel
+  getactor[vrlevel_index].yvel vrlevel_indexyvel
+  getactor[vrlevel_index].picnum vrlevel_tile
+  getactor[vrlevel_index].statnum vrlevel_stat
+  getplayer[THISACTOR].cursectnum vrlevel_sectorid
+  getactor[vrlevel_index].sectnum vrlevel_spritesector
+  setvarvar vrlevel_sectors numsectors
+  getplayer[THISACTOR].posz vrlevel_z
+  ifvarg vrlevel_sectorid -1
+  ifvarvarl vrlevel_sectorid numsectors
+  {
+   getsector[vrlevel_sectorid].ceilingz vrlevel_ceiling
+   getsector[vrlevel_sectorid].floorz vrlevel_floorz
+  }
+  getsector[vrlevel_sector].floorpicnum vrlevel_floor
+  getplayer[THISACTOR].gm vrlevel_gm
+  getuserdef[THISACTOR].volume_number vrlevel_volume
+  getuserdef[THISACTOR].level_number vrlevel_number
+  getuserdef[THISACTOR].monsters_off vrlevel_active
+  getuserdef[THISACTOR].m_monsters_off vrlevel_staged
+  getplayer[THISACTOR].knuckle_incs vrlevel_knuckle
+  getplayer[THISACTOR].weapon_pos vrlevel_weaponpos
+  addlog vrlevel_active
+  addlog vrlevel_staged
+  addlog vrlevel_knuckle
+  addlog vrlevel_weaponpos
+  addlog vrlevel_player
+  addlog vrlevel_actor
+  addlog vrlevel_index
+  addlog vrlevel_yvel
+  addlog vrlevel_indexyvel
+  addlog vrlevel_tile
+  addlog vrlevel_stat
+  addlog vrlevel_sectorid
+  addlog vrlevel_spritesector
+  addlog vrlevel_sectors
+  addlog vrlevel_ceiling
+  addlog vrlevel_floorz
+  addlog vrlevel_z
+  addlog vrlevel_sequence
+  addlog vrlevel_floor
+  addlog vrlevel_gm
+  addlog vrlevel_volume
+  addlog vrlevel_number
+ }
+endevent
+gamevar vrlevel_mode 0 0
+onevent EVENT_DISPLAYREST
+ getplayer[THISACTOR].gm vrlevel_mode
+ addlog vrlevel_mode
+ addlog myconnectindex
+endevent
+
+// Exercise ordinary-level and user-map ambiguity at native sentinel (0,7).
+definelevelname 0 7 reserved.map 00:00 00:00 CPU Reserved Slot

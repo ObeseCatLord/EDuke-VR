@@ -1294,13 +1294,16 @@ static void G_SpawnAllSprites()
     // I don't know why this is separated, but I have better things to do than combine them and see what happens
     for (int i = 0; i < MAXSPRITES; i++)
     {
-        if (sprite[i].statnum < MAXSTATUS && (PN(i) != SECTOREFFECTOR || SLT(i) != SE_14_SUBWAY_CAR))
+        // Network reserve slots retain old map data; they are not map actors.
+        if (sprite[i].statnum < MAXSTATUS && sprite[i].statnum != STAT_NETALLOC &&
+            (PN(i) != SECTOREFFECTOR || SLT(i) != SE_14_SUBWAY_CAR))
             A_Spawn(-1, i);
     }
 
     for (int i = 0; i < MAXSPRITES; i++)
     {
-        if (sprite[i].statnum < MAXSTATUS && PN(i) == SECTOREFFECTOR && SLT(i) == SE_14_SUBWAY_CAR)
+        if (sprite[i].statnum < MAXSTATUS && sprite[i].statnum != STAT_NETALLOC &&
+            PN(i) == SECTOREFFECTOR && SLT(i) == SE_14_SUBWAY_CAR)
             A_Spawn(-1, i);
     }
 }

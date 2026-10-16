@@ -5362,6 +5362,10 @@ void Net_NotifyNewGame()
         return;
     }
 
+    // loadboard replaced the sprite lists. Old client scratch indices must not
+    // delete unrelated actors in the new map when its first snapshot arrives.
+    Net_InitScratchPadSpriteList();
+
     // Grab the total number of sprites at level load
     for (statIndex = 0; statIndex < MAXSTATUS; ++statIndex)
     {

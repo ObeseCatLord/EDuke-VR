@@ -104,9 +104,14 @@ def main():
             def screenshot(name,process,observer,lab):
                 before=set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'));window,_=x11.owned_window(process.pid)
                 if not window:raise RuntimeError('private screenshot window missing')
+                offset=len(observer.text())
                 x11.press(window,'F12',.06,True)
                 observer.wait(lambda t:bool(set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'))-before),timeout=4)
-                path=next(iter(set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'))-before));im=Image.open(path);im.load();im.save(root/(name+'.png'))
+                path=next(iter(set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'))-before))
+                # Native screenshot completion logs after fclose; existence can
+                # precede PNG encoding and is not a completed-frame receipt.
+                observer.wait(lambda t:f'Saved screenshot to {path.relative_to(lab)}' in t[offset:],timeout=4)
+                im=Image.open(path);im.load();im.save(root/(name+'.png'))
                 screenshots[name]=bool(np.asarray(im).max()>np.asarray(im).min())
             phase='native player damage';offset=len(so.text());first_health=latest(so,victim)['health']
             control(killer,'fire',True)

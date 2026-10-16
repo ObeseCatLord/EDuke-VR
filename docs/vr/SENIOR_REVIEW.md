@@ -431,9 +431,31 @@ correction and its unchanged27-byte/native-receiver contract.
 | Distinct stereo pairs alone can be frozen images | Adapted. Require actual image changes between death and recovery as well as submission receipts. Saved XR-victim frames were visually inspected for native death/zero-health versus recovered100-health HUD. This is bounded fixture evidence, not general renderer correctness. |
 | Defer unqualified dual-runtime branch and remove obsolete fallback assertion | Adopted. Both removed from the checked-in harness; experimental copies remain only in ignored local work. No second runtime is needed for this mixed-client checkpoint. |
 
-The final harness revisions have CPU observation tests and syntax checks, but
-remain pending a healthy-driver runtime rerun. Earlier passing mixed-client
+At that review checkpoint the final harness revisions had CPU observation tests
+and syntax checks; the healthy-driver runtime follow-up is recorded below. Earlier passing mixed-client
 records are explicitly historical fixtures, not execution of the later changes.
 NVIDIA Xid51/154 caused the graphics-test hold; root cause remains unknown.
 This review does not close independent two-VR, VR host/maps/loss, or the full
 port/SPS/multiplayer goal.
+
+## Native map transitions and sprite lifetime — verified Astra/xhigh
+
+The adapter design and correctness passes verified existing native loading and
+reliable message reuse. A fresh final ownership reviewer was explicitly
+`gpt-6-astra`/`xhigh`; parent independently checked this review turn's effective
+model/effort metadata. Read-only review performed no builds or graphics work.
+
+| Recommendation | Disposition |
+|---|---|
+| Dedicated stdin call cannot execute in its old branch | Adopted. Moved the existing call; trailing echo proves dispatch before map-stub testing. Initial ignored-input experiments no longer support a desync claim. |
+| Preserve active settings, server authority and canonical map naming | Adopted. Active fill, native start, MODE_GAME success guard, final filename (including empty), existing reliable new-game message. Strict complete/ranged integer parsing precedes indexing. |
+| Is a new transition/snapshot protocol necessary? | Rejected. Repeated failures were traced to two existing sprite lifetime boundaries. Both spawn passes exclude reserved slots; new-map notification clears old scratch-list metadata before new allocations. Native state machines/packets are retained. |
+| Map marker/ammo counters can hide wrong sprites or falling through the world | Adopted. Every player/observer now checks native identity, distinct live player sprites, sectors/Z and persistence across later snapshots. Both client roles move/fire, peer positions converge within256 Build units, and real CPU framebuffers change. |
+| Malformed load suppression does not preserve/recover previous server state | Adopted. Document native menu/reset behavior and prove a subsequent valid load plus resumed controls. Filename canonicalization and strict numeric negative cases added. |
+| Collection logging does not prove first-snapshot persistence | Adopted. Removed temporary production logger; actual CON/player/sprite observations span later native ticks. |
+| CPU qualification cannot substitute for XR transitions | Adopted. Actual private simulated-runtime transitions check native controls, held-trigger reset, live sprite ownership and fresh actual stereo submissions. |
+
+No confirmed production defect remained in that reviewed diff. Main integrated
+and verified the later test improvements; these are bounded fixtures, not full
+multiplayer or renderer coverage. Earlier recovered GPU PvP/SPS/crosshair tests
+were recorded separately from the new map proof.

@@ -52,74 +52,76 @@ static inline int osdcmd_quit(osdcmdptr_t UNUSED(parm))
     return OSDCMD_OK;
 }
 
+// Console map changes reuse native multiplayer loading and reliable packets.
+// Take settings from the active game: staged network-menu choices may differ.
+static void osdcmd_networkLevel(int volume, int level)
+{
+#ifndef NETCODE_DISABLE
+    Net_FillNewGame(&pendingnewgame, 0);
+    pendingnewgame.volume_number = volume;
+    pendingnewgame.level_number = level;
+    Net_StartNewGame();
+    // Native startup goes back to the menu on failure. Do not ask clients to
+    // load a level the server could not enter; this does not roll back startup.
+    if (!(g_player[myconnectindex].ps->gm & MODE_GAME))
+    {
+        LOG_F(ERROR, "Server could not start requested level; clients were not instructed to reload.");
+        return;
+    }
+    // Loading may canonicalize a user map to a defined level. Send that final
+    // name (including empty) before NEW_GAME on the existing reliable channel.
+    Net_SendUserMapName();
+    Net_SendNewGame(0, nullptr);
+#else
+    UNREFERENCED_PARAMETER(volume);
+    UNREFERENCED_PARAMETER(level);
+#endif
+}
+
+static bool osdcmd_levelNumber(char const *text, int maximum, int &index)
+{
+    char *end;
+    errno = 0;
+    long const value = strtol(text, &end, 10);
+    if (errno == ERANGE || end == text || *end || value < 1 || value > maximum)
+        return false;
+    index = int(value) - 1;
+    return true;
+}
+
 static int osdcmd_changelevel(osdcmdptr_t parm)
 {
-    int volume = 0;
-    int level;
-
+    int volume = 0, level;
     if (!VOLUMEONE)
     {
-        if (parm->numparms != 2) return OSDCMD_SHOWHELP;
-
-        volume = strtol(parm->parms[0], NULL, 10) - 1;
-        level = strtol(parm->parms[1], NULL, 10) - 1;
+        if (parm->numparms != 2 || !osdcmd_levelNumber(parm->parms[0], MAXVOLUMES, volume) ||
+            !osdcmd_levelNumber(parm->parms[1], MAXLEVELS, level))
+            return OSDCMD_SHOWHELP;
     }
-    else
-    {
-        if (parm->numparms != 1) return OSDCMD_SHOWHELP;
-
-        level = strtol(parm->parms[0], NULL, 10) - 1;
-    }
-
-    if (volume < 0 || level < 0)
+    else if (parm->numparms != 1 || !osdcmd_levelNumber(parm->parms[0], MAXLEVELS, level))
         return OSDCMD_SHOWHELP;
 
-    if (level > MAXLEVELS || g_mapInfo[volume * MAXLEVELS + level].filename == NULL)
+    if (g_netClient)
+    {
+        LOG_F(WARNING, "Only the server can change multiplayer levels.");
+        return OSDCMD_OK;
+    }
+
+    auto const &map = g_mapInfo[volume * MAXLEVELS + level];
+    if (!map.filename || !map.name)
     {
         LOG_F(WARNING, "changelevel: no map defined for episode %d level %d", volume + 1, level + 1);
         return OSDCMD_SHOWHELP;
     }
 
-    if (numplayers > 1)
+    if (g_netServer)
     {
-        /*
-        if (g_netServer)
-            Net_NewGame(volume,level);
-        else if (voting == -1)
-        {
-            ud.m_volume_number = volume;
-            ud.m_level_number = level;
-
-            if (g_player[myconnectindex].ps->i)
-            {
-                int32_t i;
-
-                for (i=0; i<MAXPLAYERS; i++)
-                {
-                    g_player[i].vote = 0;
-                    g_player[i].gotvote = 0;
-                }
-
-                g_player[myconnectindex].vote = g_player[myconnectindex].gotvote = 1;
-
-                voting = myconnectindex;
-
-                tempbuf[0] = PACKET_MAP_VOTE_INITIATE;
-                tempbuf[1] = myconnectindex;
-                tempbuf[2] = ud.m_volume_number;
-                tempbuf[3] = ud.m_level_number;
-
-                enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(tempbuf, 4, ENET_PACKET_FLAG_RELIABLE));
-            }
-            if ((g_gametypeFlags[ud.m_coop] & GAMETYPE_PLAYERSFRIENDLY) && !(g_gametypeFlags[ud.m_coop] & GAMETYPE_TDM))
-                ud.m_noexits = 0;
-
-            M_OpenMenu(myconnectindex);
-            Menu_Change(MENU_NETWAITVOTES);
-        }
-        */
+        boardfilename[0] = 0;
+        osdcmd_networkLevel(volume, level);
         return OSDCMD_OK;
     }
+    if (numplayers > 1)
+        return OSDCMD_OK;
 
     if (g_player[myconnectindex].ps->gm & MODE_GAME)
     {
@@ -227,56 +229,23 @@ static int osdcmd_map(osdcmdptr_t parm)
     }
     kclose(ii);
 
+    if (g_netClient)
+    {
+        LOG_F(WARNING, "Only the server can change multiplayer levels.");
+        return OSDCMD_OK;
+    }
+
     boardfilename[0] = '/';
     boardfilename[1] = 0;
     strcat(boardfilename, filename);
 
-    if (numplayers > 1)
+    if (g_netServer)
     {
-        /*
-        if (g_netServer)
-        {
-            Net_SendUserMapName();
-            ud.m_volume_number = 0;
-            ud.m_level_number = 7;
-            Net_NewGame(ud.m_volume_number, ud.m_level_number);
-        }
-        else if (voting == -1)
-        {
-            Net_SendUserMapName();
-
-            ud.m_volume_number = 0;
-            ud.m_level_number = 7;
-
-            if (g_player[myconnectindex].ps->i)
-            {
-                int32_t i;
-
-                for (i=0; i<MAXPLAYERS; i++)
-                {
-                    g_player[i].vote = 0;
-                    g_player[i].gotvote = 0;
-                }
-
-                g_player[myconnectindex].vote = g_player[myconnectindex].gotvote = 1;
-                voting = myconnectindex;
-
-                tempbuf[0] = PACKET_MAP_VOTE_INITIATE;
-                tempbuf[1] = myconnectindex;
-                tempbuf[2] = ud.m_volume_number;
-                tempbuf[3] = ud.m_level_number;
-
-                enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(tempbuf, 4, ENET_PACKET_FLAG_RELIABLE));
-            }
-            if ((g_gametypeFlags[ud.m_coop] & GAMETYPE_PLAYERSFRIENDLY) && !(g_gametypeFlags[ud.m_coop] & GAMETYPE_TDM))
-                ud.m_noexits = 0;
-
-            M_OpenMenu(myconnectindex);
-            Menu_Change(MENU_NETWAITVOTES);
-        }
-        */
+        osdcmd_networkLevel(0, 7);
         return OSDCMD_OK;
     }
+    if (numplayers > 1)
+        return OSDCMD_OK;
 
     osdcmd_cheatsinfo_stat.cheatnum = -1;
     ud.m_volume_number = 0;

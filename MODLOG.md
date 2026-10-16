@@ -183,3 +183,24 @@ Synthesize senior review into docs/vr/PLAN.md with dispositions and test gates; 
   passing CPU observation tests. Unqualified dual-runtime/fallback branches removed.
 - Native/XR CPU builds pass. Complete two-VR/host/map/loss qualification,
   remaining weapons, full-pitch/full SPS/camera/platform work remain open.
+
+
+### Native level transitions and recovered GPU qualification
+- Moved native dedicated stdin dispatch into its reachable branch; restored
+  multiplayer map/changelevel through active native settings/loading/messages.
+  Strict numeric validation, client authority rejection, canonical map names
+  and a failed-load broadcast guard preserve the existing architecture.
+- Repeated transitions exposed stale reserved sprites spawning as old-map
+  actors and stale client scratch indices deleting new-map actors. Excluded
+  STAT_NETALLOC in both native spawn passes and reset scratch metadata at load.
+- Added GPU-denied native two-client tests with real SDL controls, CPU F12,
+  every-player sprite/sector/world checks across later snapshots, both client
+  roles, reconnect, empty-server late join and malformed-to-valid recovery.
+- Actual private XR transitions pass native authority, held-trigger reset,
+  movement/fire replication and distinct late submitted stereo captures.
+- Fresh explicitly selected and metadata-verified Astra/xhigh review accepted
+  the narrow fixes and required stronger ownership/recovery gates; adopted.
+- Following user authorization and verified reboot/recovery, one private MEDIUM
+  priority Monado runtime passes final PvP roles, reconnect/inventory, world
+  reticle occlusion and exact animated-mask single-pass pixel/depth regressions.
+  No new driver faults observed; previous fault cause remains unresolved.

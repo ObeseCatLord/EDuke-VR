@@ -728,7 +728,7 @@ native gm startup barrier, stronger movement/score/held-fire
 assertions and full-run core scan) require a healthy-driver rerun. Earlier
 passing results must not be presented as execution of those later changes.
 
-### Driver fault and testing limit
+### Historical driver fault and testing hold (lifted below)
 
 Kernel evidence shows NVIDIA Xid51 BAD_TSG, then Xid154 PF FLR and repeated
 NV_ERR_RESET_REQUIRED. Cause is unresolved. A second private Monado failed
@@ -740,10 +740,10 @@ out on the faulted driver; it was removed from production source and retained
 only as an unqualified local patch. Those failures cannot qualify networking or
 normal renderer behavior. No GPU reset or desktop/session changes were made.
 
-All owned game/Monado processes are stopped. GPU tests stay off pending graphics
-recovery. A hidden window still shares the user's GPU. Future qualification
-uses one private runtime, bounded sequential cases, and stops immediately at
-the first kernel/graphics error. Independent two-VR qualification should use
+At that checkpoint all owned game/Monado processes stopped and GPU tests were
+held pending recovery. A hidden window still shares the user's GPU. The later
+recovery/authorization and one-runtime qualification are recorded below; tests
+still stop at the first kernel/graphics error. Independent two-VR qualification should use
 separate recovered machines/runtimes rather than repeating the failing local
 dual-service experiment.
 
@@ -751,3 +751,75 @@ Bounded records and actual pre-fault images: `../../../evidence/pvp-validation.j
 and `../../../evidence/pvp-xr-victim-death-stereo.png` /
 `../../../evidence/pvp-xr-victim-respawn-stereo.png`. The full VR/SPS/multiplayer
 goal remains active.
+
+## Native map transitions and graphics recovery — 2026-10-16
+
+This supersedes the graphics hold above. After the user's renewed permission,
+a new boot, GPU Recovery Action=None and absence of new kernel faults were
+verified before creating one private Monado runtime. Its actual Vulkan queue
+priority is MEDIUM under no-new-privileges. A 12-frame hidden multiview probe
+passed before game testing. These observations establish recovery for this
+bounded run, not the cause of the earlier Xid51/154 fault.
+
+Final strengthened PvP tests pass for both XR-shooter and XR-victim roles.
+The recovered run also passes controller reconnect/sparse inventory, projected
+crosshair occlusion (independent world-point/eye/depth oracle), and animated ART
+mask single-pass differential checks: both eyes have zero changed pixels and
+exact depth against the two-pass reference, with equal native callback counts.
+Synthetic differential views remain offscreen; actual gameplay tests separately
+submit located stereo views. Private window checks and core validation pass;
+no new observed kernel GPU errors occurred between sequential cases.
+
+### Native level changes
+
+The existing dedicated stdin reader was called only from the non-dedicated
+branch. Initial stdin experiments therefore did not dispatch a map command and
+do not prove a map desync. After moving that existing call, a trailing native
+echo receipt proved actual dispatch while the original multiplayer map stub
+still did nothing. The final map/changelevel adapter uses native active settings,
+startup and existing reliable USER_MAP/NEW_GAME messages. It sends the final
+canonical filename, including empty, only after successful native startup.
+
+Repeated transitions exposed two real ownership bugs. Reserved STAT_NETALLOC
+slots retained previous-map tile data and entered both generic map-spawn passes;
+an old E1L1 player slot579 could become player1 in a four-sprite test map, later
+becoming a shot spark with yvel2595 while the player fell outside the world.
+Those slots are now excluded at the spawn boundary. The client scratch list
+also retained old-map indices; resetting its bookkeeping immediately after the
+new board loads prevents the next snapshot from deleting unrelated new actors.
+No serialization, generation protocol or transition state machine was added.
+
+The CPU runner uses a USE_OPENGL=0 classic build, dummy SDL, private PID/proc/dev
+namespace and owner-only SDL-event FIFOs. No NVIDIA/DRI devices, GPU libraries
+or handles are visible. The sole SDL_GL_DeleteContext teardown symbol is inert
+with its native null context; GL context creation and OpenXR instance references
+are rejected. Native binds invoke the real client OSD handlers; native W/fire
+inputs and native F12 software images establish behavior. Screenshot readers
+wait for the native completion receipt emitted after file closure, avoiding
+partially written PNGs.
+
+| Gate | Result and limit |
+|---|---|
+| Dedicated server plus two native clients | Real assigned indices; active monster setting1 retained while staged menu setting0 differs. |
+| Repeated user/built-in transitions | first→second→E1L1→filename-canonical E1L1→first→reserved built-in→first→canonical reserved map→first. Native fresh loads, floor markers and gameplay observed. |
+| Ownership and world state | Every connected player checked on every observer for distinct valid APLAYER/STAT_PLAYER indices, matching yvel and valid sectors/Z; repeated after at least12 further native input ticks. |
+| Controls | Both client roles move/fire; server input/positions/ammo and peer positions/ammo converge within256 horizontal Build units, with Z constrained to fixture geometry. Controls repeat after return, reserved map, replacement and malformed recovery. |
+| Client authority / invalid requests | Both client map commands warn without changing maps. Missing map, zero/negative/overflow/suffix/arity/out-of-range level requests rejected. |
+| Reconnect / empty host | Native quit/disconnect frees a slot; replacement controls current map. Host alone selects another map and the next joiner receives it. |
+| Failed map | Malformed version rejected without instructing client reload; native startup has already reset server state and returns to menu. A subsequent valid request reloads both peers and resumes controls. No rollback promise. |
+| CPU screenshots | Nonconstant native F12 framebuffers differ across maps. |
+| Actual XR transitions | Initial small map→second→E1L1→small map: real native controls/ownership plus changing, distinct late stereo eye images at completed HUD frames180/300/420/540 in the first run. Held trigger is neutralized through reset until release/new press. |
+
+Fresh Astra/xhigh source/design review was explicitly selected and effective
+turn metadata independently verified. It accepted the narrow corrections and
+required stronger persistent ownership, peer movement, world bounds and
+malformed-to-valid gates; these were implemented. Temporary native collection
+logging was removed. Native, XR and CPU builds pass. Existing upstream allocator
+compiler warnings remain separate from these changes.
+
+Bounded records and actual image files are in the sibling
+`../../../evidence/native-levels-validation.json` and
+`../../../evidence/recovered-gpu-validation.json`. These tests do not qualify
+VR hosting, two independent VR clients, loss/WAN behavior, unrestricted mods,
+all weapons/materials/cameras, other platforms or physical-headset comfort.
+The full VR/SPS/multiplayer goal remains active.

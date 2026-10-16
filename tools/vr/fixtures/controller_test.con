@@ -20,7 +20,7 @@ onevent EVENT_PROCESSINPUT
     ifvare vrinput_sample 5
     {
         setvar vrinput_sample 0
-        getactor[THISACTOR].yvel vrinput_player
+        getplayer[THISACTOR].index vrinput_player
         getinput[THISACTOR].bits vrinput_bits
         getinput[THISACTOR].fvel vrinput_fvel
         getinput[THISACTOR].svel vrinput_svel

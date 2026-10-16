@@ -446,7 +446,7 @@ The crosshair runner verifies actual X11 unmapped/focus state as part of the
 proof. Normal game launches omit this test-only flag.
 
 
-## Native PvP checkpoint and current graphics-test hold
+## Native PvP and level transitions
 
 The native dedicated server with current flat/XR clients has passed real pistol
 kill, native frag/death convergence, Use respawn and recovered controls in both
@@ -455,9 +455,44 @@ until release/new press. A native spawn-packet copy offset is corrected without
 a new protocol or simulation. See [validation](docs/vr/VALIDATION.md) for the
 precise scope and actual pre-fault eye images.
 
-Graphics tests are currently stopped after a confirmed NVIDIA driver fault.
-All test games and private Monado services were stopped; no GPU reset was
-attempted. Hidden windows isolate focus, while still sharing GPU resources.
-The final PvP harness changes remain pending healthy-driver qualification.
-Do not repeat the local dual-Monado experiment on the unrecovered desktop.
-Full VR/SPS and multiplayer qualification remain incomplete.
+After the reported driver fault, GPU work stopped. The user later authorized
+GPU testing again. A new boot, no recovery action and a clean bounded graphics
+probe established recovery before one private runtime was resumed. Both final
+PvP roles, controller reconnect/inventory, world-crosshair occlusion and exact
+animated-mask single-pass color/depth checks now pass on that recovered driver.
+The cause of the earlier fault remains unknown. Hidden windows still share GPU
+resources; tests use one runtime, sequential cases and driver checks.
+
+Native `map` and `changelevel` now work from a dedicated server's stdin and
+reuse EDuke32's existing level loader and reliable multiplayer messages. Active
+settings survive transitions; clients cannot change the server's map. Two native
+sprite-lifetime bugs are corrected: reserved network slots are excluded from map
+actor spawning, and old client temporary-sprite indices are cleared at map load.
+Repeated native and actual XR transitions pass controls, sprite ownership,
+late stereo frames and held-trigger reset checks. This is bounded local testing;
+the full VR/SPS/multiplayer port remains incomplete.
+
+CPU-only reproduction requires a classic build and `bubblewrap`. Its private
+namespace has no GPU devices; SDL dummy input reaches native controls through a
+test-only FIFO helper. The test also captures native software framebuffers.
+
+```sh
+make -j4 USE_OPENGL=0 POLYMER=0 obj=work/obj-cpu \
+  duke3d_game=work/eduke32-cpu work/eduke32-cpu
+cc -shared -fPIC $(sdl2-config --cflags) tools/vr/sdl_dummy_input.c \
+  -o work/headless_input.so -ldl $(sdl2-config --libs)
+python3 tools/vr/smoke_native_levels.py --binary work/eduke32-cpu \
+  --input-helper work/headless_input.so --grp /path/to/owned/DUKE3D.GRP \
+  --work-dir work/cpu-levels
+
+# Existing private Monado runtime/validation environment required.
+EDUKE32_TEST_PRIVATE_WINDOW=1 python3 tools/vr/smoke_xr_levels.py \
+  --binary ./eduke32 --client-binary ./eduke32-xr \
+  --grp /path/to/owned/DUKE3D.GRP --work-dir work/xr-levels \
+  --display :1 --remote-port 29427
+```
+
+Use `duke3d_game=eduke32-xr` to name the executable. Changing `APPBASENAME`
+also changes the native configuration filename and can bypass the fixture's
+bounded video settings. See [validation](docs/vr/VALIDATION.md) for evidence and
+remaining limits.

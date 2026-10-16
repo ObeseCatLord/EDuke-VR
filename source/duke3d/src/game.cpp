@@ -7244,6 +7244,9 @@ MAIN_LOOP_RESTART:
 
         if (g_networkMode == NET_DEDICATED_SERVER)
         {
+#ifndef NETCODE_DISABLE
+            Net_DedicatedServerStdin();
+#endif
             idle();
         }
         else if (engineFPSLimit((myplayer.gm & MODE_MENU) == MODE_MENU) || g_saveRequested)
@@ -7252,9 +7255,6 @@ MAIN_LOOP_RESTART:
             {
                 // only allow binds to function if the player is actually in a game (not in a menu, typing, et cetera) or demo
                 CONTROL_BindsEnabled = !!(myplayer.gm & (MODE_GAME|MODE_DEMO));
-#ifndef NETCODE_DISABLE
-                Net_DedicatedServerStdin();
-#endif
             }
 
             //g_switchRoutine(co_drawframe);
