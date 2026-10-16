@@ -23,7 +23,7 @@ o := o
 
 ### Directories
 source := source
-obj := obj
+obj := $(if $(filter 1,$(USE_OPENXR)),obj-xr,obj)
 
 ### Functions
 # Some of this still needs work--"getfiltered" takes a list of files and strips the paths off of them,
@@ -230,6 +230,14 @@ engine_obj := $(obj)/$(engine)
 engine_cflags :=
 
 engine_deps :=
+
+ifeq ($(USE_OPENXR),1)
+    xr_src := $(source)/vr
+    xr_obj := $(obj)/vr
+    xr_objs := eduke_xr.cpp
+    xr_cflags :=
+    engine_deps += xr
+endif
 
 ifneq (1,$(SDL_TARGET))
     engine_deps += imgui
@@ -711,6 +719,10 @@ libraries := \
     libxmplite \
     mact \
     voidwrap \
+
+ifeq ($(USE_OPENXR),1)
+    libraries += xr
+endif
 
 ifneq (0,$(USE_MIMALLOC))
     libraries += mimalloc

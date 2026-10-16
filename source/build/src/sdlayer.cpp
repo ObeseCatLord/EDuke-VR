@@ -15,6 +15,12 @@
 #include "sdl_inc.h"
 #include "softsurface.h"
 
+#ifdef USE_OPENXR
+# include "../../vr/eduke_xr.h"
+# include <cerrno>
+# include <cstdlib>
+#endif
+
 #if SDL_MAJOR_VERSION >= 2
 # include "imgui.h"
 # include "imgui_impl_sdl2.h"
@@ -91,6 +97,66 @@ static int sdl_minimized;
 static SDL_Window *sdl_window;
 static SDL_GLContext sdl_context;
 static int vsync_unsupported;
+#endif
+
+#ifdef USE_OPENXR
+// Explicit diagnostic using Polymost's context; this is not game-world VR.
+static eduke_xr::Runtime sdl_xr;
+static bool sdl_xr_attempted;
+static bool sdl_xr_active;
+static unsigned long sdl_xr_frameLimit;
+
+static void sdlayer_xr_shutdown()
+{
+    sdl_xr.shutdown();
+    sdl_xr_active = false;
+    sdl_xr_attempted = false;
+}
+
+static void sdlayer_xr_diagnostic()
+{
+    std::string error;
+    if (!sdl_xr_attempted)
+    {
+        sdl_xr_attempted = true;
+        char const *value = std::getenv("EDUKE32_XR_DIAGNOSTIC_FRAMES");
+        if (!value || !*value)
+            return;
+
+        char *end;
+        errno = 0;
+        sdl_xr_frameLimit = std::strtoul(value, &end, 10);
+        if (errno || *end || value[0] == '-' || sdl_xr_frameLimit < 1 || sdl_xr_frameLimit > 100000)
+        {
+            LOG_F(ERROR, "OpenXR diagnostic: EDUKE32_XR_DIAGNOSTIC_FRAMES must be 1..100000.");
+            return;
+        }
+        if (!sdl_xr.initialize(sdl_window, error))
+        {
+            LOG_F(ERROR, "OpenXR diagnostic initialization failed: %s", error.c_str());
+            return;
+        }
+        sdl_xr_active = true;
+        LOG_F(INFO, "OpenXR diagnostic started on EDuke32's SDL GL context (not game-world VR).");
+    }
+    if (!sdl_xr_active)
+        return;
+
+    // Validate and optionally save both layers on the first submitted frame.
+    auto const result = sdl_xr.diagnosticFrame(sdl_xr.submittedFrames() == 0,
+        std::getenv("EDUKE32_XR_DIAGNOSTIC_OUTPUT"), error);
+    if (result == eduke_xr::Runtime::TickResult::Error)
+        LOG_F(ERROR, "OpenXR diagnostic failed: %s", error.c_str());
+    else if (result == eduke_xr::Runtime::TickResult::Submitted && sdl_xr.submittedFrames() >= sdl_xr_frameLimit)
+        LOG_F(INFO, "OpenXR diagnostic complete: %llu single-pass stereo frames; native rendering continues.",
+              (unsigned long long)sdl_xr.submittedFrames());
+    else if (result != eduke_xr::Runtime::TickResult::Exit)
+        return;
+
+    sdl_xr.shutdown();
+    sdl_xr_active = false;
+    // Do not restart until the SDL context is recreated.
+}
 #endif
 
 static int32_t vsync_renderlayer;
@@ -760,6 +826,9 @@ int32_t initsystem(void)
 //
 void uninitsystem(void)
 {
+#ifdef USE_OPENXR
+    sdlayer_xr_shutdown();
+#endif
     uninitinput();
     timerUninit();
 
@@ -1513,6 +1582,10 @@ char const *videoGetDisplayName(int display)
 
 static void destroy_window_resources()
 {
+#ifdef USE_OPENXR
+    // OpenXR swapchains and their GL objects depend on this context.
+    sdlayer_xr_shutdown();
+#endif
 /* We should NOT destroy the window surface. This is done automatically
    when SDL_DestroyWindow or SDL_SetVideoMode is called.             */
 
@@ -2111,6 +2184,9 @@ void videoShowFrame(int32_t w)
         {
             MICROPROFILE_SCOPEI("Engine", "SDL_GL_SwapWindow", MP_GREEN3);
 #if SDL_MAJOR_VERSION >= 2
+# ifdef USE_OPENXR
+            sdlayer_xr_diagnostic();
+# endif
             SDL_GL_SwapWindow(sdl_window);
 #else
             SDL_GL_SwapBuffers();

@@ -1,5 +1,10 @@
 
 obj/
+obj-xr/
+/eduke32-xr
+/source/vr/xr_smoke
+/source/vr/*.o
+/tools/vr/__pycache__/
 
 /eduke32
 /mapster32

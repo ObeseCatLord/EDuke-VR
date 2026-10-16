@@ -332,6 +332,7 @@ CPLUSPLUS := 1
 # Feature toggles
 STANDALONE ?= 0
 NETCODE ?= 1
+USE_OPENXR ?= 0
 STARTUP_WINDOW ?= 1
 RETAIL_MENU ?= 0
 POLYMER ?= 1
@@ -1003,6 +1004,19 @@ ifeq (,$(filter $(PLATFORM),WINDOWS WII))
 endif
 
 LIBS += -lm
+
+# The first OpenXR target is SDL2 desktop OpenGL on Linux/X11.  Keep the
+# normal build free of OpenXR dependencies until explicitly requested.
+ifeq ($(USE_OPENXR),1)
+    ifneq ($(SUBPLATFORM),LINUX)
+        $(error USE_OPENXR=1 currently requires Linux)
+    endif
+    ifneq ($(RENDERTYPE)$(SDL_TARGET)$(USE_OPENGL),SDL21)
+        $(error USE_OPENXR=1 requires SDL2 and desktop OpenGL)
+    endif
+    COMPILERFLAGS += -DUSE_OPENXR $(shell pkg-config --cflags openxr gl x11)
+    LIBS += $(shell pkg-config --libs openxr gl x11)
+endif
 
 
 ##### Detect version control revision, if applicable
