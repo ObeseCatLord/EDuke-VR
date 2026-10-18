@@ -18,17 +18,20 @@ uniform vec4 u_texturePosSize;
 uniform float u_usePalette;
 uniform mat4 u_projection[2];
 uniform mat4 u_rotation[2];
+uniform mat4 u_modelview[2];
 
 void main()
 {
    int view = int(gl_ViewID_OVR);
    vec4 vertex = u_rotation[view] * gl_Vertex;
-   vec4 eyeCoordPosition = vertex;
+   vec4 eyeCoordPosition = u_modelview[view] * vertex;
+   // This uniform is native MVP: projection for identity-modelview ART,
+   // GL-computed projection*modelview for an explicit native model.
    gl_Position = u_projection[view] * vertex;
 
    // A finite, outside-the-frustum position makes an eye-owned payload
    // disappear from the other layer without depending on user clip planes.
-   if (a_eye != float(view))
+   if (a_eye >= 0.0 && a_eye != float(view))
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 
    eyeCoordPosition.xyz /= eyeCoordPosition.w;

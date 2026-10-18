@@ -68,7 +68,7 @@ static std::array<uint8_t, MAXSPRITESONSCREEN> membership;
 static bool animating, generationSaturated;
 static uint64_t worldFrames, worldMultiviewFrames, worldOracleFrames;
 static uint64_t worldMaskMultiviewFrames, worldMaskOracleFrames, worldFullMultiviewFrames;
-static uint64_t worldModelOracleFrames;
+static uint64_t worldModelOracleFrames, worldModelMultiviewFrames;
 static eduke_xr::Runtime *previousRuntime;
 static uint64_t worldGeneration;
 static eduke_xr::Runtime *pendingRuntime, *inputRuntime;
@@ -82,7 +82,7 @@ struct WorldReceipt
     eduke_xr::Runtime *runtime=nullptr;
     uint64_t generation=0, serial=0;
     bool opaque=false, masks=false;
-    bool models=true;
+    bool models=true, handModels=false;
 };
 static WorldReceipt worldReceipt;
 static struct
@@ -93,17 +93,18 @@ static struct
     bool consumed=false, mismatch=false;
 } handModelReceipt;
 
-static void accountWorldFrame(bool opaque, bool masks, bool fixture, bool models=true)
+static void accountWorldFrame(bool opaque, bool masks, bool fixture, bool models=true, bool handModels=false)
 {
     ++worldFrames;
     if (opaque) ++worldMultiviewFrames; else ++worldOracleFrames;
     if (masks) ++worldMaskMultiviewFrames; else ++worldMaskOracleFrames;
     if (!models) ++worldModelOracleFrames;
+    if (models && handModels) ++worldModelMultiviewFrames;
     if (opaque && masks && models) ++worldFullMultiviewFrames;
     if (!fixture && worldFrames==60)
-        LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; masks multiview=%u twoPass=%u full multiview=%u; hand models twoPass=%u; one animation transaction per frame.",
+        LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; masks multiview=%u twoPass=%u full multiview=%u; hand models twoPass=%u multiview=%u; one animation transaction per frame.",
               unsigned(worldMultiviewFrames),unsigned(worldOracleFrames),unsigned(worldMaskMultiviewFrames),
-              unsigned(worldMaskOracleFrames),unsigned(worldFullMultiviewFrames),unsigned(worldModelOracleFrames));
+              unsigned(worldMaskOracleFrames),unsigned(worldFullMultiviewFrames),unsigned(worldModelOracleFrames),unsigned(worldModelMultiviewFrames));
 }
 
 static bool overlayEnabled()
@@ -364,6 +365,48 @@ struct HandModelSample
     vec3f_t muzzle{}, grip{};
     XrVector3f basis[3]{}; // Canonical model unit to physical Build X/Y/Z-down.
     VRShotInput shot{};
+};
+
+// Test-only target ownership, not a renderer/state recorder. Native reference
+// emission copies the actual opaque eye into another RGBA8/D24 array layer;
+// its frozen MD3 input is then compared with replay on the untouched XR target.
+struct ModelOracleTarget
+{
+    GLuint fbo=0, color=0, depth=0;
+    GLint read=0, draw=0;
+    ModelOracleTarget()
+    {
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read); glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
+        GLint active, array; glGetIntegerv(GL_ACTIVE_TEXTURE,&active); glActiveTexture(GL_TEXTURE0);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY,&array);
+        glGenFramebuffers(1,&fbo); glGenTextures(1,&color); glGenTextures(1,&depth);
+        glBindTexture(GL_TEXTURE_2D_ARRAY,color);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_RGBA8,xdim,ydim,2,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+        glBindTexture(GL_TEXTURE_2D_ARRAY,depth);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_DEPTH_COMPONENT24,xdim,ydim,2,0,GL_DEPTH_COMPONENT,GL_UNSIGNED_INT,nullptr);
+        glBindTexture(GL_TEXTURE_2D_ARRAY,array); glActiveTexture(active);
+    }
+    bool copyEye(unsigned eye,std::string &error)
+    {
+        GLint source; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&source);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,source); glBindFramebuffer(GL_DRAW_FRAMEBUFFER,fbo);
+        glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,color,0,eye);
+        glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,depth,0,eye);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)
+        { error="native model reference framebuffer incomplete"; return false; }
+        glBlitFramebuffer(0,0,xdim,ydim,0,0,xdim,ydim,GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT,GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER,fbo);
+        if (glGetError()!=GL_NO_ERROR) { error="native model reference target copy failed"; return false; }
+        return true;
+    }
+    ~ModelOracleTarget()
+    {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,read); glBindFramebuffer(GL_DRAW_FRAMEBUFFER,draw);
+        if (fbo) glDeleteFramebuffers(1,&fbo);
+        if (color) glDeleteTextures(1,&color);
+        if (depth) glDeleteTextures(1,&depth);
+    }
 };
 
 bool prepareHandModel(HandModelSample &sample)
@@ -938,7 +981,7 @@ void G_XRBeginFrame()
     // was later canceled by a nested native draw, resize, or early swap.
     if (worldReceipt.runtime && worldReceipt.runtime->generation()==worldReceipt.generation
         && worldReceipt.runtime->lastSubmittedSerial()==worldReceipt.serial)
-        accountWorldFrame(worldReceipt.opaque,worldReceipt.masks,false,worldReceipt.models);
+        accountWorldFrame(worldReceipt.opaque,worldReceipt.masks,false,worldReceipt.models,worldReceipt.handModels);
     worldReceipt={};
     // Only the ordinary game/demo frame owners may acquire/synchronize input.
     G_XRCancelMenuPresentation();
@@ -1145,7 +1188,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         worldFrames=0;
         worldMultiviewFrames=worldOracleFrames=0;
         worldMaskMultiviewFrames=worldMaskOracleFrames=worldFullMultiviewFrames=0;
-        worldModelOracleFrames=0;
+        worldModelOracleFrames=worldModelMultiviewFrames=0;
     }
     if (!recentered && aimHand()!=-2)
     {
@@ -1245,7 +1288,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     vec2_t const oldStart=windowxy1, oldEnd=windowxy2;
     int const oldRange=viewingrange, oldAspect=yxaspect;
     int const frozenVisibility=g_visibility, frozenParallax=parallaxvisibility;
-    bool animated=false, good=true, usedMultiview=false, usedMaskMultiview=false, usedHandModel=false, attemptedHandModel=false;
+    bool animated=false, good=true, usedMultiview=false, usedMaskMultiview=false, usedHandModel=false, usedModelMultiview=false, attemptedHandModel=false;
     videoSetViewableArea(0,0,xdim-1,ydim-1);
     auto const drawOpaque = [&](bool collect) {
         for (unsigned i=0;i<2 && good;++i)
@@ -1394,47 +1437,128 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 return worldFrames!=59 || !prefix
                     || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
             };
+            float modelMatrices[2][16]{}, modelProjections[2][16]{};
+            float oracleMatrices[2][16]{}, oracleProjections[2][16]{};
+            bool oracleSamples[2]{}, oracleCompared[2]{};
+            auto const drawHandModel = [&](bool collect,ModelOracleTarget *oracle=nullptr) {
+                bool accepted=true;
+                for (unsigned i=0;i<2 && good;++i)
+                {
+                    good=runtime->bindEye(i,error);
+                    if (!good) break;
+                    if (oracle && !oracle->copyEye(i,error)) { good=false; break; }
+                    videoSetViewableArea(0,0,xdim-1,ydim-1);
+                    eyeState(eyes[i]);
+                    if (collect && !polymost_xrBeginCollection(POLYMOST_XR_MODELS,i)) return false;
+                    int const scriptVisibility=g_visibility, scriptParallax=parallaxvisibility;
+                    g_visibility=frozenVisibility; parallaxvisibility=frozenParallax;
+                    renderPrepareMasksQ16(eyes[i].camera.pos.x,eyes[i].camera.pos.y,eyes[i].camera.pos.z,
+                                         eyes[i].camera.angle,eyes[i].camera.horizon,eyes[i].camera.sector);
+                    g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
+                    handModelMatrix(handModel,eyes[i]);
+                    if (worldFrames==59 && std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
+                    {
+                        float projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
+                        if (oracle)
+                        {
+                            Bmemcpy(oracleMatrices[i],handModel.context.modelToEye,sizeof(projection));
+                            Bmemcpy(oracleProjections[i],projection,sizeof(projection)); oracleSamples[i]=true;
+                        }
+                        else if (oracleSamples[i])
+                        {
+                            if (Bmemcmp(oracleMatrices[i],handModel.context.modelToEye,sizeof(projection))
+                                || Bmemcmp(oracleProjections[i],projection,sizeof(projection)))
+                            { good=false; error="native model oracle transform changed"; break; }
+                            oracleCompared[i]=true;
+                        }
+                    }
+                    if (i==1 && testFailure("model-eye-1"))
+                    { good=false; error="injected held-model failure before second eye"; break; }
+                    good=polymost_xrBeginModelDraw(handModel.context.shade,handModel.context.palette,handModel.sector);
+                    if (good)
+                    {
+                        good=polymost_md3drawcontext(&handModel.context)!=0;
+                        polymost_xrEndModelDraw();
+                    }
+                    if (!good) error="native held-model emission failed";
+                    if (good && oracle)
+                    {
+                        auto const prefix=std::string(std::getenv("EDUKE32_XR_MODEL_OUTPUT"))+"-reference-"+(i ? "right" : "left");
+                        good=eduke_xr::captureFramebuffer((prefix+".ppm").c_str(),xdim,ydim,error)
+                            && eduke_xr::captureFramebufferDepth((prefix+"-depth.bin").c_str(),xdim,ydim,error);
+                    }
+                    if (collect && polymost_xrEndCollection(i)!=POLYMOST_XR_COLLECT_OK) accepted=false;
+                    if (good && worldFrames==59 && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                    {
+                        Bmemcpy(modelMatrices[i],handModel.context.modelToEye,sizeof(modelMatrices[i]));
+                        glGetFloatv(GL_PROJECTION_MATRIX,modelProjections[i]);
+                    }
+                }
+                return good && accepted;
+            };
             good=captureModels("-before");
-            for (unsigned i=0;i<2 && good;++i)
+            auto const forceReference=std::getenv("EDUKE32_XR_TEST_MODELS_TWO_PASS");
+            if (good && singlePass && !(forceReference && !Bstrcmp(forceReference,"1")))
             {
-                good=runtime->bindEye(i,error);
-                if (!good) break;
-                videoSetViewableArea(0,0,xdim-1,ydim-1);
-                eyeState(eyes[i]);
-                int const scriptVisibility=g_visibility, scriptParallax=parallaxvisibility;
-                g_visibility=frozenVisibility; parallaxvisibility=frozenParallax;
-                renderPrepareMasksQ16(eyes[i].camera.pos.x,eyes[i].camera.pos.y,eyes[i].camera.pos.z,
-                                     eyes[i].camera.angle,eyes[i].camera.horizon,eyes[i].camera.sector);
-                g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
-                handModelMatrix(handModel,eyes[i]);
-                if (i==1 && testFailure("model-eye-1"))
-                { good=false; error="injected held-model failure before second eye"; break; }
-                good=polymost_xrBeginModelDraw(handModel.context.shade,handModel.context.palette,handModel.sector);
-                if (good)
+                if (worldFrames==59 && std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
                 {
-                    good=polymost_md3drawcontext(&handModel.context)!=0;
-                    polymost_xrEndModelDraw();
+                    ModelOracleTarget oracle;
+                    drawHandModel(false,&oracle);
                 }
-                if (!good) error="native held-model emission failed";
-                if (good && worldFrames==59 && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                if (std::getenv("EDUKE32_XR_TEST_FAIL"))
+                    SDL_setenv("EDUKE32_XR_TEST_MODELS_ARMED",worldFrames==59 ? "1" : "0",1);
+                bool committed=drawHandModel(true);
+                if (good) good=captureModels("-collected");
+                if (committed && good)
                 {
-                    LOG_F(INFO,"OpenXR hand model: eye=%u model=%d root=%d,%d,%d direction=%d,%d,%d.",i,
-                          handModel.context.modelid,handModel.root.x,handModel.root.y,handModel.root.z,
-                          handModel.shot.direction[0],handModel.shot.direction[1],handModel.shot.direction[2]);
-                    float const *a=handModel.context.modelToEye;
-                    LOG_F(INFO,"OpenXR hand model matrix: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
-                          a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
-                    float projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
-                    a=projection;
-                    LOG_F(INFO,"OpenXR hand model projection: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
-                          a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
+                    good=runtime->bindMultiview(error);
+                    if (good)
+                    {
+                        committed=polymost_xrReplayCollection()==POLYMOST_XR_COLLECT_OK;
+                        if (committed)
+                        {
+                            usedModelMultiview=true;
+                            if (worldFrames==59 && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                            {
+                                auto const stats=polymost_xrCollectionStats();
+                                LOG_F(INFO,"OpenXR hand model single-pass: paired=%u eyeOnly=%u shared=%u sharedVertices=%u.",
+                                      stats.pairedCalls,stats.eyeOnlyCalls,stats.sharedModelCalls,stats.sharedModelVertices);
+                            }
+                        }
+                        else if (polymost_xrReplaySubmitted())
+                        { good=false; error=std::string("model replay failed after submission: ")+polymost_xrCollectionReason(); }
+                    }
                 }
+                if (!committed && good)
+                {
+                    static unsigned reported;
+                    if (reported<3 || worldFrames==59)
+                    { LOG_F(INFO,"OpenXR hand model uses two-pass oracle: %s.",polymost_xrCollectionReason()); ++reported; }
+                    polymost_xrDiscardCollection();
+                    drawHandModel(false);
+                }
+                polymost_xrDiscardCollection();
             }
+            else if (good) drawHandModel(false);
             if (good) good=captureModels("-after");
             if (good)
             {
                 usedHandModel=true;
                 handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,false,false};
+                if (oracleCompared[0] && oracleCompared[1]) LOG_F(INFO,"OpenXR hand model oracle inputs: identical=1.");
+                if (worldFrames==59 && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                    for (unsigned i=0;i<2;++i)
+                    {
+                        LOG_F(INFO,"OpenXR hand model: eye=%u model=%d root=%d,%d,%d direction=%d,%d,%d.",i,
+                              handModel.context.modelid,handModel.root.x,handModel.root.y,handModel.root.z,
+                              handModel.shot.direction[0],handModel.shot.direction[1],handModel.shot.direction[2]);
+                        float const *a=modelMatrices[i];
+                        LOG_F(INFO,"OpenXR hand model matrix: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
+                              a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
+                        a=modelProjections[i];
+                        LOG_F(INFO,"OpenXR hand model projection: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
+                              a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
+                    }
             }
         }
         auto const drawMasks = [&](bool collect) {
@@ -1477,7 +1601,9 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             char const *failure=std::getenv("EDUKE32_XR_TEST_FAIL");
             bool const maskFault=failure && !Bstrncmp(failure,"mask-",5);
             if (maskFault)
-                SDL_setenv("EDUKE32_XR_TEST_MASK_ARMED",(!fixtureTest || g_frameCounter == 12) ? "1" : "0",1);
+                SDL_setenv("EDUKE32_XR_TEST_MASK_ARMED",
+                           (std::getenv("EDUKE32_XR_TEST_MASK_WITH_MODEL") ? usedHandModel && worldFrames==59
+                            : (!fixtureTest || g_frameCounter == 12)) ? "1" : "0",1);
             auto const captureCollection = [&](char const *suffix) {
                 auto const prefix=std::getenv("EDUKE32_XR_TEST_CAPTURE");
                 return !prefix || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
@@ -1557,7 +1683,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     if (deferPresentation)
     {
         presentationRuntime=runtime; presentationGeneration=runtime->generation();
-        worldReceipt={runtime,runtime->generation(),frame.serial,usedMultiview,usedMaskMultiview,!usedHandModel};
+        worldReceipt={runtime,runtime->generation(),frame.serial,usedMultiview,usedMaskMultiview,!usedHandModel || usedModelMultiview,usedHandModel};
     }
     // Display-end callbacks must not observe the right eye's renderer globals.
     // Preserve script visibility mutations while rebuilding native derived fog.

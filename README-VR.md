@@ -5,7 +5,8 @@ This repository starts from the exact requested **r10669 ec5824db8** source arch
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
 The private [chunky model set](docs/vr/MODEL_ASSETS.md) is complete as an art/export
-deliverable; game attachment, body IK and model stereo integration remain open.
+deliverable; animated game attachment and body IK remain open. The qualified
+idle pistol now has native MD3 stereo and shared-geometry multiview transport.
 A [GPU-denied software OpenXR lab](docs/vr/SOFTWARE_XR.md) now qualifies bounded
 actual world multiview rendering without using the hardware GPU.
 
@@ -532,8 +533,12 @@ translucency. Enable `EDUKE32_XR_MODELS=1` alongside the existing tracked
 weapon/UI settings and the supplied private native DEF binding. Firing, reload,
 custom presentation and unsupported models retain native ART. This first
 muzzle-alignment proof does not finish controller grip fit, animated weapons,
-full-body integration or model SPS. Hand models currently draw per eye and are
-excluded from full-multiview counts. See [the focused design and qualification](docs/vr/MODEL_HAND_DESIGN.md).
+full-body integration or complete model/material SPS. With the existing
+`EDUKE32_XR_SINGLE_PASS=1` opt-in, this opaque idle pistol now submits shared
+geometry through the existing multiview transport, with exact native color/depth
+qualification. Unsupported state uses the native two-eye reference and is
+excluded from full-multiview counts. See [the native boundary](docs/vr/MODEL_HAND_DESIGN.md)
+and [model SPS qualification](docs/vr/MODEL_SPS.md).
 
 
 The native tracked **Devastator** now reuses the RPG path, retaining native

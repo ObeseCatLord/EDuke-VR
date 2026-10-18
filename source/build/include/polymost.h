@@ -68,6 +68,7 @@ enum polymost_xr_collect_phase
 {
     POLYMOST_XR_OPAQUE,
     POLYMOST_XR_MASKS,
+    POLYMOST_XR_MODELS,
 };
 
 struct polymost_xr_collect_stats
@@ -76,6 +77,7 @@ struct polymost_xr_collect_stats
     uint32_t pairedVertices, eyeOnlyVertices;
     uint32_t flatSkyCalls, skyDepthCalls, npotCalls;
     uint32_t maskCalls, translucentCalls, depthOnlyCalls, depthWriteOffCalls;
+    uint32_t modelCalls, sharedModelCalls, sharedModelVertices;
 };
 
 // Frame-local transport only: begin eye 0 resets both streams, eye 1 continues.
@@ -90,6 +92,8 @@ void polymost_xrDiscardCollection();
 polymost_xr_collect_stats polymost_xrCollectionStats();
 char const *polymost_xrCollectionReason();
 bool polymost_xrReplaySubmitted();
+bool polymost_xrCollectingModels();
+void polymost_xrRejectModel(char const *reason);
 #endif
 void polymost_startBufferedDrawing(int nn);
 void polymost_bufferVert(vec3f_t const v, vec2f_t const t);

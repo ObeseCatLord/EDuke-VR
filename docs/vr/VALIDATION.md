@@ -1012,4 +1012,27 @@ reaped. The forced-shutdown case retains Monado's separate known
 destroy-nonexistent-space teardown warning. A separate nonzero native world-model
 fixture retains exact two-pass/candidate color/depth and callback counts 14/14/14; the model masks correctly
 use sequential-eye fallback, with zero collection writes. Model SPS is not
-claimed. Durable results/hashes are sibling `evidence/hand-model-validation.json`.
+claimed by that earlier increment. Durable results/hashes are sibling `evidence/hand-model-validation.json`.
+
+## Opaque tracked MD3 shared-geometry SPS — 2026-10-17
+
+The subsequent increment qualifies actual model multiview through the existing
+native MD3 emission and ART transport. Fourteen final private software labs pass:
+base, tracked roll, actual runtime asymmetric FOVs, fog, nearer translucent wall,
+immediate mode, two surfaces, four pre-draw rejection/error cases, later-mask
+retry, post-draw cancellation and existing unequal-coverage animated ART masks.
+All wrappers verify hardware GPU denial, matching llvmpipe/LVP, observed clean
+core validation and owned process cleanup. Native and XR builds pass.
+
+The actual multiplayer native/SPS sessions compare both eyes' color and raw
+depth exactly before/after the model and after masks. A same-frame native draw
+on copied array targets additionally requires byte-identical frozen transform
+inputs and zero color/depth tolerance. Collection leaves both actual eye layers
+unchanged. One-surface replay shares 582 vertices once; the mechanical two-surface
+fixture splits them into two shared draws. Post-submission failure cancels the
+serial; earlier rejection retries native emission once. See MODEL_SPS.md for
+review dispositions, actual counters and qualification limits. Durable results,
+binary/source hashes and prior failed attempt locations are sibling
+`evidence/model-sps-validation.json`. Full animated weapons/body integration,
+world MD3 animation ownership, general model/material SPS and hardware/headset
+performance remain open.

@@ -2069,6 +2069,11 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
     int32_t texunits = GL_TEXTURE0;
 
     bool const explicitContext = ctx != nullptr;
+#ifdef USE_OPENXR
+    static bool reportedXRPath;
+    if (!reportedXRPath && Bgetenv("EDUKE32_XR_TEST_MODELS"))
+    { reportedXRPath=true; LOG_F(INFO,"OpenXR MD3 emission path: arrays=%d.",r_vertexarrays); }
+#endif
     tspritetype explicitTspr{};
     spriteext_t explicitSext{};
     spriteext_t const *sext;
@@ -2414,8 +2419,22 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
 
         auto skinNum = explicitContext ? ctx->skinnum : tile2model[Ptile2tile(tspr->picnum, lpal)].skinnum;
         i = mdloadskin((md2model_t *)m, skinNum, drawpal, surfi);
+#ifdef USE_OPENXR
+        if (polymost_xrCollectingModels() && surfi==m->head.numsurfs-1)
+        {
+            static bool injectedSkin;
+            auto const armed=Bgetenv("EDUKE32_XR_TEST_MODELS_ARMED"), fault=Bgetenv("EDUKE32_XR_TEST_FAIL");
+            if (!injectedSkin && armed && !Bstrcmp(armed,"1") && fault && !Bstrcmp(fault,"model-skin-last"))
+            { injectedSkin=true; i=0; }
+        }
+#endif
         if (!i)
+        {
+#ifdef USE_OPENXR
+            if (polymost_xrCollectingModels()) polymost_xrRejectModel("missing required model skin");
+#endif
             continue;
+        }
         //i = mdloadskin((md2model *)m,tile2model[Ptile2tile(tspr->picnum,lpal)].skinnum,surfi); //hack for testing multiple surfaces per MD3
 
         auto sk = mdgetskinmap(m, drawpal, skinNum, surfi);
@@ -2429,6 +2448,17 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
         glLoadIdentity();
         glTranslatef(xpanning, ypanning, 1.0f);
         glMatrixMode(GL_MODELVIEW);
+
+#ifdef USE_OPENXR
+        // Ownership survives rejection: never fall through to either native
+        // immediate or indexed emission while this collector owns the draw.
+        if (polymost_xrCollectingModels())
+        {
+            if (!explicitContext || m->usesalpha) polymost_xrRejectModel("unsupported model draw family");
+            polymost_xrCollectModelSurface(s,vertlist,pc,surfi,m->head.numsurfs);
+            continue;
+        }
+#endif
 
         if (!explicitContext && !(tsprflags & TSPR_FLAGS_MDHACK))
         {

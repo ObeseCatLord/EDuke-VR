@@ -37,7 +37,11 @@ def main():
     p.add_argument('--display',default=':105')
     p.add_argument('--remote-port',type=int,default=49777)
     p.add_argument('--port',type=int,default=24610)
-    p.add_argument('--case',choices=('base','roll','fog','translucent','missing-skin','custom','second-eye-failure'),default='base')
+    p.add_argument('--model-mode',choices=('native','sps'),default='native',help='retain the native two-eye reference or require model multiview')
+    p.add_argument('--vertex-mode',choices=('arrays','immediate'),default='arrays')
+    p.add_argument('--model-file',type=Path,help='private native multi-surface fixture, retaining pistol geometry/tags')
+    p.add_argument('--fault',choices=('collect-right','surface-1','skin-last','replay-before','replay-after','mask-retry'))
+    p.add_argument('--case',choices=('base','roll','fog','asymmetric','translucent','missing-skin','custom','second-eye-failure'),default='base')
     a=p.parse_args()
     a.work_dir.mkdir(parents=True,exist_ok=True)
     root=Path(tempfile.mkdtemp(prefix='hand-model-',dir=a.work_dir.resolve()))
@@ -69,10 +73,14 @@ def main():
             (lab/'hand.map').write_bytes(data)
         (cl/'duke_assets').symlink_to(a.model_root.resolve()/'duke_assets',target_is_directory=True)
         skin='missing.png' if a.case=='missing-skin' else 'pistol.png'
-        (cl/'hand-model.def').write_text('model "duke_assets/pistol.md3" {\n'
-            ' scale 0.5859375\n'
-            f' skin {{ pal 0 surface 0 file "duke_assets/{skin}" }}\n'
+        model_file=a.model_file.resolve() if a.model_file else a.model_root.resolve()/'duke_assets/pistol.md3'
+        (cl/'held-pistol.md3').symlink_to(model_file)
+        surfaces=struct.unpack_from('<i',model_file.read_bytes(),84)[0]
+        (cl/'hand-model.def').write_text('model "held-pistol.md3" {\n'
+            ' scale 0.5859375\n'+''.join(f' skin {{ pal 0 surface {index} file "duke_assets/{skin}" }}\n' for index in range(surfaces))+
             ' frame { name "rest" tile 21 smoothduration 0 }\n}\n')
+        if a.vertex_mode=='immediate':
+            with (cl/'autoexec.cfg').open('a') as f:f.write('r_vertexarrays 0\n')
         env={k:v for k,v in os.environ.items() if not k.startswith('EDUKE32_XR')}
         env.update(DISPLAY=a.display,SDL_VIDEODRIVER='x11',SDL_AUDIODRIVER='dummy')
         se={k:v for k,v in env.items() if not k.startswith('XR_')}
@@ -84,6 +92,10 @@ def main():
             EDUKE32_XR_MODEL_OUTPUT=str(cl/'model'),EDUKE32_XR_WORLD_OUTPUT=str(cl/'world'),
             EDUKE32_XR_HUD_OUTPUT=str(cl/'hud'),EDUKE32_XR_WEAPON_OUTPUT=str(cl/'weapon'),
             EDUKE32_XR_CROSSHAIR_OUTPUT=str(cl/'crosshair'))
+        if a.model_mode=='native':ce['EDUKE32_XR_TEST_MODELS_TWO_PASS']='1'
+        if a.fault:ce['EDUKE32_XR_TEST_FAIL']='model-'+a.fault
+        if a.fault=='mask-retry':
+            ce.update(EDUKE32_XR_TEST_FAIL='mask-collect-right',EDUKE32_XR_TEST_MASK_WITH_MODEL='1')
         if a.case=='second-eye-failure':ce['EDUKE32_XR_TEST_FAIL']='model-eye-1'
         log=(sl/'server.log').open('w');logs.append(log)
         server=subprocess.Popen([str(a.binary.resolve()),'-usecwd','-nosetup','-noautoload',
@@ -97,6 +109,19 @@ def main():
             roll=25 if a.case=='roll' else 0
             hand.pose.orientation=Quat(*quaternion(12,8,roll))
             remote.packet.head.center.orientation=orientation(-12,4)
+            if a.case=='asymmetric':
+                # Monado r_head_data views are relative to head.center.
+                # These are real runtime-supplied located views, not client
+                # substitution of synthetic projection-layer poses.
+                remote.packet.head.per_view_data_valid=True
+                for index,view in enumerate(remote.packet.head.views):
+                    view.pose.orientation=Quat(0,0,0,1)
+                    view.pose.position.x=.032 if index else -.032
+                    view.pose.position.y=view.pose.position.z=0
+                    view.fov.angle_left=-.68 if index else -.75
+                    view.fov.angle_right=.65 if index else .8
+                    view.fov.angle_up=.6 if index else .7
+                    view.fov.angle_down=-.62 if index else -.72
             remote.send()
             log=(cl/'client.log').open('w');logs.append(log)
             client=subprocess.Popen([str(a.client_binary.resolve()),'-usecwd','-nosetup','-noautoload',
@@ -107,15 +132,16 @@ def main():
             player=wait_for_join_barrier(X11(a.display),client,cl/'client.log',so)['server_player']
             so.wait(lambda t:len(players(t,player))>20)
             phase='actual model frames'
-            if a.case=='second-eye-failure':
+            if a.case=='second-eye-failure' or a.fault=='replay-after':
+                expected_failure='model replay failed after submission' if a.fault else 'injected held-model failure before second eye'
                 deadline=time.monotonic()+20
                 while time.monotonic()<deadline:
                     text=(cl/'client.log').read_text(errors='replace')
-                    if 'injected held-model failure before second eye' in text:break
+                    if expected_failure in text:break
                     if client.poll() is not None:raise RuntimeError('owned game exited before injected failure')
                     time.sleep(.05)
                 canceled=re.findall(r'OpenXR hand model frame canceled: serial=(\d+) submitted=(\d+)\.',text)
-                checks={'second_eye_failure_cancels_XR':'injected held-model failure before second eye' in text,
+                checks={'injected_model_failure_cancels_XR':expected_failure in text,
                         'partially_drawn_frame_never_submitted':bool(canceled) and int(canceled[-1][0])>int(canceled[-1][1]),
                         'no_completed_model_frame_receipt':'OpenXR hand model:' not in text,
                         'no_sixty_frame_model_submission':'OpenXR world oracle: 60 frames' not in text}
@@ -127,8 +153,22 @@ def main():
                 checks={'sixty_world_and_HUD_submissions':'OpenXR world oracle: 60 frames' in text,
                     'core_validation_active':'Core Validation output type:' in text,
                     'core_validation_clean':not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',text)}
+                checks['requested_native_vertex_path_observed']=f'OpenXR MD3 emission path: arrays={int(a.vertex_mode=="arrays")}.' in text
+                if a.case=='asymmetric':
+                    observed=[np.fromstring(re.findall(r'OpenXR weapon view: eye='+str(i)+r'.*? fov=([^\n]+)\.',text)[-1],sep=',') for i in (0,1)]
+                    checks['runtime_asymmetric_FOVs_observed']=max(float(np.abs(v-np.array(expected)).max()) for v,expected in zip(observed,[[-.75,.8,.7,-.72],[-.68,.65,.6,-.62]]))<1e-6
                 counts=re.findall(r'full multiview=(\d+); hand models twoPass=(\d+)',text)
-                checks['model_frames_reported_as_two_pass']=bool(counts) and (int(counts[-1][1])==0 if fallback else int(counts[-1][1])>0 and sum(map(int,counts[-1]))<=60)
+                mv=re.findall(r'hand models twoPass=\d+ multiview=(\d+)',text)
+                checks['expected_model_submission_mode']=bool(counts) and (int(counts[-1][1])==0 if fallback or a.model_mode=='sps' else int(counts[-1][1])>0 and sum(map(int,counts[-1]))<=60)
+                if a.model_mode=='sps' and not fallback:
+                    checks['actual_model_multiview_frames']=bool(mv) and int(mv[-1])>0
+                    if a.fault and a.fault!='mask-retry':
+                        checks['rejected_model_uses_one_native_retry']=int(counts[-1][1])==1 and ('injected model-'+a.fault in text or a.fault=='skin-last' and 'missing required model skin' in text)
+                        checks['expected_model_submission_mode']=True
+                    if a.fault=='mask-retry':checks['mask_retry_after_model_observed']='injected mask-collect-right' in text
+                    if not a.fault:
+                        calls=re.findall(r'OpenXR hand model single-pass: paired=(\d+) eyeOnly=(\d+) shared=(\d+) sharedVertices=(\d+)\.',text)
+                        checks['shared_model_geometry_submitted_once']=bool(calls) and int(calls[-1][0])>0 and int(calls[-1][1])==0 and calls[-1][0]==calls[-1][2] and int(calls[-1][3])>0
                 details={}
                 if fallback:
                     checks['unsupported_case_retains_native_ART']='OpenXR hand model:' not in text and not (cl/'model-after-left.ppm').exists() and Image.open(cl/'weapon-coverage.pgm').getbbox() is not None
@@ -198,6 +238,14 @@ def main():
                     checks['stereo_model_has_parallax']=bounds[0]!=bounds[1]
                     checks['muzzle_matches_independent_physical_stereo_projection']=max(projection_errors)<2e-5
                     checks['physical_model_axes_scale_and_roll_match']=max(axis_errors)<2e-5
+                    if a.model_mode=='sps':
+                        checks['same_frame_native_inputs_identical']='OpenXR hand model oracle inputs: identical=1.' in text
+                        checks['same_frame_native_model_color_depth_exact']=all(
+                            (cl/f'model-reference-{eye}{suffix}').read_bytes()==(cl/f'model-after-{eye}{suffix}').read_bytes()
+                            for eye in ('left','right') for suffix in ('.ppm','-depth.bin'))
+                        checks['model_collection_writes_zero_color_depth']=all(
+                            (cl/f'model-before-{eye}{suffix}').read_bytes()==(cl/f'model-collected-{eye}{suffix}').read_bytes()
+                            for eye in ('left','right') for suffix in ('.ppm','-depth.bin'))
                     if a.case=='translucent':checks['near_translucent_wall_composes_over_model_both_eyes']=all(t>c*.9 for t,c in zip(translucent_changed,changed))
                     # Actual server simulation must fire from the same root/ray.
                     phase='native server shot';offset=len(so.text())
@@ -223,7 +271,7 @@ def main():
                 if not window:raise RuntimeError('owned XR drawable missing')
                 state=x11.window_visibility(window)
                 checks.update(private_drawable_unmapped=state['unmapped'],no_desktop_focus=not state['has_desktop_focus'])
-            result={'passed':all(checks.values()),'case':a.case,'checks':checks,**details}
+            result={'passed':all(checks.values()),'case':a.case,'model_mode':a.model_mode,'vertex_mode':a.vertex_mode,'fault':a.fault,'checks':checks,**details}
     except Exception as exc:
         result={'passed':False,'case':a.case,'phase':phase,'error':str(exc)}
     finally:

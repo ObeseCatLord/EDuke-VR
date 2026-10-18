@@ -308,6 +308,10 @@ suppresses only the matching idle ART tile after both eyes succeed. Actual
 private software-XR multiplayer proves visible depth, physical muzzle/axes/
 scale/roll projection, native server ray alignment, transparent composition,
 unsupported-case ART fallback and partial-frame cancellation. See
-MODEL_HAND_DESIGN.md. This model path is sequential-eye and explicitly excluded
-from full-multiview accounting; animated weapons, grip fitting, body/IK and
-model SPS remain open.
+MODEL_HAND_DESIGN.md. The subsequent MODEL_SPS.md increment reuses the same
+native surface boundary and existing transport for the opaque idle pistol.
+Shared geometry passes exact native color/depth comparisons with real private
+software XR multiplayer, asymmetric FOV, roll, fog, immediate/array paths,
+two surfaces, collection/replay rejection and later-mask retry. Model fallback
+remains excluded from full-multiview accounting. Animated weapons, grip fitting,
+body/IK and complete model/material SPS remain open.

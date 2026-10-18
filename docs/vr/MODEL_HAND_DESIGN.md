@@ -1,7 +1,8 @@
 # Native tracked MD3 increment
 
-This is an opt-in **idle pistol** vertical proof, not completed weapon/body
-integration or model single-pass stereo. Private art remains in sibling
+This is an opt-in **idle pistol** vertical proof. It now also has qualified
+opaque model single-pass transport, described in MODEL_SPS.md; complete
+weapon/body integration remains open. Private art remains in sibling
 `duke-vr-assets`; no proprietary meshes/textures are committed here.
 
 ## Focused Astra design review
@@ -20,7 +21,7 @@ implementation review. The brief is retained in ignored
 | Use constrained shot origin and stored direction together | Adopted. Canonical muzzle position maps to that origin; tracked right is orthogonalized around authoritative forward to retain roll. |
 | Predict only a narrow vanilla weapon; preserve native side effects | Adopted. Conservative player/weapon/event eligibility; a frame receipt suppresses only the matching idle pistol tile. Native helpers and weapon branch still execute. |
 | Reject unsupported materials before pixels, cancel after partial failure | Adopted. All surfaces/skins and affine transforms preflight; second-eye failure ends an empty XR frame. Receipt mismatch cancels presentation. |
-| Build SPS on the qualified native emission | Deferred until its two-eye reference is established. Frames containing sequential-eye hand models are excluded from full-multiview counts. |
+| Build SPS on the qualified native emission | Completed for this opaque explicit-context family in the subsequent MODEL_SPS.md increment. Native reference fallback is excluded from full-multiview counts. |
 | Prove transparent composition and native gameplay alignment | Actual private software-XR multiplayer fixtures described below; remaining promotion cases remain explicit. |
 
 The load-bearing correction was composition order. `renderDrawMasks` defers
@@ -101,9 +102,10 @@ their errors are not silently counted as passing evidence. Six hand cases pass
 71 checks. Client core validation is clean throughout; the forced-shutdown case
 retains Monado's separate known destroy-nonexistent-space teardown warning.
 
-Still required before broad promotion: asymmetric-FOV hand cases,
-wall/ceiling clipping, tracking loss/recovery and resolver clamping, mask retry
-with a hand model, comprehensive native transitions/callback accounting,
+The subsequent MODEL_SPS.md increment qualifies asymmetric-FOV hand rendering
+and mask retry with an accepted hand model, with exact color/depth oracles.
+Still required before broad promotion: wall/ceiling clipping, tracking
+loss/recovery and resolver clamping, comprehensive transitions/callback accounting,
 simultaneous world/hand animation ownership, animated weapon families,
-full-body presentation/IK and model/material single-pass stereo. Physical
+full-body presentation/IK and broader model/material single-pass stereo. Physical
 headset/controller fit and performance remain separate acceptance work.
