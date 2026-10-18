@@ -2829,7 +2829,15 @@ int32_t polymost_md3drawcontext(md3drawcontext_t const *ctx)
         return 0;
 
     mdensure_draw_buffers();
-    return polymost_md3draw(m, nullptr, ctx);
+#ifdef USE_OPENXR
+    bool const collecting=polymost_xrCollectingModels();
+    if (collecting) polymost_xrBeginModelInstance(ctx->instance,ctx->modelid,m->head.numsurfs);
+#endif
+    int32_t const result=polymost_md3draw(m, nullptr, ctx);
+#ifdef USE_OPENXR
+    if (collecting) polymost_xrEndModelInstance();
+#endif
+    return result;
 }
 
 int32_t polymost_mddraw(tspriteptr_t tspr)

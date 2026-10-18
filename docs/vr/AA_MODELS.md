@@ -3,8 +3,9 @@
 This opt-in binding uses the private AA `duke_pistol.md3` and skin through the
 existing world model renderer. It covers the unmodified, single Duke pistol;
 named positive frames can follow its native counter as described below. The
-full AA arsenal, floating hands, complete firing effects and headset fitting
-remain incomplete. Exported art is not runtime qualification.
+full AA arsenal attachment, complete firing effects and headset fitting
+remain incomplete. Independent tracked floating hands are now implemented; see
+[FLOATING_HANDS.md](FLOATING_HANDS.md). Exported art is not runtime qualification.
 
 ## Native boundary
 

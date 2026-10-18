@@ -98,6 +98,8 @@ char const *polymost_xrCollectionReason();
 bool polymost_xrReplaySubmitted();
 bool polymost_xrCollectingModels();
 void polymost_xrRejectModel(char const *reason);
+void polymost_xrBeginModelInstance(int32_t instance, int32_t model, int32_t surfaces);
+void polymost_xrEndModelInstance();
 #endif
 void polymost_startBufferedDrawing(int nn);
 void polymost_bufferVert(vec3f_t const v, vec2f_t const t);

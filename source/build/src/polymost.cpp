@@ -289,6 +289,7 @@ struct xr_opaque_packet_t
     float fogStart, fogEnd;
     vec4f_t fogColor;
     float textureMatrix[16];
+    uint32_t modelInstance, modelSurface;
     // Eye-dependent transforms excluded from material compatibility. For ART
     // modelview is identity and MVP equals the saved projection.
     float projection[16], rotation[16], modelview[16];
@@ -313,7 +314,9 @@ struct xr_opaque_collection_t
     char const *reason = "not collected";
     float projection[2][16]{};
     bool projectionValid[2]{};
-    uint32_t modelSurfaces[2]{};
+    struct ModelInstance { int32_t identity, model; uint32_t first, count; };
+    std::vector<ModelInstance> modelInstances[2];
+    bool modelInstanceActive=false;
     std::vector<xr_opaque_packet_t> packets[2];
     std::vector<xr_opaque_vertex_t> vertices[2];
     xr_opaque_transport_t transport;
@@ -347,6 +350,42 @@ static bool polymost_xrCollectingMasks()
 bool polymost_xrCollectingModels() { return xrOpaque.active && xrOpaque.phase==POLYMOST_XR_MODELS; }
 void polymost_xrRejectModel(char const *reason) { polymost_xrRejectOpaque(reason); }
 
+void polymost_xrBeginModelInstance(int32_t instance, int32_t model, int32_t surfaces)
+{
+    if (!polymost_xrCollectingModels() || xrOpaque.rejected) return;
+    unsigned const eye=xrOpaque.eye;
+    auto &instances=xrOpaque.modelInstances[eye];
+    if (xrOpaque.modelInstanceActive || instance<0 || model<0 || surfaces<=0
+        || uint64_t(surfaces)+xrOpaque.packets[eye].size()>XR_OPAQUE_MAX_PACKETS)
+    { polymost_xrRejectOpaque("invalid model instance boundary"); return; }
+    for (auto const &prior:instances)
+        if (prior.identity==instance)
+        { polymost_xrRejectOpaque("duplicate model instance"); return; }
+    if (eye==1)
+    {
+        auto const &left=xrOpaque.modelInstances[0];
+        size_t const index=instances.size();
+        if (index>=left.size() || left[index].identity!=instance || left[index].model!=model
+            || left[index].count!=unsigned(surfaces) || left[index].first!=xrOpaque.packets[eye].size())
+        { polymost_xrRejectOpaque("mismatched model instance traversal"); return; }
+    }
+    instances.push_back({instance,model,uint32_t(xrOpaque.packets[eye].size()),uint32_t(surfaces)});
+    xrOpaque.modelInstanceActive=true;
+}
+
+void polymost_xrEndModelInstance()
+{
+    if (!polymost_xrCollectingModels()) return;
+    if (!xrOpaque.rejected)
+    {
+        auto const &instances=xrOpaque.modelInstances[xrOpaque.eye];
+        if (!xrOpaque.modelInstanceActive || instances.empty()
+            || xrOpaque.packets[xrOpaque.eye].size()!=instances.back().first+instances.back().count)
+            polymost_xrRejectOpaque("incomplete model instance");
+    }
+    xrOpaque.modelInstanceActive=false;
+}
+
 static bool polymost_xrMaskFaultArmed(char const * const name)
 {
     char const * const armed = Bgetenv("EDUKE32_XR_TEST_MASK_ARMED");
@@ -374,7 +413,8 @@ bool polymost_xrBeginCollection(polymost_xr_collect_phase const phase, uint32_t 
         xrOpaque.vertices[1].clear();
         xrOpaque.transport = {};
         xrOpaque.projectionValid[0] = xrOpaque.projectionValid[1] = false;
-        xrOpaque.modelSurfaces[0]=xrOpaque.modelSurfaces[1]=0;
+        xrOpaque.modelInstances[0].clear(); xrOpaque.modelInstances[1].clear();
+        xrOpaque.modelInstanceActive=false;
         xrOpaque.stats = {};
         xrOpaque.rejected = false;
         xrOpaque.flatSky = xrOpaque.skyDepthRecursion = false;
@@ -412,8 +452,8 @@ polymost_xr_collect_result polymost_xrEndCollection(uint32_t const eye)
     if (xrOpaque.transport.pending)
         polymost_xrRejectOpaque("incomplete collection transport");
     if (xrOpaque.phase==POLYMOST_XR_MODELS
-        && (xrOpaque.packets[eye].empty() || xrOpaque.packets[eye].size()!=xrOpaque.modelSurfaces[eye]
-            || (eye==1 && xrOpaque.modelSurfaces[0]!=xrOpaque.modelSurfaces[1])))
+        && (xrOpaque.modelInstanceActive || xrOpaque.modelInstances[eye].empty()
+            || (eye==1 && xrOpaque.modelInstances[0].size()!=xrOpaque.modelInstances[1].size())))
         polymost_xrRejectOpaque("incomplete model surface set");
     static bool injectedRight;
     if (xrOpaque.phase == POLYMOST_XR_MASKS && eye == 1 && !injectedRight && polymost_xrMaskFaultArmed("mask-collect-right"))
@@ -4115,17 +4155,19 @@ void polymost_xrCollectModelSurface(md3surf_t const *surface, vec3f_t const *pos
     static bool injectedSurface;
     if (surfaceIndex==1 && !injectedSurface && polymost_xrModelFaultArmed("model-surface-1"))
     { injectedSurface=true; reject("injected model-surface-1"); return; }
+    if (!xrOpaque.modelInstanceActive || xrOpaque.modelInstances[eye].empty())
+    { reject("model surface outside instance"); return; }
+    auto const &instance=xrOpaque.modelInstances[eye].back();
     if (!surface || !positions || !color || surfaceIndex<0 || surfaceCount<=0
-        || surfaceIndex>=surfaceCount || unsigned(surfaceIndex)!=xrOpaque.packets[eye].size()
-        || unsigned(surfaceCount)>XR_OPAQUE_MAX_PACKETS
-        || (xrOpaque.modelSurfaces[eye] && xrOpaque.modelSurfaces[eye]!=unsigned(surfaceCount)))
+        || surfaceIndex>=surfaceCount || instance.first+unsigned(surfaceIndex)!=xrOpaque.packets[eye].size()
+        || instance.count!=unsigned(surfaceCount))
     { reject("unexpected model surface set"); return; }
-    xrOpaque.modelSurfaces[eye]=surfaceCount;
     if (surface->numverts<=0 || surface->numtris<=0 || !surface->uv || !surface->tris
         || uint64_t(surface->numtris)*3+xrOpaque.vertices[eye].size()>XR_OPAQUE_MAX_VERTICES)
     { polymost_xrRejectOpaque("opaque collection capacity",true); return; }
 
     xr_opaque_packet_t packet{};
+    packet.modelInstance=instance.identity; packet.modelSurface=surfaceIndex;
     polymost_xrCaptureNativeMaterial(packet,color);
     GLint program, active, clientActive, matrixMode, depthFunc, sampler=gl.currentBoundSampler[0], cullMode, frontFace;
     GLboolean depthWrite, colorWrite[4];

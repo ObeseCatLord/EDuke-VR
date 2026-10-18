@@ -191,6 +191,7 @@ typedef struct
     int32_t modelid, cframe, nframe, skinnum, palette, shade;
     float interpol;
     float modelToEye[16];
+    int32_t instance; // Stable identity within one explicit-model stereo batch.
 } md3drawcontext_t;
 #endif
 

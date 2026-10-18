@@ -422,6 +422,7 @@ def main() -> int:
     parser.add_argument('--model-mode', choices=('native', 'sps'))
     parser.add_argument('--animation', action='store_true',
                         help='qualify native AA firing ART and reload model frames from an explicit private MD3')
+    parser.add_argument('--floating-hands', type=Path, help='Private calibrated hand MD3/PNG directory')
     parser.add_argument('--missing-reload-frame', type=int, choices=range(6, 26),
                         help='remove one private reload frame (6..25), requiring model recovery at a later reload counter')
     for name in ('binary', 'mod-root', 'work-dir'):
@@ -433,6 +434,8 @@ def main() -> int:
     parser.add_argument('--remote-port', type=int, required=True)
     parser.add_argument('--timeout', type=int, default=65)
     args = parser.parse_args()
+    if args.floating_hands and (args.case != 'model' or args.animation or args.model_mode != 'sps'):
+        parser.error('--floating-hands requires --case model --model-mode sps without animation')
     explicit_model = any(value == '--model' or value.startswith('--model=') for value in sys.argv[1:])
     if args.animation and args.case != 'model':
         parser.error('--animation requires --case model')
@@ -500,6 +503,9 @@ def main() -> int:
         if args.model_mode == 'native':
             env['EDUKE32_XR_TEST_MODELS_TWO_PASS'] = '1'
         definition = 'aa-hand-model.def' if model_case or args.case == 'missing-frame' else 'duke3d.def'
+        if args.floating_hands:
+            from floating_hands_check import configure
+            result['hand_assets'] = configure(root, root / definition, args.floating_hands, env)
         command = [str(args.binary), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
                    '-j', str(args.mod_root), '-j', str(args.compat_con.parent), '-g', str(args.mod_root / 'AA.grp'),
                    '-x', args.compat_con.name, '-mx', 'aa_hand_model_observer.con', '-h', definition,
@@ -552,10 +558,16 @@ def main() -> int:
                 if args.animation:
                     phase = 'actual native AA Reload/Aim_Down'
                     result['reload'] = reload_actual_aa_pistol(observer, process, args.display)
+                if args.floating_hands:
+                    from floating_hands_check import exercise
+                    phase = 'actual AA floating grip models'
+                    result['floating_hands'] = exercise(observer, remote, root)
         text = observer.path.read_text(errors='replace') if fault else observer.text()
         rows = aa_samples(text)
         idle = [row for row in rows if row['startmode'] == 1 and row['pchar'] == 0 and row['currentweapon'] == 1]
         checks = result['checks']
+        if args.floating_hands:
+            checks.update(result['floating_hands']['checks'])
         checks.update(actual_AA_compat_main_compiled=('Compiling: ' + args.compat_con.name in text or
                                                       'Including: ' + args.compat_con.name in text),
                       observer_compiled=('Compiling: aa_hand_model_observer.con' in text or

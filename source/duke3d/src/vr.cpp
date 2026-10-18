@@ -88,6 +88,9 @@ static WorldReceipt worldReceipt;
 // Explicit diagnostics only: capture each naturally observed native pistol
 // counter once, using the same-frame native model oracle. No animation clock.
 static std::string modelAnimationCapture, weaponAnimationCapture;
+static std::array<bool,16> gripCaptures{};
+static int lastGripState=-1;
+static unsigned gripDiagnostics;
 static struct
 {
     eduke_xr::Runtime *runtime=nullptr;
@@ -363,16 +366,109 @@ void eyeState(Eye const &eye)
     polymost_xrProjection(eye.left,eye.right,eye.down,eye.up);
 }
 
-struct HandModelSample
+struct WorldModelSample
 {
     md3drawcontext_t context{};
-    XRPistolPresentation presentation{};
     vec3_t root{};
     int16_t sector=-1;
-    vec3f_t muzzle{}, grip{};
+    vec3f_t pivot{};
     XrVector3f basis[3]{}; // Canonical model unit to physical Build X/Y/Z-down.
+};
+
+struct HandModelSample : WorldModelSample
+{
+    XRPistolPresentation presentation{};
+    vec3f_t grip{};
     VRShotInput shot{};
 };
+
+struct GripModelSample : WorldModelSample
+{
+    XrPosef pose{};
+    int state=0; // rest, index-ready, trigger-pressed (not MD3 frame indices).
+};
+
+int gripModelTile(unsigned hand)
+{
+    auto value=std::getenv(hand ? "EDUKE32_XR_HAND_RIGHT_TILE" : "EDUKE32_XR_HAND_LEFT_TILE");
+    if (!value || !*value) return -1;
+    unsigned tile=0;
+    for (;*value;++value)
+    {
+        if (*value<'0' || *value>'9') return -1;
+        unsigned const digit=*value-'0';
+        if (tile>(MAXTILES-1-digit)/10u) return -1;
+        tile=tile*10+digit;
+    }
+    return int(tile);
+}
+
+bool prepareGripModel(GripModelSample &sample, unsigned hand, Camera const &body, eduke_xr::Runtime *runtime)
+{
+    int const tile=gripModelTile(hand);
+    auto const p=g_player[myconnectindex].ps;
+    auto const &input=rawInput.hands[hand];
+    if (tile<0 || !usemodels || !overlayEnabled() || !recentered || !inputValid()
+        || inputRuntime!=runtime || inputGeneration!=runtime->generation()
+        || !rawInput.headValid || !validPose(rawInput.headPose) || !input.gripValid || !validPose(input.gripPose)
+        || screenpeek!=myconnectindex || ud.recstat || ud.show_help || ud.overhead_on || ud.camerasprite>=0
+        || ud.drawweapon!=1 || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0
+        || p->over_shoulder_on || p->dead_flag || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0
+        || unsigned(body.sector)>=unsigned(numsectors)) return false;
+#ifdef SPLITSCREEN_MOD_HACKS
+    if (g_fakeMultiMode) return false;
+#endif
+    sample.pose=input.gripPose;
+    uint32_t const buttons=input.buttons & input.activeButtons;
+    sample.state=(buttons & eduke_xr::ButtonSelect) ? 2 : (buttons & eduke_xr::ButtonGrip) ? 1 : 0;
+    // These authored poses name the extended ready index "trigger" and the
+    // curled firing index "grip". Bind geometry, not an inferred naming rule.
+    char const *const frames[]={"rest","trigger","grip"};
+    sample.context.instance=hand+1;
+    sample.context.modelid=md_tilehasmodel(tile,0);
+    sample.context.skinnum=tile2model[Ptile2tile(tile,0)].skinnum;
+    sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+    sample.context.cframe=sample.context.nframe=md3_getframeindex(sample.context.modelid,frames[sample.state]);
+    if (sample.context.cframe<0 || !md3_gettagposition(sample.context.modelid,"tag_palm",&sample.pivot)) return false;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    if (!md3_preflightcontext(&sample.context)) return false;
+
+    // Use exactly the frozen interpolated body used for the eyes, never the
+    // simulation shot sample or the camera left behind by a native callback.
+    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+    auto const toBuild=[&](XrVector3f v) {
+        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+    };
+    auto const delta=toBuild(rotate(tracking,{sample.pose.position.x-origin.x,
+                                            sample.pose.position.y-origin.y,sample.pose.position.z-origin.z}));
+    double const offsets[]={delta.x,delta.y,delta.z};
+    int32_t const anchor[]={body.pos.x,body.pos.y,body.pos.z};
+    int32_t *const root[]={&sample.root.x,&sample.root.y,&sample.root.z};
+    for (unsigned axis=0;axis<3;++axis)
+    {
+        double const value=anchor[axis]+std::round(offsets[axis]);
+        if (!std::isfinite(value) || value<INT32_MIN || value>INT32_MAX) return false;
+        *root[axis]=int32_t(value);
+    }
+    sample.sector=body.sector;
+    updatesectorz(sample.root.x,sample.root.y,sample.root.z,&sample.sector);
+    if (sample.sector<0 || !cansee(body.pos.x,body.pos.y,body.pos.z,body.sector,
+        sample.root.x,sample.root.y,sample.root.z,sample.sector)) return false;
+
+    // Canonical MD3 +X fingers, +Y right, +Z dorsal. OpenXR core grip +X
+    // points away from the left palm/into the right; -Z is little→index.
+    // tag_palm→core grip is approximate across controllers (not grip_surface).
+    float const side=hand ? 1.f : -1.f;
+    XrVector3f const axes[3]={{0,-1,0},{0,0,-side},{side,0,0}};
+    auto const orientation=multiply(tracking,sample.pose.orientation);
+    for (unsigned axis=0;axis<3;++axis)
+    {
+        auto const v=toBuild(rotate(orientation,axes[axis]));
+        sample.basis[axis]={v.x/64.f,v.y/64.f,v.z/64.f};
+    }
+    return true;
+}
 
 // Test-only target ownership, not a renderer/state recorder. Native reference
 // emission copies the actual opaque eye into another RGBA8/D24 array layer;
@@ -444,7 +540,7 @@ bool prepareHandModel(HandModelSample &sample)
     if (frame<0 && counter==0 && !sample.presentation.alienArmageddon) frame=0; // Legacy stock idle only.
     if (frame<0) return false; // Positive counters never silently substitute rest.
     sample.context.cframe=sample.context.nframe=frame;
-    if (!md3_gettagposition(sample.context.modelid,"tag_muzzle",&sample.muzzle)
+    if (!md3_gettagposition(sample.context.modelid,"tag_muzzle",&sample.pivot)
         || !md3_gettagposition(sample.context.modelid,"tag_grip",&sample.grip)) return false;
     sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
     if (!md3_preflightcontext(&sample.context)) return false;
@@ -472,7 +568,7 @@ bool prepareHandModel(HandModelSample &sample)
     return true;
 }
 
-void handModelMatrix(HandModelSample &sample, Eye const &eye)
+void worldModelMatrix(WorldModelSample &sample, Eye const &eye)
 {
     float toEye[16]; polymost_xrRelativeWorldToEye(toEye);
     float local[16]={};
@@ -485,9 +581,9 @@ void handModelMatrix(HandModelSample &sample, Eye const &eye)
     local[12]=float(int64_t(sample.root.x)-eye.camera.pos.x);
     local[13]=float(int64_t(sample.root.y)-eye.camera.pos.y);
     local[14]=float(int64_t(sample.root.z)-eye.camera.pos.z);
-    float const muzzle[3]={sample.muzzle.x,sample.muzzle.y,sample.muzzle.z};
+    float const pivot[3]={sample.pivot.x,sample.pivot.y,sample.pivot.z};
     for (int column=0;column<3;++column)
-        for (int row=0;row<3;++row) local[12+row]-=local[column*4+row]*muzzle[column];
+        for (int row=0;row<3;++row) local[12+row]-=local[column*4+row]*pivot[column];
     local[15]=1.f;
     for (int column=0;column<4;++column)
         for (int row=0;row<4;++row)
@@ -1331,6 +1427,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         worldMultiviewFrames=worldOracleFrames=0;
         worldMaskMultiviewFrames=worldMaskOracleFrames=worldFullMultiviewFrames=0;
         worldModelOracleFrames=worldModelMultiviewFrames=0;
+        gripCaptures.fill(false); lastGripState=-1; gripDiagnostics=0;
     }
     if (!recentered && aimHand()!=-2)
     {
@@ -1589,14 +1686,41 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             capturedCounters[observedCounter]=true;
         }
         HandModelSample handModel;
-        if (good && !fixtureTest && prepareHandModel(handModel))
+        GripModelSample grips[2];
+        WorldModelSample *models[3]{};
+        unsigned modelCount=0, gripMask=0;
+        bool const weaponModel=good && !fixtureTest && prepareHandModel(handModel);
+        if (weaponModel) models[modelCount++]=&handModel;
+        for (unsigned hand=0;hand<2 && good && !fixtureTest;++hand)
+            if (prepareGripModel(grips[hand],hand,body,runtime))
+            { models[modelCount++]=&grips[hand]; gripMask|=1u<<hand; }
+        int const gripState=((gripMask&1) ? grips[0].state+1 : 0)+4*((gripMask&2) ? grips[1].state+1 : 0);
+        std::string gripPrefix;
+        bool gripLog=false;
+        if (good && worldFrames>=60 && std::getenv("EDUKE32_XR_TEST_HANDS") && gripDiagnostics<32
+            && gripState!=lastGripState)
         {
-            attemptedHandModel=true;
+            gripLog=true;
+            lastGripState=gripState; ++gripDiagnostics;
+            if (auto prefix=std::getenv("EDUKE32_XR_HAND_OUTPUT"))
+                if (!gripCaptures[gripState])
+                {
+                    char suffix[24]; Bsnprintf(suffix,sizeof(suffix),"-state-%02d",gripState);
+                    gripPrefix=std::string(prefix)+suffix;
+                    gripCaptures[gripState]=true;
+                }
+        }
+        if (gripLog && !modelCount && gripPrefix.empty())
+            LOG_F(INFO,"OpenXR floating hands: serial=%llu state=%d mask=%u left=%d right=%d capture=0.",
+                  (unsigned long long)frame.serial,gripState,gripMask,grips[0].state,grips[1].state);
+        if (good && (modelCount || !gripPrefix.empty()))
+        {
+            attemptedHandModel=modelCount!=0;
             // AA enters gameplay after its own controller selector, so the
             // ordinary frame60 diagnostic can precede the first eligible model.
             // Capture the first actual accepted AA model, without advancing it.
             static bool capturedAAModel;
-            if (handModel.presentation.alienArmageddon && !capturedAAModel
+            if (weaponModel && handModel.presentation.alienArmageddon && !capturedAAModel
                 && std::getenv("EDUKE32_XR_TEST_MODELS"))
                 if (auto prefix=std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
                 {
@@ -1605,10 +1729,21 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                         weaponAnimationCapture=weaponPrefix;
                     capturedAAModel=true;
                 }
-            char const *modelPrefix=!modelAnimationCapture.empty() ? modelAnimationCapture.c_str()
+            // Preserve the existing per-weapon diagnostic when both select
+            // the same frame. Observe this grip state again on a later frame.
+            if (!gripPrefix.empty() && !modelAnimationCapture.empty())
+            {
+                gripPrefix.clear(); gripCaptures[gripState]=false; lastGripState=-1;
+            }
+            char const *modelPrefix=!gripPrefix.empty() ? gripPrefix.c_str()
+                : !modelAnimationCapture.empty() ? modelAnimationCapture.c_str()
                 : worldFrames==59 ? std::getenv("EDUKE32_XR_MODEL_OUTPUT") : nullptr;
             bool const modelCapture=modelPrefix!=nullptr;
-            if (modelCapture && std::getenv("EDUKE32_XR_TEST_MODEL_ANIMATION"))
+            bool const gripCapture=!gripPrefix.empty();
+            if (gripLog)
+                LOG_F(INFO,"OpenXR floating hands: serial=%llu state=%d mask=%u left=%d right=%d capture=%d.",
+                      (unsigned long long)frame.serial,gripState,gripMask,grips[0].state,grips[1].state,gripCapture);
+            if (modelCapture && weaponModel && std::getenv("EDUKE32_XR_TEST_MODEL_ANIMATION"))
                 LOG_F(INFO,"OpenXR hand model sample: serial=%llu counter=%d reloading=%d frame=%d.",
                       (unsigned long long)frame.serial,handModel.presentation.counter,
                       handModel.presentation.reloading,handModel.context.cframe);
@@ -1617,8 +1752,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 return !prefix
                     || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
             };
-            float modelMatrices[2][16]{}, modelProjections[2][16]{};
-            float oracleMatrices[2][16]{}, oracleProjections[2][16]{};
+            float modelMatrices[2][3][16]{}, modelProjections[2][16]{};
+            float oracleMatrices[2][3][16]{}, oracleProjections[2][16]{};
             bool oracleSamples[2]{}, oracleCompared[2]{};
             auto const drawHandModel = [&](bool collect,ModelOracleTarget *oracle=nullptr) {
                 bool accepted=true;
@@ -1635,32 +1770,45 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     renderPrepareMasksQ16(eyes[i].camera.pos.x,eyes[i].camera.pos.y,eyes[i].camera.pos.z,
                                          eyes[i].camera.angle,eyes[i].camera.horizon,eyes[i].camera.sector);
                     g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
-                    handModelMatrix(handModel,eyes[i]);
-                    if (modelCapture)
-                    {
-                        float projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
-                        if (oracle)
-                        {
-                            Bmemcpy(oracleMatrices[i],handModel.context.modelToEye,sizeof(projection));
-                            Bmemcpy(oracleProjections[i],projection,sizeof(projection)); oracleSamples[i]=true;
-                        }
-                        else if (oracleSamples[i])
-                        {
-                            if (Bmemcmp(oracleMatrices[i],handModel.context.modelToEye,sizeof(projection))
-                                || Bmemcmp(oracleProjections[i],projection,sizeof(projection)))
-                            { good=false; error="native model oracle transform changed"; break; }
-                            oracleCompared[i]=true;
-                        }
-                    }
                     if (i==1 && testFailure("model-eye-1"))
                     { good=false; error="injected held-model failure before second eye"; break; }
-                    good=polymost_xrBeginModelDraw(handModel.context.shade,handModel.context.palette,handModel.sector);
-                    if (good)
+                    for (unsigned index=0;index<modelCount && good;++index)
                     {
-                        good=polymost_md3drawcontext(&handModel.context)!=0;
-                        polymost_xrEndModelDraw();
+                        auto &model=*models[index];
+                        worldModelMatrix(model,eyes[i]);
+                        if (modelCapture)
+                        {
+                            float projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
+                            if (oracle)
+                            {
+                                Bmemcpy(oracleMatrices[i][index],model.context.modelToEye,sizeof(projection));
+                                Bmemcpy(oracleProjections[i],projection,sizeof(projection)); oracleSamples[i]=true;
+                            }
+                            else if (oracleSamples[i])
+                            {
+                                if (Bmemcmp(oracleMatrices[i][index],model.context.modelToEye,sizeof(projection))
+                                    || Bmemcmp(oracleProjections[i],projection,sizeof(projection)))
+                                { good=false; error="native model oracle transform changed"; break; }
+                                oracleCompared[i]=true;
+                            }
+                            Bmemcpy(modelMatrices[i][index],model.context.modelToEye,sizeof(projection));
+                            Bmemcpy(modelProjections[i],projection,sizeof(projection));
+                        }
+                        good=polymost_xrBeginModelDraw(model.context.shade,model.context.palette,model.sector);
+                        if (good)
+                        {
+                            good=polymost_md3drawcontext(&model.context)!=0;
+                            polymost_xrEndModelDraw();
+                        }
+                        if (!good) error="native held-model emission failed";
+                        if (good && oracle && gripCapture)
+                        {
+                            auto const prefix=std::string(modelPrefix)+"-instance-"+std::to_string(model.context.instance)
+                                +"-reference-"+(i ? "right" : "left");
+                            good=eduke_xr::captureFramebuffer((prefix+".ppm").c_str(),xdim,ydim,error)
+                                && eduke_xr::captureFramebufferDepth((prefix+"-depth.bin").c_str(),xdim,ydim,error);
+                        }
                     }
-                    if (!good) error="native held-model emission failed";
                     if (good && oracle)
                     {
                         auto const prefix=std::string(modelPrefix)+"-reference-"+(i ? "right" : "left");
@@ -1668,17 +1816,13 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                             && eduke_xr::captureFramebufferDepth((prefix+"-depth.bin").c_str(),xdim,ydim,error);
                     }
                     if (collect && polymost_xrEndCollection(i)!=POLYMOST_XR_COLLECT_OK) accepted=false;
-                    if (good && modelCapture && std::getenv("EDUKE32_XR_TEST_MODELS"))
-                    {
-                        Bmemcpy(modelMatrices[i],handModel.context.modelToEye,sizeof(modelMatrices[i]));
-                        glGetFloatv(GL_PROJECTION_MATRIX,modelProjections[i]);
-                    }
+
                 }
                 return good && accepted;
             };
             good=captureModels("-before");
             auto const forceReference=std::getenv("EDUKE32_XR_TEST_MODELS_TWO_PASS");
-            if (good && singlePass && !(forceReference && !Bstrcmp(forceReference,"1")))
+            if (good && modelCount && singlePass && !(forceReference && !Bstrcmp(forceReference,"1")))
             {
                 if (modelCapture)
                 {
@@ -1698,11 +1842,15 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                         if (committed)
                         {
                             usedModelMultiview=true;
-                            if (modelCapture && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                            if (modelCapture && (gripCapture || std::getenv("EDUKE32_XR_TEST_MODELS")))
                             {
                                 auto const stats=polymost_xrCollectionStats();
                                 LOG_F(INFO,"OpenXR hand model single-pass: paired=%u eyeOnly=%u shared=%u sharedVertices=%u.",
                                       stats.pairedCalls,stats.eyeOnlyCalls,stats.sharedModelCalls,stats.sharedModelVertices);
+                                if (gripCapture)
+                                    LOG_F(INFO,"OpenXR floating replay: serial=%llu instances=%u paired=%u eyeOnly=%u shared=%u vertices=%u.",
+                                          (unsigned long long)frame.serial,modelCount,stats.pairedCalls,stats.eyeOnlyCalls,
+                                          stats.sharedModelCalls,stats.sharedModelVertices);
                             }
                         }
                         else if (polymost_xrReplaySubmitted())
@@ -1723,23 +1871,54 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             if (good) good=captureModels("-after");
             if (good)
             {
-                usedHandModel=true;
-                handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,handModel.presentation,0,false};
-                if (handModel.presentation.alienArmageddon) polymost_xrWeaponTileConsumer=consumeAAWeaponTile;
+                usedHandModel=modelCount!=0;
+                if (weaponModel)
+                {
+                    handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,handModel.presentation,0,false};
+                    if (handModel.presentation.alienArmageddon) polymost_xrWeaponTileConsumer=consumeAAWeaponTile;
+                }
                 if (oracleCompared[0] && oracleCompared[1]) LOG_F(INFO,"OpenXR hand model oracle inputs: identical=1.");
-                if (modelCapture && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                if (modelCapture && weaponModel && std::getenv("EDUKE32_XR_TEST_MODELS"))
                     for (unsigned i=0;i<2;++i)
                     {
                         LOG_F(INFO,"OpenXR hand model: eye=%u model=%d root=%d,%d,%d direction=%d,%d,%d.",i,
                               handModel.context.modelid,handModel.root.x,handModel.root.y,handModel.root.z,
                               handModel.shot.direction[0],handModel.shot.direction[1],handModel.shot.direction[2]);
-                        float const *a=modelMatrices[i];
+                        float const *a=modelMatrices[i][0];
                         LOG_F(INFO,"OpenXR hand model matrix: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
                               a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
                         a=modelProjections[i];
                         LOG_F(INFO,"OpenXR hand model projection: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
                               a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
                     }
+                if (gripCapture)
+                {
+                    for (unsigned i=0;i<2;++i)
+                    {
+                        auto const &p=frame.views[i].pose; auto const &f=frame.views[i].fov;
+                        LOG_F(INFO,"OpenXR floating eye: serial=%llu eye=%u pose=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g fov=%.9g,%.9g,%.9g,%.9g.",
+                              (unsigned long long)frame.serial,i,p.orientation.x,p.orientation.y,p.orientation.z,p.orientation.w,
+                              p.position.x,p.position.y,p.position.z,f.angleLeft,f.angleRight,f.angleUp,f.angleDown);
+                        float const *a=modelProjections[i];
+                        LOG_F(INFO,"OpenXR floating projection: serial=%llu eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",
+                              (unsigned long long)frame.serial,i,a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
+                    }
+                    for (unsigned index=0;index<modelCount;++index)
+                    {
+                        int const hand=models[index]->context.instance-1;
+                        if (hand<0) continue;
+                        auto const &g=grips[hand]; auto const &p=g.pose;
+                        LOG_F(INFO,"OpenXR floating hand: serial=%llu hand=%d model=%d frame=%d root=%d,%d,%d pivot=%.9g,%.9g,%.9g pose=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",
+                              (unsigned long long)frame.serial,hand,g.context.modelid,g.context.cframe,g.root.x,g.root.y,g.root.z,g.pivot.x,g.pivot.y,g.pivot.z,
+                              p.orientation.x,p.orientation.y,p.orientation.z,p.orientation.w,p.position.x,p.position.y,p.position.z);
+                        for (unsigned i=0;i<2;++i)
+                        {
+                            float const *a=modelMatrices[i][index];
+                            LOG_F(INFO,"OpenXR floating matrix: serial=%llu hand=%d eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",
+                                  (unsigned long long)frame.serial,hand,i,a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
+                        }
+                    }
+                }
             }
         }
         auto const drawMasks = [&](bool collect) {
