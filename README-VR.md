@@ -4,6 +4,11 @@ This repository starts from the exact requested **r10669 ec5824db8** source arch
 
 Read [the implementation plan](docs/vr/PLAN.md), [Astra senior-review dispositions](docs/vr/SENIOR_REVIEW.md), [verification results](docs/vr/VALIDATION.md), and [source provenance](docs/vr/PROVENANCE.md). The pinned RazeXR reference clone is the sibling `../RazeXR` directory. Preserve its Git history: current RazeXR HEAD removed the Raze engine subtree.
 
+The private [chunky model set](docs/vr/MODEL_ASSETS.md) is complete as an art/export
+deliverable; game attachment, body IK and model stereo integration remain open.
+A [GPU-denied software OpenXR lab](docs/vr/SOFTWARE_XR.md) now qualifies bounded
+actual world multiview rendering without using the hardware GPU.
+
 ## Build
 
 The existing native prerequisites are required, plus SDL2 development files, OpenXR headers/loader, desktop OpenGL/GLX and X11 development files for the optional XR build. The tested target is Linux x86_64 with `GL_OVR_multiview2`. No dependency installation or game-directory changes are needed on the development machine used here.
@@ -75,7 +80,7 @@ python3 tools/vr/smoke_world.py --binary ./eduke32-xr --display :1 \
 # Repeat with --failure-stage masks.
 ```
 
-The numeric test checks the rigid-pose/native-camera/asymmetric-projection derivation. It does not validate CPU visibility. The world runner requires 60 submitted world frames and distinct actual eye readbacks. Use a real supported GL context; Xvfb's llvmpipe did not work with this Monado/NVIDIA swapchain combination.
+The numeric test checks the rigid-pose/native-camera/asymmetric-projection derivation. It does not validate CPU visibility. The world runner requires 60 submitted world frames and distinct actual eye readbacks. The matched llvmpipe/LVP software stack now passes this bounded world test; see [the private lab recipe](docs/vr/SOFTWARE_XR.md). The older mixed software/NVIDIA swapchain configuration failed.
 
 For bounded failure regression only, `EDUKE32_XR_TEST_FAIL=opaque` injects one failure after left opaque collection; `masks` injects after the once-only animation and before masks. Both stop XR. Up to ten native animation input counts/provenance checks are logged to verify that fallback/next-frame rendering receives no stale sprite entries. This flag is for testing, not ordinary gameplay.
 

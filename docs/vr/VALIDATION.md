@@ -21,7 +21,7 @@ These results distinguish working code from planned full-port behavior. Private 
 | Mixed native dedicated server / XR client | Pass: first join and replacement/reconnect each submit 60 world frames with distinct eye readbacks; gameplay view and W-input image change inspected | Two-pass experimental renderer; no combat/map-transition/full-convergence claim. |
 | Injected failure after left opaque / before masks | Both recover to native E1L1; 10 bounded animation-input samples each have no stale duplicate owners; no extra regular-frame animation invocation observed | Startup ordinary-room failure regression, not arbitrary CON equivalence. |
 | Rigid-pose/asymmetric projection derivation | 1000 mixed pose cases pass independent numeric reference, max NDC error <4e-16 | Does not qualify native visibility or physical headset optics. |
-| Xvfb llvmpipe + current Monado combination | Fails with incomplete multiview FBO despite reported extension | NVIDIA native context passes; no fallback or speculative driver workaround added. |
+| Historical Xvfb llvmpipe + Monado combination | Failed with incomplete multiview FBO despite reported extension | Superseded by matched Mesa26.2.3 GL/LVP CPU proof below; no renderer workaround added. |
 | Temporary invalid tracking recovery | Source handling corrected to empty-frame/Idle | No injected invalid→valid runtime test yet. |
 | XR context recreation/session STOPPING/loss/restart | Cleanup paths inspected; repeated process runs pass | Controlled lifecycle-transition matrix still untested. |
 | Actual Duke-world stereo | First ordinary-room two-pass oracle submitted 60 frames; E1L1 roof/masked fence/sprites captured in both eye layers | Single-pass world, full-pitch coverage, tracked-motion tests, weapons/HUD, controllers, YAX/mirrors and CON regression matrix remain open. |
@@ -965,3 +965,21 @@ before only the final native version constant advanced3→4. Their evidence is
 All tests are GPU-denied CPU/private input; actual OpenXR stick-click and current
 model/headset behavior remain unqualified. Durable bounded results and hashes
 are in sibling `outputs/evidence/melee-native-validation.json`.
+
+## Private software OpenXR and completed art revision
+
+[SOFTWARE_XR.md](SOFTWARE_XR.md) records the new GPU-denied private runtime lab.
+Actual three-frame diagnostic multiview and60-frame Duke E1L1 rendering pass
+using matching Mesa26.2.3 llvmpipe/LVP, with distinct eye readbacks and clean
+client core validation. The final world run reports opaque60multiview,
+masks59multiview/1two-pass and full59multiview. All owned processes were reaped;
+hardware GPU devices were absent. A separate diagnostic-only Monado teardown
+warning remains recorded. No OS driver installation, desktop input or runtime
+default change occurred. This supersedes the earlier software-FBO limitation
+for the tested configuration; full SPS/headset/model acceptance remains open.
+
+[MODEL_ASSETS.md](MODEL_ASSETS.md) records the completed private fourteen-entry
+Astra art revision: Duke678tri/256², weapons44–236tri/128²,28 structural models,
+19 roundtrip samples,281 independently verified manifest hashes. Original v1
+files are preserved. Eight weapons have rest-only geometry; controller fit,
+runtime animation/body IK and model stereo rendering remain integration work.
