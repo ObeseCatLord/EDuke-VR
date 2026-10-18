@@ -596,13 +596,13 @@ bool prepareGripModel(GripModelSample &sample, unsigned hand, Camera const &body
 }
 
 // Test-only target ownership, not a renderer/state recorder. Native reference
-// emission copies the actual opaque eye into another RGBA8/D24 array layer;
-// its frozen MD3 input is then compared with replay on the untouched XR target.
-struct ModelOracleTarget
+// emission copies the actual eye into another RGBA8/D24 array layer; frozen
+// model or world MASK inputs are compared with replay on the untouched XR target.
+struct NativeOracleTarget
 {
     GLuint fbo=0, color=0, depth=0;
     GLint read=0, draw=0;
-    ModelOracleTarget()
+    NativeOracleTarget()
     {
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read); glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
         GLint active, array; glGetIntegerv(GL_ACTIVE_TEXTURE,&active); glActiveTexture(GL_TEXTURE0);
@@ -622,13 +622,13 @@ struct ModelOracleTarget
         glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,depth,0,eye);
         glDrawBuffer(GL_COLOR_ATTACHMENT0);
         if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)
-        { error="native model reference framebuffer incomplete"; return false; }
+        { error="native reference framebuffer incomplete"; return false; }
         glBlitFramebuffer(0,0,xdim,ydim,0,0,xdim,ydim,GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT,GL_NEAREST);
         glBindFramebuffer(GL_FRAMEBUFFER,fbo);
-        if (glGetError()!=GL_NO_ERROR) { error="native model reference target copy failed"; return false; }
+        if (glGetError()!=GL_NO_ERROR) { error="native reference target copy failed"; return false; }
         return true;
     }
-    ~ModelOracleTarget()
+    ~NativeOracleTarget()
     {
         glBindFramebuffer(GL_READ_FRAMEBUFFER,read); glBindFramebuffer(GL_DRAW_FRAMEBUFFER,draw);
         if (fbo) glDeleteFramebuffers(1,&fbo);
@@ -1946,7 +1946,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             float modelMatrices[2][3][16]{}, modelProjections[2][16]{};
             float oracleMatrices[2][3][16]{}, oracleProjections[2][16]{};
             bool oracleSamples[2]{}, oracleCompared[2]{};
-            auto const drawHandModel = [&](bool collect,ModelOracleTarget *oracle=nullptr) {
+            auto const drawHandModel = [&](bool collect,NativeOracleTarget *oracle=nullptr) {
                 bool accepted=true;
                 for (unsigned i=0;i<2 && good;++i)
                 {
@@ -2017,7 +2017,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             {
                 if (modelCapture)
                 {
-                    ModelOracleTarget oracle;
+                    NativeOracleTarget oracle;
                     drawHandModel(false,&oracle);
                 }
                 if (std::getenv("EDUKE32_XR_TEST_FAIL"))
@@ -2155,13 +2155,16 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 }
             }
         }
-        auto const drawMasks = [&](bool collect) {
+        auto const maskPrefix=std::getenv("EDUKE32_XR_TEST_MASK_ORACLE");
+        bool const maskCapture=maskPrefix && maskPrefix[0] && singlePass && !fixtureTest && worldFrames==59;
+        auto const drawMasks = [&](bool collect,NativeOracleTarget *oracle=nullptr) {
             bool accepted=true;
             for (unsigned i=0;i<2 && good;++i)
             {
                 auto const &eye=eyes[i];
                 good=runtime->bindEye(i,error);
                 if (!good) return false;
+                if (oracle && !oracle->copyEye(i,error)) { good=false; return false; }
                 videoSetViewableArea(0,0,xdim-1,ydim-1);
                 eyeState(eye);
                 // Begin before camera preparation, which captures this eye's
@@ -2182,7 +2185,17 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     if (!(membership[j] & (1u<<i))) tsprite[j].xrepeat=tsprite[j].yrepeat=0;
                 maskwallcnt=eye.walls.size();
                 for (int j=0;j<maskwallcnt;++j) { maskwall[j]=j; thewall[j]=eye.walls[j]; }
+                if (maskCapture) polymost_xrObserveMaskInput(i,oracle!=nullptr);
+                if (!collect) polymost_xrMeasureNativeMasks(i,g_frameCounter);
                 renderDrawMasks();
+                if (maskCapture) polymost_xrObserveMaskInput(-1,false);
+                if (!collect) polymost_xrMeasureNativeMasks(-1,g_frameCounter);
+                if (oracle && good)
+                {
+                    auto const prefix=std::string(maskPrefix)+"-reference-"+(i ? "right" : "left");
+                    good=eduke_xr::captureFramebuffer((prefix+".ppm").c_str(),xdim,ydim,error)
+                        && eduke_xr::captureFramebufferDepth((prefix+"-depth.bin").c_str(),xdim,ydim,error);
+                }
                 // Remaining draws in a rejected traversal stay suppressed.
                 // A rejected begin for the next eye skips that traversal.
                 if (collect && polymost_xrEndCollection(i) != POLYMOST_XR_COLLECT_OK)
@@ -2194,16 +2207,22 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         {
             char const *failure=std::getenv("EDUKE32_XR_TEST_FAIL");
             bool const maskFault=failure && !Bstrncmp(failure,"mask-",5);
+            if (fixtureTest) SDL_setenv("EDUKE32_XR_TEST_MASK_PROBE_ARMED",g_frameCounter==12 ? "1" : "0",1);
             if (maskFault)
                 SDL_setenv("EDUKE32_XR_TEST_MASK_ARMED",
                            (std::getenv("EDUKE32_XR_TEST_MASK_WITH_MODEL") ? usedHandModel && worldFrames==59
                             : (!fixtureTest || g_frameCounter == 12)) ? "1" : "0",1);
             auto const captureCollection = [&](char const *suffix) {
-                auto const prefix=std::getenv("EDUKE32_XR_TEST_CAPTURE");
+                auto const prefix=maskCapture ? maskPrefix : std::getenv("EDUKE32_XR_TEST_CAPTURE");
                 return !prefix || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
             };
-            bool const snapshot=fixtureTest && g_frameCounter == 12 && std::getenv("EDUKE32_XR_TEST_MASK_SNAPSHOT");
+            bool const snapshot=maskCapture || (fixtureTest && g_frameCounter == 12 && std::getenv("EDUKE32_XR_TEST_MASK_SNAPSHOT"));
             if (snapshot) good=captureCollection("-mask-before");
+            if (maskCapture && good)
+            {
+                NativeOracleTarget oracle;
+                drawMasks(false,&oracle);
+            }
             bool committed=good && drawMasks(true);
             // Read both layers before fallback/replay can hide a capture leak.
             if (snapshot && good) good=captureCollection("-mask-after");
@@ -2217,14 +2236,14 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     {
                         usedMaskMultiview=true;
                         static bool reported;
-                        if (!reported || g_frameCounter == 12
+                        if (!reported || g_frameCounter == 12 || maskCapture
                             || (fixtureTest && g_frameCounter == 13 && testFailure("mask-voxel-cold")))
                         {
                             auto const stats=polymost_xrCollectionStats();
-                            LOG_F(INFO,"OpenXR masks single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u masks=%u translucent=%u depthOnly=%u depthWriteOff=%u voxels=%u voxelsPaired=%u",
+                            LOG_F(INFO,"OpenXR masks single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u masks=%u translucent=%u depthOnly=%u depthWriteOff=%u voxels=%u voxelsPaired=%u indexedVoxelIndices=%llu",
                                   unsigned(g_frameCounter),stats.pairedCalls,stats.eyeOnlyCalls,stats.pairedVertices,stats.eyeOnlyVertices,
                                   stats.maskCalls,stats.translucentCalls,stats.depthOnlyCalls,stats.depthWriteOffCalls,
-                                  stats.voxelCalls,stats.voxelPairedCalls);
+                                  stats.voxelCalls,stats.voxelPairedCalls,(unsigned long long)stats.voxelIndexedIndices);
                             reported=true;
                         }
                     }
@@ -2234,6 +2253,11 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                         good=false;
                     }
                 }
+            }
+            if (maskCapture && good && committed)
+            {
+                good=captureCollection("-replayed");
+                if (good) LOG_F(INFO,"OpenXR native mask oracle replay captured: serial=%llu.",(unsigned long long)frame.serial);
             }
             if (!committed && good)
             {

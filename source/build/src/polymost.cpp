@@ -283,6 +283,11 @@ struct xr_opaque_packet_t
     uint32_t skyKind;  // 0 ordinary, 1 native flat-sky color, 2 sky-Z depth-only, 3 truecolor skybox
     uint32_t phase;
     bool voxel;
+    // Borrow native immutable geometry only for this synchronous collection.
+    // Include identity AND count in the shared-state comparison below texture.
+    uintptr_t voxelGeometry;
+    GLuint voxelVbo, voxelIbo;
+    uint32_t voxelIndexCount;
     GLenum alphaFunc, blendSrc, blendDst;
     float alphaRef;
     bool depthWrite, colorWrite, translucent;
@@ -327,6 +332,32 @@ struct xr_opaque_collection_t
 };
 
 static xr_opaque_collection_t xrOpaque;
+
+static struct
+{
+    int eye=-1;
+    uint64_t voxelVertices=0, fanVertices=0;
+    unsigned voxelDraws=0, fanDraws=0;
+} xrNativeMaskDemand;
+
+void polymost_xrMeasureNativeMasks(int eye, uint32_t frame)
+{
+    static unsigned reports;
+    if (eye<0)
+    {
+        if (xrNativeMaskDemand.eye>=0)
+            LOG_F(INFO,"OpenXR native mask demand: frame=%u eye=%d voxelDraws=%u voxelVertices=%llu fanDraws=%u fanVertices=%llu.",
+                  frame,xrNativeMaskDemand.eye,xrNativeMaskDemand.voxelDraws,
+                  (unsigned long long)xrNativeMaskDemand.voxelVertices,xrNativeMaskDemand.fanDraws,
+                  (unsigned long long)xrNativeMaskDemand.fanVertices);
+        xrNativeMaskDemand.eye=-1;
+        return;
+    }
+    auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
+    xrNativeMaskDemand={};
+    if (diagnostics && !Bstrcmp(diagnostics,"1") && reports<6)
+    { xrNativeMaskDemand.eye=eye; ++reports; }
+}
 
 static void polymost_xrRejectOpaque(char const *reason, bool const capacity = false)
 {
@@ -467,6 +498,16 @@ polymost_xr_collect_result polymost_xrEndCollection(uint32_t const eye)
     static bool injectedModelRight;
     if (eye==1 && !injectedModelRight && polymost_xrModelFaultArmed("model-collect-right"))
     { injectedModelRight=true; polymost_xrRejectOpaque("injected model-collect-right"); }
+    static bool injectedVoxelReference;
+    if (xrOpaque.phase==POLYMOST_XR_MASKS && eye==1 && !injectedVoxelReference
+        && polymost_xrMaskFaultArmed("mask-voxel-reference"))
+        for (auto &packet:xrOpaque.packets[eye])
+            if (packet.voxel)
+            {
+                packet.voxelVbo=0; injectedVoxelReference=true;
+                LOG_F(INFO,"OpenXR voxel replay reference invalidated before validation.");
+                break;
+            }
     GLenum collectionError = GL_NO_ERROR;
     while (GLenum const error = glGetError()) collectionError = error;
     if (collectionError != GL_NO_ERROR)
@@ -990,6 +1031,14 @@ static bool polymost_xrValidateOpaqueStream(uint32_t const eye)
     std::vector<xr_opaque_vertex_t> const &vertices = xrOpaque.vertices[eye];
     for (xr_opaque_packet_t const &packet : xrOpaque.packets[eye])
     {
+        if (packet.voxel)
+        {
+            if (packet.phase!=POLYMOST_XR_MASKS || !packet.voxelGeometry || !packet.voxelVbo || !packet.voxelIbo
+                || !packet.voxelIndexCount || packet.voxelIndexCount>uint32_t(INT32_MAX)
+                || packet.count!=packet.voxelIndexCount || packet.count%6 || packet.first)
+                return false;
+            continue;
+        }
         if (packet.first + packet.count > vertices.size() || packet.count % 3)
             return false;
         for (uint32_t i = packet.first; i < packet.first + packet.count; ++i)
@@ -1117,31 +1166,49 @@ static void polymost_xrUploadOpaquePacket(xr_opaque_packet_t const &left, xr_opa
 
 static void polymost_xrReplayOpaqueDraw(xr_opaque_packet_t const &left, uint32_t const eye, xr_opaque_packet_t const * const right)
 {
-    static std::vector<xr_opaque_vertex_t> replayVertices;
-    replayVertices.clear();
-    replayVertices.insert(replayVertices.end(), xrOpaque.vertices[eye].begin() + left.first, xrOpaque.vertices[eye].begin() + left.first + left.count);
-    bool shared=right && left.phase==POLYMOST_XR_MODELS && left.count==right->count;
-    if (shared)
-        for (uint32_t i=0;i<left.count;++i)
-            if (Bmemcmp(&replayVertices[i].x,&xrOpaque.vertices[1][right->first+i].x,5*sizeof(float)))
-            { shared=false; break; }
-    if (shared)
+    if (left.voxel)
     {
-        for (auto &vertex:replayVertices) vertex.eye=-1.f;
-        ++xrOpaque.stats.sharedModelCalls; xrOpaque.stats.sharedModelVertices+=left.count;
+        polymost_xrUploadOpaquePacket(left,right);
+        glBindBuffer(GL_ARRAY_BUFFER,left.voxelVbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,left.voxelIbo);
+        glVertexPointer(3,GL_FLOAT,5*sizeof(float),nullptr);
+        glTexCoordPointer(2,GL_FLOAT,5*sizeof(float),(GLvoid *)(3*sizeof(float)));
+        glEnableClientState(GL_VERTEX_ARRAY); glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+        glDisableVertexAttribArray(7);
+        glVertexAttrib1f(7,right ? -1.f : float(eye));
+        xrOpaque.replaySubmitted=true;
+        glDrawElements(GL_TRIANGLES,GLsizei(left.voxelIndexCount),GL_UNSIGNED_INT,nullptr);
+        xrOpaque.stats.voxelIndexedIndices+=left.voxelIndexCount;
     }
-    else if (right)
-        replayVertices.insert(replayVertices.end(), xrOpaque.vertices[1].begin() + right->first, xrOpaque.vertices[1].begin() + right->first + right->count);
-    polymost_xrUploadOpaquePacket(left, right);
-    glBufferData(GL_ARRAY_BUFFER, replayVertices.size() * sizeof(xr_opaque_vertex_t), replayVertices.data(), GL_STREAM_DRAW);
-    glVertexPointer(3, GL_FLOAT, sizeof(xr_opaque_vertex_t), 0);
-    glTexCoordPointer(2, GL_FLOAT, sizeof(xr_opaque_vertex_t), (GLvoid *)(3 * sizeof(float)));
-    glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, sizeof(xr_opaque_vertex_t), (GLvoid *)(5 * sizeof(float)));
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-    glEnableVertexAttribArray(7);
-    xrOpaque.replaySubmitted = true;
-    glDrawArrays(GL_TRIANGLES, 0, replayVertices.size());
+    else
+    {
+        static std::vector<xr_opaque_vertex_t> replayVertices;
+        replayVertices.clear();
+        replayVertices.insert(replayVertices.end(), xrOpaque.vertices[eye].begin() + left.first, xrOpaque.vertices[eye].begin() + left.first + left.count);
+        bool shared=right && left.phase==POLYMOST_XR_MODELS && left.count==right->count;
+        if (shared)
+            for (uint32_t i=0;i<left.count;++i)
+                if (Bmemcmp(&replayVertices[i].x,&xrOpaque.vertices[1][right->first+i].x,5*sizeof(float)))
+                { shared=false; break; }
+        if (shared)
+        {
+            for (auto &vertex:replayVertices) vertex.eye=-1.f;
+            ++xrOpaque.stats.sharedModelCalls; xrOpaque.stats.sharedModelVertices+=left.count;
+        }
+        else if (right)
+            replayVertices.insert(replayVertices.end(), xrOpaque.vertices[1].begin() + right->first, xrOpaque.vertices[1].begin() + right->first + right->count);
+        polymost_xrUploadOpaquePacket(left, right);
+        glBindBuffer(GL_ARRAY_BUFFER,xrOpaque.vbo);
+        glBufferData(GL_ARRAY_BUFFER, replayVertices.size() * sizeof(xr_opaque_vertex_t), replayVertices.data(), GL_STREAM_DRAW);
+        glVertexPointer(3, GL_FLOAT, sizeof(xr_opaque_vertex_t), 0);
+        glTexCoordPointer(2, GL_FLOAT, sizeof(xr_opaque_vertex_t), (GLvoid *)(3 * sizeof(float)));
+        glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, sizeof(xr_opaque_vertex_t), (GLvoid *)(5 * sizeof(float)));
+        glEnableClientState(GL_VERTEX_ARRAY);
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+        glEnableVertexAttribArray(7);
+        xrOpaque.replaySubmitted = true;
+        glDrawArrays(GL_TRIANGLES, 0, replayVertices.size());
+    }
     static bool injectedVoxelAfter;
     if (left.voxel && !injectedVoxelAfter && polymost_xrMaskFaultArmed("mask-voxel-replay-after"))
     {
@@ -1166,11 +1233,72 @@ static void polymost_xrReplayOpaqueDraw(xr_opaque_packet_t const &left, uint32_t
     }
 }
 
+// The fixture plants state that its following ART may never observe. Verify
+// replay restores it on success and after a submitted-draw failure, then put
+// the real entry state back. No sentinel object survives this call.
+struct xr_voxel_replay_state_probe_t
+{
+    GLuint buffer=0;
+    GLint element=0, enabled=0;
+    GLfloat constant[4]{};
+    xr_voxel_replay_state_probe_t()
+    {
+        auto const armed=Bgetenv("EDUKE32_XR_TEST_MASK_PROBE_ARMED");
+        if (xrOpaque.phase!=POLYMOST_XR_MASKS || !armed || Bstrcmp(armed,"1")) return;
+        bool voxel=false;
+        for (auto const &packets:xrOpaque.packets)
+            for (auto const &packet:packets) voxel |= packet.voxel;
+        if (!voxel) return;
+        // Exercise each shared-geometry key against a real admitted material.
+        // This is a comparator proof, not a different-mesh image oracle.
+        bool keys=true;
+        for (auto const &packets:xrOpaque.packets)
+            for (auto const &packet:packets)
+                if (packet.voxel)
+                {
+                    auto changed=packet;
+                    keys &= polymost_xrCompatibleOpaque(packet,changed);
+                    ++changed.voxelGeometry; keys &= !polymost_xrCompatibleOpaque(packet,changed);
+                    changed=packet; ++changed.voxelVbo; keys &= !polymost_xrCompatibleOpaque(packet,changed);
+                    changed=packet; ++changed.voxelIbo; keys &= !polymost_xrCompatibleOpaque(packet,changed);
+                    changed=packet; changed.voxelIndexCount+=6; keys &= !polymost_xrCompatibleOpaque(packet,changed);
+                    changed=packet; changed.projection[0]+=1.f; changed.modelview[12]+=1.f;
+                    keys &= polymost_xrCompatibleOpaque(packet,changed);
+                    break;
+                }
+        LOG_F(INFO,"OpenXR voxel geometry key control: frame=12 checks=6 passed=%d.",int(keys));
+        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING,&element);
+        glGetVertexAttribiv(7,GL_VERTEX_ATTRIB_ARRAY_ENABLED,&enabled);
+        glGetVertexAttribfv(7,GL_CURRENT_VERTEX_ATTRIB,constant);
+        glGenBuffers(1,&buffer); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,buffer);
+        GLuint const index=0; glBufferData(GL_ELEMENT_ARRAY_BUFFER,sizeof(index),&index,GL_STATIC_DRAW);
+        glDisableVertexAttribArray(7); glVertexAttrib4f(7,.125f,.25f,.5f,.75f);
+    }
+    ~xr_voxel_replay_state_probe_t()
+    {
+        if (!buffer) return;
+        GLint actualElement,actualEnabled; GLfloat actualConstant[4];
+        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING,&actualElement);
+        glGetVertexAttribiv(7,GL_VERTEX_ATTRIB_ARRAY_ENABLED,&actualEnabled);
+        glGetVertexAttribfv(7,GL_CURRENT_VERTEX_ATTRIB,actualConstant);
+        GLfloat const expected[]={.125f,.25f,.5f,.75f};
+        bool const restored=GLuint(actualElement)==buffer && !actualEnabled
+            && !Bmemcmp(actualConstant,expected,sizeof(expected));
+        LOG_F(INFO,"OpenXR voxel replay state sentinel: frame=12 restored=%d submitted=%d fault=%d.",
+              int(restored),int(xrOpaque.replaySubmitted),int(xrOpaque.injectedFault!=nullptr));
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,element);
+        if (enabled) glEnableVertexAttribArray(7); else glDisableVertexAttribArray(7);
+        glVertexAttrib4fv(7,constant); glDeleteBuffers(1,&buffer);
+    }
+};
+
 polymost_xr_collect_result polymost_xrReplayCollection()
 {
     xrOpaque.replaySubmitted = false;
-    if (!xrOpaque.active || xrOpaque.rejected || !polymost_xrValidateOpaqueStream(0) || !polymost_xrValidateOpaqueStream(1))
+    if (!xrOpaque.active || xrOpaque.rejected)
         return xrOpaque.rejected ? POLYMOST_XR_COLLECT_REJECTED : POLYMOST_XR_COLLECT_ERROR;
+    if (!polymost_xrValidateOpaqueStream(0) || !polymost_xrValidateOpaqueStream(1))
+    { xrOpaque.reason="invalid indexed or expanded replay stream"; return POLYMOST_XR_COLLECT_ERROR; }
     if (xrOpaque.phase==POLYMOST_XR_MODELS)
     {
         bool paired=xrOpaque.packets[0].size()==xrOpaque.packets[1].size();
@@ -1205,7 +1333,8 @@ polymost_xr_collect_result polymost_xrReplayCollection()
         return POLYMOST_XR_COLLECT_ERROR;
     }
 
-    GLint program = 0, active = 0, clientActive = 0, arrayBuffer = 0, depthFunc = 0, vao = 0, alphaFunc = 0;
+    xr_voxel_replay_state_probe_t const stateProbe;
+    GLint program = 0, active = 0, clientActive = 0, arrayBuffer = 0, elementBuffer = 0, depthFunc = 0, vao = 0, alphaFunc = 0;
     GLint cullMode=0, frontFace=0, matrixMode=0;
     GLboolean const cull=glIsEnabled(GL_CULL_FACE);
     GLfloat fogStart, fogEnd, fogColor[4], textureMatrix[16];
@@ -1219,6 +1348,7 @@ polymost_xr_collect_result polymost_xrReplayCollection()
     glGetIntegerv(GL_CURRENT_PROGRAM, &program); glGetIntegerv(GL_ACTIVE_TEXTURE, &active); glGetIntegerv(GL_CLIENT_ACTIVE_TEXTURE, &clientActive);
     glActiveTexture(GL_TEXTURE0); glGetFloatv(GL_TEXTURE_MATRIX,textureMatrix); glActiveTexture(active);
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer); glGetIntegerv(GL_DEPTH_FUNC, &depthFunc); glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite); glGetFloatv(GL_CURRENT_COLOR, color);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING,&elementBuffer);
     glGetBooleanv(GL_COLOR_WRITEMASK,colorMask);
     glGetIntegerv(GL_ALPHA_TEST_FUNC, &alphaFunc); glGetFloatv(GL_ALPHA_TEST_REF, &alphaRef);
     glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb); glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
@@ -1233,6 +1363,7 @@ polymost_xr_collect_result polymost_xrReplayCollection()
     xr_opaque_array_state_t const texcoord = polymost_xrCaptureFixedArray(GL_TEXTURE_COORD_ARRAY, GL_TEXTURE_COORD_ARRAY_SIZE, GL_TEXTURE_COORD_ARRAY_TYPE, GL_TEXTURE_COORD_ARRAY_STRIDE, GL_TEXTURE_COORD_ARRAY_POINTER, GL_TEXTURE_COORD_ARRAY_BUFFER_BINDING);
     glClientActiveTexture(clientActive);
     GLint eyeEnabled = 0, eyeSize = 0, eyeType = 0, eyeNormalized = 0, eyeStride = 0, eyeBuffer = 0; GLvoid *eyePointer = nullptr;
+    GLfloat eyeConstant[4]; glGetVertexAttribfv(7,GL_CURRENT_VERTEX_ATTRIB,eyeConstant);
     glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &eyeEnabled); glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_SIZE, &eyeSize);
     glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_TYPE, &eyeType); glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &eyeNormalized);
     glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &eyeStride); glGetVertexAttribiv(7, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &eyeBuffer); glGetVertexAttribPointerv(7, GL_VERTEX_ATTRIB_ARRAY_POINTER, &eyePointer);
@@ -1310,9 +1441,11 @@ polymost_xr_collect_result polymost_xrReplayCollection()
  #ifdef GL_VERTEX_ARRAY_BINDING
     glBindVertexArray(vao);
  #endif
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,elementBuffer);
     glClientActiveTexture(GL_TEXTURE0); polymost_xrRestoreFixedArray(GL_TEXTURE_COORD_ARRAY, texcoord, true);
     polymost_xrRestoreFixedArray(GL_VERTEX_ARRAY, vertex, false);
     glBindBuffer(GL_ARRAY_BUFFER, eyeBuffer); glVertexAttribPointer(7, eyeSize, eyeType, eyeNormalized, eyeStride, eyePointer); if (eyeEnabled) glEnableVertexAttribArray(7); else glDisableVertexAttribArray(7);
+    glVertexAttrib4fv(7,eyeConstant);
     glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer); glClientActiveTexture(clientActive);
     // Entry invalidated accounting; only raw GL was used since. A second
     // reset here would unbind the restored samplers. Reconcile program/unit
@@ -4099,6 +4232,83 @@ static void polymost_xrCaptureNativeMaterial(xr_opaque_packet_t &packet, float c
     packet.color = { color[0], color[1], color[2], color[3] };
 }
 
+// Test-only first resolved MASK draw observation. The native reference pass can
+// change inherited material state; pixels alone cannot certify equal inputs.
+static struct
+{
+    int eye=-1;
+    bool reference=false, seen=false, valid[2]{};
+    struct sample_t
+    {
+        xr_opaque_packet_t material{};
+        GLint integer[16]{}, textures[5]{}, samplers[5]{};
+        GLboolean enabled[9]{}, depthWrite{}, colorMask[4]{};
+        GLfloat alphaRef{}, depthRange[2]{}, detail{}, glow{};
+        GLint viewport[4]{}, scissor[4]{};
+        uintptr_t geometry{};
+        bool voxel{};
+    } sample[2];
+} xrMaskOracleInput;
+
+void polymost_xrObserveMaskInput(int eye, bool reference)
+{
+    xrMaskOracleInput.eye=eye;
+    xrMaskOracleInput.reference=reference;
+    xrMaskOracleInput.seen=false;
+    if (eye==0 && reference) xrMaskOracleInput.valid[0]=xrMaskOracleInput.valid[1]=false;
+}
+
+static void polymost_xrCaptureMaskInput(float const color[4], voxmodel_t const *voxel=nullptr)
+{
+    if (xrMaskOracleInput.eye<0 || xrMaskOracleInput.seen) return;
+    xrMaskOracleInput.seen=true;
+    decltype(xrMaskOracleInput)::sample_t sample{};
+    auto &material=sample.material;
+    polymost_xrCaptureNativeMaterial(material,color);
+    Bmemcpy(material.rotation,polymost1RotMatrix,sizeof(material.rotation));
+    glGetFloatv(GL_PROJECTION_MATRIX,material.projection);
+    glGetFloatv(GL_MODELVIEW_MATRIX,material.modelview);
+    glGetFloatv(GL_FOG_START,&material.fogStart); glGetFloatv(GL_FOG_END,&material.fogEnd);
+    glGetFloatv(GL_FOG_COLOR,&material.fogColor.x);
+    GLenum const integerKeys[]={GL_CURRENT_PROGRAM,GL_ALPHA_TEST_FUNC,GL_DEPTH_FUNC,
+        GL_BLEND_SRC_RGB,GL_BLEND_DST_RGB,GL_BLEND_SRC_ALPHA,GL_BLEND_DST_ALPHA,
+        GL_BLEND_EQUATION_RGB,GL_BLEND_EQUATION_ALPHA,GL_CULL_FACE_MODE,GL_FRONT_FACE,
+        GL_ACTIVE_TEXTURE,GL_CLIENT_ACTIVE_TEXTURE,GL_MATRIX_MODE,GL_ARRAY_BUFFER_BINDING,
+        GL_ELEMENT_ARRAY_BUFFER_BINDING};
+    for (unsigned i=0;i<ARRAY_SIZE(integerKeys);++i) glGetIntegerv(integerKeys[i],&sample.integer[i]);
+    GLenum const enableKeys[]={GL_ALPHA_TEST,GL_DEPTH_TEST,GL_BLEND,GL_CULL_FACE,GL_DEPTH_CLAMP,
+        GL_SCISSOR_TEST,GL_STENCIL_TEST,GL_POLYGON_OFFSET_FILL,GL_FOG};
+    for (unsigned i=0;i<ARRAY_SIZE(enableKeys);++i) sample.enabled[i]=glIsEnabled(enableKeys[i]);
+    glGetBooleanv(GL_DEPTH_WRITEMASK,&sample.depthWrite); glGetBooleanv(GL_COLOR_WRITEMASK,sample.colorMask);
+    glGetFloatv(GL_ALPHA_TEST_REF,&sample.alphaRef); glGetFloatv(GL_DEPTH_RANGE,sample.depthRange);
+    glGetIntegerv(GL_VIEWPORT,sample.viewport); glGetIntegerv(GL_SCISSOR_BOX,sample.scissor);
+    sample.detail=polymost1UseDetailMapping; sample.glow=polymost1UseGlowMapping;
+    for (int i=0;i<5;++i)
+    {
+        glActiveTexture(GL_TEXTURE0+i);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D,&sample.textures[i]);
+        glGetIntegeri_v(GL_SAMPLER_BINDING,i,&sample.samplers[i]);
+        if (!i) glGetFloatv(GL_TEXTURE_MATRIX,material.textureMatrix);
+    }
+    glActiveTexture(sample.integer[11]);
+    sample.geometry=reinterpret_cast<uintptr_t>(voxel); sample.voxel=voxel!=nullptr;
+    int const eye=xrMaskOracleInput.eye;
+    if (xrMaskOracleInput.reference)
+    { xrMaskOracleInput.sample[eye]=sample; xrMaskOracleInput.valid[eye]=true; }
+    else
+    {
+        auto const &reference=xrMaskOracleInput.sample[eye];
+        bool const equal=xrMaskOracleInput.valid[eye] && !Bmemcmp(&reference,&sample,sizeof(sample));
+        LOG_F(INFO,"OpenXR native mask oracle input: eye=%d family=%s equal=%d.",eye,voxel ? "voxel" : "art",int(equal));
+        if (!equal)
+            LOG_F(INFO,"OpenXR native mask oracle input difference: eye=%d material=%d integers=%d textures=%d samplers=%d alpha=%.9g/%.9g.",
+                  eye,int(Bmemcmp(&reference.material,&sample.material,sizeof(material))!=0),
+                  int(Bmemcmp(reference.integer,sample.integer,sizeof(sample.integer))!=0),
+                  int(Bmemcmp(reference.textures,sample.textures,sizeof(sample.textures))!=0),
+                  int(Bmemcmp(reference.samplers,sample.samplers,sizeof(sample.samplers))!=0),reference.alphaRef,sample.alphaRef);
+    }
+}
+
 static bool polymost_xrPrepareOpaquePacket(xr_opaque_packet_t &packet, pthtyp const * const pth,
     int32_t const method, float const color[4], bool const skyDepth, voxmodel_t const * const voxel = nullptr)
 {
@@ -4352,6 +4562,9 @@ static bool polymost_xrPrepareOpaquePacket(xr_opaque_packet_t &packet, pthtyp co
 
 bool polymost_xrCollectVoxel(voxmodel_t const *model, float const color[4])
 {
+    polymost_xrCaptureMaskInput(color,model);
+    if (xrNativeMaskDemand.eye>=0 && model && model->qcnt>0)
+    { ++xrNativeMaskDemand.voxelDraws; xrNativeMaskDemand.voxelVertices+=uint64_t(model->qcnt)*6; }
     if (!polymost_xrCollectingMasks()) return false;
     // Activity, not success, consumes the draw. Later voxels must not leak
     // pixels after an earlier packet rejected this collection.
@@ -4369,19 +4582,20 @@ bool polymost_xrCollectVoxel(voxmodel_t const *model, float const color[4])
     { polymost_xrRejectOpaque("invalid voxel geometry or pending fan"); return true; }
     unsigned const eye=xrOpaque.eye;
     uint64_t const count=uint64_t(model->qcnt)*6;
-    if (count+xrOpaque.vertices[eye].size()>XR_OPAQUE_MAX_VERTICES)
-    {
-        static unsigned reports;
-        auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
-        if (diagnostics && !Bstrcmp(diagnostics,"1") && reports++<4)
-            LOG_F(INFO,"OpenXR voxel capacity rejection: eye=%u pic=%d packets=%u vertices=%u requested=%llu limit=%u.",
-                  eye,globalpicnum,unsigned(xrOpaque.packets[eye].size()),unsigned(xrOpaque.vertices[eye].size()),
-                  (unsigned long long)count,unsigned(XR_OPAQUE_MAX_VERTICES));
-        polymost_xrRejectOpaque("opaque collection capacity",true);
-        return true;
-    }
+    // The former expanded-vertex cap also bounded GLsizei arithmetic. Keep an
+    // explicit bound while borrowing native buffers instead of copying indices.
+    if (count>uint64_t(INT32_MAX) || !model->vbo || !model->vboindex)
+    { polymost_xrRejectOpaque("invalid indexed voxel count or buffers"); return true; }
+    GLint vertexBuffer, indexBuffer;
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&vertexBuffer);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING,&indexBuffer);
+    if (GLuint(vertexBuffer)!=model->vbo || GLuint(indexBuffer)!=model->vboindex)
+    { polymost_xrRejectOpaque("native voxel buffer binding mismatch"); return true; }
     xr_opaque_packet_t packet{};
     if (!polymost_xrPrepareOpaquePacket(packet,nullptr,DAMETH_MASK,color,false,model)) return true;
+    packet.voxelGeometry=reinterpret_cast<uintptr_t>(model);
+    packet.voxelVbo=model->vbo; packet.voxelIbo=model->vboindex;
+    packet.count=packet.voxelIndexCount=uint32_t(count);
     static unsigned reports;
     auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
     if (diagnostics && !Bstrcmp(diagnostics,"1") && reports<16)
@@ -4403,15 +4617,18 @@ bool polymost_xrCollectVoxel(voxmodel_t const *model, float const color[4])
         || !finite(&packet.color.x,4) || !finite(&packet.correction.x,4)
         || !std::isfinite(packet.shade) || !std::isfinite(packet.vis) || !std::isfinite(packet.shadeInterpolate))
     { polymost_xrRejectOpaque("nonfinite voxel material or transform"); return true; }
-    for (uint64_t i=0;i<count;++i)
-        if (model->index[i]>=uint64_t(model->qcnt)*4 || !finite(model->vertex+size_t(model->index[i])*5,5))
-        { polymost_xrRejectOpaque("invalid voxel index or vertex"); return true; }
-    packet.first=xrOpaque.vertices[eye].size(); packet.count=count;
-    for (uint64_t i=0;i<count;++i)
-    {
-        auto const *v=model->vertex+size_t(model->index[i])*5;
-        xrOpaque.vertices[eye].push_back({v[0],v[1],v[2],v[3],v[4],float(eye)});
-    }
+    // Earlier admitted packets already validated this immutable native asset.
+    // Reuse only within this collection; no persistent cache or ownership layer.
+    bool validated=false;
+    for (auto const &packets:xrOpaque.packets)
+        for (auto const &earlier:packets)
+            validated |= earlier.voxel && earlier.voxelGeometry==packet.voxelGeometry
+                && earlier.voxelVbo==packet.voxelVbo && earlier.voxelIbo==packet.voxelIbo
+                && earlier.voxelIndexCount==packet.voxelIndexCount;
+    if (!validated)
+        for (uint64_t i=0;i<count;++i)
+            if (model->index[i]>=uint64_t(model->qcnt)*4 || !finite(model->vertex+size_t(model->index[i])*5,5))
+            { polymost_xrRejectOpaque("invalid voxel index or vertex"); return true; }
     xrOpaque.packets[eye].push_back(packet);
     return true;
 }
@@ -4688,6 +4905,10 @@ void polymost_xrEndTint()
 
 void polymost_finishBufferedDrawing(int mode)
 {
+#ifdef USE_OPENXR
+    if (xrNativeMaskDemand.eye>=0 && mode==GL_TRIANGLE_FAN && drawpolyVertsCnt>=3)
+    { ++xrNativeMaskDemand.fanDraws; xrNativeMaskDemand.fanVertices+=uint64_t(drawpolyVertsCnt-2)*3; }
+#endif
 #ifdef USE_OPENXR
     if (xrOpaque.active)
     {
@@ -5034,6 +5255,7 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
     glColor4f(pc[0], pc[1], pc[2], pc[3]);
 
 #ifdef USE_OPENXR
+    polymost_xrCaptureMaskInput(pc);
     bool collectOpaque = xrOpaque.active;
     if (collectOpaque && pow2xsplit && tsiz.x != tsiz2.x)
     {

@@ -24,6 +24,14 @@ BOTTLE_TILE = 954  # BOTTLE1, declared by the stock DEFS.CON.
 SKY_TILE = 89  # LA, native eight-panel sky configured by G_InitMultiPsky.
 MASK_TILE = 285  # MASKWALL1, indexed ART with transparent texels.
 VOXEL_TILE = 913  # AA MASKWALL2; the oracle optionally maps it to an owned KVX.
+# The first location is the historical single-pillar fixture.  The remaining
+# positions stay inside the native camera's +x view cone while being far enough
+# apart to make each pillar a distinct visibility control.
+VOXEL_PILLAR_POSITIONS = ((3200, 2048), (2300, 1280), (2800, 1728),
+                          (3300, 2368))
+VOXEL_STRESS_COUNT = 4
+VOXEL_STRESS_EXPANDED_VERTICES = 69_930
+XR_EXPANDED_VERTEX_CAP = 262_144
 
 
 def sector(wallptr: int, wallnum: int, sky_ceiling=False, sky_floor=False, *,
@@ -79,10 +87,14 @@ def voxel_cstat(voxel_flip=False, voxel_translucent=False) -> int:
 
 
 def build_map(scene="room", voxel_flip=False, voxel_palette=0, voxel_shade=0,
-              voxel_translucent=False) -> bytes:
+              voxel_translucent=False, voxel_count=1, voxel_hidden_index=None) -> bytes:
     if scene not in ("room", "sky", "sky-floor", "skybox", "skybox-ceiling-fog-control",
                      "skybox-floor-fog-control", "masks", "masks-animated", "masks-voxel"):
         raise ValueError("unknown fixture scene")
+    if voxel_count not in (1, VOXEL_STRESS_COUNT):
+        raise ValueError("voxel_count must be 1 or 4")
+    if voxel_hidden_index is not None and not 0 <= voxel_hidden_index < voxel_count:
+        raise ValueError("voxel_hidden_index must identify an emitted voxel")
     # A six-wall first room with a portal only in its middle east-wall span.
     # Wall 2 and wall 6 are exact reversed twins, required by Build portals.
     # Alternating native palette/shade inputs exercise state changes before
@@ -116,10 +128,13 @@ def build_map(scene="room", voxel_flip=False, voxel_palette=0, voxel_shade=0,
         # cstat 0x11 (blocking, wall-aligned) are the AA production case.
         # The surrounding indexed masks deliberately exercise state recovery
         # before and after the voxel's real depth contribution.
-        sprites.append(sprite(3200, 2048, -2048, 0,
-                              cstat=voxel_cstat(voxel_flip, voxel_translucent), tile=VOXEL_TILE,
-                              shade=voxel_shade, palette=voxel_palette,
-                              angle=512, xrepeat=64, yrepeat=64))
+        for index, (x, y) in enumerate(VOXEL_PILLAR_POSITIONS[:voxel_count]):
+            visible = index != voxel_hidden_index
+            sprites.append(sprite(x, y, -2048, 0,
+                                  cstat=voxel_cstat(voxel_flip, voxel_translucent), tile=VOXEL_TILE,
+                                  shade=voxel_shade, palette=voxel_palette,
+                                  angle=512, xrepeat=64 if visible else 0,
+                                  yrepeat=64 if visible else 0))
     if scene.startswith("skybox"):
         # The two regions deliberately share tile 89 but have different native
         # ceiling/floor palette, shade and visibility inputs.  The portal puts
@@ -187,6 +202,8 @@ def _assert_legacy_scene_bytes() -> None:
     }
     for scene, digest in expected.items():
         assert hashlib.sha256(build_map(scene)).hexdigest() == digest
+    assert len(VOXEL_PILLAR_POSITIONS) == VOXEL_STRESS_COUNT
+    assert VOXEL_STRESS_COUNT * VOXEL_STRESS_EXPANDED_VERTICES > XR_EXPANDED_VERTEX_CAP
 
 
 _assert_sector_layout()
@@ -194,15 +211,17 @@ _assert_legacy_scene_bytes()
 
 
 def generate(directory: Path, scene="room", voxel_flip=False, voxel_palette=0,
-             voxel_shade=0, voxel_translucent=False) -> Path:
+             voxel_shade=0, voxel_translucent=False, voxel_count=1,
+             voxel_hidden_index=None) -> Path:
     """Generate ``stereo_fixture.map`` in *directory* and return its path.
 
     This is intentionally a small public API for the native/XR comparison
     harness. It has no dependency on a local GRP: the caller supplies the
     owned GRP and ``fixtures/stereo_test.con`` at launch time.
     """
-    data = build_map(scene, voxel_flip, voxel_palette, voxel_shade, voxel_translucent)
-    count = 9 if scene == "masks-voxel" else 8 if scene.startswith("masks") else 1
+    data = build_map(scene, voxel_flip, voxel_palette, voxel_shade, voxel_translucent,
+                     voxel_count, voxel_hidden_index)
+    count = (8 + voxel_count) if scene == "masks-voxel" else 8 if scene.startswith("masks") else 1
     if len(data) != 20 + 2 + 2 * 40 + 2 + 10 * 32 + 2 + count * 44:
         raise AssertionError("v7 fixture size no longer matches source layouts")
     directory.mkdir(parents=True, exist_ok=True)
@@ -228,6 +247,10 @@ def main() -> int:
     parser.add_argument("--voxel-palette", default=0, type=int)
     parser.add_argument("--voxel-shade", default=0, type=int)
     parser.add_argument("--voxel-translucent", action="store_true")
+    parser.add_argument("--voxel-count", choices=(1, VOXEL_STRESS_COUNT), type=int, default=1,
+                        help="tile-913 pillars in masks-voxel (default: 1)")
+    parser.add_argument("--voxel-hidden-index", type=int,
+                        help="fixture-only hidden pillar for a native visibility control")
     args = parser.parse_args()
     if not 0 <= args.voxel_palette <= 255:
         parser.error('--voxel-palette must be in 0..255')
@@ -235,8 +258,16 @@ def main() -> int:
         parser.error('--voxel-shade must be in -128..127')
     if (args.voxel_flip or args.voxel_palette or args.voxel_shade or args.voxel_translucent) and args.scene != 'masks-voxel':
         parser.error('--voxel-* options require --scene masks-voxel')
+    if args.voxel_count != 1 and args.scene != 'masks-voxel':
+        parser.error('--voxel-count 4 requires --scene masks-voxel')
+    if args.voxel_hidden_index is not None:
+        if args.scene != 'masks-voxel':
+            parser.error('--voxel-hidden-index requires --scene masks-voxel')
+        if not 0 <= args.voxel_hidden_index < args.voxel_count:
+            parser.error('--voxel-hidden-index must identify an emitted voxel')
     output = generate(args.output.parent, args.scene, args.voxel_flip, args.voxel_palette,
-                      args.voxel_shade, args.voxel_translucent)
+                      args.voxel_shade, args.voxel_translucent, args.voxel_count,
+                      args.voxel_hidden_index)
     if output != args.output:
         output.replace(args.output)
     print(f"wrote {args.output} ({args.output.stat().st_size} bytes, v7, 2 sectors, 10 walls)")

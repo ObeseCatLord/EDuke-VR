@@ -1,5 +1,8 @@
 # Native indexed voxel MASK stereo
 
+Historical expanded-geometry checkpoint. Current native-buffer reuse work and
+actual-AA whole-MASK proof are in [AA_INDEXED_VOXEL_STORAGE.md](AA_INDEXED_VOXEL_STORAGE.md).
+
 Status: **bounded adapter implemented and privately qualified**. Full-world SPS
 remains incomplete. Actual AA still uses native two-pass masks because its large
 voxel props exceed the existing expanded-geometry collection limit. This is a

@@ -19,7 +19,9 @@ import subprocess
 import tempfile
 import time
 from PIL import Image, ImageChops
-from stereo_fixture import generate, sprite, voxel_cstat
+from stereo_fixture import (XR_EXPANDED_VERTEX_CAP, VOXEL_STRESS_COUNT,
+                            VOXEL_STRESS_EXPANDED_VERTICES, generate, sprite,
+                            voxel_cstat)
 from smoke_world import CONFIG
 
 
@@ -43,6 +45,13 @@ VOXEL_SUPPRESSED_AFTER_REJECTION = 'OpenXR voxel draw suppressed after injected 
 VOXEL_ATLAS_EVICTED = 'OpenXR voxel atlas evicted for injected mask-voxel-cold.'
 VOXEL_UNSUPPORTED_FALLBACK = re.compile(
     r'OpenXR masks candidate uses two-pass oracle: unsupported model or voxel mask sprite '
+    r'\(frame=12\)')
+VOXEL_CAPACITY_REJECTION = re.compile(
+    r'OpenXR voxel capacity rejection: eye=(?P<eye>\d+) pic=(?P<pic>\d+) '
+    r'packets=(?P<packets>\d+) vertices=(?P<vertices>\d+) '
+    r'requested=(?P<requested>\d+) limit=(?P<limit>\d+)\.')
+VOXEL_CAPACITY_FALLBACK = re.compile(
+    r'OpenXR masks candidate uses two-pass oracle: opaque collection capacity '
     r'\(frame=12\)')
 
 
@@ -188,12 +197,49 @@ def mask_submission_at_frame(output, frame):
     return records[-1] if records else None
 
 
-def has_positive_voxel_replay(submission, pose):
+def voxel_replay_state_evidence(output, *, fault=False):
+    receipts = [tuple(map(int, values)) for values in re.findall(
+        r'OpenXR voxel replay state sentinel: frame=(\d+) restored=(\d+) submitted=(\d+) fault=(\d+)\.', output)]
+    keys = re.findall(r'OpenXR voxel geometry key control: frame=12 checks=6 passed=(\d+)\.', output)
+    return {'receipts': receipts, 'geometry_keys': keys,
+            'proved': receipts == [(12, 1, 1, int(fault))] and keys == ['1']}
+
+
+def has_positive_voxel_replay(submission, pose, voxel_count=1):
     """Require a paired replay, or an eye-owned replay for the unequal pose."""
     if not submission:
         return False
     calls, paired = (submission.get(key, 0) for key in VOXEL_COUNTER_KEYS)
-    return calls > 0 and (calls > paired if pose == 'unequal' else paired > 0)
+    if pose == 'unequal':
+        return calls >= voxel_count and calls > paired
+    return calls >= voxel_count and paired >= voxel_count
+
+
+def voxel_capacity_fallback_evidence(output, expected):
+    """Require a real frame-12 mask capacity rejection and native fallback.
+
+    The optional pre-change control must not treat a missing SPS submission as
+    success: the diagnostic has to show the real expanded-vertex request
+    crossing the old cap, followed by that collection's exact capacity route.
+    """
+    matches = [match.groupdict() for match in VOXEL_CAPACITY_REJECTION.finditer(output)]
+    rejections = [{key: int(value) for key, value in match.items()} for match in matches]
+    crossed = [item for item in rejections if item['pic'] == 913
+               and item['limit'] == XR_EXPANDED_VERTEX_CAP
+               and item['requested'] == VOXEL_STRESS_EXPANDED_VERTICES
+               and item['vertices'] + item['requested'] > item['limit']]
+    return {
+        'old_expanded_vertex_cap': XR_EXPANDED_VERTEX_CAP,
+        'fixture_voxel_count': expected,
+        'fixture_vertices_per_voxel': VOXEL_STRESS_EXPANDED_VERTICES,
+        'capacity_rejections': rejections,
+        'actual_request_crossed_cap': bool(crossed),
+        'frame12_capacity_mask_fallback': bool(VOXEL_CAPACITY_FALLBACK.search(output)),
+        'mask_submission_absent_at_capture': mask_submission_at_frame(output, 12) is None,
+        'proved': (expected == VOXEL_STRESS_COUNT and bool(crossed)
+                   and bool(VOXEL_CAPACITY_FALLBACK.search(output))
+                   and mask_submission_at_frame(output, 12) is None),
+    }
 
 
 def mask_fault_evidence(output, failure, pose):
@@ -201,6 +247,9 @@ def mask_fault_evidence(output, failure, pose):
     fallback = bool(failure and re.search(
         r'OpenXR masks candidate uses two-pass oracle: .*injected.*mask-'+re.escape(failure)
         + r'.*\(frame=12\)', output))
+    if failure == 'voxel-reference':
+        fallback = ('OpenXR voxel replay reference invalidated before validation.' in output and
+                    bool(re.search(r'OpenXR masks candidate uses two-pass oracle: invalid indexed or expanded replay stream \(frame=12\)', output)))
     capture = mask_submission_at_frame(output, 12)
     recovery = mask_submission_at_frame(output, 13)
     evidence = {
@@ -230,18 +279,21 @@ def voxel_native_fallback_evidence(output):
             'observed': guard and capture is None}
 
 
-def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_attachment, single_pass=False, pose="zero", inject_init=False, scene="room", sky_depth=0, sky_panning=1, mask_failure=None, model_root=None, model_name="pistol", model_scale=1.0, models_enabled=True, model_skin=True, skybox_root=None, non_sky_rgba=False, skybox_fog_fault=False, include_skybox_def=True, voxel_file=None, voxel_flip=False, voxel_palette=0, voxel_shade=0, voxel_translucent=False):
+def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_attachment, single_pass=False, pose="zero", inject_init=False, scene="room", sky_depth=0, sky_panning=1, mask_failure=None, model_root=None, model_name="pistol", model_scale=1.0, models_enabled=True, model_skin=True, skybox_root=None, non_sky_rgba=False, skybox_fog_fault=False, include_skybox_def=True, voxel_file=None, voxel_flip=False, voxel_palette=0, voxel_shade=0, voxel_translucent=False, voxel_count=1, voxel_hidden_index=None, expect_voxel_capacity_fallback=False):
     directory.mkdir()
-    generate(directory, scene, voxel_flip, voxel_palette, voxel_shade, voxel_translucent)
+    generate(directory, scene, voxel_flip, voxel_palette, voxel_shade, voxel_translucent,
+             voxel_count, voxel_hidden_index)
     shutil.copyfile(fixture_con, directory/'stereo_test.con')
     if voxel_translucent:
         # Native MASKWALL2 spawn deliberately clears translucency. Set this
         # test variant after spawn, equally in native, XR and ART-control runs,
         # so the rejection oracle exercises the requested draw-time state.
         with (directory/'stereo_test.con').open('a') as con:
-            con.write('\nappendevent EVENT_ENTERLEVEL\n'
-                      ' setvar vrfixture_sprite 8\n'
-                      f' setactor[vrfixture_sprite].cstat {voxel_cstat(voxel_flip, True)}\nendevent\n')
+            con.write('\nappendevent EVENT_ENTERLEVEL\n')
+            for index in range(8, 8 + voxel_count):
+                con.write(f' setvar vrfixture_sprite {index}\n'
+                          f' setactor[vrfixture_sprite].cstat {voxel_cstat(voxel_flip, True)}\n')
+            con.write('endevent\n')
     if skybox_root:
         append_skybox_def(directory, skybox_root, non_sky_rgba, include_skybox_def)
     if voxel_file:
@@ -276,10 +328,13 @@ def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_
     for key in ('EDUKE32_XR', 'EDUKE32_XR_TEST_ZERO_IPD', 'EDUKE32_XR_WORLD_OUTPUT',
                 'EDUKE32_XR_DIAGNOSTIC_FRAMES', 'EDUKE32_XR_TEST_FAIL', 'EDUKE32_XR_SINGLE_PASS',
                 'EDUKE32_XR_TEST_NATIVE_TARGET', 'EDUKE32_XR_TEST_STEREO_POSE',
-                'EDUKE32_XR_TEST_MASK_ARMED', 'EDUKE32_XR_TEST_MASK_SNAPSHOT', 'EDUKE32_XR_TEST_ART_CLOCK'):
+                'EDUKE32_XR_TEST_MASK_ARMED', 'EDUKE32_XR_TEST_MASK_SNAPSHOT', 'EDUKE32_XR_TEST_ART_CLOCK',
+                'EDUKE32_XR_TEST_MASK_REJECTIONS', 'EDUKE32_XR_TEST_MASK_PROBE_ARMED'):
         env.pop(key, None)
     if scene == 'masks-animated':
         env['EDUKE32_XR_TEST_ART_CLOCK'] = '1'
+    if expect_voxel_capacity_fallback:
+        env['EDUKE32_XR_TEST_MASK_REJECTIONS'] = '1'
     if zero_ipd:
         env['EDUKE32_XR'] = '1'
         env['EDUKE32_XR_TEST_ZERO_IPD' if pose == 'zero' else 'EDUKE32_XR_TEST_STEREO_POSE'] = '2' if pose == 'unequal' else '1'
@@ -336,14 +391,17 @@ def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_
                          and all(a.read_bytes() == b.read_bytes() for a, b in zip(snapshots[:4], snapshots[4:])))
             fault_evidence = mask_fault_evidence(output, mask_failure, pose)
             native_voxel_fallback = voxel_native_fallback_evidence(output)
+            capacity_fallback = voxel_capacity_fallback_evidence(output, voxel_count)
             model_fallback = bool(re.search(r'OpenXR masks candidate uses two-pass oracle: .*model.*\(frame=12\)', output))
             opaque_fallback = bool(re.search(r'OpenXR opaque candidate uses two-pass oracle: .*\(frame=12\)', output))
             return {'captured': good, 'masks_at_capture': mask_submission,
+                    'voxel_replay_state': voxel_replay_state_evidence(output, fault=mask_failure == 'voxel-replay-after'),
                     'native_model_fallback_at_capture': model_fallback,
                     'mask_collection_untouched': untouched if single_pass else None,
                     'mask_fault_observed': fault_evidence['generic_fallback_at_capture'],
                     'mask_fault_evidence': fault_evidence,
                     'voxel_native_fallback_evidence': native_voxel_fallback,
+                    'voxel_capacity_fallback_evidence': capacity_fallback,
                     'counts': counts, 'single_pass_at_capture': submission,
                     'opaque_fallback_at_capture': opaque_fallback,
                     'skybox_fog_fault_observed': 'XR skybox fog upload intentionally skipped.' in output,
@@ -372,7 +430,7 @@ def main():
     parser.add_argument('--pose', choices=('zero', 'stereo', 'unequal'), default='zero',
                         help='identical eyes, or deterministic nonzero IPD, pitch/yaw/roll and asymmetric FOV')
     parser.add_argument('--inject-replay-init-failure', action='store_true')
-    parser.add_argument('--mask-failure', choices=('collect-right', 'replay-before', 'before-voxel', 'voxel-cold'))
+    parser.add_argument('--mask-failure', choices=('collect-right', 'replay-before', 'before-voxel', 'voxel-cold', 'voxel-reference'))
     parser.add_argument('--scene', choices=('room', 'sky', 'sky-floor', 'skybox',
                                              'skybox-ceiling-fog-control', 'skybox-floor-fog-control',
                                              'masks', 'masks-animated'), default='room')
@@ -392,6 +450,12 @@ def main():
                         help='fixture voxel shade, in -128..127 (default: 0)')
     parser.add_argument('--voxel-translucent', action='store_true',
                         help='set voxel cstat translucent bit and require native mask fallback')
+    parser.add_argument('--voxel-count', choices=(1, VOXEL_STRESS_COUNT), type=int, default=1,
+                        help='tile-913 pillars in the disposable voxel scene (default: 1)')
+    parser.add_argument('--expect-voxel-capacity-fallback', action='store_true',
+                        help='accept only the real frame-12 262144-vertex mask-capacity fallback for four voxels')
+    parser.add_argument('--voxel-hidden-control', choices=range(VOXEL_STRESS_COUNT), type=int,
+                        help='run one native all-but-indexed-pillar visibility control for the four-voxel scene')
     args = parser.parse_args()
     if not 0 <= args.voxel_palette <= 255:
         parser.error('--voxel-palette must be in 0..255')
@@ -399,6 +463,12 @@ def main():
         parser.error('--voxel-shade must be in -128..127')
     if (args.voxel_flip or args.voxel_palette or args.voxel_shade or args.voxel_translucent) and not args.voxel_file:
         parser.error('--voxel-* options require --voxel-file')
+    if args.voxel_count != 1 and not args.voxel_file:
+        parser.error('--voxel-count 4 requires --voxel-file')
+    if args.expect_voxel_capacity_fallback and args.voxel_count != VOXEL_STRESS_COUNT:
+        parser.error('--expect-voxel-capacity-fallback requires --voxel-count 4')
+    if args.voxel_hidden_control is not None and args.voxel_count != VOXEL_STRESS_COUNT:
+        parser.error('--voxel-hidden-control requires --voxel-count 4')
     if args.voxel_file:
         if args.scene != 'room' or args.skybox_root or args.model_root:
             parser.error('--voxel-file owns the masks-voxel scene and cannot combine with --scene, --skybox-root, or --model-root')
@@ -410,6 +480,9 @@ def main():
         parser.error('--mask-failure requires --single-pass and cannot combine with opaque init failure')
     if args.voxel_translucent and args.mask_failure:
         parser.error('--voxel-translucent cannot combine with --mask-failure')
+    if args.expect_voxel_capacity_fallback and (args.mask_failure or args.inject_replay_init_failure
+                                                or args.voxel_translucent):
+        parser.error('--expect-voxel-capacity-fallback cannot combine with injected faults or --voxel-translucent')
     if args.inject_replay_init_failure and not args.single_pass:
         parser.error('--inject-replay-init-failure requires --single-pass')
     if args.skybox_root:
@@ -437,6 +510,8 @@ def main():
         fixture_options['voxel_palette'] = args.voxel_palette
         fixture_options['voxel_shade'] = args.voxel_shade
         fixture_options['voxel_translucent'] = args.voxel_translucent
+        fixture_options['voxel_count'] = args.voxel_count
+        fixture_options['expect_voxel_capacity_fallback'] = args.expect_voxel_capacity_fallback
     if not binary.is_file() or not grp.is_file() or not args.display:
         parser.error('existing XR-enabled binary, owned GRP and display are required')
     args.work_dir.mkdir(parents=True, exist_ok=True)
@@ -483,7 +558,12 @@ def main():
     oracle_equal = oracle['captured'] and stereo['captured'] and all(
         a.read_bytes() == b.read_bytes() for a, b in zip(oracle_eyes, eyes))
     submission = stereo['single_pass_at_capture']
-    promoted = not args.single_pass or bool(submission and submission['eye_only_calls' if args.pose == 'unequal' else 'paired_calls'] > 0)
+    capacity_fallback = stereo['voxel_capacity_fallback_evidence']
+    if args.expect_voxel_capacity_fallback:
+        promoted = capacity_fallback['proved']
+    else:
+        promoted = (not args.single_pass or bool(submission and submission[
+            'eye_only_calls' if args.pose == 'unequal' else 'paired_calls'] > 0))
     distinct = stereo['captured'] and eyes[0].read_bytes() != eyes[1].read_bytes()
     pose_good = args.pose == 'zero' or distinct
     sky_good = (not args.single_pass or args.scene not in ('sky', 'sky-floor') or bool(submission
@@ -523,9 +603,12 @@ def main():
                                                Image.open(control_files[0]).convert('RGB'))
         footprint_bytes = footprint.tobytes() if footprint else b''
         footprint_pixels = sum(any(footprint_bytes[i:i+3]) for i in range(0, len(footprint_bytes), 3))
-        voxel_replayed = has_positive_voxel_replay(masks, args.pose)
+        voxel_replayed = has_positive_voxel_replay(masks, args.pose, args.voxel_count)
         voxel_reference = {
             'asset_name': args.voxel_file.name, 'tile': 913,
+            'voxel_count': args.voxel_count,
+            'expanded_vertices_per_voxel': VOXEL_STRESS_EXPANDED_VERTICES,
+            'fixture_expanded_vertices': args.voxel_count * VOXEL_STRESS_EXPANDED_VERTICES,
             'requested_palette': args.voxel_palette, 'requested_shade': args.voxel_shade,
             'requested_cstat': f'0x{voxel_cstat(args.voxel_flip, args.voxel_translucent):x}',
             'native_fallback_expected': args.voxel_translucent,
@@ -538,11 +621,37 @@ def main():
             'single_pass_voxel_calls': masks.get('voxel_calls') if masks else None,
             'single_pass_voxel_paired_calls': masks.get('voxel_paired_calls') if masks else None,
             'single_pass_voxel_replayed_at_capture': voxel_replayed,
+            'expected_capacity_fallback': args.expect_voxel_capacity_fallback,
+            'capacity_fallback_evidence': capacity_fallback if args.expect_voxel_capacity_fallback else None,
+        }
+    hidden_voxel_control = None
+    if args.voxel_hidden_control is not None:
+        hidden_options = dict(fixture_options, voxel_hidden_index=args.voxel_hidden_control)
+        hidden, hidden_files = run(binary, grp, lab/f'native-voxel-hidden-{args.voxel_hidden_control}',
+                                   fixture_con, args.display, False, args.timeout,
+                                   args.native_attachment, pose=args.pose, scene=args.scene,
+                                   sky_depth=args.sky_depth, sky_panning=args.sky_panning,
+                                   **hidden_options)
+        footprint = None
+        if hidden['captured'] and native['captured']:
+            footprint = ImageChops.difference(Image.open(reference[0]).convert('RGB'),
+                                               Image.open(hidden_files[0]).convert('RGB'))
+        footprint_bytes = footprint.tobytes() if footprint else b''
+        hidden_voxel_control = {
+            'hidden_pillar_index': args.voxel_hidden_control,
+            'native_control_captured': hidden['captured'],
+            'pillar_changes_native_pixels': sum(any(footprint_bytes[i:i+3])
+                                                for i in range(0, len(footprint_bytes), 3)) > 25,
+            'changed_pixels': sum(any(footprint_bytes[i:i+3])
+                                  for i in range(0, len(footprint_bytes), 3)),
+            'pixel_bounds': footprint.getbbox() if footprint else None,
         }
     if args.single_pass and args.scene.startswith('masks'):
         masks_good = bool(masks and masks['translucent_calls'] > 0 and masks['depth_only_calls'] > 0
                           and masks['depth_write_off_calls'] > 0)
-    if args.mask_failure:
+    if args.expect_voxel_capacity_fallback:
+        masks_good = capacity_fallback['proved']
+    elif args.mask_failure:
         masks_good = stereo['mask_fault_evidence']['proved']
     elif args.voxel_translucent:
         masks_good = stereo['voxel_native_fallback_evidence']['observed']
@@ -550,11 +659,16 @@ def main():
         masks_good = masks_good and voxel_reference['single_pass_voxel_replayed_at_capture']
     untouched = not args.single_pass or stereo['mask_collection_untouched']
     recovered = not args.inject_replay_init_failure or stereo['init_failure_recovered']
-    passed = (masks_good and untouched and sky_good and depth_good and recovered and pose_good and native['captured'] and stereo['captured'] and counts_equal and oracle_equal and promoted
+    voxel_state_good = (not (args.voxel_file and args.single_pass and not args.mask_failure
+                             and not args.voxel_translucent and not args.expect_voxel_capacity_fallback)
+                        or stereo['voxel_replay_state']['proved'])
+    passed = (voxel_state_good and masks_good and untouched and sky_good and depth_good and recovered and pose_good and native['captured'] and stereo['captured'] and counts_equal and oracle_equal and promoted
               and (model_reference is None or model_reference['native_model_changes_ART_pixels']
                    and model_reference['native_no_skin_control_captured'] and model_reference['textured_model_visible_pixels'] > 25)
               and (voxel_reference is None or voxel_reference['native_ART_control_captured']
                    and voxel_reference['native_voxel_changes_ART_pixels'])
+              and (hidden_voxel_control is None or hidden_voxel_control['native_control_captured']
+                   and hidden_voxel_control['pillar_changes_native_pixels'])
               and len(pixel_results) == 2 and all(p['exact'] for p in pixel_results))
     skybox_matrix = None
     if args.skybox_root:
@@ -684,6 +798,8 @@ def main():
         result['private_model_reference'] = model_reference
     if voxel_reference is not None:
         result['voxel_control'] = voxel_reference
+    if hidden_voxel_control is not None:
+        result['voxel_hidden_pillar_control'] = hidden_voxel_control
     (lab/'result.json').write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps(result, indent=2))
     return 0 if passed else 1

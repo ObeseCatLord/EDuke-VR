@@ -83,6 +83,7 @@ struct polymost_xr_collect_stats
     uint32_t skyboxCalls, skyboxPairedCalls;
     uint32_t maskCalls, translucentCalls, depthOnlyCalls, depthWriteOffCalls;
     uint32_t voxelCalls, voxelPairedCalls;
+    uint64_t voxelIndexedIndices;
     uint32_t modelCalls, sharedModelCalls, sharedModelVertices;
 };
 
@@ -98,6 +99,9 @@ void polymost_xrDiscardCollection();
 polymost_xr_collect_stats polymost_xrCollectionStats();
 char const *polymost_xrCollectionReason();
 bool polymost_xrReplaySubmitted();
+// Optional bounded native fallback measurements. Negative eye ends the sample.
+void polymost_xrObserveMaskInput(int eye, bool reference);
+void polymost_xrMeasureNativeMasks(int eye, uint32_t frame);
 bool polymost_xrCollectingModels();
 void polymost_xrRejectModel(char const *reason);
 void polymost_xrBeginModelInstance(int32_t instance, int32_t model, int32_t surfaces);

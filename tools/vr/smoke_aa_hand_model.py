@@ -44,6 +44,14 @@ MODEL_RECEIPT = re.compile(
     r'OpenXR hand model receipt: serial=(\d+) counter=(\d+) reloading=(\d+) roles=(\d+) valid=(\d+)\.')
 MODEL_SAMPLE = re.compile(
     r'OpenXR hand model sample: serial=(\d+) counter=(\d+) reloading=(\d+) frame=(\d+)\.')
+MASK_ORACLE_RECEIPT = re.compile(r'OpenXR native mask oracle replay captured: serial=(\d+)\.')
+MASK_ORACLE_INPUT = re.compile(
+    r'OpenXR native mask oracle input: eye=(\d+) family=(voxel|art) equal=(\d+)\.')
+MASK_ORACLE_SUBMISSION = re.compile(
+    r'OpenXR masks single-pass: frame=(\d+) .*? voxels=(\d+) voxelsPaired=(\d+) indexedVoxelIndices=(\d+)')
+WORLD_MASK_COUNTERS = re.compile(
+    r'OpenXR world oracle: 60 frames, opaque multiview=(\d+) twoPass=(\d+); '
+    r'masks multiview=(\d+) twoPass=(\d+) full multiview=(\d+);')
 AA_RELOAD_FIELDS = ('tick', 'counter', 'reloading', 'ammo', 'thisclip', 'hudshade', 'playershade', 'pistolclip')
 AA_RELOAD_SAMPLE = re.compile(r'addlog aareload_(\w+)(?: \(player \d+\))? = (-?\d+)')
 AA_BODY_TILES = {2524, 2525, 2526, 2528, 2529, 5122}
@@ -160,6 +168,101 @@ def image_contribution(root: Path, prefix: str) -> dict:
     return {'changed_pixels': changed, 'depth_changed_pixels': depth_changed,
             'bounds': bounds, 'stereo_parallax': bounds[0] != bounds[1],
             'both_eyes_visible': min(changed) > 0 and min(depth_changed) > 0}
+
+
+def _mask_capture(root: Path, prefix: str, stage: str, eye: str) -> dict:
+    """Read one engine-owned MASK capture without treating absent files as data."""
+    color_path = root / f'{prefix}-{stage}-{eye}.ppm'
+    depth_path = root / f'{prefix}-{stage}-{eye}-depth.bin'
+    record = {'color_path': str(color_path), 'depth_path': str(depth_path), 'available': False}
+    if not color_path.is_file() or not depth_path.is_file():
+        return record
+    try:
+        image = np.asarray(Image.open(color_path).convert('RGB'))
+        depth = depth_path.read_bytes()
+    except OSError:
+        return record
+    complete_depth = len(depth) == image.shape[0] * image.shape[1] * 4
+    record.update(image=image, depth=depth, size=[int(image.shape[1]), int(image.shape[0])],
+                  available=True, complete_depth=complete_depth)
+    return record
+
+
+def _mask_pair(expected: dict, actual: dict) -> dict:
+    """Compare complete RGB/depth captures and retain failure distinctions."""
+    available = expected['available'] and actual['available']
+    dimensions = available and expected['image'].shape == actual['image'].shape
+    depth_complete = available and expected['complete_depth'] and actual['complete_depth']
+    rgb_exact = dimensions and bool(np.array_equal(expected['image'], actual['image']))
+    depth_exact = depth_complete and expected['depth'] == actual['depth']
+    return {'available': available, 'dimensions_equal': dimensions,
+            'rgb_exact': rgb_exact, 'raw_depth_exact': depth_exact,
+            'complete_exact': dimensions and depth_complete and rgb_exact and depth_exact}
+
+
+def mask_oracle_evidence(root: Path, prefix: str, text: str) -> dict:
+    """Evaluate an engine-produced whole-MASK same-frame replay receipt.
+
+    This is deliberately a pure reader so focused tests can prove that missing
+    captures, collection writes, and omitted input receipts fail independently.
+    """
+    captures = {stage: {eye: _mask_capture(root, prefix, stage, eye)
+                        for eye in ('left', 'right')}
+                for stage in ('reference', 'mask-before', 'mask-after', 'replayed')}
+    replay = {eye: _mask_pair(captures['reference'][eye], captures['replayed'][eye])
+              for eye in ('left', 'right')}
+    collection = {eye: _mask_pair(captures['mask-before'][eye], captures['mask-after'][eye])
+                  for eye in ('left', 'right')}
+    contribution = {}
+    for eye in ('left', 'right'):
+        before, after = captures['mask-before'][eye], captures['replayed'][eye]
+        valid = (before['available'] and after['available'] and before['complete_depth'] and
+                 after['complete_depth'] and before['image'].shape == after['image'].shape)
+        if valid:
+            color_delta = np.any(before['image'] != after['image'], axis=2)
+            before_depth = np.frombuffer(before['depth'], dtype=np.uint32)
+            after_depth = np.frombuffer(after['depth'], dtype=np.uint32)
+            depth_delta = before_depth != after_depth
+            contribution[eye] = {'available': True, 'color_changed_pixels': int(color_delta.sum()),
+                                 'depth_changed_pixels': int(depth_delta.sum()),
+                                 'visible': bool(color_delta.any() and depth_delta.any())}
+        else:
+            contribution[eye] = {'available': False, 'color_changed_pixels': 0,
+                                 'depth_changed_pixels': 0, 'visible': False}
+    receipts = [int(value) for value in MASK_ORACLE_RECEIPT.findall(text)]
+    first_inputs = {}
+    input_receipts = MASK_ORACLE_INPUT.findall(text)
+    for eye, family, equal in input_receipts:
+        first_inputs.setdefault(int(eye), {'family': family, 'equal': int(equal)})
+    submissions = [{'frame': int(frame), 'voxels': int(voxels), 'voxels_paired': int(paired),
+                    'indexed_voxel_indices': int(indices)}
+                   for frame, voxels, paired, indices in MASK_ORACLE_SUBMISSION.findall(text)]
+    counters = [tuple(map(int, values)) for values in WORLD_MASK_COUNTERS.findall(text)]
+    last_counter = counters[-1] if counters else None
+    return {
+        'prefix': str(root / prefix),
+        'reference_replay': replay,
+        'collection': collection,
+        'contribution': contribution,
+        'receipt_serials': receipts,
+        'first_inputs': first_inputs,
+        'mask_submissions': submissions,
+        'world_counters': ({'opaque_multiview': last_counter[0], 'opaque_two_pass': last_counter[1],
+                            'masks_multiview': last_counter[2], 'masks_two_pass': last_counter[3],
+                            'full_multiview': last_counter[4]} if last_counter else None),
+        'checks': {
+            'SPS_MASK_reference_replay_complete_exact': all(item['complete_exact'] for item in replay.values()),
+            'SPS_MASK_collection_color_depth_unchanged': all(item['complete_exact'] for item in collection.values()),
+            'SPS_MASK_visible_color_depth_contribution_both_eyes': all(item['visible'] for item in contribution.values()),
+            'SPS_MASK_single_positive_replay_receipt': len(receipts) == 1 and receipts[0] > 0,
+            'SPS_MASK_first_inputs_equal_for_both_eyes': len(input_receipts) == 2 and set(first_inputs) == {0, 1} and
+                all(item['family'] in ('voxel', 'art') and item['equal'] == 1 for item in first_inputs.values()),
+            'SPS_MASK_indexed_voxel_submission_at_capture': bool(submissions) and
+                submissions[-1]['frame'] == 59 and
+                submissions[-1]['voxels'] > 0 and submissions[-1]['voxels_paired'] > 0 and
+                submissions[-1]['indexed_voxel_indices'] > 0,
+        },
+    }
 
 
 def native_weapon_card(root: Path) -> dict:
@@ -423,6 +526,8 @@ def main() -> int:
     parser.add_argument('--palm-mount', action='store_true', help='Enable the tagged standard-pistol muzzle calibration')
     parser.add_argument('--opaque-rejection-diagnostics', action='store_true', help='Record bounded production world collection rejection predicates')
     parser.add_argument('--mask-rejection-diagnostics', action='store_true', help='Record bounded AA MASK model or voxel rejection mappings')
+    parser.add_argument('--mask-oracle', action='store_true',
+                        help='Require same-frame native whole-MASK collection/replay parity in SPS mode')
     parser.add_argument('--animation', action='store_true',
                         help='qualify native AA firing ART and reload model frames from an explicit private MD3')
     parser.add_argument('--floating-hands', type=Path, help='Private calibrated hand MD3/PNG directory')
@@ -449,6 +554,8 @@ def main() -> int:
     if args.missing_reload_frame is not None and not args.animation:
         parser.error('--missing-reload-frame requires --animation')
     args.model_mode = args.model_mode or ('sps' if args.animation else 'native')
+    if args.mask_oracle and args.model_mode != 'sps':
+        parser.error('--mask-oracle requires --model-mode sps')
     model_case = args.case in ('model', 'duplicate-body')
     args.binary, args.mod_root, args.work_dir = (args.binary.resolve(), args.mod_root.resolve(), args.work_dir.resolve())
     args.compat_con = args.compat_con.resolve()
@@ -511,6 +618,9 @@ def main() -> int:
             env['EDUKE32_XR_TEST_OPAQUE_REJECTIONS'] = '1'
         if args.mask_rejection_diagnostics:
             env['EDUKE32_XR_TEST_MASK_REJECTIONS'] = '1'
+        if args.mask_oracle:
+            result['mask_oracle'] = {'prefix': str(root / 'mask-oracle')}
+            env['EDUKE32_XR_TEST_MASK_ORACLE'] = str(root / 'mask-oracle')
         if args.palm_mount:
             env['EDUKE32_XR_PISTOL_MOUNT'] = '1'
             env['EDUKE32_XR_TEST_PISTOL_MOUNT'] = '1'
@@ -574,7 +684,12 @@ def main() -> int:
                     from floating_hands_check import exercise
                     phase = 'actual AA floating grip models'
                     result['floating_hands'] = exercise(observer, remote, root)
+            if args.mask_oracle:
+                phase = 'same-frame native whole-MASK replay oracle'
+                observer.wait(lambda value: bool(MASK_ORACLE_RECEIPT.findall(value)), timeout=25)
         text = observer.path.read_text(errors='replace') if fault else observer.text()
+        if args.mask_oracle:
+            result['mask_oracle'] = mask_oracle_evidence(root, 'mask-oracle', text)
         rows = aa_samples(text)
         idle = [row for row in rows if row['startmode'] == 1 and row['pchar'] == 0 and row['currentweapon'] == 1]
         checks = result['checks']
@@ -726,6 +841,13 @@ def main() -> int:
             if args.case == 'missing-frame':
                 checks['missing_rest_fixture_only_changed_frame_name'] = \
                     result['missing_frame_fixture']['only_frame_name_bytes_changed']
+        if args.mask_oracle:
+            mask = result['mask_oracle']
+            checks.update(mask['checks'])
+            if mask['world_counters'] is not None:
+                checks['SPS_MASK_warm_world_and_MASK_multiview'] = (
+                    mask['world_counters']['masks_multiview'] > 0 and
+                    mask['world_counters']['full_multiview'] > 0)
         if os.environ.get('EDUKE32_TEST_PRIVATE_WINDOW') == '1':
             window, _ = X11(args.display).owned_window(process.pid)
             if not window:
