@@ -1857,9 +1857,18 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         // a named frame. This diagnostic observes counters without changing them.
         auto const observedPlayer=g_player[myconnectindex].ps;
         int const observedCounter=observedPlayer->kickback_pic;
+        // Observe another native weapon without changing its counters or draw
+        // path. Keep the original pistol diagnostic as the default.
+        static int const captureWeapon=[]() {
+            auto const value=std::getenv("EDUKE32_XR_TEST_MODEL_WEAPON");
+            if (!value) return int(PISTOL_WEAPON);
+            char *end;
+            long const weapon=std::strtol(value,&end,10);
+            return end!=value && !*end && weapon>=0 && weapon<MAX_WEAPONS ? int(weapon) : -1;
+        }();
         static bool capturedCounters[27]{};
         if (worldFrames>=60 && observedCounter>0 && observedCounter<27
-            && observedPlayer->curr_weapon==PISTOL_WEAPON
+            && observedPlayer->curr_weapon==captureWeapon
             && std::getenv("EDUKE32_XR_TEST_MODEL_ANIMATION")
             && !capturedCounters[observedCounter])
         {
