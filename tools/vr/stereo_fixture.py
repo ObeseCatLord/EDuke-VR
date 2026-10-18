@@ -13,6 +13,7 @@ The animated mask scene includes native DEF animation and alpha-cutoff inputs.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 import struct
 
@@ -22,6 +23,7 @@ WALL_TILE = 293  # W_TECHWALL1, declared by the stock DEFS.CON.
 BOTTLE_TILE = 954  # BOTTLE1, declared by the stock DEFS.CON.
 SKY_TILE = 89  # LA, native eight-panel sky configured by G_InitMultiPsky.
 MASK_TILE = 285  # MASKWALL1, indexed ART with transparent texels.
+VOXEL_TILE = 913  # AA MASKWALL2; the oracle optionally maps it to an owned KVX.
 
 
 def sector(wallptr: int, wallnum: int, sky_ceiling=False, sky_floor=False, *,
@@ -57,13 +59,13 @@ def wall(x: int, y: int, point2: int, nextwall: int = -1, nextsector: int = -1,
 
 
 def sprite(x: int, y: int, z: int, sectnum: int, *, cstat=0, tile=BOTTLE_TILE,
-           palette=0, angle=0, xrepeat=24, yrepeat=48) -> bytes:
+           shade=0, palette=0, angle=0, xrepeat=24, yrepeat=48) -> bytes:
     # spritetypev7, source/build/include/buildtypes.h: 44 bytes.  statnum=0
     # keeps this ordinary decoration in the world; BOTTLE1 has no enemy AI.
     return struct.pack(
         "<iiiHhbBBBBBbbhhhhhhhhhh",
         x, y, z,                 # position
-        cstat, tile, 0,          # cstat, picnum, shade
+        cstat, tile, shade,      # cstat, picnum, shade
         palette, 32, 0, xrepeat, yrepeat,  # palette, clipping, blend, scale
         0, 0,                    # offsets
         sectnum, 0, angle, -1,   # sector, status, angle, owner
@@ -71,9 +73,15 @@ def sprite(x: int, y: int, z: int, sectnum: int, *, cstat=0, tile=BOTTLE_TILE,
     )
 
 
-def build_map(scene="room") -> bytes:
+def voxel_cstat(voxel_flip=False, voxel_translucent=False) -> int:
+    """Return the native modern-voxel cstat plus requested fixture variants."""
+    return 0x11 | (4 if voxel_flip else 0) | (2 if voxel_translucent else 0)
+
+
+def build_map(scene="room", voxel_flip=False, voxel_palette=0, voxel_shade=0,
+              voxel_translucent=False) -> bytes:
     if scene not in ("room", "sky", "sky-floor", "skybox", "skybox-ceiling-fog-control",
-                     "skybox-floor-fog-control", "masks", "masks-animated"):
+                     "skybox-floor-fog-control", "masks", "masks-animated", "masks-voxel"):
         raise ValueError("unknown fixture scene")
     # A six-wall first room with a portal only in its middle east-wall span.
     # Wall 2 and wall 6 are exact reversed twins, required by Build portals.
@@ -103,6 +111,15 @@ def build_map(scene="room") -> bytes:
             sprite(2800, 2100, -4096, 0, cstat=32, tile=MASK_TILE, palette=1, xrepeat=32, yrepeat=32),
             sprite(3400, 1900, -3072, 0, cstat=32 | 2, tile=MASK_TILE, xrepeat=32, yrepeat=32),
         ]
+    if scene == "masks-voxel":
+        # This must remain an ordinary modern voxel mapping: palette zero and
+        # cstat 0x11 (blocking, wall-aligned) are the AA production case.
+        # The surrounding indexed masks deliberately exercise state recovery
+        # before and after the voxel's real depth contribution.
+        sprites.append(sprite(3200, 2048, -2048, 0,
+                              cstat=voxel_cstat(voxel_flip, voxel_translucent), tile=VOXEL_TILE,
+                              shade=voxel_shade, palette=voxel_palette,
+                              angle=512, xrepeat=64, yrepeat=64))
     if scene.startswith("skybox"):
         # The two regions deliberately share tile 89 but have different native
         # ceiling/floor palette, shade and visibility inputs.  The portal puts
@@ -155,18 +172,37 @@ def _assert_sector_layout() -> None:
     assert (second[12], second[14], second[15], second[16], second[17], second[18]) == (SKY_TILE, 24, 1, 17, 9, 16)
 
 
+def _assert_legacy_scene_bytes() -> None:
+    """Prevent fixture extensions from changing any pre-existing default map."""
+    expected = {
+        'room': '9d1b044ffe7114a7d56532598441a95ea94de26ed93ac7b31a386f27a3aca035',
+        'sky': '6ff1ffa61b53f1f0d5954e49834b3bacf3aea7b3071f9ae621dd466421407b72',
+        'sky-floor': '774ace2223061d1d44f9fc43e217fb717cef0b7adda1da31610eea075af99d02',
+        'skybox': 'e78e6f04876410f70975b6914a37dd8859f61a7df8e10c8e5c21a5ae93ce615b',
+        'skybox-ceiling-fog-control': '522da7987cc6ccd1b3261e75c00d998d99e9e2cabc496f023314f92ad9ea0a4a',
+        'skybox-floor-fog-control': 'c91c6524251b4e0500289774dea8f62dd2f3a7312d175292b076435802773b55',
+        'masks': '35c1bb3333ab293987d3b0785d387316038eed31ecd250702c35b6885d48636a',
+        'masks-animated': '5787842c3bd7e972f10bf1067c07751fea0104a45952e3b8d2da2f399dbede2b',
+        'masks-voxel': '5023aab6b8e5ae230561c6fb68a9729f95964e9b90289e5df1c57167245e48ad',
+    }
+    for scene, digest in expected.items():
+        assert hashlib.sha256(build_map(scene)).hexdigest() == digest
+
+
 _assert_sector_layout()
+_assert_legacy_scene_bytes()
 
 
-def generate(directory: Path, scene="room") -> Path:
+def generate(directory: Path, scene="room", voxel_flip=False, voxel_palette=0,
+             voxel_shade=0, voxel_translucent=False) -> Path:
     """Generate ``stereo_fixture.map`` in *directory* and return its path.
 
     This is intentionally a small public API for the native/XR comparison
     harness. It has no dependency on a local GRP: the caller supplies the
     owned GRP and ``fixtures/stereo_test.con`` at launch time.
     """
-    data = build_map(scene)
-    count = 8 if scene.startswith("masks") else 1
+    data = build_map(scene, voxel_flip, voxel_palette, voxel_shade, voxel_translucent)
+    count = 9 if scene == "masks-voxel" else 8 if scene.startswith("masks") else 1
     if len(data) != 20 + 2 + 2 * 40 + 2 + 10 * 32 + 2 + count * 44:
         raise AssertionError("v7 fixture size no longer matches source layouts")
     directory.mkdir(parents=True, exist_ok=True)
@@ -176,7 +212,8 @@ def generate(directory: Path, scene="room") -> Path:
     # an equal-depth group's second (depth-only) pass. Clock=1 selects +1.
     (directory / "stereo_fixture.def").write_text(
         "animtilerange 285 286 0 2\nanimtilerange 286 287 0 2\n"
-        "alphahackrange 285 287 0.25\n" if scene == "masks-animated" else "// native ART defaults\n")
+        "alphahackrange 285 287 0.25\n" if scene == "masks-animated" else
+        "alphahackrange 285 285 0.25\n" if scene == "masks-voxel" else "// native ART defaults\n")
     (directory / "stereo_map.con").write_text(f"define VRFIXTURE_SPRITES {count}\n")
     return output
 
@@ -186,9 +223,20 @@ def main() -> int:
     parser.add_argument("output", type=Path, help="output .map path")
     parser.add_argument("--scene", choices=("room", "sky", "sky-floor", "skybox",
                                                "skybox-ceiling-fog-control", "skybox-floor-fog-control",
-                                               "masks", "masks-animated"), default="room")
+                                               "masks", "masks-animated", "masks-voxel"), default="room")
+    parser.add_argument("--voxel-flip", action="store_true")
+    parser.add_argument("--voxel-palette", default=0, type=int)
+    parser.add_argument("--voxel-shade", default=0, type=int)
+    parser.add_argument("--voxel-translucent", action="store_true")
     args = parser.parse_args()
-    output = generate(args.output.parent, args.scene)
+    if not 0 <= args.voxel_palette <= 255:
+        parser.error('--voxel-palette must be in 0..255')
+    if not -128 <= args.voxel_shade <= 127:
+        parser.error('--voxel-shade must be in -128..127')
+    if (args.voxel_flip or args.voxel_palette or args.voxel_shade or args.voxel_translucent) and args.scene != 'masks-voxel':
+        parser.error('--voxel-* options require --scene masks-voxel')
+    output = generate(args.output.parent, args.scene, args.voxel_flip, args.voxel_palette,
+                      args.voxel_shade, args.voxel_translucent)
     if output != args.output:
         output.replace(args.output)
     print(f"wrote {args.output} ({args.output.stat().st_size} bytes, v7, 2 sectors, 10 walls)")

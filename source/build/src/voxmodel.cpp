@@ -1217,7 +1217,10 @@ int32_t polymost_voxdraw(voxmodel_t *m, tspriteptr_t const tspr)
     glEnableClientState(GL_TEXTURE_COORD_ARRAY);
     glTexCoordPointer(2, GL_FLOAT, 5*sizeof(float), (GLvoid*) (3*sizeof(float)));
 
-    glDrawElements(GL_TRIANGLES, m->qcnt*2*3, GL_UNSIGNED_INT, 0);
+#ifdef USE_OPENXR
+    if (!polymost_xrCollectVoxel(m, pc))
+#endif
+        glDrawElements(GL_TRIANGLES, m->qcnt*2*3, GL_UNSIGNED_INT, 0);
 
     buildgl_bindBuffer(GL_ARRAY_BUFFER, 0);
     buildgl_bindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);

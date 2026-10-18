@@ -2217,12 +2217,14 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     {
                         usedMaskMultiview=true;
                         static bool reported;
-                        if (!reported || g_frameCounter == 12)
+                        if (!reported || g_frameCounter == 12
+                            || (fixtureTest && g_frameCounter == 13 && testFailure("mask-voxel-cold")))
                         {
                             auto const stats=polymost_xrCollectionStats();
-                            LOG_F(INFO,"OpenXR masks single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u masks=%u translucent=%u depthOnly=%u depthWriteOff=%u",
+                            LOG_F(INFO,"OpenXR masks single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u masks=%u translucent=%u depthOnly=%u depthWriteOff=%u voxels=%u voxelsPaired=%u",
                                   unsigned(g_frameCounter),stats.pairedCalls,stats.eyeOnlyCalls,stats.pairedVertices,stats.eyeOnlyVertices,
-                                  stats.maskCalls,stats.translucentCalls,stats.depthOnlyCalls,stats.depthWriteOffCalls);
+                                  stats.maskCalls,stats.translucentCalls,stats.depthOnlyCalls,stats.depthWriteOffCalls,
+                                  stats.voxelCalls,stats.voxelPairedCalls);
                             reported=true;
                         }
                     }
@@ -2273,7 +2275,11 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     std::string endError;
     bool const deferPresentation=good && !fixtureTest && overlayEnabled();
     crosshairViews.valid=deferPresentation;
-    if (!deferPresentation && !runtime->finishFrame(good && !fixtureTest,endError)) { good=false; error += " "+endError; }
+    bool const frameFinished=deferPresentation || runtime->finishFrame(good && !fixtureTest,endError);
+    if (!frameFinished) { good=false; error += " "+endError; }
+    if (!good && fixtureTest && testFailure("mask-voxel-replay-after"))
+        LOG_F(INFO,"OpenXR voxel fault frame canceled: serial=%llu submitted=%llu emptyFinished=%d.",
+              (unsigned long long)frame.serial,(unsigned long long)runtime->lastSubmittedSerial(),int(frameFinished));
     if (deferPresentation)
     {
         presentationRuntime=runtime; presentationGeneration=runtime->generation();

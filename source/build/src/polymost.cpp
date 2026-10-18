@@ -282,6 +282,7 @@ struct xr_opaque_packet_t
     float shade, vis, fog, colorOnly, paletteEnabled, shadeInterpolate;
     uint32_t skyKind;  // 0 ordinary, 1 native flat-sky color, 2 sky-Z depth-only, 3 truecolor skybox
     uint32_t phase;
+    bool voxel;
     GLenum alphaFunc, blendSrc, blendDst;
     float alphaRef;
     bool depthWrite, colorWrite, translucent;
@@ -1075,6 +1076,8 @@ static void polymost_xrUploadOpaquePacket(xr_opaque_packet_t const &left, xr_opa
         glBlendFuncSeparate(left.blendSrc, left.blendDst, left.blendSrc, left.blendDst);
         glDepthFunc(GL_LEQUAL);
         glDepthMask(left.depthWrite);
+        if (left.cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+        if (left.cull) { glCullFace(left.cullMode); glFrontFace(left.frontFace); }
     }
     else
     {
@@ -1139,6 +1142,14 @@ static void polymost_xrReplayOpaqueDraw(xr_opaque_packet_t const &left, uint32_t
     glEnableVertexAttribArray(7);
     xrOpaque.replaySubmitted = true;
     glDrawArrays(GL_TRIANGLES, 0, replayVertices.size());
+    static bool injectedVoxelAfter;
+    if (left.voxel && !injectedVoxelAfter && polymost_xrMaskFaultArmed("mask-voxel-replay-after"))
+    {
+        injectedVoxelAfter=true;
+        xrOpaque.injectedFault="injected mask-voxel-replay-after";
+        LOG_F(INFO,"OpenXR voxel replay fault injected after actual draw submission.");
+        glBindBuffer(GL_TEXTURE_2D,0);
+    }
     static bool injectedAfter;
     if (left.phase == POLYMOST_XR_MASKS && !injectedAfter && polymost_xrMaskFaultArmed("mask-replay-after"))
     {
@@ -1261,6 +1272,8 @@ polymost_xr_collect_result polymost_xrReplayCollection()
             xrOpaque.stats.skyDepthCalls += xrOpaque.packets[0][left].skyKind == 2;
             xrOpaque.stats.skyboxCalls += xrOpaque.packets[0][left].skyKind == XR_SKYBOX_COLOR;
             xrOpaque.stats.skyboxPairedCalls += xrOpaque.packets[0][left].skyKind == XR_SKYBOX_COLOR;
+            xrOpaque.stats.voxelCalls += xrOpaque.packets[0][left].voxel;
+            xrOpaque.stats.voxelPairedCalls += xrOpaque.packets[0][left].voxel;
             xrOpaque.stats.npotCalls += xrOpaque.packets[0][left].npot.z != 0.f;
             recordPacket(xrOpaque.packets[0][left]);
             ++xrOpaque.stats.pairedCalls; xrOpaque.stats.pairedVertices += xrOpaque.packets[0][left].count + xrOpaque.packets[1][right].count; ++left; ++right;
@@ -1274,6 +1287,7 @@ polymost_xr_collect_result polymost_xrReplayCollection()
             xrOpaque.stats.flatSkyCalls += packet.skyKind == 1;
             xrOpaque.stats.skyDepthCalls += packet.skyKind == 2;
             xrOpaque.stats.skyboxCalls += packet.skyKind == XR_SKYBOX_COLOR;
+            xrOpaque.stats.voxelCalls += packet.voxel;
             xrOpaque.stats.npotCalls += packet.npot.z != 0.f;
             recordPacket(packet);
             ++xrOpaque.stats.eyeOnlyCalls;
@@ -3660,6 +3674,22 @@ static inline bool polymost_spriteIsModernVoxel(tspritetype const * const tspr)
     return !polymost_spriteIsLegacyVoxel(tspr) && usevoxels && (unsigned)tiletovox[picnum] < MAXVOXELS && voxmodels[tiletovox[picnum]];
 }
 
+#ifdef USE_OPENXR
+static bool polymost_xrCanCollectVoxel(tspritetype const *tspr, bool const requireWarm = true)
+{
+    auto const &mapping=tile2model[Ptile2tile(tspr->picnum,tspr->pal)];
+    if ((usemodels && mapping.modelid>=0 && mapping.framenum>=0)
+        || !polymost_spriteIsModernVoxel(tspr)
+        || (tspr->clipdist & (TSPR_FLAGS_SLAB|TSPR_FLAGS_MDHACK))
+        || (tspr->cstat & (CSTAT_SPRITE_ALIGNMENT_FLOOR|CSTAT_SPRITE_TRANSLUCENT|CSTAT_SPRITE_TRANSLUCENT_INVERT))
+        || spriteext[tspr->owner].alpha!=0.f || !polymost_useindexedtextures())
+        return false;
+    auto const *model=voxmodels[tiletovox[tspr->picnum]];
+    return model->is8bit && model->vertex && model->index && model->qcnt>0
+        && (!requireWarm || model->texid8bit);
+}
+#endif
+
 int32_t polymost_maskWallHasTranslucency(uwalltype const * const wall)
 {
     if (wall->cstat & CSTAT_WALL_TRANSLUCENT)
@@ -4069,10 +4099,19 @@ static void polymost_xrCaptureNativeMaterial(xr_opaque_packet_t &packet, float c
     packet.color = { color[0], color[1], color[2], color[3] };
 }
 
-static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t const method, float const color[4], bool const skyDepth)
+static bool polymost_xrPrepareOpaquePacket(xr_opaque_packet_t &packet, pthtyp const * const pth,
+    int32_t const method, float const color[4], bool const skyDepth, voxmodel_t const * const voxel = nullptr)
 {
     if (!xrOpaque.active || xrOpaque.rejected)
         return false;
+    static bool injectedBeforeVoxel;
+    if (!voxel && polymost_xrCollectingMasks() && !injectedBeforeVoxel
+        && polymost_xrMaskFaultArmed("mask-before-voxel"))
+    {
+        injectedBeforeVoxel=true;
+        polymost_xrRejectOpaque("injected mask-before-voxel");
+        return false;
+    }
 
     GLint depthFunc = 0, program = 0, activeTexture = 0, alphaFunc = 0;
     GLint blendSrcRgb = 0, blendDstRgb = 0, blendSrcAlpha = 0, blendDstAlpha = 0, blendEquationRgb = 0, blendEquationAlpha = 0;
@@ -4100,7 +4139,7 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
     // high-tile replacements, alpha and the masked sky-depth companion stay
     // outside this admission boundary.
     uint32_t const skyFlags=PTH_CLAMPED|PTH_HIGHTILE|PTH_SKYBOX;
-    bool const skybox=opaque && !skyDepth && method==DAMETH_CLAMPED
+    bool const skybox=opaque && pth && !skyDepth && method==DAMETH_CLAMPED
         && (pth->flags&skyFlags)==skyFlags && !(pth->flags&(PTH_INDEXED|PTH_HASALPHA)) && pth->hicr;
     bool const maskColorWrite = colorMask[0] && colorMask[1] && colorMask[2] && colorMask[3];
     bool const maskDepthOnly = !colorMask[0] && !colorMask[1] && !colorMask[2] && !colorMask[3];
@@ -4145,11 +4184,13 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
         return rejectUnsupported("unsupported render mode");
     if (!buildgl_samplerObjectsEnabled())
         return rejectUnsupported("sampler objects disabled");
-    if (!(pth->flags & PTH_INDEXED) && !skybox)
+    if (voxel && (xrOpaque.phase!=POLYMOST_XR_MASKS || !voxel->is8bit || !voxel->texid8bit))
+        return rejectUnsupported("unsupported voxel material or phase");
+    if (!voxel && (!pth || (!(pth->flags & PTH_INDEXED) && !skybox)))
         return rejectUnsupported("non-indexed texture");
-    if ((pth->flags & PTH_HIGHTILE) && !skybox)
+    if (!voxel && (pth->flags & PTH_HIGHTILE) && !skybox)
         return rejectUnsupported("high-resolution texture");
-    if (pth->hicr && !skybox)
+    if (!voxel && pth->hicr && !skybox)
         return rejectUnsupported("high-resolution texture replacement");
     if (polymost_usetileshades() != TS_SHADETABLE)
         return rejectUnsupported("non-shadetable tile shading");
@@ -4205,8 +4246,10 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
         if (!maskColorWrite && !maskDepthOnly)
             return rejectUnsupported("mask color write mask is neither full nor depth-only");
     }
-    if (!polymost_xrIdentityMatrix(modelview))
+    if (!voxel && !polymost_xrIdentityMatrix(modelview))
         return rejectUnsupported("non-identity modelview matrix");
+    if (!voxel && glIsEnabled(GL_CULL_FACE))
+        return rejectUnsupported("unexpected culling for native ART");
     if (!polymost_xrIdentityMatrix(textureMatrix))
         return rejectUnsupported("non-identity texture matrix");
     if (polymost1FogEnabled != (skybox ? 1.f : 0.f))
@@ -4252,9 +4295,8 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
         return false;
     }
 
-    xr_opaque_packet_t &packet = xrOpaque.transport.packet;
     packet = {};
-    packet.texture = pth->glpic;
+    packet.texture = voxel ? voxel->texid8bit : pth->glpic;
     packet.palswap = palswapTextureID;
     packet.palette = paletteTextureIDs[curbasepal];
     packet.sampler = samplerObjectIDs[sampler];
@@ -4273,6 +4315,7 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
             return rejectUnsupported("invalid native skybox fog range or color");
     }
     packet.phase = xrOpaque.phase;
+    packet.voxel = voxel != nullptr;
     packet.alphaFunc = opaque ? 0 : alphaFunc;
     packet.alphaRef = opaque ? 0.f : alphaRef;
     packet.blendSrc = opaque ? 0 : blendSrcRgb;
@@ -4283,7 +4326,93 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
     for (int i=0;i<4;++i) packet.modelview[i*5]=1.f;
     Bmemcpy(packet.projection, xrOpaque.projection[xrOpaque.eye], sizeof(packet.projection));
     Bmemcpy(packet.rotation, polymost1RotMatrix, sizeof(packet.rotation));
-    xrOpaque.transport.pending = true;
+    if (voxel)
+    {
+        GLint texture, cullMode, frontFace, matrixMode;
+        glActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D,&texture); glActiveTexture(activeTexture);
+        glGetIntegerv(GL_CULL_FACE_MODE,&cullMode); glGetIntegerv(GL_FRONT_FACE,&frontFace);
+        if (texture!=GLint(voxel->texid8bit) || !glIsEnabled(GL_CULL_FACE)
+            || cullMode!=GL_BACK || (frontFace!=GL_CW && frontFace!=GL_CCW)
+            || !depthWrite || !maskColorWrite || color[3]!=1.f)
+            return rejectUnsupported("unsupported indexed voxel draw state");
+        for (float const value:modelview)
+            if (!std::isfinite(value)) return rejectUnsupported("nonfinite voxel modelview");
+        Bmemcpy(packet.modelview,modelview,sizeof(modelview));
+        packet.cull=true; packet.cullMode=cullMode; packet.frontFace=frontFace;
+        // Use the same GL multiplication as the native built-in MVP. Preserve
+        // projection and matrix mode before returning to native voxel cleanup.
+        GLfloat projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
+        glGetIntegerv(GL_MATRIX_MODE,&matrixMode);
+        glMatrixMode(GL_PROJECTION); glMultMatrixf(modelview);
+        glGetFloatv(GL_PROJECTION_MATRIX,packet.projection);
+        glLoadMatrixf(projection); glMatrixMode(matrixMode);
+    }
+    return true;
+}
+
+bool polymost_xrCollectVoxel(voxmodel_t const *model, float const color[4])
+{
+    if (!polymost_xrCollectingMasks()) return false;
+    // Activity, not success, consumes the draw. Later voxels must not leak
+    // pixels after an earlier packet rejected this collection.
+    if (xrOpaque.rejected)
+    {
+        static bool reportedSuppressed;
+        if (!reportedSuppressed && polymost_xrMaskFaultArmed("mask-before-voxel"))
+        {
+            LOG_F(INFO,"OpenXR voxel draw suppressed after injected collection rejection.");
+            reportedSuppressed=true;
+        }
+        return true;
+    }
+    if (xrOpaque.transport.pending || !model || !model->vertex || !model->index || model->qcnt<=0)
+    { polymost_xrRejectOpaque("invalid voxel geometry or pending fan"); return true; }
+    unsigned const eye=xrOpaque.eye;
+    uint64_t const count=uint64_t(model->qcnt)*6;
+    if (count+xrOpaque.vertices[eye].size()>XR_OPAQUE_MAX_VERTICES)
+    {
+        static unsigned reports;
+        auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
+        if (diagnostics && !Bstrcmp(diagnostics,"1") && reports++<4)
+            LOG_F(INFO,"OpenXR voxel capacity rejection: eye=%u pic=%d packets=%u vertices=%u requested=%llu limit=%u.",
+                  eye,globalpicnum,unsigned(xrOpaque.packets[eye].size()),unsigned(xrOpaque.vertices[eye].size()),
+                  (unsigned long long)count,unsigned(XR_OPAQUE_MAX_VERTICES));
+        polymost_xrRejectOpaque("opaque collection capacity",true);
+        return true;
+    }
+    xr_opaque_packet_t packet{};
+    if (!polymost_xrPrepareOpaquePacket(packet,nullptr,DAMETH_MASK,color,false,model)) return true;
+    static unsigned reports;
+    auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
+    if (diagnostics && !Bstrcmp(diagnostics,"1") && reports<16)
+    {
+        auto const &previous=xrOpaque.packets[eye].empty() ? packet : xrOpaque.packets[eye].back();
+        LOG_F(INFO,"OpenXR voxel material %u/16: eye=%u packet=%u pal=%d shade=%.9g alpha=%.9g npot=%.9g,%.9g,%.9g,%.9g front=%u previousVoxel=%d previousAlpha=%.9g previousNpot=%.9g,%.9g,%.9g,%.9g.",
+              ++reports,eye,unsigned(xrOpaque.packets[eye].size()),globalpal,packet.shade,packet.alphaRef,
+              packet.npot.x,packet.npot.y,packet.npot.z,packet.npot.w,unsigned(packet.frontFace),
+              int(previous.voxel),previous.alphaRef,previous.npot.x,previous.npot.y,previous.npot.z,previous.npot.w);
+    }
+    auto const finite=[](float const *values, unsigned count) {
+        for (unsigned i=0;i<count;++i) if (!std::isfinite(values[i])) return false;
+        return true;
+    };
+    if (!finite(packet.projection,16) || !finite(packet.rotation,16)
+        || !finite(&packet.texturePosSize.x,4) || !finite(&packet.halfTexel.x,2)
+        || !finite(&packet.palswapPos.x,2) || !finite(&packet.palswapSize.x,2)
+        || !finite(&packet.clamp.x,2) || !finite(&packet.numShades.x,2)
+        || !finite(&packet.color.x,4) || !finite(&packet.correction.x,4)
+        || !std::isfinite(packet.shade) || !std::isfinite(packet.vis) || !std::isfinite(packet.shadeInterpolate))
+    { polymost_xrRejectOpaque("nonfinite voxel material or transform"); return true; }
+    for (uint64_t i=0;i<count;++i)
+        if (model->index[i]>=uint64_t(model->qcnt)*4 || !finite(model->vertex+size_t(model->index[i])*5,5))
+        { polymost_xrRejectOpaque("invalid voxel index or vertex"); return true; }
+    packet.first=xrOpaque.vertices[eye].size(); packet.count=count;
+    for (uint64_t i=0;i<count;++i)
+    {
+        auto const *v=model->vertex+size_t(model->index[i])*5;
+        xrOpaque.vertices[eye].push_back({v[0],v[1],v[2],v[3],v[4],float(eye)});
+    }
+    xrOpaque.packets[eye].push_back(packet);
     return true;
 }
 
@@ -4912,8 +5041,11 @@ static void polymost_drawpoly(vec2f_t const* const dpxy, int32_t const n, int32_
         collectOpaque = false;
     }
     if (collectOpaque)
-        collectOpaque = polymost_xrPrepareOpaquePacket(pth, method, pc,
+    {
+        collectOpaque = polymost_xrPrepareOpaquePacket(xrOpaque.transport.packet, pth, method, pc,
             xrOpaque.skyDepthRecursion && method_ == DAMETH_MASK);
+        xrOpaque.transport.pending = collectOpaque;
+    }
 #endif
 
     //POGOTODO: remove this, replace it with a shader implementation
@@ -9727,12 +9859,51 @@ void polymost_drawsprite(int32_t snum)
 #ifdef USE_OPENXR
     // tileUpdatePicnum can select a model or voxel dynamically, so this
     // guard is deliberately after it and before their CPU/GPU entry points.
+    static bool injectedVoxelCold;
+    if (polymost_xrCollectingMasks() && !injectedVoxelCold
+        && polymost_xrMaskFaultArmed("mask-voxel-cold") && polymost_xrCanCollectVoxel(tspr))
+    {
+        auto *model=voxmodels[tiletovox[tspr->picnum]];
+        // Fixture-only cache eviction. Unbind through native accounting before
+        // deletion so GL name reuse cannot leave a stale cached binding.
+        GLint active; glGetIntegerv(GL_ACTIVE_TEXTURE,&active);
+        buildgl_activeTexture(GL_TEXTURE0); buildgl_bindTexture(GL_TEXTURE_2D,0);
+        glDeleteTextures(1,&model->texid8bit); model->texid8bit=0;
+        buildgl_activeTexture(active);
+        injectedVoxelCold=true;
+        LOG_F(INFO,"OpenXR voxel atlas evicted for injected mask-voxel-cold.");
+    }
     if (polymost_xrCollectingMasks() && !(spriteext[spritenum].flags & SPREXT_NOTMD) &&
         ((usemodels && tile2model[Ptile2tile(tspr->picnum, tspr->pal)].modelid >= 0 &&
                       tile2model[Ptile2tile(tspr->picnum, tspr->pal)].framenum >= 0) ||
-         polymost_spriteIsModernVoxel(tspr) || polymost_spriteIsLegacyVoxel(tspr)))
+         polymost_spriteIsModernVoxel(tspr) || polymost_spriteIsLegacyVoxel(tspr))
+        && !polymost_xrCanCollectVoxel(tspr))
     {
-        polymost_xrRejectOpaque("unsupported model or voxel mask sprite");
+        // Keep this beside the rejection it describes: tileUpdatePicnum may
+        // have changed the mapping, and a prior collection failure means this
+        // guard is no longer the reason native fallback was selected.
+        static unsigned int reports;
+        char const * const diagnostics = Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
+        bool const collectionAlreadyRejected = xrOpaque.rejected;
+        if (!collectionAlreadyRejected && diagnostics && diagnostics[0] == '1' && diagnostics[1] == '\0' && reports < 16)
+        {
+            auto const &mapping = tile2model[Ptile2tile(tspr->picnum, tspr->pal)];
+            int const modelType = mapping.modelid >= 0 && (unsigned)mapping.modelid < (unsigned)nextmodelid && models && models[mapping.modelid]
+                ? models[mapping.modelid]->mdnum : -1;
+            bool const modernVoxel = polymost_spriteIsModernVoxel(tspr);
+            bool const legacyVoxel = polymost_spriteIsLegacyVoxel(tspr);
+            int const modernVoxelId = modernVoxel ? tiletovox[tspr->picnum] : -1;
+            int const legacyVoxelId = legacyVoxel ? tspr->picnum : -1;
+            ++reports;
+            LOG_F(INFO, "OpenXR MASK model/voxel rejection %u/16: owner=%d pic=%d pal=%d cstat=0x%x clipdist=0x%x sector=%d eye=%u model=%d frame=%d skin=%d type=%d modernVoxel=%d legacyVoxel=%d collectionAlreadyRejected=%d.",
+                  reports, spritenum, tspr->picnum, tspr->pal, unsigned(tspr->cstat), unsigned(tspr->clipdist), tspr->sectnum,
+                  xrOpaque.eye, mapping.modelid, mapping.framenum, mapping.skinnum, modelType, modernVoxelId, legacyVoxelId,
+                  int(collectionAlreadyRejected));
+        }
+        polymost_xrRejectOpaque(polymost_xrCanCollectVoxel(tspr,false)
+            ? (polymost_xrMaskFaultArmed("mask-voxel-cold")
+                ? "injected mask-voxel-cold: cold indexed voxel atlas" : "cold indexed voxel atlas")
+            : "unsupported model or voxel mask sprite");
         return;
     }
 #endif

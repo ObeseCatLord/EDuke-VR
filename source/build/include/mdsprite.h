@@ -229,6 +229,11 @@ typedef struct
 #endif
 } voxmodel_t;
 
+#ifdef USE_OPENXR
+// True consumes a native voxel draw during MASK collection, including rejection.
+bool polymost_xrCollectVoxel(voxmodel_t const *model, float const color[4]);
+#endif
+
 EXTERN mdmodel_t **models;
 
 void updateanimation(md2model_t *m, tspriteptr_t tspr, uint8_t lpal);

@@ -82,6 +82,7 @@ struct polymost_xr_collect_stats
     uint32_t flatSkyCalls, skyDepthCalls, npotCalls;
     uint32_t skyboxCalls, skyboxPairedCalls;
     uint32_t maskCalls, translucentCalls, depthOnlyCalls, depthWriteOffCalls;
+    uint32_t voxelCalls, voxelPairedCalls;
     uint32_t modelCalls, sharedModelCalls, sharedModelVertices;
 };
 

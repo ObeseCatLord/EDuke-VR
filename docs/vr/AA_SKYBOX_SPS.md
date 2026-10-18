@@ -1,6 +1,9 @@
 # AA truecolor skybox: bounded world SPS increment
 
 Status: **implemented and privately qualified for native shading mode 4**.
+Subsequent indexed voxel qualification and the current AA capacity boundary are
+documented in [AA_VOXEL_SPS.md](AA_VOXEL_SPS.md). The results below describe the
+skybox checkpoint before that increment.
 Full-world single-pass stereo remains incomplete. The final AA run uses opaque
 multiview for 59/60 frames (one cold texture fallback); all 60 mask phases still
 use native two-pass rendering because world model/voxel sprites are excluded.
