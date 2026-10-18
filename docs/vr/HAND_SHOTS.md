@@ -1,6 +1,9 @@
 # Experimental native hand-shot authority
 
-Current compatibility note (2026-10-18): native NETVERSION is now **5**. The
+Current compatibility note (2026-10-18): native NETVERSION is now **6**. AA's
+native pistol/SHOTGUN pairing now uses the existing hand-hitscan adapter; matching
+peers are required to agree on this eligibility. See [AA_COMBAT.md](AA_COMBAT.md).
+Since version5 the
 existing authoritative player snapshot additionally carries the native reload
 flag with its weapon counter; see [PISTOL_ANIMATION.md](PISTOL_ANIMATION.md).
 Capability mask 127 and tracked-pose formats are unchanged. Revision numbers

@@ -62,6 +62,16 @@ multiview world frames. AA's unsupported opaque state and model/voxel mask
 families retain the existing two-pass fallback. Do not describe this result as
 full AA single-pass coverage.
 
+## Native Duke pistol combat and projected crosshair
+
+The next increment qualifies actual AA Duke pistol fire/ammo/counters, tracked
+hand origin, native event-drawn crosshair in world space, and held-trigger loss
+recovery. The corresponding native multiplayer weapon fixture also verifies
+authoritative impact/damage. Matching NETVERSION6 peers are required. See
+[AA_COMBAT.md](AA_COMBAT.md) for the two demonstrated compatibility boundaries,
+focused Astra review, native-coordinate conventions and complete test scope.
+Actual AA campaign multiplayer and the remaining arsenal are still unqualified.
+
 ## Assets and remaining acceptance
 
 The Astra asset subagent completed 69 AA handheld dispatch entries (68 physical
@@ -74,7 +84,7 @@ Bindings must follow actual AA character/upgrade dispatch and the native
 `weaponcount`, `LASERFIRE`, `saberpos`, `spinframe`, and other action channels.
 Unbound semantic clips must not acquire invented engine animation clocks.
 
-Still required: remaining controller-operated menus, actual AA
+Still required: remaining controller-operated menus and AA weapon-family
 combat/aim/crosshair checks, custom weapon origins and animation bindings,
 scripted cameras/bikes/cutscenes, real native AA multiplayer join/combat/map
 transitions, broader single-pass material/model/voxel coverage, and physical

@@ -38,8 +38,10 @@ def main():
  p.add_argument('--display',default=':1');p.add_argument('--remote-port',type=int,required=True)
  p.add_argument('--port',type=int,default=24596)
  p.add_argument('--weapon',choices=('pistol','shotgun','chaingun','grow'),default='pistol')
+ p.add_argument('--pistol-shotgun',action='store_true',help='use the AA native SHOTGUN firing tile with pistol timing/WorksLike')
  p.add_argument('--case',choices=('open','wall','glancing','steep','vertical','damage','autoaim','spread','range-one','large-range','force','force-down','steep-target','switch','spread-level'),default='open')
  a=p.parse_args()
+ if a.pistol_shotgun and a.weapon!='pistol':p.error('--pistol-shotgun requires --weapon pistol')
  if a.base_only_client and (a.weapon!='pistol' or a.case!='open'):p.error('base-only client fixture uses pistol/open')
  if a.rpg_only_server and (a.weapon!='pistol' or a.case!='open'):p.error('RPG-only server fixture uses pistol/open')
  if a.case in ('force','force-down') and a.weapon!='pistol':p.error('forced-slope fixture uses the pistol')
@@ -52,6 +54,7 @@ def main():
   for lab in (sl,cl):
    for n in ('controller_test.con','aim_test.con','hand_test.con','hitscan_test.con'):shutil.copyfile(Path(__file__).parent/'fixtures'/n,lab/n)
    f=lab/'hitscan_test.con';s=f.read_text().replace('gamevar vrscan_weapon 1 0',f'gamevar vrscan_weapon {weapon} 0')
+   if a.pistol_shotgun:s+='\ngamevar WEAPON1_SHOOTS SHOTGUN GAMEVAR_PERPLAYER\n'
    if a.case in ('spread','spread-level','large-range'):s=s.replace('setvar ANGRANGE 0','setvar ANGRANGE 32').replace('setvar ZRANGE 0','setvar ZRANGE 256')
    if a.case=='large-range':s=s.replace('setvar ANGRANGE 32','setvar ANGRANGE 2147483647').replace('setvar ZRANGE 256','setvar ZRANGE 2147483647')
    if a.case=='range-one':s=s.replace('setvar ANGRANGE 0','setvar ANGRANGE 1').replace('setvar ZRANGE 0','setvar ZRANGE 1')
@@ -161,7 +164,7 @@ def main():
      co.pause(.12);window,_=X11(a.display).owned_window(client.pid)
      if not window:raise RuntimeError('owned post-growth window missing')
      subprocess.run(['import','-display',a.display,'-window',str(window),str(root/'post-grow.png')],check=True,timeout=8)
-    checks={'native_join':player>0,'negotiated_hand_sample':'capability: accepted' in so.text(),'negotiated_hitscan_feature':bool(re.search(r'capability: accepted player='+str(player)+r' version=1 features=3',so.text())) and bool(re.search(r'capability: acknowledged player='+str(player)+r' version=1 features=3',co.text())),'actual_60_stereo_world_HUD_submissions':(cl/'hud-left.ppm').read_bytes()!=(cl/'hud-right.ppm').read_bytes(),'core_validation_active':'Core Validation output type:' in co.text(),'core_validation_clean':not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',co.text()),'native_ammo_consumed':samples(so.text(),'ammo',player)[-1]<initial_ammo,'native_player_binding_does_not_oscillate':len(re.findall(r'VR snapshot player binding restored: player='+str(player)+r' ',co.text()))<=1}
+    checks={'native_join':player>0,'negotiated_hand_sample':'capability: accepted' in so.text(),'negotiated_hitscan_feature':any(int(bits)&2 for bits in re.findall(r'capability: accepted player='+str(player)+r' version=1 features=(\d+)',so.text())) and any(int(bits)&2 for bits in re.findall(r'capability: acknowledged player='+str(player)+r' version=1 features=(\d+)',co.text())),'actual_60_stereo_world_HUD_submissions':(cl/'hud-left.ppm').read_bytes()!=(cl/'hud-right.ppm').read_bytes(),'core_validation_active':'Core Validation output type:' in co.text(),'core_validation_clean':not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',co.text()),'native_ammo_consumed':samples(so.text(),'ammo',player)[-1]<initial_ammo,'native_player_binding_does_not_oscillate':len(re.findall(r'VR snapshot player binding restored: player='+str(player)+r' ',co.text()))<=1}
     if a.ready_wrap:
      waits=re.findall(r'readiness wait: begin baseline=(\d+)\.[\s\S]*?readiness wait: complete observed=(-?\d+) requests=(\d+) ticks=(\d+)',co.text())
      checks['actual_wrapped_native_readiness_replies_reach_gameplay']=bool(waits) and all(int(base) in (127,255) and int(observed)<int(base) for base,observed,_,_ in waits)
@@ -223,5 +226,5 @@ def main():
  finally:
   stop(client);stop(server)
   for log in logs:log.close()
- result['evidence_directory']=str(root);(root/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2));return 0 if result['passed'] else 1
+ result['pistol_shotgun']=a.pistol_shotgun;result['evidence_directory']=str(root);(root/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2));return 0 if result['passed'] else 1
 if __name__=='__main__':raise SystemExit(main())

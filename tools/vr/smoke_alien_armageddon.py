@@ -20,14 +20,18 @@ import time
 import numpy as np
 from PIL import Image
 from monado_remote import Remote
-from smoke_actions import Observer
+from smoke_actions import Observer, traces
 from smoke_multiplayer import CONFIG, X11, stop
+from smoke_aim import orientation
+from smoke_hitscan import rays
+from smoke_crosshair import raster
 
 
 AA_SELECT_BIT = 1 << 29  # Native Open / AA ifhitspace, mapped to left Select.
 
 AA_FIELDS = ('tick', 'bits', 'q16avel', 'q16horz', 'cursorx', 'cursory',
              'startmode', 'charsel', 'pchar', 'currentweapon', 'ammo', 'gm',
+             'counter', 'reloading', 'weaponpos', 'shoots', 'workslike', 'firedelay', 'shots',
              'volume', 'level')
 AA_SAMPLE = re.compile(r'addlog aaobserve_(\w+)(?: \(player \d+\))? = (-?\d+)')
 PVP_CAPTURE = re.compile(r'OpenXR PvP frame: submitted=(\d+) captured=1')
@@ -62,13 +66,127 @@ def aa_wrapper():
     getplayer[THISACTOR].curr_weapon aaobserve_currentweapon
     getplayer[THISACTOR].ammo_amount PISTOL_WEAPON aaobserve_ammo
     getplayer[THISACTOR].gm aaobserve_gm
+    getplayer[THISACTOR].kickback_pic aaobserve_counter
+    getplayer[THISACTOR].reloading aaobserve_reloading
+    getplayer[THISACTOR].weapon_pos aaobserve_weaponpos
+    setvarvar aaobserve_shoots WEAPON1_SHOOTS
+    setvarvar aaobserve_workslike WEAPON1_WORKSLIKE
+    setvarvar aaobserve_firedelay WEAPON1_FIREDELAY
     getuserdef[THISACTOR].volume_number aaobserve_volume
     getuserdef[THISACTOR].level_number aaobserve_level
 '''
     logs = ''.join(f'    addlog aaobserve_{name}\n' for name in AA_FIELDS)
     return ('// Private read-only AA controller observation wrapper.\n'
             'include scripts/AAGAME.CON\n\n' + fields +
-            '\n\nappendevent EVENT_PROCESSINPUT\n' + reads + logs + 'endevent\n')
+            '\n\nappendevent EVENT_PROCESSINPUT\n' + reads + logs + 'endevent\n'
+            'appendevent EVENT_POSTWEAPONSHOOT\n addvar aaobserve_shots 1\nendevent\n')
+
+
+def crosshair_evidence(observer, root):
+    """Compare actual AA event pixels with the world-depth projection oracle."""
+    text = observer.wait(lambda text: 'OpenXR crosshair capture: world=120 ' in text, timeout=40)
+    ui = np.asarray(Image.open(root/'crosshair-ui.ppm'))
+    alpha = np.asarray(Image.open(root/'crosshair-coverage.pgm'))
+    matrices = {int(eye): np.fromstring(values, sep=',').reshape(4, 4, order='F') for eye, values in
+                re.findall(r'OpenXR crosshair matrix: eye=(\d) values=([^\n]+)\.', text)}
+    anchor = np.array(list(map(float, re.findall(r'OpenXR crosshair anchor: pixel=([^,]+),([^\n]+)\.', text)[-1])))
+    canonical_anchor = [ui.shape[1]/2+1, ui.shape[0]/2+1]
+    capture_serial = int(re.findall(r'OpenXR crosshair capture: world=120 serial=(\d+)\.', text)[-1])
+    native_state = aa_samples(text)[-1]
+    point = np.array([2*anchor[0]/ui.shape[1]-1, 1-2*anchor[1]/ui.shape[0], 0, 1])
+    errors, changed, centres, depths, occluded = [], [], [], [], []
+    for eye, name in enumerate(('left', 'right')):
+        before = np.asarray(Image.open(root/f'crosshair-before-{name}.ppm'))
+        after = np.asarray(Image.open(root/f'crosshair-{name}.ppm'))
+        raw = (root/f'crosshair-before-{name}-depth.bin').read_bytes()
+        depth = np.flipud(np.frombuffer(raw, dtype=np.uint32).reshape(before.shape[:2]))/4294967295
+        expected, _, blocked = raster(before, ui, alpha, depth, matrices[eye])
+        errors.append(int(np.abs(expected.astype(int)-after.astype(int)).max()))
+        changed.append(int(np.count_nonzero(np.any(before != after, axis=2))))
+        depths.append(raw == (root/f'crosshair-{name}-depth.bin').read_bytes())
+        projected = matrices[eye] @ point
+        centres.append((projected[:2]/projected[3]).tolist())
+        occluded.append(blocked)
+    native_hit = list(map(int, re.findall(r'OpenXR world crosshair: start=(-?\d+),(-?\d+),(-?\d+) '
+                                         r'hit=(-?\d+),(-?\d+),(-?\d+)', text)[-1]))
+    return {'native_hit': native_hit, 'pixel_max_error': errors, 'changed_pixels': changed,
+            'capture_world_frame': 120, 'capture_serial': capture_serial, 'native_state': native_state,
+            'anchor_pixels': anchor.tolist(), 'canonical_anchor_pixels': canonical_anchor,
+            'depth_preserved': depths, 'centres_ndc': centres, 'occluded_pixels': occluded,
+            'coverage_bounds': Image.fromarray(alpha).getbbox(),
+            'passed': bool(np.any(alpha)) and max(errors) <= 2 and min(changed) > 0 and all(depths)
+            and anchor.tolist() == canonical_anchor and native_state['startmode'] == 1 and native_state['pchar'] == 0
+            and abs(centres[0][0]-centres[1][0]) > 1e-4}
+
+
+def drive_combat(observer, remote, root):
+    """Fire AA's actual selected weapon with an off-head physical controller."""
+    remote.neutral()
+    observer.wait(lambda text: aa_samples(text)[-1]['weaponpos'] == 0, timeout=15)
+    hand = remote.packet.right
+    hand.pose.position.x = .2
+    hand.pose.position.y = 1.3
+    hand.pose.position.z = -.5
+    hand.pose.orientation = orientation(12, 8)
+    remote.send()
+    observer.pause(.8)
+    crosshair = crosshair_evidence(observer, root)
+    before = aa_samples(observer.text())[-1]
+    offset = len(observer.text())
+    hand.trigger_value = 1
+    hand.trigger_click = True
+    remote.send()
+    fired = observer.wait(lambda text: any(row['shots'] > before['shots'] and row['ammo'] < before['ammo']
+                                          for row in aa_samples(text[offset:])), timeout=8)
+    held = aa_samples(fired[offset:])
+    hand.trigger_value = 0
+    hand.trigger_click = False
+    remote.send()
+    released_at = len(observer.text())
+    released = observer.wait(lambda text: any(not (row['bits'] & 4) and row['counter'] == 0
+                                             for row in aa_samples(text[released_at:])), timeout=8)
+    first_release = aa_samples(released[released_at:])[-1]
+    tracked_hits = rays(observer.text()[offset:], 0)
+    stages = {}
+
+    def stage(name, active, trigger):
+        start = len(observer.text())
+        hand.active = active
+        hand.trigger_value = int(trigger)
+        hand.trigger_click = trigger
+        remote.send()
+        observed = observer.wait(lambda text: len(aa_samples(text[start:])) >= 4, timeout=8)[start:]
+        stages[name] = {'native': aa_samples(observed), 'xr': traces(observed)}
+
+    stage('lost_held', False, True)
+    stage('recovered_held', True, True)
+    stage('recovered_release', True, False)
+    repress_at = len(observer.text())
+    hand.trigger_value = 1
+    hand.trigger_click = True
+    remote.send()
+    observer.wait(lambda text: any(row['shots'] > first_release['shots'] for row in aa_samples(text[repress_at:])), timeout=8)
+    hand.trigger_value = 0
+    hand.trigger_click = False
+    remote.send()
+    final = observer.wait(lambda text: aa_samples(text)[-1]['counter'] == 0 and
+                          not (aa_samples(text)[-1]['bits'] & 4), timeout=8)
+    final_row = aa_samples(final)[-1]
+    lost = stages['lost_held']
+    recovered = stages['recovered_held']
+    loss_checks = {
+        'actual_controller_inactive': bool(lost['xr']) and any(not row['right_aim'] for row in lost['xr']),
+        'held_recovery_does_not_fire': all(row['ammo'] == first_release['ammo'] and
+            row['shots'] == first_release['shots'] and not (row['bits'] & 4)
+            for stage_rows in (lost, recovered) for row in stage_rows['native']),
+        'new_press_after_release_fires': final_row['ammo'] < first_release['ammo']
+            and final_row['shots'] > first_release['shots'] and bool(rays(final[repress_at:], 0)),
+    }
+    return {'before': before, 'held': held, 'released': first_release,
+            'tracked_hits': tracked_hits, 'loss_recovery': stages, 'loss_checks': loss_checks,
+            'final': final_row,
+            'crosshair': crosshair,
+            'native_trigger_seen': any(row['bits'] & 4 for row in held)}
 
 
 def drive_character_selection(observer, remote):
@@ -219,12 +337,15 @@ def main():
         help='Advance actual AA opening screens with Return sent only to the owned private window')
     p.add_argument('--play-controller', action='store_true',
         help='Use a private Monado remote controller to select Duke and START in AA\'s native character UI')
+    p.add_argument('--combat', action='store_true', help='Fire the actual AA Duke weapon after controller entry')
     p.add_argument('--remote-port', type=int,
         help='Loopback mndrmt3 port for --play-controller; the runtime must already be running')
     p.add_argument('--texture-cache-seed', type=Path, help='Reuse an owned prior lab cache without changing installed content')
     a = p.parse_args()
     if a.play_controller and not a.remote_port:
         p.error('--play-controller requires --remote-port')
+    if a.combat and not a.play_controller:
+        p.error('--combat requires --play-controller')
     if a.play_controller and (a.episode, a.level) != (1, 2):
         p.error('--play-controller is the fixed Hollywood (episode 1, level 2) proof')
     binary, mod = a.binary.resolve(), a.mod_root.resolve()
@@ -255,6 +376,10 @@ def main():
         env['EDUKE32_XR_TEST_INPUT'] = '1'
         env['EDUKE32_XR_TEST_PVP'] = '1'
         (root/'aa_controller_observer.con').write_text(aa_wrapper())
+    if a.combat:
+        env['EDUKE32_XR_TEST_SHOTS'] = '1'
+        env['EDUKE32_XR_CROSSHAIR_OUTPUT'] = str(root/'crosshair')
+        env['EDUKE32_XR_CROSSHAIR_FRAME'] = '120'
     command = [str(binary), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
         '-j', str(mod), '-g', str(mod/'AA.grp'),
         '-x', 'aa_controller_observer.con' if a.play_controller else 'scripts/AAGAME.CON', '-h', 'duke3d.def',
@@ -293,8 +418,13 @@ def main():
                                 next_press = now+1
                         time.sleep(.05)
                     controller = drive_character_selection(observer, remote)
+                    capture_after = controller['periodic_capture_before_start']
+                    if a.combat:
+                        controller['combat'] = drive_combat(observer, remote, root)
+                        capture_after = max(map(int, PVP_CAPTURE.findall(observer.text())), default=0)
+                        controller['periodic_capture_before_combat_end'] = capture_after
                     controller['post_gameplay_capture'] = post_gameplay_capture(
-                        observer, root, controller['periodic_capture_before_start'],
+                        observer, root, capture_after,
                         max(1, min(30, deadline-time.monotonic())))
             while True:
                 text = observer.text()
@@ -359,13 +489,26 @@ def main():
                     raise RuntimeError('owned AA private drawable missing')
                 state = x11.window_visibility(window)
                 checks.update(private_drawable_unmapped=state['unmapped'], no_desktop_focus=not state['has_desktop_focus'])
+            if a.combat:
+                combat = controller['combat']
+                checks.update(actual_AA_pistol_is_native_shotgun_hitscan=combat['before']['shoots'] == 2613
+                              and combat['before']['workslike'] == 1,
+                              native_AA_ammo_and_shot_event=combat['released']['ammo'] < combat['before']['ammo']
+                              and combat['released']['shots'] > combat['before']['shots'],
+                              actual_controller_fire_and_release=combat['native_trigger_seen']
+                              and not (combat['released']['bits'] & 4),
+                              actual_AA_tracked_native_hitscan=bool(combat['tracked_hits']),
+                              actual_AA_event_crosshair_projected_with_world_depth=combat['crosshair']['passed'],
+                              reticle_origin_matches_actual_AA_shot=bool(combat['tracked_hits']) and
+                              combat['crosshair']['native_hit'][:3] == [combat['tracked_hits'][0][key] for key in ('x', 'y', 'z')])
+                checks.update(combat['loss_checks'])
             result = {'passed': all(checks.values()), 'checks': checks, 'episode': a.episode, 'level': a.level,
                 'multiview_accounting': list(map(int, counts[-1])) if counts else None,
                 'native_intro_keypresses': intro_presses,
                 'initial_world_capture': initial_world_capture,
                 'controller_observation': controller,
                 'post_gameplay_capture': controller.get('post_gameplay_capture') if controller else None,
-                'qualification': 'Selected actual AA map with native custom scripts/DEF/ART; complete campaign/combat/MP and general SPS remain unqualified.'}
+                'qualification': 'Actual AA entry, with optional Duke-pistol tracked combat/crosshair proof; full arsenal/campaign/AA multiplayer and general SPS remain unqualified.'}
     except Exception as error:
         result = {'passed': False, 'episode': a.episode, 'level': a.level, 'error': str(error)}
     finally:

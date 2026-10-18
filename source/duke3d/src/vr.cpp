@@ -826,11 +826,19 @@ void G_XREndWeapon(bool captured)
     { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
 }
 
+static bool crosshairCaptureFrame()
+{
+    // Explicit diagnostic frame selection lets native mod entry finish before
+    // readback. It never changes simulation or crosshair presentation timing.
+    auto const requested=std::getenv("EDUKE32_XR_CROSSHAIR_FRAME");
+    return worldFrames+1==(requested ? std::strtoull(requested,nullptr,10) : 60);
+}
+
 bool G_XRBeginCrosshair()
 {
     if (!crosshairViews.valid || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return false;
     // Flush the preceding HUD at its original depth/order. Only the native
-    // crosshair returned by EVENT_DISPLAYCROSSHAIR enters this spatial segment.
+    // crosshair event and its optional returned tile enter this spatial segment.
     XrPosef panel=rawInput.headPose;
     auto const offset=rotate(panel.orientation,{0,0,-eduke_xr::PanelDistance});
     panel.position.x+=offset.x; panel.position.y+=offset.y; panel.position.z+=offset.z;
@@ -838,7 +846,7 @@ bool G_XRBeginCrosshair()
     if (!menuRuntime->flushMenuOverlay(panel,eduke_xr::PanelHalfWidth,eduke_xr::PanelHalfWidth*float(ydim)/xdim,
                                        rawInput.headValid && validPose(rawInput.headPose),error))
     { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
-    if (worldFrames==59)
+    if (crosshairCaptureFrame())
         if (auto prefix=std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT"))
         {
             std::string before=std::string(prefix)+"-before";
@@ -848,7 +856,7 @@ bool G_XRBeginCrosshair()
     return true;
 }
 
-void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t flags)
+void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t flags, bool eventOnly)
 {
     if (!captured || !crosshairViews.valid || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
     auto const p=g_player[myconnectindex].ps;
@@ -936,7 +944,13 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
         }
         right={right.x*halfHeight*float(xdim)/ydim,right.y*halfHeight*float(xdim)/ydim,right.z*halfHeight*float(xdim)/ydim};
         up={up.x*halfHeight,up.y*halfHeight,up.z*halfHeight};
-        auto const anchor=polymost_xrRotateSpriteAnchor(position,scale,flags);
+        // CON-only reticles use the logical full-screen centre with native
+        // rotatesprite bounds (0,0,xdim,ydim). Their authored relative offsets
+        // stay intact. Stock returned tiles retain look/returnvar/viewport and
+        // FURY conventions; those do not describe independently drawn CON ART.
+        auto const anchor=eventOnly
+            ? polymost_xrRotateSpriteAnchor({160<<16,100<<16},65536,RS_AUTO,{xdim,ydim})
+            : polymost_xrRotateSpriteAnchor(position,scale,flags,{windowxy1.x+windowxy2.x,windowxy1.y+windowxy2.y});
         float const ax=2.f*anchor.x/xdim-1.f, ay=1.f-2.f*anchor.y/ydim;
         for (int eye=0;eye<2;++eye)
         {
@@ -947,7 +961,7 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
                 for (int row=0;row<4;++row)
                     for (int k=0;k<4;++k) matrices[eye][column*4+row]+=m[k*4+row]*columns[column][k];
         }
-        if (worldFrames==59 && std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT"))
+        if (crosshairCaptureFrame() && std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT"))
         {
             LOG_F(INFO,"OpenXR world crosshair: start=%d,%d,%d hit=%d,%d,%d sector=%d wall=%d sprite=%d point=%.6f,%.6f,%.6f.",
                   start.x,start.y,start.z,hit.x,hit.y,hit.z,hit.sect,hit.wall,hit.sprite,point.x,point.y,point.z);
@@ -958,10 +972,13 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
                       matrices[eye][8],matrices[eye][9],matrices[eye][10],matrices[eye][11],matrices[eye][12],matrices[eye][13],matrices[eye][14],matrices[eye][15]);
         }
     }
-    char const *prefix=worldFrames==59 ? std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT") : nullptr;
+    char const *prefix=crosshairCaptureFrame() ? std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT") : nullptr;
     std::string error;
     if (!menuRuntime->flushMenuOverlay(unused,1,1,visible,error,prefix,&matrices[0][0]))
     { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
+    else if (prefix)
+        LOG_F(INFO,"OpenXR crosshair capture: world=%llu serial=%llu.",
+              (unsigned long long)(worldFrames+1),(unsigned long long)pendingFrame.serial);
 }
 
 void G_XRArmMenuPresentation()

@@ -47,14 +47,80 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for n in ('binary','client-binary','grp','work-dir'):p.add_argument('--'+n,type=Path,required=True)
     p.add_argument('--display',default=':1');p.add_argument('--remote-port',type=int,required=True);p.add_argument('--port',type=int,default=24599)
-    p.add_argument('--case',choices=('base','wall','head-moved','occluded','off','lost','cancelled','left','ceiling','floor','large','color','target','ceiling-slope','floor-slope'),default='base')
+    p.add_argument('--case',choices=('base','wall','head-moved','occluded','off','lost','cancelled','custom','custom-occluded','custom-viewport','custom-nested','left','ceiling','floor','large','color','target','ceiling-slope','floor-slope'),default='base')
+    p.add_argument('--pistol-shotgun',action='store_true',help='make only pistol WEAPON1_SHOOTS use SHOTGUN; retain its native WorksLike')
     a=p.parse_args();a.work_dir.mkdir(parents=True,exist_ok=True);root=Path(tempfile.mkdtemp(prefix='crosshair-',dir=a.work_dir.resolve()));server=client=None;logs=[];phase='setup';result={'passed':False}
     try:
         sl=setup_lab(root,'server',a.grp.resolve(),False);cl=setup_lab(root,'client',a.grp.resolve(),False)
         for lab in (sl,cl):
             for n in ('controller_test.con','aim_test.con','hand_test.con','hitscan_test.con'):shutil.copyfile(Path(__file__).parent/'fixtures'/n,lab/n)
             con=(lab/'hitscan_test.con').read_text()+'''\ngamevar vrch_frames 0 0\ngamevar vrch_calls 0 0\ngamevar vrch_scale 0 0\nonevent EVENT_DISPLAYCROSSHAIR\n addvar vrch_calls 1\nendevent\nonevent EVENT_DISPLAYREST\n addvar vrch_frames 1\n addlog vrch_frames\n addlog vrch_calls\n getuserdef[THISACTOR].crosshairscale vrch_scale\n addlog vrch_scale\nendevent\n'''
+            if a.pistol_shotgun:
+                con+="""
+// Match AA's projectile override without changing pistol WorksLike.
+gamevar WEAPON1_SHOOTS SHOTGUN GAMEVAR_PERPLAYER
+gamevar vrch_shoots 0 0
+gamevar vrch_workslike 0 0
+onevent EVENT_PROCESSINPUT
+ setvarvar vrch_shoots WEAPON1_SHOOTS
+ setvarvar vrch_workslike WEAPON1_WORKSLIKE
+ addlog vrch_shoots
+ addlog vrch_workslike
+endevent
+"""
             if a.case=='cancelled':con+='\nonevent EVENT_DISPLAYCROSSHAIR\n setvar RETURN -1\nendevent\n'
+            if a.case in ('custom','custom-occluded','custom-viewport','custom-nested'):
+                # The event owns these ART pixels and deliberately suppresses
+                # the built-in tile.  The two differently transformed parts
+                # make an empty/returned-tile capture unable to pass.
+                con+='''
+onevent EVENT_DISPLAYCROSSHAIR
+ rotatesprite16 10485760 6553600 65536 0 CROSSHAIR 0 0 3 0 0 xdim ydim
+ rotatesprite16 11010048 6553600 32768 256 CROSSHAIR 0 0 3 0 0 xdim ydim
+ setvar RETURN -1
+endevent
+'''
+            if a.case=='custom-viewport':
+                con+='''
+gamevar vrch_look_ang 0 0
+gamevar vrch_screen_size 0 0
+onevent EVENT_PROCESSINPUT
+ setplayer[THISACTOR].look_ang 32
+ getplayer[THISACTOR].look_ang vrch_look_ang
+ getuserdef[THISACTOR].screen_size vrch_screen_size
+ addlog vrch_look_ang
+ addlog vrch_screen_size
+endevent
+'''
+            if a.case=='custom-nested':
+                con+='''
+gamevar vrch_nested 0 0
+gamevar vrch_nested_at 0 0
+gamevar vrch_screen_calls 0 0
+onevent EVENT_DISPLAYCROSSHAIR
+ ifvare vrch_frames 10
+ ifvare vrch_nested 0
+ {
+  setvar vrch_nested 1
+  setvarvar vrch_nested_at vrch_frames
+  startscreen
+ }
+endevent
+onevent EVENT_SCREEN
+ addvar vrch_screen_calls 1
+ setvar RETURN 1
+endevent
+onevent EVENT_DISPLAYREST
+ addlog vrch_nested
+ addlog vrch_nested_at
+ addlog vrch_screen_calls
+endevent
+// EVENT_SCREEN's return is nested in this callback. Restore the outer
+// event-only result after that one native screen frame has completed.
+onevent EVENT_DISPLAYCROSSHAIR
+ setvar RETURN -1
+endevent
+'''
             (lab/'crosshair_test.con').write_text(con)
             data=bytearray(room(a.case=='wall',a.case=='target'))
             if a.case in ('ceiling-slope','floor-slope'):
@@ -62,15 +128,16 @@ def main():
                 offset=64+ (12 if a.case=='ceiling-slope' else 14)
                 struct.pack_into('<H',data,offset,2)
                 struct.pack_into('<h',data,64+(18 if a.case=='ceiling-slope' else 26),512)
-            if a.case=='occluded':
+            if a.case in ('occluded','custom-occluded'):
                 # Opaque decoration blocks the view/depth, but deliberately has
                 # no native hitscan-block bit. It must occlude a marker behind it.
                 struct.pack_into('<h',data,104+8*32,5)
                 data+=sprite(3500,4600,-14000,1,tile=30001,cstat=128,xrepeat=128,yrepeat=128)
                 (lab/'tiles099.art').write_bytes(struct.pack('<4i',1,1,30001,30001)+struct.pack('<hh',16,16)+bytes(4)+bytes([196])*256)
             (lab/'hand.map').write_bytes(data)
-            if a.case in ('large','color'):
-                with (lab/'autoexec.cfg').open('a') as f:f.write('crosshairscale 100\n' if a.case=='large' else 'crosshaircolor 0 255 0\n')
+            if a.case in ('large','color','custom-viewport'):
+                setting='crosshairscale 100\n' if a.case=='large' else 'crosshaircolor 0 255 0\n' if a.case=='color' else 'r_size 12\n'
+                with (lab/'autoexec.cfg').open('a') as f:f.write(setting)
             if a.case=='off':
                 with (lab/'autoexec.cfg').open('a') as f:f.write('crosshair 0\n')
         env={k:v for k,v in os.environ.items() if not k.startswith('EDUKE32_XR')};env.update(DISPLAY=a.display,SDL_VIDEODRIVER='x11',SDL_AUDIODRIVER='dummy')
@@ -93,19 +160,53 @@ def main():
             text=co.text();counts=[tuple(map(int,r)) for r in re.findall(r'addlog vrch_frames = (\d+).*?addlog vrch_calls = (\d+)',text,re.S)]
             checks={'actual_60_stereo_world_HUD_frames':(cl/'hud-left.ppm').read_bytes()!=(cl/'hud-right.ppm').read_bytes(),'core_validation_active':'Core Validation output type:' in text,'core_validation_clean':not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',text),'native_crosshair_event_once':len(counts)>60 and all(c==(0 if a.case=='off' else f) for f,c in counts)}
             extra={}
+            if a.pistol_shotgun:
+                server_shoots=list(map(int,re.findall(r'addlog vrch_shoots[^=\n]*= (-?\d+)',so.text())))
+                server_workslike=list(map(int,re.findall(r'addlog vrch_workslike[^=\n]*= (-?\d+)',so.text())))
+                checks['pistol_slot_SHOTGUN_override_keeps_WorksLike1']=bool(server_shoots and server_workslike) and server_shoots[-1]==2613 and server_workslike[-1]==1
+                extra['server_pistol_slot_weapon_data']={'shoots':(server_shoots[-1] if server_shoots else None),'workslike':(server_workslike[-1] if server_workslike else None)}
             if a.case=='large':checks['native_crosshair_size_setting_applied']=int(re.findall(r'addlog vrch_scale = (\d+)',text)[-1])==100
+            if a.case=='custom-viewport':
+                viewport_look=list(map(int,re.findall(r'addlog vrch_look_ang[^=\n]*= (-?\d+)',text)))
+                viewport_size=list(map(int,re.findall(r'addlog vrch_screen_size[^=\n]*= (-?\d+)',text)))
+                checks['custom_viewport_has_native_nonzero_look_and_reduced_screen']=bool(viewport_look and viewport_size) and viewport_look[-1]==32 and viewport_size[-1]==12
+                extra['custom_viewport_native_state']={'look_ang':(viewport_look[-1] if viewport_look else None),'screen_size':(viewport_size[-1] if viewport_size else None)}
+            if a.case=='custom-nested':
+                nested=list(map(int,re.findall(r'addlog vrch_nested(?: \(player \d+\))? = (-?\d+)',text)))
+                screen_calls=list(map(int,re.findall(r'addlog vrch_screen_calls[^=\n]*= (-?\d+)',text)))
+                captures=[tuple(map(int,row)) for row in re.findall(r'OpenXR crosshair capture: world=(\d+) serial=(\d+)\.',text)]
+                nested_at=list(map(int,re.findall(r'addlog vrch_nested_at = (\d+)',text)))
+                checks['custom_nested_startscreen_runs_once']=bool(nested and screen_calls and nested_at) and nested[-1]==1 and screen_calls[-1]==1 and nested_at[-1]==10
+                checks['custom_nested_continues_to_fresh_world_frame_60']=any(world==60 and serial>0 for world,serial in captures)
+                extra['custom_nested_captures']=captures
             if os.environ.get('EDUKE32_TEST_PRIVATE_WINDOW')=='1':
                 x11=X11(a.display);window,_=x11.owned_window(client.pid)
                 if not window:raise RuntimeError('private drawable missing')
                 state=x11.window_visibility(window);server_window,_=x11.owned_window(server.pid)
                 checks.update(private_XR_drawable_unmapped=state['unmapped'],test_window_does_not_have_desktop_focus=not state['has_desktop_focus'],server_has_no_mapped_window=not server_window or x11.window_visibility(server_window)['unmapped'])
-            if a.case in ('off','cancelled'):
-                checks['native_off_or_event_cancellation_hides_spatial_marker']=not (cl/'crosshair-ui.ppm').exists() and 'OpenXR world crosshair:' not in text
+            if a.case=='off':
+                checks['native_off_hides_spatial_marker']=not (cl/'crosshair-ui.ppm').exists() and 'OpenXR world crosshair:' not in text
+            elif a.case=='cancelled':
+                # A callback that returns -1 still owns a real, empty XR
+                # segment. Require its capture evidence rather than treating
+                # missing output files as cancellation proof.
+                coverage=cl/'crosshair-coverage.pgm'
+                cancelled_coverage_empty=coverage.exists() and not np.any(np.array(Image.open(coverage)))
+                cancelled_changed=[]
+                cancelled_frames_present=True
+                for name in ('left','right'):
+                    before_path=cl/f'crosshair-before-{name}.ppm';after_path=cl/f'crosshair-{name}.ppm'
+                    if before_path.exists() and after_path.exists():
+                        before=np.array(Image.open(before_path));after=np.array(Image.open(after_path))
+                        cancelled_changed.append(int(np.count_nonzero(np.any(before!=after,axis=2))))
+                    else:cancelled_frames_present=False
+                checks['native_event_cancellation_hides_spatial_marker']=cancelled_coverage_empty and cancelled_frames_present and len(cancelled_changed)==2 and max(cancelled_changed)==0
+                extra.update(cancelled_coverage_pixels=(int(np.count_nonzero(np.array(Image.open(coverage)))) if coverage.exists() else None),cancelled_changed_pixels=cancelled_changed)
             else:
                 phase='pixel/depth oracle';ui=np.array(Image.open(cl/'crosshair-ui.ppm'));alpha=np.array(Image.open(cl/'crosshair-coverage.pgm'))
                 if a.case=='color':checks['native_crosshair_color_preserved']=bool(np.any(alpha>0)) and int(ui[:,:,1].max())>200 and int(ui[:,:,0].max())<10 and int(ui[:,:,2].max())<10
                 extra['native_coverage_bounds']=Image.open(cl/'crosshair-coverage.pgm').getbbox()
-                depth_ok=[];errors=[];changed=[];occluded=[];centres=[];projection_errors=[]
+                depth_ok=[];errors=[];changed=[];occluded=[];centres=[];projection_errors=[];anchors=[]
                 matrices={int(i):np.fromstring(m,sep=',').reshape(4,4,order='F') for i,m in re.findall(r'OpenXR crosshair matrix: eye=(\d) values=([^\n]+)\.',text)}
                 for eye,name in enumerate(('left','right')):
                     before=np.array(Image.open(cl/f'crosshair-before-{name}.ppm'));after=np.array(Image.open(cl/f'crosshair-{name}.ppm'))
@@ -115,6 +216,7 @@ def main():
                     else:
                         expected,clear,blocked=raster(before,ui,alpha,depth,matrices[eye])
                         anchor=np.array(list(map(float,re.findall(r'OpenXR crosshair anchor: pixel=('+NUMBER+'),('+NUMBER+r')\.',text)[-1])))
+                        anchors.append(anchor)
                         c=matrices[eye]@np.array([2*anchor[0]/ui.shape[1]-1,1-2*anchor[1]/ui.shape[0],0,1]);centre=c[:2]/c[3];centres.append(centre.tolist())
                         # Independent physical eye projection of the world point;
                         # do not trust the matrix uploaded by the implementation.
@@ -129,11 +231,25 @@ def main():
                         extra.setdefault('unoccluded_reference_changed_pixels',[]).append(int(np.count_nonzero(np.any(clear!=before,axis=2))))
                     errors.append(int(np.abs(expected.astype(int)-after.astype(int)).max()));occluded.append(blocked)
                 checks.update(exact_world_depth_preserved=all(depth_ok),both_eye_pixels_match_depth_tested_projection=max(errors)<=2)
+                if a.case.startswith('custom'):
+                    # Event-only ART is authored in native 320x200 units but
+                    # must use the physical full-screen centre. This expected
+                    # point comes from the native screen dimensions, not the
+                    # uploaded world matrix.
+                    expected_anchor=np.array([ui.shape[1]/2+1,ui.shape[0]/2+1])
+                    part_centres=(expected_anchor,np.array([expected_anchor[0]+8*ui.shape[1]/320,expected_anchor[1]]))
+                    def covered(point):
+                        x,y=np.rint(point).astype(int);radius=12
+                        return int(np.count_nonzero(alpha[max(0,y-radius):min(alpha.shape[0],y+radius+1),max(0,x-radius):min(alpha.shape[1],x+radius+1)]))
+                    part_coverage=[covered(point) for point in part_centres]
+                    checks['custom_event_anchor_is_fullscreen_logical_centre']=len(anchors)==2 and max(float(np.abs(anchor-expected_anchor).max()) for anchor in anchors)<1e-4
+                    checks['custom_event_multipart_source_coverage_present']=all(part_coverage)
+                    extra.update(custom_expected_anchor=expected_anchor.tolist(),custom_part_centres=[point.tolist() for point in part_centres],custom_part_coverage=part_coverage)
                 if a.case=='lost':checks['invalid_hand_hides_reticle_without_stale_pixels']=changed==[0,0] and not matrices
                 else:
                     checks['independent_physical_projection_matches_world_point']=max(projection_errors)<2e-5
                     checks['independent_eye_projection_has_parallax']=abs(centres[0][0]-centres[1][0])>1e-4
-                    if a.case=='occluded':checks['actual_world_depth_occludes_reticle']=min(occluded)>0 and max(changed)==0 and min(extra['unoccluded_reference_changed_pixels'])>0
+                    if a.case in ('occluded','custom-occluded'):checks['actual_world_depth_occludes_reticle']=min(occluded)>0 and max(changed)==0 and min(extra['unoccluded_reference_changed_pixels'])>0
                     else:checks['actual_spatial_marker_visible_both_eyes']=min(changed)>0
                     phase='actual native shot';offset=len(so.text());remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.send();so.wait(lambda t:bool(rays(t[offset:],player)),timeout=4);remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.send()
                     shot=rays(so.text()[offset:],player)[0];hit=list(map(int,re.findall(r'OpenXR world crosshair: start=(-?\d+),(-?\d+),(-?\d+) hit=(-?\d+),(-?\d+),(-?\d+)',text)[-1]));checks['reticle_ray_matches_actual_server_origin_and_impact']=hit==[shot[k] for k in ('x','y','z','hitx','hity','hitz')]

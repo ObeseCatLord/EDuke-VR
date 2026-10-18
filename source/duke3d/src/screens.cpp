@@ -1219,15 +1219,20 @@ void G_DisplayRest(int32_t smoothratio)
     {
         ud.returnvar[0] = (160<<16) - (g_player[myconnectindex].ps->look_ang<<15);
         ud.returnvar[1] = 100<<16;
+#ifdef USE_OPENXR
+        // The callback can draw its own crosshair and return -1 to suppress
+        // only the stock tile. Keep all of that native event in one segment.
+        bool const xrCrosshair=G_XRBeginCrosshair();
+#endif
         int32_t a = VM_OnEventWithReturn(EVENT_DISPLAYCROSSHAIR, g_player[screenpeek].ps->i, screenpeek, CROSSHAIR);
+        vec2_t crosshairpos = { ud.returnvar[0], ud.returnvar[1] };
+        uint32_t crosshair_o = 1|2;
+        uint32_t crosshair_scale = 65536;
+        auto const oyxaspect = yxaspect;
         if ((unsigned) a < MAXTILES)
         {
-            vec2_t crosshairpos = { ud.returnvar[0], ud.returnvar[1] };
             uint8_t crosshair_pal = CROSSHAIR_PAL;
-            uint32_t crosshair_o = 1|2;
-            uint32_t crosshair_scale = divscale16(ud.crosshairscale, 100);
-
-            auto const oyxaspect = yxaspect;
+            crosshair_scale = divscale16(ud.crosshairscale, 100);
             if (FURY)
             {
                 crosshairpos.x = scale(crosshairpos.x - (320<<15), ydim << 2, xdim * 3) + (320<<15);
@@ -1239,17 +1244,15 @@ void G_DisplayRest(int32_t smoothratio)
             }
 
 #ifdef USE_OPENXR
-            bool const xrCrosshair=G_XRBeginCrosshair();
             if (xrCrosshair || G_XRCrosshairPosition(crosshairpos))
 #endif
                 rotatesprite_win(crosshairpos.x, crosshairpos.y, crosshair_scale, 0, a, 0, crosshair_pal, crosshair_o);
-#ifdef USE_OPENXR
-            G_XREndCrosshair(xrCrosshair,crosshairpos,crosshair_scale,crosshair_o);
-#endif
-
-            if (FURY)
-                renderSetAspect(viewingrange, oyxaspect);
         }
+#ifdef USE_OPENXR
+        G_XREndCrosshair(xrCrosshair,crosshairpos,crosshair_scale,crosshair_o,(unsigned) a >= MAXTILES);
+#endif
+        if (FURY && (unsigned) a < MAXTILES)
+            renderSetAspect(viewingrange, oyxaspect);
     }
 
 #ifdef GEKKO

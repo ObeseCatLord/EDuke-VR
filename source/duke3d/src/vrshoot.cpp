@@ -91,7 +91,10 @@ uint8_t G_VRHandShotFeature(int player, int tile)
     {
         case KNEE__: return works==KNEE_WEAPON ? VRShotFeatureMelee : 0;
         case SHOTSPARK1__: return works==PISTOL_WEAPON ? VRShotFeatureHitscan : 0;
-        case SHOTGUN__: return works==SHOTGUN_WEAPON ? VRShotFeatureHitscan : 0;
+        // Mods may use the native shotgun ray with pistol timing (AA's Duke
+        // sidearm). The live Shoots/custom-projectile checks above still own
+        // eligibility; native firing, spread, events and damage are unchanged.
+        case SHOTGUN__: return (works==SHOTGUN_WEAPON || works==PISTOL_WEAPON) ? VRShotFeatureHitscan : 0;
         case CHAINGUN__: return works==CHAINGUN_WEAPON ? VRShotFeatureHitscan : 0;
         case GROWSPARK__: return works==GROW_WEAPON ? VRShotFeatureHitscan : 0;
         case RPG__: return (works==RPG_WEAPON || works==DEVISTATOR_WEAPON) ? VRShotFeatureRPG : 0;

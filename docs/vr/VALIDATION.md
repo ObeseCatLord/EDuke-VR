@@ -2,6 +2,15 @@
 
 ## Current checkpoint — 2026-10-18
 
+AA's actual Duke pistol now uses the native hand-hitscan adapter and AA's own
+event-drawn crosshair is projected/depth-tested in both eyes. Real controller
+fire/release/tracking-loss recovery, native multiplayer impact/damage for the
+same weapon combination, and custom crosshair/viewport/nested-screen regressions
+pass. Matching **NETVERSION6** peers are required; the packet layout is unchanged
+from version5. See [AA_COMBAT.md](AA_COMBAT.md) and sibling
+`evidence/aa-combat-validation.json`. Full AA multiplayer, remaining arsenal/model
+bindings and broader SPS remain incomplete.
+
 Stock native-counter tracked pistol animation now passes actual private
 software-XR/native multiplayer tests, including authoritative reload-flag
 synchronization (matching native NETVERSION5 peers). Exact color/depth model
@@ -14,8 +23,8 @@ AA 5.66's actual installed scripts/assets now reach selected Hollywood world/UI
 and controller-operated Duke/START selection with inspected post-selection
 stereo gameplay images. Native cache recovery restores replacement-VBO state;
 CON startscreen reuses the existing XR UI lifetime. The observed AA scene uses
-native two-pass fallback, not accepted full multiview. AA combat/crosshair,
-weapon-model integration and AA multiplayer remain unqualified. Read
+native two-pass fallback, not accepted full multiview. Apart from the Duke pistol
+increment above, AA weapon integration and AA multiplayer remain unqualified. Read
 [ALIEN_ARMAGEDDON.md](ALIEN_ARMAGEDDON.md). Private art delivers 69 AA handheld
 entries plus both hands; main verified 1,614 manifest files and 71 indexed MD3s.
 

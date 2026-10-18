@@ -8188,11 +8188,11 @@ void polymost_xrProjectionReset()
 
 // Reuse native 320x200/viewport scaling to anchor a spatial UI segment exactly
 // at the returned ART draw origin, including native/custom draw offsets.
-vec2f_t polymost_xrRotateSpriteAnchor(vec2_t position, int32_t scale, int32_t flags)
+vec2f_t polymost_xrRotateSpriteAnchor(vec2_t position, int32_t scale, int32_t flags, vec2_t clipSum)
 {
     int32_t aspect, inverseAspect;
     if (g_rotatespriteNoWidescreen) { flags|=RS_STRETCH; flags&=~RS_ALIGN_MASK; }
-    dorotspr_handle_bit2(&position.x,&position.y,&scale,flags,windowxy1.x+windowxy2.x,windowxy1.y+windowxy2.y,&aspect,&inverseAspect);
+    dorotspr_handle_bit2(&position.x,&position.y,&scale,flags,clipSum.x,clipSum.y,&aspect,&inverseAspect);
     return {float(position.x)/65536.f,float(position.y)/65536.f};
 }
 
