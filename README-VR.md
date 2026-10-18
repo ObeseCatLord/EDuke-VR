@@ -527,6 +527,14 @@ completed the latest `v3` package with action clips for all eight formerly stati
 reconstructions, preserving v1/v2. All 430 manifest hashes were independently
 verified. See [MODEL_ASSETS.md](docs/vr/MODEL_ASSETS.md).
 
+The stock World Tour flamethrower now uses the constrained hand origin and
+physical aim through its existing native FIREBALL path. Native damage, gravity,
+trail actors, ammo and script events remain intact. Seven CPU multiplayer cases
+and three private software-XR controller cases pass, alongside a freezer
+regression. Feature64 extends the existing capability mask to127 without new
+packet fields; rebuild matching peers. Physical headset and 3D flame-weapon
+presentation remain open. See [FLAMETHROWER.md](docs/vr/FLAMETHROWER.md).
+
 An opt-in native MD3 adapter now renders a qualified **idle pistol** from the
 constrained aiming ray, with stereo depth and correct ordering behind nearer
 translucency. Enable `EDUKE32_XR_MODELS=1` alongside the existing tracked

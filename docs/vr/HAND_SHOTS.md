@@ -306,3 +306,16 @@ raw Quick_Kick without melee support and fired from the body. The existing
 native auth guard now rejects that mix. Capability/pose wire layouts stay the
 same. Controller right stick click is mapped but runtime/headset/foot/model
 presentation is still unqualified during the GPU hold.
+
+
+## Stock World Tour flamethrower
+
+Weapon12's actual default FIREBALL is now supported through the same resolver
+and physical projectile helper, retaining native actor/gravity/tracer/damage,
+ammo and events. Feature64 extends mask63 to127 without changing capability or
+pose message sizes. Seven CPU multiplayer cases plus actual private software-XR
+open/wall/vertical controller cases pass. The native flat reference matches
+spawn/random/ammo fields exactly; real target damage and primary snapshots
+replicate. The separate FLAMETHROWERFLAME attack and arbitrary replacements are
+not promoted. Full 3D animation/controller fitting/headset acceptance remain
+open. Read FLAMETHROWER.md for evidence and precise limits.

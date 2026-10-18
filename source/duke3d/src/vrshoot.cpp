@@ -99,6 +99,7 @@ uint8_t G_VRHandShotFeature(int player, int tile)
         case SHRINKER__: return works==SHRINKER_WEAPON ? VRShotFeatureFreezeShrink : 0;
         case HEAVYHBOMB__: return works==HANDBOMB_WEAPON ? VRShotFeatureHandBomb : 0;
         case HANDHOLDINGLASER__: return works==TRIPBOMB_WEAPON ? VRShotFeatureTripmine : 0;
+        case FIREBALL__: return WORLDTOUR && works==FLAMETHROWER_WEAPON ? VRShotFeatureFireball : 0;
     }
 #endif
     return false;

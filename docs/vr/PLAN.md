@@ -235,7 +235,8 @@ compatibility. Tracked pipebombs and the native Devastator adapter now exist;
 Devastator graphics/headset qualification remains pending. The tracked native
 tripmine adapter is now implemented with CPU placement/replication/recovery proof
 (TRIPMINES.md). Native selected/quick melee now has CPU multiplayer/recovery
-proof too (MELEE.md). Remaining weapon implementation includes World Tour flames;
+proof too (MELEE.md). The stock World Tour flame adapter now has CPU multiplayer
+and private software-XR controller proof (FLAMETHROWER.md); complete
 headset/model integration and full SPS remain required.
 
 
@@ -287,7 +288,8 @@ DEVASTATOR.md. The subsequent native tripmine press/commit adapter and CPU
 multiplayer proof are recorded in TRIPMINES.md. Melee now reuses the native
 counter/hitscan/damage path, with an observed early shared-key readiness defect
 corrected and actual revision4 matching-peer proof (MELEE.md). Continue with
-World Tour flames and model integration;
+World Tour flames and model integration (the stock flame adapter is now
+qualified in FLAMETHROWER.md; animated model integration remains open);
 GPU/headset acceptance is still required before declaring the full port done.
 
 The user requested a further complete model pass: Quake-like chunky geometry,
@@ -315,3 +317,15 @@ software XR multiplayer, asymmetric FOV, roll, fog, immediate/array paths,
 two surfaces, collection/replay rejection and later-mask retry. Model fallback
 remains excluded from full-multiview accounting. Animated weapons, grip fitting,
 body/IK and complete model/material SPS remain open.
+
+
+The stock World Tour weapon12 FIREBALL path now reuses the native hand resolver
+and physical projectile velocity helper, preserving native weapon/actor policy.
+Seven CPU native MP cases and actual private software-XR open/wall/vertical
+controller cases pass; freezer rendering/authority regression passes. The native
+reference matches flat spawn/random/ammo fields exactly. An observed card-edge
+oracle defect was corrected by clipping before viewport/subpixel snapping,
+without changing renderer output or tolerance. See FLAMETHROWER.md and bounded
+evidence. Next work remains animated weapon presentation/controller fit, deliberate
+body/IK/remote presentation, broader model/material SPS and complete headset,
+platform, multiplayer and world-feature acceptance.

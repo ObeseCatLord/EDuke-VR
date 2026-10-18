@@ -1477,6 +1477,12 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
         case SPIT__:
         case COOLEXPLOSION1__:
         {
+            // World Tour's stock weapon12 fires FIREBALL. Keep its native
+            // actor/tracer/damage policy; adapt only the initial player ray.
+            uint8_t const feature=playerNum>=0 ? G_VRHandShotFeature(playerNum,projecTile) : 0;
+            bool const tracked=feature && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,feature);
+            int16_t originSector=spriteSectnum;
+            bool clamped=false;
             if (pSprite->extra >= 0)
                 pSprite->shade = -96;
 
@@ -1507,9 +1513,17 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
                 if (projecTile == FIREBALL)
                 {
                     Zvel = fix16_to_int(F16(100) - pPlayer->q16horiz - pPlayer->q16horizoff) * 98;
-                    startPos.x += sintable[(348+shootAng+512)&2047]/448;
-                    startPos.y += sintable[(348+shootAng)&2047]/448;
-                    startPos.z += 0x300;
+                    if (tracked)
+                    {
+                        if (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,originSector,clamped)) return -1;
+                        P_HandProjectileVelocity(playerNum,-1,vel,shootAng,vel,Zvel);
+                    }
+                    else
+                    {
+                        startPos.x += sintable[(348+shootAng+512)&2047]/448;
+                        startPos.y += sintable[(348+shootAng)&2047]/448;
+                        startPos.z += 0x300;
+                    }
                 }
                 else if (GetAutoAimAng(spriteNum, playerNum, projecTile, -ZOFFSET4, 0, &startPos, vel, &Zvel, &shootAng) < 0)
                     Zvel = fix16_to_int(F16(100) - pPlayer->q16horiz - pPlayer->q16horizoff) * 98;
@@ -1532,7 +1546,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
                 startPos.z -= (10 << 8);
             }
 
-            int const returnSprite = A_InsertSprite(spriteSectnum, startPos.x, startPos.y, startPos.z, projecTile, -127, spriteSize, spriteSize,
+            int const returnSprite = A_InsertSprite(originSector, startPos.x, startPos.y, startPos.z, projecTile, -127, spriteSize, spriteSize,
                                                     shootAng, vel, Zvel, spriteNum, 4);
 
             sprite[returnSprite].extra += (krand() & 7);
@@ -1564,6 +1578,9 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             sprite[returnSprite].cstat    = 128;
             sprite[returnSprite].clipdist = 4;
 
+            if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR native fireball: player=%d index=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d.",
+                      playerNum,returnSprite,startPos.x,startPos.y,startPos.z,originSector,clamped,shootAng,vel,Zvel);
             return returnSprite;
         }
 

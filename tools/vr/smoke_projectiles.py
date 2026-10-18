@@ -13,7 +13,12 @@ from smoke_multiplayer import X11,setup_lab,stop
 
 SHOT=re.compile(r'VR native projectile: player=(\d+) tile=(\d+) index=(\d+) origin=(-?\d+),(-?\d+),(-?\d+) sector=(-?\d+) clamped=(\d) angle=(-?\d+) speed=(-?\d+) zvel=(-?\d+) policy=(-?\d+)')
 KEYS=('player','tile','index','x','y','z','sector','clamped','angle','speed','zvel','policy')
-def shots(text,player):return [dict(zip(KEYS,map(int,r))) for r in SHOT.findall(text) if int(r[0])==player]
+def shots(text,player):
+ result=[dict(zip(KEYS,map(int,r))) for r in SHOT.findall(text) if int(r[0])==player]
+ for row in re.findall(r'VR native fireball: player=(\d+) index=(\d+) origin=(-?\d+),(-?\d+),(-?\d+) sector=(-?\d+) clamped=(\d) angle=(-?\d+) speed=(-?\d+) zvel=(-?\d+)',text):
+  values=dict(zip(('player','index','x','y','z','sector','clamped','angle','speed','zvel'),map(int,row)))
+  if values['player']==player:result.append(dict(values,tile=5163,policy=0))
+ return result
 def observations(text,player):
  result=[];row={}
  for k,v in re.findall(r'addlog vrproj_(index|tile|player|sector|x|y|z|angle|speed|zvel|policy|hit)\b[^=\n]*= (-?\d+)',text):
@@ -27,14 +32,20 @@ def main():
  p=argparse.ArgumentParser(description=__doc__)
  for n in ('binary','client-binary','grp','work-dir'):p.add_argument('--'+n,type=Path,required=True)
  p.add_argument('--display',default=':1');p.add_argument('--remote-port',type=int,required=True);p.add_argument('--port',type=int,default=24598)
- p.add_argument('--weapon',choices=('freeze','shrink'),default='freeze')
+ p.add_argument('--weapon',choices=('freeze','shrink','flame'),default='freeze')
  p.add_argument('--case',choices=('open','wall','glancing','steep','vertical','effect','unsupported-server','older-client'),default='open')
- a=p.parse_args();a.work_dir.mkdir(parents=True,exist_ok=True);root=Path(tempfile.mkdtemp(prefix='projectile-',dir=a.work_dir.resolve()));server=client=None;logs=[];phase='setup';result={'passed':False}
+ a=p.parse_args()
+ if a.weapon=='flame' and a.case not in ('open','wall','glancing','steep','vertical'):p.error('flame supports open/wall/glancing/steep/vertical cases')
+ a.work_dir.mkdir(parents=True,exist_ok=True);root=Path(tempfile.mkdtemp(prefix='projectile-',dir=a.work_dir.resolve()));server=client=None;logs=[];phase='setup';result={'passed':False}
  try:
   sl=setup_lab(root,'server',a.grp.resolve(),False);cl=setup_lab(root,'client',a.grp.resolve(),False)
-  weapon=9 if a.weapon=='freeze' else 6
+  weapon={'freeze':9,'shrink':6,'flame':12}[a.weapon]
   for lab in (sl,cl):
    for n in ('controller_test.con','aim_test.con','hand_test.con','hitscan_test.con','projectile_test.con'):shutil.copyfile(Path(__file__).parent/'fixtures'/n,lab/n)
+   if a.weapon=='flame':
+    for source in a.grp.resolve().parent.iterdir():
+     if source.suffix.upper() in ('.CON','.ART'):(lab/source.name).symlink_to(source)
+    f=lab/'projectile_test.con';f.write_text(f.read_text().replace('ifvare vrproj_tile SHRINKSPARK setvar vrproj_match 1','ifvare vrproj_tile SHRINKSPARK setvar vrproj_match 1\n    ifvare vrproj_tile FIREBALL setvar vrproj_match 1'))
    f=lab/'hitscan_test.con';f.write_text(f.read_text().replace('gamevar vrscan_weapon 1 0',f'gamevar vrscan_weapon {weapon} 0'))
    (lab/'hand.map').write_bytes(room(a.case in ('wall','glancing'),a.case=='effect'))
   env={k:v for k,v in os.environ.items() if not k.startswith('EDUKE32_XR')};env.update(DISPLAY=a.display,SDL_VIDEODRIVER='x11',SDL_AUDIODRIVER='dummy')
@@ -55,6 +66,11 @@ def main():
    hand.pose.orientation=orientation(yaw,pitch);remote.packet.head.center.orientation=orientation(-12,4);remote.send();co.pause(.5)
    co.wait(lambda t:'OpenXR world oracle: 60 frames' in t and 'OpenXR HUD presentation: 60 frames' in t,timeout=20)
    checks={'native_join':player>0,'actual_60_stereo_world_HUD_submissions':(cl/'hud-left.ppm').read_bytes()!=(cl/'hud-right.ppm').read_bytes(),'core_validation_active':'Core Validation output type:' in co.text(),'core_validation_clean':not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',co.text())}
+   if os.environ.get('EDUKE32_TEST_PRIVATE_WINDOW')=='1':
+    x11=X11(a.display);window,_=x11.owned_window(client.pid)
+    if not window:raise RuntimeError('owned private XR drawable missing')
+    state=x11.window_visibility(window)
+    checks.update(private_XR_drawable_unmapped=state['unmapped'],no_desktop_focus=not state['has_desktop_focus'])
    ammo=samples(so.text(),'ammo',player)[-1];offset=len(so.text());phase='native fire'
    def fire(wait=True):
     start=len(so.text());remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.send()
@@ -71,15 +87,20 @@ def main():
     checks.update(older_client_advertises_only_hitscan='features=3' in so.text() and 'features=7' not in so.text(),unadvertised_feature_does_not_enable_hand_origin=not shots(so.text()[offset:],player) and first['sector']==0 and first['x']<1152,native_body_projectile_consumes_ammo=samples(so.text(),'ammo',player)[-1]<ammo)
     result={'passed':all(checks.values()),'case':a.case,'weapon':a.weapon,'checks':checks,'native_spawn_observation':first}
    else:
-    checks['feature_explicitly_negotiated']='features=7' in co.text() and 'features=7' in so.text();fire();first=shots(so.text()[offset:],player)[0]
-    speed=644 if a.weapon=='freeze' else 768;bias=-32 if a.weapon=='freeze' else 0
+    feature='features=127' if a.weapon=='flame' else 'features=7'
+    checks['feature_explicitly_negotiated']=feature in co.text() and feature in so.text();fire();first=shots(so.text()[offset:],player)[0]
+    speed={'freeze':644,'shrink':768,'flame':840}[a.weapon];bias=-32 if a.weapon=='freeze' else 0
     checks.update(physical_horizontal_speed=abs(first['speed']-round(speed*math.cos(math.radians(pitch))))<=1,physical_vertical_speed_and_native_bias=abs(first['zvel']-(round(-speed*16*math.sin(math.radians(pitch)))+bias))<=1,native_ammo_consumed=samples(so.text(),'ammo',player)[-1]<ammo)
     if a.case in ('wall','glancing'):checks['constrained_before_wall']=first['clamped']==1 and first['x']<=1136 and first['sector']==0
     else:checks['origin_crosses_portal_without_body_offset']=[first[k] for k in ('x','y','z')]==[1216,4173,-8109] and first['sector']==1
     if a.case=='open':
      phase='actual client projectile';co.wait(lambda t:any(r['index']==first['index'] for r in observations(t,player)),timeout=4)
      client_rows=[r for r in observations(co.text(),player) if r['index']==first['index']]
-     checks['client_receives_real_projectile']=any(all(r[k]==first[k] for k in ('tile','speed','zvel','angle')) for r in client_rows)
+     if a.weapon=='flame':
+      co.wait(lambda t:'VR snapshot fireball applied: index='+str(first['index'])+' ' in t,timeout=4)
+      checks['client_applies_authoritative_fireball_snapshot']=True
+      checks['client_preserves_initial_heading_speed_with_native_gravity']=any(all(r[k]==first[k] for k in ('tile','speed','angle')) and r['zvel']>=first['zvel'] for r in client_rows)
+     else:checks['client_receives_real_projectile']=any(all(r[k]==first[k] for k in ('tile','speed','zvel','angle')) for r in client_rows)
     if a.weapon=='freeze' and a.case in ('open','steep','vertical'):
      phase='native bounce';so.wait(lambda t:any(r['index']==first['index'] and r['policy']<first['policy'] and (r['hit']&49152) in (16384,32768) for r in observations(t[offset:],player)),timeout=5)
      bounce=next(r for r in observations(so.text()[offset:],player) if r['index']==first['index'] and r['policy']<first['policy'] and (r['hit']&49152) in (16384,32768))

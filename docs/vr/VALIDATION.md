@@ -1036,3 +1036,42 @@ binary/source hashes and prior failed attempt locations are sibling
 `evidence/model-sps-validation.json`. Full animated weapons/body integration,
 world MD3 animation ownership, general model/material SPS and hardware/headset
 performance remain open.
+
+
+## Native stock World Tour flame adapter — 2026-10-17
+
+Seven actual GPU-denied CPU server/client cases pass: native flat reference,
+tracked, closed wall, vertical, loss/release, underwater and PRE cancellation.
+Default weapon12 emits FIREBALL without a fixture Shoots override. Native flat
+spawn fields, controlled damage/random state and ammo exactly match the saved
+pre-adapter binary. Native and tracked target health converges1000→926 on both
+peers. Invalid/held recovery does not fire or consume ammo; underwater/cancel
+retain native ammo/event semantics. Vertical physical velocity is0/-13440;
+resolved origins cross the portal or stay safely before the closed wall. Actual
+primary snapshots apply on native clients; immediate wall hits are explicitly
+excluded from transient snapshot guarantees.
+
+Four final private software-XR labs pass: actual controller flame open/wall/
+vertical and freezer open regression. Each submits sixty actual world/HUD
+frames with core validation clean, GPU devices denied, matching llvmpipe/LVP,
+unmapped private drawables/no focus, and owned Monado/Xvfb/child cleanup. Open
+flame: origin(1216,4173,-8109), sector1, yaw69, xvel832/zvel-1870 at8-degree
+physical pitch. Wall clamps to(1125,4149,-8672), sector0. Straight up is
+xvel0/zvel-13440. Applied primary snapshot and native gravity are observed.
+Native weapon card pose matches the independently resolved physical origin;
+open/wall/flame/freezer pixel maxima are1 in both eyes and world depth is exact.
+The actual captured native WT weapon/world image was inspected.
+
+Initial flame/freezer runs failed only a card-boundary comparison (right maxima
+12/64). Saved-artifact CPU analysis proved the independent oracle omitted
+homogeneous triangle clipping before viewport/subpixel snapping. Corrected
+clipping and top-left fill retain the original tolerance2 and independent
+continuous-ray UV/sampling. Both original captures now compare at1/1, followed
+by the four passing fresh runs; no renderer or pixel tolerance changed.
+
+All native/XR/CPU/input builds pass; existing smmalloc compiler diagnostics
+remain. Python compilation and whitespace checks pass. Read FLAMETHROWER.md;
+durable run results, original failed attempts, source/binary hashes and oracle
+recheck are sibling `evidence/flamethrower-validation.json`. No physical headset,
+3D flame-weapon animation, general SPS/materials, WAN or full-port completion
+is established by these bounded checks.

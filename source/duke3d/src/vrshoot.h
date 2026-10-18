@@ -16,6 +16,7 @@ constexpr size_t VRShotWireSize=14;
 constexpr uint8_t VRShotFeatureRPG=1, VRShotFeatureHitscan=2, VRShotFeatureFreezeShrink=4;
 constexpr uint8_t VRShotFeatureHandBomb=8, VRShotFeatureTripmine=16;
 constexpr uint8_t VRShotFeatureMelee=32;
+constexpr uint8_t VRShotFeatureFireball=64;
 bool G_VRValidateShot(VRShotInput const &input);
 bool G_VRDecodeShot(uint8_t const *bytes, size_t size, VRShotInput &input);
 void G_VREncodeShot(VRShotInput const &input, uint8_t *bytes);

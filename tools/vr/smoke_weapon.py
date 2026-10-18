@@ -57,20 +57,46 @@ def warp(before,ui,alpha,view,placement,visible,subpixel_bits=8,half_width=None,
     with np.errstate(divide='ignore',invalid='ignore'):distance=-origin[2]/rays[:,:,2]
     points=origin+distance[:,:,None]*rays
     u=(points[:,:,0]/half_width+1)*.5;v=(1-points[:,:,1]/half_height)*.5
-    # Native raster coverage snaps projected vertices to the actual driver's
-    # subpixel grid. Keep this distinct from continuous ray/texture sampling.
+    # GL clips each triangle before viewport conversion/subpixel snapping.
+    # Snapping the original offscreen quad can move an outer edge by a pixel.
+    # Keep coverage distinct from continuous ray/texture sampling above.
     corners=np.array([[-half_width,-half_height,0],[half_width,-half_height,0],[half_width,half_height,0],[-half_width,half_height,0]])
     eye_corners=(corners@rotation(orientation).T+position-vp)@rotation(vq)
-    projected=np.c_[(eye_corners[:,0]/-eye_corners[:,2]-left)/(right-left)*w,
-                    (up-eye_corners[:,1]/-eye_corners[:,2])/(up-down)*h]
-    grid=2**subpixel_bits;projected=np.rint(projected*grid)/grid
+    # Same documented near/far as eduke_xr.cpp's overlay projection, in metres.
+    near,far=.05,100.
+    clip=np.c_[2*eye_corners[:,0]/(right-left)+(right+left)*eye_corners[:,2]/(right-left),
+               2*eye_corners[:,1]/(up-down)+(up+down)*eye_corners[:,2]/(up-down),
+               -(far+near)*eye_corners[:,2]/(far-near)-2*far*near/(far-near),-eye_corners[:,2]]
+    grid=2**subpixel_bits
     inside=np.zeros((h,w),dtype=bool)
     for tri in ((0,1,2),(0,2,3)):
-        edges=[]
-        for j,k in zip(tri,tri[1:]+tri[:1]):
-            a,b=projected[j],projected[k]
-            edges.append((b[0]-a[0])*(yy+.5-a[1])-(b[1]-a[1])*(xx+.5-a[0]))
-        inside|=(np.minimum.reduce(edges)>=0)|(np.maximum.reduce(edges)<=0)
+        polygon=[clip[i] for i in tri]
+        for axis in range(3):
+            for sign in (-1,1):
+                clipped=[]
+                for a,b in zip(polygon,polygon[1:]+polygon[:1]):
+                    da=a[3]+sign*a[axis];db=b[3]+sign*b[axis]
+                    if da>=0:clipped.append(a)
+                    if (da>=0)!=(db>=0):clipped.append(a+(b-a)*(da/(da-db)))
+                polygon=clipped
+        if len(polygon)<3:continue
+        polygon=np.array(polygon)
+        if np.any(polygon[:,3]<=0):continue
+        ndc=polygon[:,:2]/polygon[:,3:4]
+        projected=np.c_[(ndc[:,0]+1)*w*.5,(1-ndc[:,1])*h*.5]
+        projected=np.rint(projected*grid)/grid
+        for i in range(1,len(projected)-1):
+            vertices=projected[[0,i,i+1]]
+            a,b,c=vertices
+            area=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])
+            if area==0:continue
+            if area<0:vertices=vertices[::-1]
+            covered=np.ones((h,w),dtype=bool)
+            for a,b in zip(vertices,np.roll(vertices,-1,axis=0)):
+                edge=(b[0]-a[0])*(yy+.5-a[1])-(b[1]-a[1])*(xx+.5-a[0])
+                top_left=b[1]<a[1] or (b[1]==a[1] and b[0]>a[0])
+                covered&=(edge>0)|((edge==0)&top_left)
+            inside|=covered
     inside&=distance>0
     sx=np.clip(u*tw-.5,0,tw-1);sy=np.clip(v*th-.5,0,th-1)
     sx=np.nan_to_num(sx);sy=np.nan_to_num(sy)
