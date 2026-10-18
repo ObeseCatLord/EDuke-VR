@@ -1,5 +1,46 @@
 # Private chunky model set
 
+## AA weapons and floating hands (2026-10-18)
+
+The Astra asset subagent completed sibling `duke-vr-assets/aa-v1`: 69 AA
+weapon/equipment dispatch entries representing 68 physical designs, plus both
+floating hands. Shrinker/Expander intentionally share the native AA chassis.
+There are 71 editable Blender masters, MD3/PNG sets and embedded GLBs, with
+source comparisons and all-side CPU previews. No new AA character bodies were
+requested or created.
+
+Entries use 36–620 triangles; hands use 208 each. Weapons have 128² atlases and
+hands 64². Authored atlases have at most 64 colors; unchanged Ripper, tripmine
+and freezer donor pixels retain 295/293/295 colors. Newly authored closed
+components retain deliberate overlaps, while seven reused models disclose
+original detail boundaries. Hidden surfaces and metre scale are inferred.
+
+Main integration verified all 1,614 manifest hashes (manifest SHA-256
+`3f7471e8bbff04616d95060e9aa73af04d2afb5144abdbf931ea20faf7c1ccbc`), all 71
+indexed MD3s and 467 frame names, triangle counts, and the canonical static tag
+basis (maximum float error 4.38e-8). Visual inspection prompted correction of
+repeated generic pistol/energy shapes before final acceptance. These are chunky
+sprite-guided interpretations, not recovered source meshes.
+
+Use private `aa-v1/metadata/asset_index.json` and `aa-v1/NATIVE_BINDING.md` for
+paths, character/upgrade dispatch, coordinate conversions, tags and action
+ownership. Four literal native-counter mappings are evidenced; other cosmetic
+samples remain unbound. Static muzzle tags can be central emitter/contact
+references and do not prove gameplay origins. Runtime selection, hand fitting,
+remaining timing, effects/scopes and reload-hand choreography remain integration
+work. The files stay outside Git and the installed game remains unchanged.
+
+## Stock native pistol action package
+
+Sibling `duke-vr-assets/v4-pistol-native` supplies the stock pistol's 27 native
+counter frames: rest, fire 1–4 and reload 5–26. Its 196 triangles include two
+necessary magazine closure triangles; its 128² PNG and rest calibration remain
+unchanged. The engine resolves frame names and uses the existing native MD3
+path. See [PISTOL_ANIMATION.md](PISTOL_ANIMATION.md) for actual runtime proof and
+scope; this does not promote AA weapons automatically.
+
+## Earlier stock package history
+
 The user's requested full art revision was completed by the Astra asset agent
 in sibling `outputs/duke-vr-assets/v2`. Original Duke3D/World Tour ART sprites
 guide silhouettes, proportions and colors. Editable sources derive from the

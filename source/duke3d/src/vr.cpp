@@ -85,12 +85,17 @@ struct WorldReceipt
     bool models=true, handModels=false;
 };
 static WorldReceipt worldReceipt;
+// Explicit diagnostics only: capture each naturally observed native pistol
+// counter once, using the same-frame native model oracle. No animation clock.
+static std::string modelAnimationCapture, weaponAnimationCapture;
 static struct
 {
     eduke_xr::Runtime *runtime=nullptr;
     uint64_t generation=0, serial=0;
     int player=-1;
-    bool consumed=false, mismatch=false;
+    XRPistolPresentation presentation{};
+    uint8_t seen=0; // native body=1, optional magazine=2, optional hand=4
+    bool mismatch=false;
 } handModelReceipt;
 
 static void accountWorldFrame(bool opaque, bool masks, bool fixture, bool models=true, bool handModels=false)
@@ -360,6 +365,7 @@ void eyeState(Eye const &eye)
 struct HandModelSample
 {
     md3drawcontext_t context{};
+    XRPistolPresentation presentation{};
     vec3_t root{};
     int16_t sector=-1;
     vec3f_t muzzle{}, grip{};
@@ -416,7 +422,10 @@ bool prepareHandModel(HandModelSample &sample)
     if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
         || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
         || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)
-        || !P_XRIdlePistolAppearance(sample.context.palette,sample.context.shade)) return false;
+        || !P_XRPistolPresentation(sample.presentation)) return false;
+
+    sample.context.palette=sample.presentation.palette;
+    sample.context.shade=sample.presentation.shade;
 
     bool clamped;
     sample.shot=G_VRGetShotInput(myconnectindex);
@@ -426,6 +435,14 @@ bool prepareHandModel(HandModelSample &sample)
     int const tile=Ptile2tile(FIRSTGUNSPRITE,sample.context.palette);
     sample.context.modelid=md_tilehasmodel(FIRSTGUNSPRITE,sample.context.palette);
     sample.context.skinnum=tile2model[tile].skinnum;
+    char name[16];
+    int const counter=sample.presentation.counter;
+    if (counter) Bsprintf(name,counter<5 ? "fire_%02d" : "reload_%02d",counter);
+    else Bstrcpy(name,"rest");
+    int frame=md3_getframeindex(sample.context.modelid,name);
+    if (frame<0 && counter==0) frame=0; // Preserve the legacy frame-zero idle proof.
+    if (frame<0) return false; // Positive counters never silently substitute rest.
+    sample.context.cframe=sample.context.nframe=frame;
     if (!md3_gettagposition(sample.context.modelid,"tag_muzzle",&sample.muzzle)
         || !md3_gettagposition(sample.context.modelid,"tag_grip",&sample.grip)) return false;
     sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
@@ -480,16 +497,35 @@ void handModelMatrix(HandModelSample &sample, Eye const &eye)
 }
 } // namespace
 
+static bool pistolReceiptOwned()
+{
+    return handModelReceipt.runtime && handModelReceipt.runtime==menuRuntime && menuRuntime
+        && handModelReceipt.generation==menuGeneration && menuRuntime->generation()==menuGeneration
+        && handModelReceipt.serial==pendingFrame.serial && handModelReceipt.player==screenpeek
+        && menuRuntime->menuOverlayTargetBound();
+}
+
+static bool pistolReceiptMatches()
+{
+    XRPistolPresentation fresh;
+    auto const &saved=handModelReceipt.presentation;
+    return pistolReceiptOwned() && P_XRPistolPresentation(fresh)
+        && fresh.palette==saved.palette && fresh.shade==saved.shade
+        && fresh.counter==saved.counter && fresh.reloading==saved.reloading;
+}
+
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
 {
-    if (!handModelReceipt.runtime || uniqueID!=W_PISTOL || tile!=FIRSTGUN) return false;
-    int32_t palette, shade;
-    if (handModelReceipt.runtime!=menuRuntime || handModelReceipt.generation!=menuGeneration
-        || handModelReceipt.serial!=pendingFrame.serial || handModelReceipt.player!=screenpeek
-        || !menuRuntime->menuOverlayTargetBound() || !P_XRIdlePistolAppearance(palette,shade)
-        || handModelReceipt.consumed)
+    int const role=uniqueID==W_PISTOL ? 1 : uniqueID==W_PISTOL_CLIP ? 2 : uniqueID==W_PISTOL_HAND ? 4 : 0;
+    if (!handModelReceipt.runtime || !role) return false;
+    // Classify claimed roles first: a wrong auxiliary tile must latch failure,
+    // even when the body draw has already consumed its part of the receipt.
+    bool const validTile=role==1 ? (tile==FIRSTGUN || tile==FIRSTGUN+1 || tile==FIRSTGUN+2
+                                         || tile==FIRSTGUN+4 || tile==FIRSTGUN+5 || tile==FIRSTGUNRELOADWIDE)
+                                 : tile==FIRSTGUN+(role==2 ? 6 : 8);
+    if (!validTile || (handModelReceipt.seen&role) || !pistolReceiptMatches())
     { handModelReceipt.mismatch=true; return false; }
-    handModelReceipt.consumed=true;
+    handModelReceipt.seen|=role;
     return true;
 }
 
@@ -670,12 +706,12 @@ void G_XRCancelMenuPresentation()
     }
 }
 
-void G_XRBeginMenuPresentation()
+static void beginMenuPresentation(bool nativeScreen)
 {
     char const *enabled=std::getenv("EDUKE32_XR_UI");
-    bool const overlay=overlayEnabled() && presentationRuntime;
+    bool const overlay=!nativeScreen && overlayEnabled() && presentationRuntime;
     if (!enabled || (Bstrcmp(enabled,"1") && Bstrcmp(enabled,"2"))
-        || (!overlay && (g_player[myconnectindex].ps->gm & MODE_GAME))
+        || (!nativeScreen && !overlay && (g_player[myconnectindex].ps->gm & MODE_GAME))
         || videoGetRenderMode()!=REND_POLYMOST) return;
     auto *runtime=overlay ? presentationRuntime : pendingRuntime;
     if (!runtime || runtime->generation()!=(overlay ? presentationGeneration : pendingGeneration)) return;
@@ -703,6 +739,11 @@ void G_XRBeginMenuPresentation()
         }
 }
 
+void G_XRBeginMenuPresentation() { beginMenuPresentation(false); }
+// CON startscreen owns a flat screen even during MODE_GAME/level entry.
+// Reuse the acquired frame and native UI target without arming a world draw.
+void G_XRBeginScreenPresentation() { beginMenuPresentation(true); }
+
 bool G_XRBeginWeapon()
 {
     auto const enabled=std::getenv("EDUKE32_XR_WEAPON");
@@ -717,8 +758,8 @@ bool G_XRBeginWeapon()
     {
         G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false;
     }
-    if (worldFrames==59)
-        if (auto prefix=std::getenv("EDUKE32_XR_WEAPON_OUTPUT"))
+    if (auto prefix=!weaponAnimationCapture.empty() ? weaponAnimationCapture.c_str()
+                    : worldFrames==59 ? std::getenv("EDUKE32_XR_WEAPON_OUTPUT") : nullptr)
         {
             std::string before=std::string(prefix)+"-before";
             if (!menuRuntime->captureFrame(before.c_str(),false,error,true))
@@ -733,7 +774,7 @@ void G_XREndWeapon(bool captured)
         if (auto test=std::getenv("EDUKE32_XR_TEST_WEAPON_NESTED"))
         {
             static bool injected;
-            if (!injected && !Bstrcmp(test,"1"))
+            if (!injected && (!Bstrcmp(test,"1") || (!Bstrcmp(test,"2") && worldFrames==59)))
             {
                 injected=true;
                 LOG_F(INFO,"OpenXR weapon test: injected unarmed native presentation.");
@@ -767,7 +808,8 @@ void G_XREndWeapon(bool captured)
     // (192,180) in its 320x200, 4:3 subregion. Animation/palette/CON remain native.
     auto const offset=rotate(pose.orientation,{-.08f,.24f,-.15f});
     pose.position.x+=offset.x; pose.position.y+=offset.y; pose.position.z+=offset.z;
-    char const *prefix=worldFrames==59 ? std::getenv("EDUKE32_XR_WEAPON_OUTPUT") : nullptr;
+    char const *prefix=!weaponAnimationCapture.empty() ? weaponAnimationCapture.c_str()
+        : worldFrames==59 ? std::getenv("EDUKE32_XR_WEAPON_OUTPUT") : nullptr;
     if (prefix)
     {
         auto const &p=pose.position; auto const &q=pose.orientation;
@@ -924,8 +966,37 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
 
 void G_XRArmMenuPresentation()
 {
-    if (handModelReceipt.runtime && (!handModelReceipt.consumed || handModelReceipt.mismatch))
+    if (handModelReceipt.runtime && worldFrames==59)
+        if (auto test=std::getenv("EDUKE32_XR_TEST_RECEIPT"))
+        {
+            if (!Bstrcmp(test,"invalid-aux")) G_XRSuppressWeaponTile(FIRSTGUN+7,W_PISTOL_CLIP);
+            else if (!Bstrcmp(test,"duplicate")) G_XRSuppressWeaponTile(FIRSTGUN,W_PISTOL);
+        }
+    if (handModelReceipt.runtime && !modelAnimationCapture.empty())
+        LOG_F(INFO,"OpenXR hand model receipt: serial=%llu counter=%d reloading=%d roles=%u valid=%d.",
+              (unsigned long long)handModelReceipt.serial,handModelReceipt.presentation.counter,
+              handModelReceipt.presentation.reloading,unsigned(handModelReceipt.seen),
+              (handModelReceipt.seen&1) && !handModelReceipt.mismatch && pistolReceiptOwned());
+    // Native menus poll authoritative packets after the weapon pixels, even
+    // when no menu is open. Late field changes belong to subsequent draws;
+    // the completed image requires its receipt and target ownership to survive.
+    if (handModelReceipt.runtime && (!(handModelReceipt.seen&1) || handModelReceipt.mismatch || !pistolReceiptOwned()))
     {
+        if (std::getenv("EDUKE32_XR_TEST_MODELS"))
+            LOG_F(INFO,"OpenXR hand model frame canceled: serial=%llu submitted=%llu.",
+                  (unsigned long long)handModelReceipt.serial,
+                  (unsigned long long)handModelReceipt.runtime->lastSubmittedSerial());
+        if (std::getenv("EDUKE32_XR_TEST_MODEL_ANIMATION"))
+        {
+            XRPistolPresentation fresh;
+            bool const qualified=P_XRPistolPresentation(fresh);
+            auto const &saved=handModelReceipt.presentation;
+            LOG_F(INFO,"OpenXR hand model rejected: qualified=%d saved=%d,%d,%d,%d fresh=%d,%d,%d,%d bound=%d roles=%u mismatch=%d serial=%llu,%llu.",
+                  qualified,saved.palette,saved.shade,saved.counter,saved.reloading,
+                  fresh.palette,fresh.shade,fresh.counter,fresh.reloading,
+                  menuRuntime && menuRuntime->menuOverlayTargetBound(),unsigned(handModelReceipt.seen),handModelReceipt.mismatch,
+                  (unsigned long long)handModelReceipt.serial,(unsigned long long)pendingFrame.serial);
+        }
         G_XRCancelMenuPresentation();
         sdlayer_xr_disableWorld("held-model/native weapon receipt mismatch");
         return;
@@ -977,6 +1048,7 @@ void G_XREndFrame()
 void G_XRBeginFrame()
 {
     crosshairViews.valid=false;
+    modelAnimationCapture.clear(); weaponAnimationCapture.clear();
     // Credit only the exact completed projection, never a rendered image that
     // was later canceled by a nested native draw, resize, or early swap.
     if (worldReceipt.runtime && worldReceipt.runtime->generation()==worldReceipt.generation
@@ -1428,13 +1500,37 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             error="injected failure after animation, before first masks";
         }
         std::vector<tspritetype> pristine(tsprite,tsprite+spritesortcnt);
+        // Capture actual native fallback ART too when an optional model lacks
+        // a named frame. This diagnostic observes counters without changing them.
+        auto const observedPlayer=g_player[myconnectindex].ps;
+        int const observedCounter=observedPlayer->kickback_pic;
+        static bool capturedCounters[27]{};
+        if (worldFrames>=60 && observedCounter>0 && observedCounter<27
+            && observedPlayer->curr_weapon==PISTOL_WEAPON
+            && std::getenv("EDUKE32_XR_TEST_MODEL_ANIMATION")
+            && !capturedCounters[observedCounter])
+        {
+            char suffix[32]; Bsnprintf(suffix,sizeof(suffix),"-counter-%02d",observedCounter);
+            if (auto prefix=std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
+                modelAnimationCapture=std::string(prefix)+suffix;
+            if (auto prefix=std::getenv("EDUKE32_XR_WEAPON_OUTPUT"))
+                weaponAnimationCapture=std::string(prefix)+suffix;
+            capturedCounters[observedCounter]=true;
+        }
         HandModelSample handModel;
         if (good && !fixtureTest && prepareHandModel(handModel))
         {
             attemptedHandModel=true;
+            char const *modelPrefix=!modelAnimationCapture.empty() ? modelAnimationCapture.c_str()
+                : worldFrames==59 ? std::getenv("EDUKE32_XR_MODEL_OUTPUT") : nullptr;
+            bool const modelCapture=modelPrefix!=nullptr;
+            if (modelCapture && std::getenv("EDUKE32_XR_TEST_MODEL_ANIMATION"))
+                LOG_F(INFO,"OpenXR hand model sample: serial=%llu counter=%d reloading=%d frame=%d.",
+                      (unsigned long long)frame.serial,handModel.presentation.counter,
+                      handModel.presentation.reloading,handModel.context.cframe);
             auto const captureModels = [&](char const *suffix) {
-                auto const prefix=std::getenv("EDUKE32_XR_MODEL_OUTPUT");
-                return worldFrames!=59 || !prefix
+                auto const prefix=modelPrefix;
+                return !prefix
                     || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
             };
             float modelMatrices[2][16]{}, modelProjections[2][16]{};
@@ -1456,7 +1552,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                                          eyes[i].camera.angle,eyes[i].camera.horizon,eyes[i].camera.sector);
                     g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
                     handModelMatrix(handModel,eyes[i]);
-                    if (worldFrames==59 && std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
+                    if (modelCapture)
                     {
                         float projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
                         if (oracle)
@@ -1483,12 +1579,12 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     if (!good) error="native held-model emission failed";
                     if (good && oracle)
                     {
-                        auto const prefix=std::string(std::getenv("EDUKE32_XR_MODEL_OUTPUT"))+"-reference-"+(i ? "right" : "left");
+                        auto const prefix=std::string(modelPrefix)+"-reference-"+(i ? "right" : "left");
                         good=eduke_xr::captureFramebuffer((prefix+".ppm").c_str(),xdim,ydim,error)
                             && eduke_xr::captureFramebufferDepth((prefix+"-depth.bin").c_str(),xdim,ydim,error);
                     }
                     if (collect && polymost_xrEndCollection(i)!=POLYMOST_XR_COLLECT_OK) accepted=false;
-                    if (good && worldFrames==59 && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                    if (good && modelCapture && std::getenv("EDUKE32_XR_TEST_MODELS"))
                     {
                         Bmemcpy(modelMatrices[i],handModel.context.modelToEye,sizeof(modelMatrices[i]));
                         glGetFloatv(GL_PROJECTION_MATRIX,modelProjections[i]);
@@ -1500,7 +1596,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             auto const forceReference=std::getenv("EDUKE32_XR_TEST_MODELS_TWO_PASS");
             if (good && singlePass && !(forceReference && !Bstrcmp(forceReference,"1")))
             {
-                if (worldFrames==59 && std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
+                if (modelCapture)
                 {
                     ModelOracleTarget oracle;
                     drawHandModel(false,&oracle);
@@ -1518,7 +1614,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                         if (committed)
                         {
                             usedModelMultiview=true;
-                            if (worldFrames==59 && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                            if (modelCapture && std::getenv("EDUKE32_XR_TEST_MODELS"))
                             {
                                 auto const stats=polymost_xrCollectionStats();
                                 LOG_F(INFO,"OpenXR hand model single-pass: paired=%u eyeOnly=%u shared=%u sharedVertices=%u.",
@@ -1544,9 +1640,9 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             if (good)
             {
                 usedHandModel=true;
-                handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,false,false};
+                handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,handModel.presentation,0,false};
                 if (oracleCompared[0] && oracleCompared[1]) LOG_F(INFO,"OpenXR hand model oracle inputs: identical=1.");
-                if (worldFrames==59 && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                if (modelCapture && std::getenv("EDUKE32_XR_TEST_MODELS"))
                     for (unsigned i=0;i<2;++i)
                     {
                         LOG_F(INFO,"OpenXR hand model: eye=%u model=%d root=%d,%d,%d direction=%d,%d,%d.",i,

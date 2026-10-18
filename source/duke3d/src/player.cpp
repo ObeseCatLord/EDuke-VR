@@ -2537,7 +2537,7 @@ static int P_DisplayAccess(int accessShade)
 }
 
 #ifdef USE_OPENXR
-bool P_XRIdlePistolAppearance(int32_t &palette, int32_t &shade)
+bool P_XRPistolPresentation(XRPistolPresentation &sample)
 {
 #ifndef EDUKE32_STANDALONE
     auto const p=g_player[myconnectindex].ps;
@@ -2547,7 +2547,7 @@ bool P_XRIdlePistolAppearance(int32_t &palette, int32_t &shade)
         || p->dead_flag || (unsigned)p->i>=MAXSPRITES || sprite[p->i].extra<=0
         || sprite[p->i].xrepeat<40 || sprite[p->i].pal==1
         || p->curr_weapon!=PISTOL_WEAPON || p->last_weapon>=0 || p->weapon_pos || p->holster_weapon
-        || p->kickback_pic || p->fist_incs || p->knuckle_incs || p->tipincs || p->access_incs
+        || (unsigned)p->kickback_pic>26 || p->fist_incs || p->knuckle_incs || p->tipincs || p->access_incs
         || p->knee_incs || p->quick_kick || p->last_quick_kick
         || PWEAPON(myconnectindex,PISTOL_WEAPON,WorksLike)!=PISTOL_WEAPON
         || G_VRHandShotFeature(myconnectindex)!=VRShotFeatureHitscan
@@ -2556,9 +2556,16 @@ bool P_XRIdlePistolAppearance(int32_t &palette, int32_t &shade)
 #ifdef SPLITSCREEN_MOD_HACKS
     if (g_fakeMultiMode) return false;
 #endif
-    palette=P_GetHudPal(p);
-    shade=min<int32_t>(sprite[p->i].shade,24);
-    return palette==0; // First native opaque-diffuse family; tinted cases keep ART.
+    if (p->kickback_pic
+        && (PWEAPON(myconnectindex,PISTOL_WEAPON,Clip)!=12
+            || PWEAPON(myconnectindex,PISTOL_WEAPON,Reload)!=27
+            || PWEAPON(myconnectindex,PISTOL_WEAPON,FireDelay)!=2
+            || PWEAPON(myconnectindex,PISTOL_WEAPON,TotalTime)!=5
+            || PWEAPON(myconnectindex,PISTOL_WEAPON,HoldDelay)!=0
+            || PWEAPON(myconnectindex,PISTOL_WEAPON,Flags)!=WEAPON_RELOAD_TIMING
+            || (p->kickback_pic>=5 && p->reloading!=1))) return false;
+    sample={P_GetHudPal(p),min<int32_t>(sprite[p->i].shade,24),p->kickback_pic,p->reloading};
+    return sample.palette==0; // Qualified opaque diffuse family; tinted cases keep ART.
 #else
     return false;
 #endif

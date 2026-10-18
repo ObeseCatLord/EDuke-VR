@@ -30,6 +30,25 @@ from smoke_multiplayer import X11, setup_lab, stop
 from smoke_weapon import quaternion
 
 
+def pistol_states(text, player):
+    rows, row = [], {}
+    for key, value in re.findall(r'addlog vrpistol_(player|counter|reloading|ammo|weapon)(?: \(player \d+\))? = (-?\d+)', text):
+        if key == 'player': row = {}
+        row[key] = int(value)
+        if key == 'weapon' and len(row) == 5 and row['player'] == player:
+            rows.append(row)
+    return rows
+
+
+def completed_reload(text, player):
+    rows = pistol_states(text, player)
+    for i, row in enumerate(rows):
+        if row['counter'] >= 5 and row['reloading'] == 1 and row['ammo'] == 12:
+            return any(s['counter'] == 0 and s['reloading'] == 0 and s['ammo'] == 12
+                       and s['weapon'] == 1 for s in rows[i+1:])
+    return False
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('binary','client-binary','grp','model-root','work-dir'):
@@ -42,7 +61,18 @@ def main():
     p.add_argument('--model-file',type=Path,help='private native multi-surface fixture, retaining pistol geometry/tags')
     p.add_argument('--fault',choices=('collect-right','surface-1','skin-last','replay-before','replay-after','mask-retry'))
     p.add_argument('--case',choices=('base','roll','fog','asymmetric','translucent','missing-skin','custom','second-eye-failure'),default='base')
+    p.add_argument('--animation',action='store_true',help='Actual native MP shot/clip reload and per-counter stereo model oracles')
+    p.add_argument('--late-field',action='store_true',help='Native DISPLAYEND field mutation after completed weapon pixels')
+    p.add_argument('--last-shot',action='store_true',help='Native final pistol round and automatic weapon switch')
+    p.add_argument('--receipt-fault',choices=('invalid-aux','duplicate','nested-swap'),help='Reject a completed model with a native weapon receipt/ownership fault')
+    p.add_argument('--animation-fallback',choices=('missing-frames','nonstock'),help='Prove native animated ART when a model frame or stock timing is unavailable')
     a=p.parse_args()
+    if a.animation_fallback and not a.animation:p.error('--animation-fallback requires --animation')
+    if a.receipt_fault and (a.animation or a.fault):p.error('--receipt-fault is a separate cancellation case')
+    if a.late_field and not a.animation:p.error('--late-field requires --animation')
+    if a.last_shot and a.animation:p.error('--last-shot and --animation are separate native cases')
+    if a.animation and (a.case!='base' or a.fault or a.model_mode!='sps'):
+        p.error('--animation requires the base SPS case without a collection fault')
     a.work_dir.mkdir(parents=True,exist_ok=True)
     root=Path(tempfile.mkdtemp(prefix='hand-model-',dir=a.work_dir.resolve()))
     server=client=None;logs=[];phase='setup';result={'passed':False}
@@ -55,6 +85,23 @@ def main():
             if a.case=='custom':
                 with (lab/'hitscan_test.con').open('a') as f:
                     f.write('\nonevent EVENT_DISPLAYWEAPON\n setvar RETURN 0\nendevent\n')
+            if a.animation or a.last_shot:
+                fixture=lab/'hitscan_test.con'
+                script=fixture.read_text().replace('.ammo_amount vrscan_weapon 80','.ammo_amount vrscan_weapon '+('1' if a.last_shot else '13'))
+                script+='\n'+''.join(f'gamevar vrpistol_{key} 0 1\n' for key in ('player','counter','reloading','ammo','weapon'))
+                script+='onevent EVENT_PROCESSINPUT\n    getactor[THISACTOR].yvel vrpistol_player\n'
+                for field,key in (('kickback_pic','counter'),('reloading','reloading'),('ammo_amount PISTOL_WEAPON','ammo'),('curr_weapon','weapon')):
+                    script+=f'    getplayer[THISACTOR].{field} vrpistol_{key}\n'
+                script+=''.join(f'    addlog vrpistol_{key}\n' for key in ('player','counter','reloading','ammo','weapon'))+'endevent\n'
+                if a.animation_fallback=='nonstock':
+                    script+='onevent EVENT_PROCESSINPUT\n setvar WEAPON1_FIREDELAY 3\nendevent\n'
+                if a.late_field:
+                    script+='gamevar vrpistol_late 0 524289\ngamevar vrpistol_latecounter 0 524289\n'
+                    script+='onevent EVENT_DISPLAYEND\n addvar vrpistol_latecounter 1\n'
+                    script+=' ifvare vrpistol_latecounter 60\n'
+                    script+=' { setactor[THISACTOR].shade 1 setvar vrpistol_late 1 addlog vrpistol_late }\nendevent\n'
+                fixture.write_text(script)
+                with (lab/'autoexec.cfg').open('a') as f:f.write('r_maxfps 120\n')
             data=bytearray(room())
             if a.case=='fog':
                 # The constrained hand crosses into sector1 while the player
@@ -92,11 +139,14 @@ def main():
             EDUKE32_XR_MODEL_OUTPUT=str(cl/'model'),EDUKE32_XR_WORLD_OUTPUT=str(cl/'world'),
             EDUKE32_XR_HUD_OUTPUT=str(cl/'hud'),EDUKE32_XR_WEAPON_OUTPUT=str(cl/'weapon'),
             EDUKE32_XR_CROSSHAIR_OUTPUT=str(cl/'crosshair'))
+        if a.animation:ce['EDUKE32_XR_TEST_MODEL_ANIMATION']='1'
         if a.model_mode=='native':ce['EDUKE32_XR_TEST_MODELS_TWO_PASS']='1'
         if a.fault:ce['EDUKE32_XR_TEST_FAIL']='model-'+a.fault
         if a.fault=='mask-retry':
             ce.update(EDUKE32_XR_TEST_FAIL='mask-collect-right',EDUKE32_XR_TEST_MASK_WITH_MODEL='1')
         if a.case=='second-eye-failure':ce['EDUKE32_XR_TEST_FAIL']='model-eye-1'
+        if a.receipt_fault=='nested-swap':ce['EDUKE32_XR_TEST_WEAPON_NESTED']='2'
+        elif a.receipt_fault:ce['EDUKE32_XR_TEST_RECEIPT']=a.receipt_fault
         log=(sl/'server.log').open('w');logs.append(log)
         server=subprocess.Popen([str(a.binary.resolve()),'-usecwd','-nosetup','-noautoload',
             '-dedicated','-port',str(a.port),'-map','hand.map','-x','hitscan_test.con'],
@@ -132,8 +182,8 @@ def main():
             player=wait_for_join_barrier(X11(a.display),client,cl/'client.log',so)['server_player']
             so.wait(lambda t:len(players(t,player))>20)
             phase='actual model frames'
-            if a.case=='second-eye-failure' or a.fault=='replay-after':
-                expected_failure='model replay failed after submission' if a.fault else 'injected held-model failure before second eye'
+            if a.case=='second-eye-failure' or a.fault=='replay-after' or a.receipt_fault:
+                expected_failure='held-model/native weapon receipt mismatch' if a.receipt_fault else 'model replay failed after submission' if a.fault else 'injected held-model failure before second eye'
                 deadline=time.monotonic()+20
                 while time.monotonic()<deadline:
                     text=(cl/'client.log').read_text(errors='replace')
@@ -143,8 +193,9 @@ def main():
                 canceled=re.findall(r'OpenXR hand model frame canceled: serial=(\d+) submitted=(\d+)\.',text)
                 checks={'injected_model_failure_cancels_XR':expected_failure in text,
                         'partially_drawn_frame_never_submitted':bool(canceled) and int(canceled[-1][0])>int(canceled[-1][1]),
-                        'no_completed_model_frame_receipt':'OpenXR hand model:' not in text,
-                        'no_sixty_frame_model_submission':'OpenXR world oracle: 60 frames' not in text}
+                        'expected_emission_before_failure':('OpenXR hand model:' in text) if a.receipt_fault else ('OpenXR hand model:' not in text),
+                        'no_sixty_frame_model_submission':'OpenXR world oracle: 60 frames' not in text,
+                        'native_game_remains_running':client.poll() is None}
                 details={}
             else:
                 co.wait(lambda t:'OpenXR world oracle: 60 frames' in t and 'OpenXR HUD presentation: 60 frames' in t,timeout=25)
@@ -171,6 +222,7 @@ def main():
                         checks['shared_model_geometry_submitted_once']=bool(calls) and int(calls[-1][0])>0 and int(calls[-1][1])==0 and calls[-1][0]==calls[-1][2] and int(calls[-1][3])>0
                 details={}
                 if fallback:
+                    checks.pop('requested_native_vertex_path_observed')
                     checks['unsupported_case_retains_native_ART']='OpenXR hand model:' not in text and not (cl/'model-after-left.ppm').exists() and Image.open(cl/'weapon-coverage.pgm').getbbox() is not None
                 else:
                     rows=re.findall(r'OpenXR hand model: eye=(\d) model=(\d+) root=(-?\d+),(-?\d+),(-?\d+) direction=(-?\d+),(-?\d+),(-?\d+)\.',text)
@@ -262,8 +314,55 @@ def main():
                     native_direction/=np.linalg.norm(native_direction)
                     direction_error=float(np.abs(model_direction-native_direction).max())
                     checks['model_uses_actual_native_server_root_and_ray']=sampled[:3]==[shot[k] for k in ('x','y','z')] and direction_error<1e-4
-                    # Native firing temporarily returns to ART, then requalifies idle.
-                    co.pause(.7)
+                    if a.animation:
+                        phase='actual native clip-boundary reload'
+                        co.wait(lambda t:completed_reload(t,player),timeout=8)
+                        so.wait(lambda t:completed_reload(t,player),timeout=8)
+                        animated=co.text()
+                        receipts=[tuple(map(int,r)) for r in re.findall(r'OpenXR hand model receipt: serial=(\d+) counter=(\d+) reloading=(\d+) roles=(\d+) valid=(\d+)\.',animated)]
+                        samples=[tuple(map(int,r)) for r in re.findall(r'OpenXR hand model sample: serial=(\d+) counter=(\d+) reloading=(\d+) frame=(\d+)\.',animated)]
+                        frames_offset=struct.unpack_from('<i',model,92)[0]
+                        names=[model[frames_offset+i*56+40:frames_offset+i*56+56].split(b'\0')[0].decode()
+                               for i in range(struct.unpack_from('<i',model,76)[0])]
+                        checks['actual_native_server_and_client_positive_ammo_reload']=completed_reload(animated,player) and completed_reload(so.text(),player)
+                        checks['native_reload_model_roles_observed']=all(any(r[3]==role and r[4] for r in receipts) for role in (1,3,5))
+                        checks['native_firing_counter_model_observed']=any(0<c<5 for _,c,_,_ in samples)
+                        checks['captured_model_frames_match_native_counter_names']=all(names[f]==('rest' if c==0 else ('fire_' if c<5 else 'reload_')+f'{c:02d}') for _,c,_,f in samples)
+                        counter_checks={}
+                        for serial,counter,reloading,frame_index in samples:
+                            if counter==0:continue
+                            prefix=cl/f'model-counter-{counter:02d}'
+                            equal=all(Path(str(prefix)+f'-reference-{eye}'+suffix).read_bytes()==Path(str(prefix)+f'-after-{eye}'+suffix).read_bytes()
+                                      for eye in ('left','right') for suffix in ('.ppm','-depth.bin'))
+                            clean=all(Path(str(prefix)+f'-before-{eye}'+suffix).read_bytes()==Path(str(prefix)+f'-collected-{eye}'+suffix).read_bytes()
+                                      for eye in ('left','right') for suffix in ('.ppm','-depth.bin'))
+                            visible=all(Image.open(Path(str(prefix)+f'-after-{eye}.ppm')).tobytes()!=Image.open(Path(str(prefix)+f'-before-{eye}.ppm')).tobytes()
+                                        for eye in ('left','right'))
+                            art=Image.open(cl/f'weapon-counter-{counter:02d}-coverage.pgm').getbbox() is None
+                            receipt=any(r[:3]==(serial,counter,reloading) and r[4] for r in receipts)
+                            counter_checks[counter]={'native_color_depth_exact':equal,'zero_collection_writes':clean,
+                                'visible_both_eyes':visible,'ART_suppressed':art,'valid_native_receipt':receipt}
+                        if a.late_field:
+                            checks['native_displayend_field_write_once']=len(re.findall(r'addlog vrpistol_late \(player '+str(player)+r'\) = 1',animated))==1
+                        checks['animated_counter_stereo_oracles_pass']=bool(counter_checks) and all(all(c.values()) for c in counter_checks.values())
+                        if a.animation_fallback:
+                            checks.pop('native_reload_model_roles_observed')
+                            checks.pop('native_firing_counter_model_observed')
+                            checks.pop('animated_counter_stereo_oracles_pass')
+                            art_files=list(cl.glob('weapon-counter-*-coverage.pgm'))
+                            counters=[int(path.name.split('-')[2]) for path in art_files]
+                            checks['positive_native_counters_do_not_emit_ineligible_model']=not any(c>0 for _,c,_,_ in samples) and not receipts
+                            checks['actual_firing_and_reload_ART_captured']=any(0<c<5 for c in counters) and any(c>=6 for c in counters)
+                            checks['all_captured_fallback_ART_has_native_pixels']=bool(art_files) and all(Image.open(path).getbbox() is not None for path in art_files)
+                            details['fallback_native_ART_counters']=sorted(counters)
+                        details.update(native_pistol_receipts=receipts,animated_counter_checks=counter_checks,
+                            server_pistol_states=pistol_states(so.text(),player),client_pistol_states=pistol_states(animated,player))
+                    else:
+                        co.pause(.7)
+                    if a.last_shot:
+                        so.wait(lambda t:any(r['ammo']==0 and r['weapon']!=1 for r in pistol_states(t,player)),timeout=4)
+                        co.wait(lambda t:any(r['ammo']==0 and r['weapon']!=1 for r in pistol_states(t,player)),timeout=4)
+                        checks['native_zero_ammo_weapon_switch_on_both_peers']=True
                     checks['native_fire_does_not_cancel_XR']='receipt mismatch' not in co.text() and 'held-model emission failed' not in co.text()
                     details.update(changed_pixels=changed,depth_changed_pixels=depth_changed,bounds=bounds,native_shot=shot,native_ray_normalized_max_error=direction_error,muzzle_projection_NDC_max_error=projection_errors,axis_projection_NDC_max_error=axis_errors,model_pixels_covered_by_translucency=translucent_changed)
             if os.environ.get('EDUKE32_TEST_PRIVATE_WINDOW')=='1':
@@ -271,7 +370,7 @@ def main():
                 if not window:raise RuntimeError('owned XR drawable missing')
                 state=x11.window_visibility(window)
                 checks.update(private_drawable_unmapped=state['unmapped'],no_desktop_focus=not state['has_desktop_focus'])
-            result={'passed':all(checks.values()),'case':a.case,'model_mode':a.model_mode,'vertex_mode':a.vertex_mode,'fault':a.fault,'checks':checks,**details}
+            result={'passed':all(checks.values()),'case':a.case,'model_mode':a.model_mode,'vertex_mode':a.vertex_mode,'fault':a.fault,'receipt_fault':a.receipt_fault,'checks':checks,**details}
     except Exception as exc:
         result={'passed':False,'case':a.case,'phase':phase,'error':str(exc)}
     finally:

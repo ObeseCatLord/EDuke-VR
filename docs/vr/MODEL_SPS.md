@@ -1,5 +1,11 @@
 # Native opaque MD3 single-pass transport
 
+Current extension (2026-10-18): the qualified stock pistol also uses native
+firing/reload counters, with exact stereo model-oracle tests and matching
+NETVERSION5 peers. See [PISTOL_ANIMATION.md](PISTOL_ANIMATION.md); the idle-only
+proof below records the earlier bounded checkpoint. AA keeps its custom weapon
+presentation until its separate bindings are qualified.
+
 The first tracked idle-pistol model now uses the same bounded multiview packet
 transport as indexed ART. This is an incremental native renderer extension;
 full weapon/body integration and complete model/material SPS coverage remain

@@ -2035,6 +2035,21 @@ int32_t md3_preflightcontext(md3drawcontext_t const *ctx)
     return 1;
 }
 
+int32_t md3_getframeindex(int32_t modelid, char const *name)
+{
+    if (!models || (unsigned)modelid>=(unsigned)nextmodelid || !models[modelid] || models[modelid]->mdnum!=3 || !name || !name[0]) return -1;
+    auto const m=(md3model_t *)models[modelid];
+    if (!m->head.frames || m->numframes<=0) return -1;
+    // MD3 names are fixed16-byte fields, which need not carry a terminator.
+    // Match the native frame-name contract without reading into the next field.
+    unsigned length=0;
+    while (length<16 && name[length]) ++length;
+    if (length==16) return -1;
+    for (int i=0;i<m->numframes;++i)
+        if (!Bstrncmp(m->head.frames[i].nam,name,sizeof(m->head.frames[i].nam))) return i;
+    return -1;
+}
+
 int32_t md3_gettagposition(int32_t modelid, char const *name, vec3f_t *position)
 {
     if (!name || !name[0] || !position || (unsigned)modelid >= (unsigned)nextmodelid || !models)

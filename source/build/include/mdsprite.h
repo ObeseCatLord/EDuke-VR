@@ -240,6 +240,8 @@ int32_t polymost_mddraw(tspriteptr_t tspr);
 int32_t md3_preflightcontext(md3drawcontext_t const *ctx);
 int32_t polymost_md3drawcontext(md3drawcontext_t const *ctx);
 int32_t md3_gettagposition(int32_t modelid, char const *name, vec3f_t *position);
+// Pure loaded-MD3 frame lookup; -1 for invalid/missing names, no tile mutation.
+int32_t md3_getframeindex(int32_t modelid, char const *name);
 #ifdef USE_OPENXR
 // Intercepts one already-resolved native opaque MD3 surface, without pixels.
 void polymost_xrCollectModelSurface(md3surf_t const *surface, vec3f_t const *positions,

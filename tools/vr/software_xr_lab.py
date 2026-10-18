@@ -57,6 +57,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deps", required=True, help="absolute extracted vulkan-swrast dependency directory")
     parser.add_argument("--work-dir", required=True, help="absolute, owned lab output directory")
     parser.add_argument("--remote-port", type=int, default=49777)
+    parser.add_argument("--child-timeout", type=int, default=60,
+                        help="bounded child runtime in seconds, including asset precache (default: 60)")
     parser.add_argument("--_in-lab", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("child", nargs=argparse.REMAINDER, metavar="CHILD_COMMAND")
     args = parser.parse_args()
@@ -67,6 +69,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("a child command is required after --")
     if not 1 <= args.remote_port <= 65535:
         parser.error("--remote-port must be in 1..65535")
+    if not 1 <= args.child_timeout <= 600:
+        parser.error("--child-timeout must be in 1..600 seconds")
     return args
 
 
@@ -118,7 +122,8 @@ def reexec_sandbox(args: argparse.Namespace, script: Path) -> None:
         if name in os.environ:
             command_line.extend(("--setenv", name, os.environ[name]))
     command_line.extend((sys.executable, str(script), "--_in-lab", "--deps", str(deps),
-                         "--work-dir", str(work_dir), "--remote-port", str(args.remote_port), "--", str(command)))
+                         "--work-dir", str(work_dir), "--remote-port", str(args.remote_port),
+                         "--child-timeout", str(args.child_timeout), "--", str(command)))
     command_line.extend(args.child[1:])
     os.execvp("bwrap", command_line)
 
@@ -295,12 +300,12 @@ def run_lab(args: argparse.Namespace) -> int:
 
         stage = "child diagnostic"
         smoke = launch("child", child)
-        deadline = time.monotonic() + 60
+        deadline = time.monotonic() + args.child_timeout
         while smoke.process.poll() is None and time.monotonic() < deadline:
             audit_processes(processes)
             time.sleep(0.1)
         if smoke.process.poll() is None:
-            raise LabError("child timed out after 60 seconds; it was not restarted")
+            raise LabError(f"child timed out after {args.child_timeout} seconds; it was not restarted")
         child_code = smoke.process.returncode
         audit_processes(processes)
         # Harnesses write game logs in child directories. A fresh work directory

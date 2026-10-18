@@ -1,5 +1,28 @@
 # Verification record — updated 2026-10-16
 
+## Current checkpoint — 2026-10-18
+
+Stock native-counter tracked pistol animation now passes actual private
+software-XR/native multiplayer tests, including authoritative reload-flag
+synchronization (matching native NETVERSION5 peers). Exact color/depth model
+oracles pass in array and immediate modes; failure, custom/timing/missing-frame
+fallback and last-round paths are exercised. Read
+[PISTOL_ANIMATION.md](PISTOL_ANIMATION.md). Complete results and original failed
+attempts are sibling `evidence/pistol-animation-validation.json`.
+
+AA 5.66's actual installed scripts/assets now reach selected Hollywood world/UI
+and controller-operated Duke/START selection with inspected post-selection
+stereo gameplay images. Native cache recovery restores replacement-VBO state;
+CON startscreen reuses the existing XR UI lifetime. The observed AA scene uses
+native two-pass fallback, not accepted full multiview. AA combat/crosshair,
+weapon-model integration and AA multiplayer remain unqualified. Read
+[ALIEN_ARMAGEDDON.md](ALIEN_ARMAGEDDON.md). Private art delivers 69 AA handheld
+entries plus both hands; main verified 1,614 manifest files and 71 indexed MD3s.
+
+Historical revision numbers and narrower scope claims below describe their
+original checkpoints. The full VR port remains incomplete.
+
+
 These results distinguish working code from planned full-port behavior. Private raw logs remain in the local work directory; no session telemetry or proprietary game data is committed.
 
 | Check | Result | Practical limit |

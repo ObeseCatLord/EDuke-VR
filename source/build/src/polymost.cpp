@@ -1328,7 +1328,13 @@ void polymost_glreset()
     texcache_syncmemcache();
 
     if (!nogl)
+    {
         polymost_initdrawpoly();
+        // Array pointers retain the buffer object bound when they were set.
+        // Cache invalidation can resume drawing immediately after this reset,
+        // so point them at the replacement VBO and restore native draw state.
+        polymost_resetState();
+    }
 
     DVLOG_F(LOG_DEBUG, "polymost_glreset()");
 }

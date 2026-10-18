@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Controlled native pistol-ammo seed plus read-only reload observations.
+// hitscan_test owns the normal native weapon selection and firing route.
+include hitscan_test.con
+
+gamevar vrrld_seeded 0 1
+gamevar vrrld_tick 0 1
+gamevar vrrld_player 0 1
+gamevar vrrld_counter 0 1
+gamevar vrrld_reloading 0 1
+gamevar vrrld_ammo 0 1
+gamevar vrrld_weapon 0 1
+gamevar vrrld_bits 0 1
+
+onevent EVENT_PROCESSINPUT
+    getactor[THISACTOR].yvel vrrld_player
+    // Seed exactly one 13-round pistol clip after the included controlled
+    // hitscan selection has completed.  All subsequent reload state is stock.
+    ifvare vrscan_given 1 ifvare vrrld_seeded 0
+    {
+        setplayer[THISACTOR].ammo_amount PISTOL_WEAPON 13
+        setvar vrrld_seeded 1
+    }
+    addvar vrrld_tick 1
+    getplayer[THISACTOR].kickback_pic vrrld_counter
+    getplayer[THISACTOR].reloading vrrld_reloading
+    getplayer[THISACTOR].ammo_amount PISTOL_WEAPON vrrld_ammo
+    getplayer[THISACTOR].curr_weapon vrrld_weapon
+    getinput[THISACTOR].bits vrrld_bits
+    addlog vrrld_tick
+    addlog vrrld_player
+    addlog vrrld_counter
+    addlog vrrld_reloading
+    addlog vrrld_ammo
+    addlog vrrld_weapon
+    addlog vrrld_bits
+endevent

@@ -1,5 +1,11 @@
 # Native tracked MD3 increment
 
+Current extension (2026-10-18): the qualified stock pistol also uses native
+firing/reload counters, with exact stereo model-oracle tests and matching
+NETVERSION5 peers. See [PISTOL_ANIMATION.md](PISTOL_ANIMATION.md); the idle-only
+proof below records the earlier bounded checkpoint. AA keeps its custom weapon
+presentation until its separate bindings are qualified.
+
 This is an opt-in **idle pistol** vertical proof. It now also has qualified
 opaque model single-pass transport, described in MODEL_SPS.md; complete
 weapon/body integration remains open. Private art remains in sibling

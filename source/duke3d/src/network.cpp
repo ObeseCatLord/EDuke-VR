@@ -153,6 +153,7 @@ typedef struct serverplayerupdate_s
     uint16_t picnum;
     uint16_t gotweapon;
     uint8_t  kickback_pic;
+    uint8_t  reloading;
     uint8_t  hbomb_on, hbomb_hold_delay, rapid_fire_hold;
     uint8_t  frags[MAXPLAYERS];
     int16_t  inv_amount[GET_MAX];
@@ -2348,6 +2349,7 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
         g_player[player].ps->gotweapon = playerupdate.gotweapon;
 
         g_player[player].ps->kickback_pic = playerupdate.kickback_pic;
+        g_player[player].ps->reloading = playerupdate.reloading;
         g_player[player].ps->hbomb_on = playerupdate.hbomb_on;
         g_player[player].ps->hbomb_hold_delay = playerupdate.hbomb_hold_delay;
         g_player[player].ps->rapid_fire_hold = playerupdate.rapid_fire_hold;
@@ -5083,6 +5085,7 @@ void Net_SendServerUpdates(void)
 
         playerupdate.gotweapon    = g_player[i].ps->gotweapon;
         playerupdate.kickback_pic = g_player[i].ps->kickback_pic;
+        playerupdate.reloading = g_player[i].ps->reloading;
         playerupdate.hbomb_on = g_player[i].ps->hbomb_on;
         playerupdate.hbomb_hold_delay = g_player[i].ps->hbomb_hold_delay;
         playerupdate.rapid_fire_hold = g_player[i].ps->rapid_fire_hold;

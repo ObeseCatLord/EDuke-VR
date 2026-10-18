@@ -1,5 +1,11 @@
 # Experimental native hand-shot authority
 
+Current compatibility note (2026-10-18): native NETVERSION is now **5**. The
+existing authoritative player snapshot additionally carries the native reload
+flag with its weapon counter; see [PISTOL_ANIMATION.md](PISTOL_ANIMATION.md).
+Capability mask 127 and tracked-pose formats are unchanged. Revision numbers
+below describe their historical validation checkpoints.
+
 Updated 2026-10-17. Opt-in `EDUKE32_XR_HAND_SHOTS=1`, with right/left tracked aim.
 Ordinary hardcoded kick, pistol, shotgun, chaingun, grow, RPG/Devastator, freezer, shrinker, pipebomb and tripmine use this origin and
 full vector when the selected WorksLike family, configured Shoots tile and actual

@@ -11,7 +11,12 @@ void G_XRClearInput();
 void G_XRResetAim(int playerNum);
 bool G_XRBeginWeapon();
 void G_XREndWeapon(bool captured);
-bool P_XRIdlePistolAppearance(int32_t &palette, int32_t &shade);
+struct XRPistolPresentation
+{
+    int32_t palette=0, shade=0, counter=0, reloading=0;
+};
+// Read-only native presentation sample; never advances weapon/animation state.
+bool P_XRPistolPresentation(XRPistolPresentation &sample);
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID);
 void G_XRUpdateShotInput();
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
@@ -22,6 +27,7 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
 void G_XRArmWorldDraw();
 bool G_XRConsumeWorldDraw();
 void G_XRBeginMenuPresentation();
+void G_XRBeginScreenPresentation();
 void G_XRArmMenuPresentation();
 void G_XRCancelMenuPresentation();
 

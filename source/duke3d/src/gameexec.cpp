@@ -34,6 +34,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "savegame.h"
 #include "scriplib.h"
 #include "vfs.h"
+#ifdef USE_OPENXR
+#include "vr.h"
+#endif
 
 #if KRANDDEBUG
 # define GAMEEXEC_INLINE
@@ -1331,12 +1334,20 @@ void Screen_Play(void)
         if (!engineFPSLimit(true))
             continue;
 
+#ifdef USE_OPENXR
+        G_XRBeginFrame();
+        G_XRBeginScreenPresentation();
+#endif
         videoClearScreen(0);
 
         if (VM_OnEventWithReturn(EVENT_SCREEN, -1, myconnectindex, I_CheckAllInput()))
             running = false;
 
         I_ClearAllInput();
+#ifdef USE_OPENXR
+        G_XREndFrame();
+        G_XRArmMenuPresentation();
+#endif
         videoNextPage();
     } while (running);
 
