@@ -11,17 +11,16 @@ void G_XRClearInput();
 void G_XRResetAim(int playerNum);
 bool G_XRBeginWeapon();
 void G_XREndWeapon(bool captured);
-struct XRPistolPresentation
+enum class XRWeaponFamily { Unsupported, StockPistol, AAPistol, AARpg };
+struct XRWeaponPresentation
 {
     int32_t palette=0, shade=0, counter=0, reloading=0;
-    bool alienArmageddon=false;
+    XRWeaponFamily family=XRWeaponFamily::Unsupported;
 };
-enum class XRPistolFamily { Unsupported, Stock, AlienArmageddon };
 // Stable asset identity, independent of HUD appearance and animation counters.
-XRPistolFamily P_XRPistolFamily();
+XRWeaponFamily P_XRWeaponFamily();
 // Read-only native presentation sample; never advances weapon/animation state.
-bool P_XRPistolPresentation(XRPistolPresentation &sample);
-bool P_XRAAPistolPresentation(XRPistolPresentation &sample);
+bool P_XRWeaponPresentation(XRWeaponPresentation &sample);
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID);
 void G_XRUpdateShotInput();
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);

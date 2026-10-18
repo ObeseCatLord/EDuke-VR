@@ -2538,19 +2538,19 @@ static int P_DisplayAccess(int accessShade)
 
 #ifdef USE_OPENXR
 #ifndef EDUKE32_STANDALONE
-static bool P_XRPistolBaseReady()
+static bool P_XRWeaponBaseReady(int weapon, unsigned maxCounter, uint8_t feature)
 {
     auto const p=g_player[myconnectindex].ps;
-    if (FURY || NAM_WW2GI || screenpeek!=myconnectindex || ud.recstat
+    if (!p || FURY || NAM_WW2GI || screenpeek!=myconnectindex || ud.recstat
         || ud.show_help || ud.overhead_on || ud.camerasprite>=0 || ud.drawweapon!=1
         || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
         || p->dead_flag || (unsigned)p->i>=MAXSPRITES || sprite[p->i].extra<=0
         || sprite[p->i].xrepeat<40 || sprite[p->i].pal==1
-        || p->curr_weapon!=PISTOL_WEAPON || p->last_weapon>=0 || p->weapon_pos || p->holster_weapon
-        || (unsigned)p->kickback_pic>26 || p->fist_incs || p->knuckle_incs || p->tipincs || p->access_incs
+        || p->curr_weapon!=weapon || p->last_weapon>=0 || p->weapon_pos || p->holster_weapon
+        || (unsigned)p->kickback_pic>maxCounter || p->fist_incs || p->knuckle_incs || p->tipincs || p->access_incs
         || p->knee_incs || p->quick_kick || p->last_quick_kick
-        || PWEAPON(myconnectindex,PISTOL_WEAPON,WorksLike)!=PISTOL_WEAPON
-        || G_VRHandShotFeature(myconnectindex)!=VRShotFeatureHitscan) return false;
+        || PWEAPON(myconnectindex,weapon,WorksLike)!=weapon
+        || G_VRHandShotFeature(myconnectindex)!=feature) return false;
 #ifdef SPLITSCREEN_MOD_HACKS
     if (g_fakeMultiMode) return false;
 #endif
@@ -2558,36 +2558,53 @@ static bool P_XRPistolBaseReady()
 }
 #endif
 
-XRPistolFamily P_XRPistolFamily()
+XRWeaponFamily P_XRWeaponFamily()
 {
 #ifndef EDUKE32_STANDALONE
     auto const p=g_player[myconnectindex].ps;
-    if (FURY || NAM_WW2GI || !p || unsigned(p->i)>=MAXSPRITES
-        || p->curr_weapon!=PISTOL_WEAPON
-        || PWEAPON(myconnectindex,PISTOL_WEAPON,WorksLike)!=PISTOL_WEAPON
-        || G_VRHandShotFeature(myconnectindex)!=VRShotFeatureHitscan) return XRPistolFamily::Unsupported;
-    if (DUKE && !VM_HaveEvent(EVENT_DISPLAYROOMSEND) && !VM_HaveEvent(EVENT_DISPLAYREST)
-        && !VM_HaveEvent(EVENT_DISPLAYWEAPON) && !VM_HaveEvent(EVENT_DRAWWEAPON)) return XRPistolFamily::Stock;
+    if (FURY || NAM_WW2GI || !p || unsigned(p->i)>=MAXSPRITES) return XRWeaponFamily::Unsupported;
+    int const weapon=p->curr_weapon;
+    if (weapon!=PISTOL_WEAPON && weapon!=RPG_WEAPON) return XRWeaponFamily::Unsupported;
+    if (PWEAPON(myconnectindex,weapon,WorksLike)!=weapon
+        || G_VRHandShotFeature(myconnectindex)!=(weapon==PISTOL_WEAPON ? VRShotFeatureHitscan : VRShotFeatureRPG))
+        return XRWeaponFamily::Unsupported;
+    if (weapon==PISTOL_WEAPON && DUKE && !VM_HaveEvent(EVENT_DISPLAYROOMSEND) && !VM_HaveEvent(EVENT_DISPLAYREST)
+        && !VM_HaveEvent(EVENT_DISPLAYWEAPON) && !VM_HaveEvent(EVENT_DRAWWEAPON)) return XRWeaponFamily::StockPistol;
     auto const enabled=Bgetenv("EDUKE32_XR_AA_MODELS");
     if (!enabled || Bstrcmp(enabled,"1") || (!DUKE && g_gameType!=GAMEFLAG_NOPOLYMER)
         || !VM_HaveEvent(EVENT_DISPLAYWEAPON) || !VM_HaveEvent(EVENT_DRAWWEAPON)
         || Gv_GetVarByLabel("pchar",INT32_MIN,p->i,myconnectindex)!=0
-        || Gv_GetVarByLabel("LASERMODE",INT32_MIN,p->i,myconnectindex)!=0) return XRPistolFamily::Unsupported;
+        || Gv_GetVarByLabel(weapon==PISTOL_WEAPON ? "LASERMODE" : "nukeselect",INT32_MIN,p->i,myconnectindex)!=0)
+        return XRWeaponFamily::Unsupported;
     for (int i=0;i<g_gameArrayCount;++i)
         if (aGameArrays[i].szLabel && !Bstrcmp(aGameArrays[i].szLabel,"dukeupgrades"))
         {
-            if (aGameArrays[i].size>PISTOL_WEAPON && aGameArrays[i].pValues
-                && Gv_GetArrayValue(i,PISTOL_WEAPON)==0) return XRPistolFamily::AlienArmageddon;
+            if (aGameArrays[i].size>weapon && aGameArrays[i].pValues && Gv_GetArrayValue(i,weapon)==0)
+                return weapon==PISTOL_WEAPON ? XRWeaponFamily::AAPistol : XRWeaponFamily::AARpg;
             break;
         }
 #endif
-    return XRPistolFamily::Unsupported;
+    return XRWeaponFamily::Unsupported;
 }
 
-bool P_XRPistolPresentation(XRPistolPresentation &sample)
+#ifndef EDUKE32_STANDALONE
+static bool P_XRAAWeaponReady()
+{
+    auto const p=g_player[myconnectindex].ps;
+    auto const value=[&](char const *label) { return Gv_GetVarByLabel(label,INT32_MIN,p->i,myconnectindex); };
+    static char const *const zero[] = {"brutalcount","PLAYERONTHEBIKE",
+        "slimpush","juice_pos","idleanim","slidekick","sidekick","jumpkick","qk_proxy","doubletop"};
+    for (auto label:zero) if (value(label)!=0) return false;
+    static char const *const none[] = {"movecam","thiscam","onturret","zombieonplayer"};
+    for (auto label:none) if (value(label)!=-1) return false;
+    return value("startmode")==1 && value("newhud")>=-1;
+}
+#endif
+
+static bool P_XRPistolPresentation(XRWeaponPresentation &sample)
 {
 #ifndef EDUKE32_STANDALONE
-    if (!P_XRPistolBaseReady() || P_XRPistolFamily()!=XRPistolFamily::Stock) return false;
+    if (!P_XRWeaponBaseReady(PISTOL_WEAPON,26,VRShotFeatureHitscan)) return false;
     auto const p=g_player[myconnectindex].ps;
     if (p->kickback_pic
         && (PWEAPON(myconnectindex,PISTOL_WEAPON,Clip)!=12
@@ -2597,20 +2614,20 @@ bool P_XRPistolPresentation(XRPistolPresentation &sample)
             || PWEAPON(myconnectindex,PISTOL_WEAPON,HoldDelay)!=0
             || PWEAPON(myconnectindex,PISTOL_WEAPON,Flags)!=WEAPON_RELOAD_TIMING
             || (p->kickback_pic>=5 && p->reloading!=1))) return false;
-    sample={P_GetHudPal(p),min<int32_t>(sprite[p->i].shade,24),p->kickback_pic,p->reloading};
+    sample={P_GetHudPal(p),min<int32_t>(sprite[p->i].shade,24),p->kickback_pic,p->reloading,XRWeaponFamily::StockPistol};
     return sample.palette==0; // Qualified opaque diffuse family; tinted cases keep ART.
 #else
     return false;
 #endif
 }
 
-bool P_XRAAPistolPresentation(XRPistolPresentation &sample)
+static bool P_XRAAPistolPresentation(XRWeaponPresentation &sample)
 {
 #ifndef EDUKE32_STANDALONE
     // AA's own grpinfo sets only GAMEFLAG_NOPOLYMER, without GAMEFLAG_DUKE. The stock
     // qualifier still requires DUKE; this explicit adapter also accepts AA's
     // custom-game identity, with the exact script/presentation checks below.
-    if (!P_XRPistolBaseReady() || P_XRPistolFamily()!=XRPistolFamily::AlienArmageddon) return false;
+    if (!P_XRWeaponBaseReady(PISTOL_WEAPON,26,VRShotFeatureHitscan) || !P_XRAAWeaponReady()) return false;
     auto const p=g_player[myconnectindex].ps;
     // Standard single Duke pistol, idle/reload only. Fire includes baked flashes
     // and a changing native shade history; preserve that entire native sequence.
@@ -2625,23 +2642,58 @@ bool P_XRAAPistolPresentation(XRPistolPresentation &sample)
         || PWEAPON(myconnectindex,PISTOL_WEAPON,FireDelay)!=2
         || PWEAPON(myconnectindex,PISTOL_WEAPON,HoldDelay)!=0
         || PWEAPON(myconnectindex,PISTOL_WEAPON,Flags)!=WEAPON_RELOAD_TIMING)) return false;
-    auto const value=[&](char const *label) { return Gv_GetVarByLabel(label,INT32_MIN,p->i,myconnectindex); };
-    static char const *const zero[] = {"brutalcount","PLAYERONTHEBIKE",
-        "slimpush","juice_pos","idleanim","slidekick","sidekick","jumpkick","qk_proxy","doubletop"};
-    for (auto label:zero) if (value(label)!=0) return false;
-    static char const *const none[] = {"movecam","thiscam","onturret","zombieonplayer"};
-    for (auto label:none) if (value(label)!=-1) return false;
-    if (value("startmode")!=1 || value("newhud")<-1) return false;
     int const baseShade=min<int32_t>(sprite[p->i].shade,24);
     // AA advances shade history inside G_DrawWeaponTile and adds two for
     // FIRSTGUN. Until the history converges, let that native state draw ART.
-    if (value("hud_shadef")!=baseShade) return false;
-    sample={0,baseShade+(counter<6 ? 2 : 0),counter,p->reloading,true};
+    if (Gv_GetVarByLabel("hud_shadef",INT32_MIN,p->i,myconnectindex)!=baseShade) return false;
+    sample={0,baseShade+(counter<6 ? 2 : 0),counter,p->reloading,XRWeaponFamily::AAPistol};
     return true;
 #else
     return false;
 #endif
 }
+
+static bool P_XRAARpgPresentation(XRWeaponPresentation &sample)
+{
+#ifndef EDUKE32_STANDALONE
+    if (!P_XRWeaponBaseReady(RPG_WEAPON,20,VRShotFeatureRPG) || !P_XRAAWeaponReady()
+        || g_rotatespriteNoWidescreen) return false;
+    auto const p=g_player[myconnectindex].ps;
+    int const counter=p->kickback_pic;
+    // The complete native composite flame/body remains ART at the shot commit.
+    // Stable mount identity above deliberately does not depend on this counter.
+    if ((counter>=4 && counter<=7) || p->reloading
+        || PWEAPON(myconnectindex,RPG_WEAPON,Clip)!=0
+        || PWEAPON(myconnectindex,RPG_WEAPON,Reload)!=0
+        || PWEAPON(myconnectindex,RPG_WEAPON,FireDelay)!=4
+        || PWEAPON(myconnectindex,RPG_WEAPON,TotalTime)!=20
+        || PWEAPON(myconnectindex,RPG_WEAPON,HoldDelay)!=0
+        || PWEAPON(myconnectindex,RPG_WEAPON,Flags)!=0
+        || PWEAPON(myconnectindex,RPG_WEAPON,ShotsPerBurst)!=0) return false;
+    // AA GETSECTOR[THISACTOR] resolves the actor's sector, not the HUD palette.
+    int const sect=sprite[p->i].sectnum;
+    if (unsigned(sect)>=unsigned(numsectors)) return false;
+    int palette=sector[sect].floorpal;
+    if (palette>=10 && palette<=25) palette=0;
+    if (palette) return false;
+    sample={palette,counter>=6 ? -100 : min<int32_t>(sprite[p->i].shade,30),counter,0,XRWeaponFamily::AARpg};
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool P_XRWeaponPresentation(XRWeaponPresentation &sample)
+{
+    switch (P_XRWeaponFamily())
+    {
+        case XRWeaponFamily::StockPistol: return P_XRPistolPresentation(sample);
+        case XRWeaponFamily::AAPistol: return P_XRAAPistolPresentation(sample);
+        case XRWeaponFamily::AARpg: return P_XRAARpgPresentation(sample);
+        default: return false;
+    }
+}
+
 #endif
 
 void P_DisplayWeapon(void)

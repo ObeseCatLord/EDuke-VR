@@ -74,10 +74,23 @@ static uint64_t worldGeneration;
 static eduke_xr::Runtime *pendingRuntime, *inputRuntime;
 static eduke_xr::Runtime::Frame pendingFrame;
 static uint64_t pendingGeneration, inputGeneration;
-bool pistolMountRequested()
+static bool aaWeaponFamily(XRWeaponFamily family)
 {
-    auto value=std::getenv("EDUKE32_XR_PISTOL_MOUNT");
-    return value && !Bstrcmp(value,"1");
+    return family==XRWeaponFamily::AAPistol || family==XRWeaponFamily::AARpg;
+}
+static int weaponModelTile(XRWeaponFamily family)
+{
+    return family==XRWeaponFamily::AARpg ? RPGSPRITE
+        : family==XRWeaponFamily::StockPistol || family==XRWeaponFamily::AAPistol ? FIRSTGUNSPRITE : -1;
+}
+static XRWeaponFamily mountedWeaponFamily()
+{
+    auto const family=P_XRWeaponFamily();
+    auto value=std::getenv("EDUKE32_XR_WEAPON_MOUNT");
+    if (value && !Bstrcmp(value,"1")) return family;
+    // Preserve the legacy opt-in: it must not move an RPG's gameplay muzzle.
+    value=std::getenv("EDUKE32_XR_PISTOL_MOUNT");
+    return value && !Bstrcmp(value,"1") && family!=XRWeaponFamily::AARpg ? family : XRWeaponFamily::Unsupported;
 }
 static bool worldDrawArmed;
 static eduke_xr::Runtime *presentationRuntime;
@@ -90,7 +103,7 @@ struct WorldReceipt
     bool models=true, handModels=false;
 };
 static WorldReceipt worldReceipt;
-// Explicit diagnostics only: capture each naturally observed native pistol
+// Explicit diagnostics only: capture each naturally observed selected native weapon
 // counter once, using the same-frame native model oracle. No animation clock.
 static std::string modelAnimationCapture, weaponAnimationCapture;
 static std::array<bool,16> gripCaptures{};
@@ -101,7 +114,7 @@ static struct
     eduke_xr::Runtime *runtime=nullptr;
     uint64_t generation=0, serial=0;
     int player=-1;
-    XRPistolPresentation presentation{};
+    XRWeaponPresentation presentation{};
     uint8_t seen=0; // native body=1, optional magazine=2, optional hand=4
     bool mismatch=false;
     bool weaponSegment=false;
@@ -129,11 +142,11 @@ static bool overlayEnabled()
 static eduke_xr::Runtime *menuRuntime;
 static uint64_t menuGeneration, menuOwner;
 // Geometry from the same acquired world frame; no separate presentation owner.
-struct PistolVisual
+struct WeaponVisual
 {
     bool selected=false, valid=false, clamped=false;
     int player=-1, hand=-1, model=-1;
-    XRPistolFamily family=XRPistolFamily::Unsupported;
+    XRWeaponFamily family=XRWeaponFamily::Unsupported;
     vec3_t root{}, correction{};
     int16_t sector=-1;
     VRShotInput ray{}; // Render-only direction/bounds; never installed as input.
@@ -144,7 +157,7 @@ static struct
 {
     float matrix[2][16]; vec3_t eye[2]; bool valid=false;
     Camera body{};
-    PistolVisual pistol{};
+    WeaponVisual weapon{};
     std::string diagnosticCrosshairPrefix;
 } crosshairViews;
 static eduke_xr::ActionInput rawInput;
@@ -399,7 +412,7 @@ struct WorldModelSample
 
 struct HandModelSample : WorldModelSample
 {
-    XRPistolPresentation presentation{};
+    XRWeaponPresentation presentation{};
     vec3f_t grip{};
     VRShotInput shot{};
 };
@@ -412,11 +425,11 @@ struct GripModelSample : WorldModelSample
 
 // Stable palette-zero metadata is shared by native input and local visuals.
 // Texture availability, HUD counters and material state never choose a muzzle.
-bool pistolMuzzle(int hand, int &model, vec3f_t &muzzle, vec3f_t &palm, XrVector3f &position)
+bool weaponMuzzle(XRWeaponFamily family, int hand, int &model, vec3f_t &muzzle, vec3f_t &palm, XrVector3f &position)
 {
     if (unsigned(hand)>=2) return false;
     auto const &input=rawInput.hands[hand];
-    model=md_tilehasmodel(FIRSTGUNSPRITE,0);
+    model=md_tilehasmodel(weaponModelTile(family),0);
     if (!input.gripValid || !validPose(input.gripPose) || !input.aimValid || !validPose(input.aimPose)
         || !md3_gettagposition(model,"tag_muzzle",&muzzle)
         || !md3_gettagposition(model,hand ? "tag_palm_right" : "tag_palm_left",&palm)) return false;
@@ -429,20 +442,19 @@ bool pistolMuzzle(int hand, int &model, vec3f_t &muzzle, vec3f_t &palm, XrVector
 // One current-frame visual, owned by the existing world/HUD presentation.
 // This never polls input or writes the native shot stream. Simulation remains
 // 30 Hz; local hands and the aiming preview follow acquired XR frame poses.
-void preparePistolVisual(Camera const &body, eduke_xr::Runtime *runtime)
+void prepareWeaponVisual(Camera const &body, eduke_xr::Runtime *runtime)
 {
-    auto &visual=crosshairViews.pistol;
+    auto &visual=crosshairViews.weapon;
     visual={}; crosshairViews.body=body;
-    visual.family=pistolMountRequested() && handShotsRequested() && aimHand()>=0
-        ? P_XRPistolFamily() : XRPistolFamily::Unsupported;
-    visual.selected=visual.family!=XRPistolFamily::Unsupported;
+    visual.family=handShotsRequested() && aimHand()>=0 ? mountedWeaponFamily() : XRWeaponFamily::Unsupported;
+    visual.selected=visual.family!=XRWeaponFamily::Unsupported;
     if (!visual.selected) return;
     visual.player=myconnectindex; visual.hand=aimHand();
     if (!overlayEnabled() || !handShotsRequested() || !localAimCamera() || !aimPoseUsable() || !recentered
         || inputRuntime!=runtime || inputGeneration!=runtime->generation() || shotReferenceInvalidated || !shotLookAllowed
         || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)) return;
     vec3f_t muzzle{}, palm{}; XrVector3f position;
-    if (!pistolMuzzle(visual.hand,visual.model,muzzle,palm,position)) return;
+    if (!weaponMuzzle(visual.family,visual.hand,visual.model,muzzle,palm,position)) return;
     visual.pose=rawInput.hands[visual.hand].aimPose;
     visual.pose.position=position;
     auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
@@ -489,11 +501,11 @@ void preparePistolVisual(Camera const &body, eduke_xr::Runtime *runtime)
     visual.valid=true;
 }
 
-bool pistolVisualOwned()
+bool weaponVisualOwned()
 {
-    auto const &visual=crosshairViews.pistol;
+    auto const &visual=crosshairViews.weapon;
     return crosshairViews.valid && visual.valid && visual.player==myconnectindex && visual.hand==aimHand()
-        && visual.family==P_XRPistolFamily() && visual.model==md_tilehasmodel(FIRSTGUNSPRITE,0)
+        && visual.family==P_XRWeaponFamily() && visual.model==md_tilehasmodel(weaponModelTile(visual.family),0)
         && inputRuntime==menuRuntime && inputGeneration==menuGeneration && inputValid()
         && aimPoseUsable() && rawInput.hands[visual.hand].gripValid
         && G_VRShotReady(myconnectindex) && Net_VRShotAvailable();
@@ -562,10 +574,10 @@ bool prepareGripModel(GripModelSample &sample, unsigned hand, Camera const &body
         if (!std::isfinite(value) || value<INT32_MIN || value>INT32_MAX) return false;
         *root[axis]=int32_t(value);
     }
-    auto const &visual=crosshairViews.pistol;
+    auto const &visual=crosshairViews.weapon;
     if (visual.selected && visual.hand==int(hand))
     {
-        if (!visual.valid || visual.family!=P_XRPistolFamily()) return false;
+        if (!visual.valid || visual.family!=P_XRWeaponFamily()) return false;
         // One collision translation for the gun and its holding hand. Validate
         // the translated palm below; independent clamping would break contact.
         int32_t const correction[]={visual.correction.x,visual.correction.y,visual.correction.z};
@@ -644,31 +656,33 @@ bool prepareHandModel(HandModelSample &sample)
     if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
         || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
         || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)
-        || !(P_XRPistolPresentation(sample.presentation) || P_XRAAPistolPresentation(sample.presentation))) return false;
+        || !P_XRWeaponPresentation(sample.presentation)) return false;
 
     sample.context.palette=sample.presentation.palette;
     sample.context.shade=sample.presentation.shade;
 
     bool clamped;
     sample.shot=G_VRGetShotInput(myconnectindex);
-    auto const &visual=crosshairViews.pistol;
+    auto const &visual=crosshairViews.weapon;
     if (visual.selected)
     {
-        if (!visual.valid || visual.hand!=aimHand() || visual.family!=P_XRPistolFamily()) return false;
+        if (!visual.valid || visual.hand!=aimHand() || visual.family!=sample.presentation.family) return false;
         sample.shot=visual.ray; sample.root=visual.root; sample.sector=visual.sector;
     }
     else if (!G_VRResolveShot(myconnectindex,sample.root,sample.sector,clamped)) return false;
     // Reuse the current native pickup DEF routing, loader and skin cache.
     // This opt-in contract uses the supplied 64-model-units/metre MD3 assets.
-    int const tile=Ptile2tile(FIRSTGUNSPRITE,sample.context.palette);
-    sample.context.modelid=md_tilehasmodel(FIRSTGUNSPRITE,sample.context.palette);
+    int const modelTile=weaponModelTile(sample.presentation.family);
+    int const tile=Ptile2tile(modelTile,sample.context.palette);
+    sample.context.modelid=md_tilehasmodel(modelTile,sample.context.palette);
     sample.context.skinnum=tile2model[tile].skinnum;
     char name[16];
     int const counter=sample.presentation.counter;
-    if (counter) Bsprintf(name,counter<(sample.presentation.alienArmageddon ? 6 : 5) ? "fire_%02d" : "reload_%02d",counter);
+    if (counter) Bsprintf(name,sample.presentation.family==XRWeaponFamily::AARpg
+        || counter<(sample.presentation.family==XRWeaponFamily::AAPistol ? 6 : 5) ? "fire_%02d" : "reload_%02d",counter);
     else Bstrcpy(name,"rest");
     int frame=md3_getframeindex(sample.context.modelid,name);
-    if (frame<0 && counter==0 && !sample.presentation.alienArmageddon) frame=0; // Legacy stock idle only.
+    if (frame<0 && counter==0 && sample.presentation.family==XRWeaponFamily::StockPistol) frame=0; // Legacy stock idle only.
     if (frame<0) return false; // Positive counters never silently substitute rest.
     sample.context.cframe=sample.context.nframe=frame;
     if (!md3_gettagposition(sample.context.modelid,"tag_muzzle",&sample.pivot)
@@ -730,7 +744,7 @@ void worldModelMatrix(WorldModelSample &sample, Eye const &eye)
 }
 } // namespace
 
-static bool pistolReceiptOwned()
+static bool weaponReceiptOwned()
 {
     return handModelReceipt.runtime && handModelReceipt.runtime==menuRuntime && menuRuntime
         && handModelReceipt.generation==menuGeneration && menuRuntime->generation()==menuGeneration
@@ -738,18 +752,18 @@ static bool pistolReceiptOwned()
         && menuRuntime->menuOverlayTargetBound();
 }
 
-static bool pistolReceiptMatches()
+static bool weaponReceiptMatches()
 {
-    XRPistolPresentation fresh;
+    XRWeaponPresentation fresh;
     auto const &saved=handModelReceipt.presentation;
-    return pistolReceiptOwned() && P_XRPistolPresentation(fresh)
+    return weaponReceiptOwned() && P_XRWeaponPresentation(fresh) && fresh.family==saved.family
         && fresh.palette==saved.palette && fresh.shade==saved.shade
         && fresh.counter==saved.counter && fresh.reloading==saved.reloading;
 }
 
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
 {
-    if (handModelReceipt.presentation.alienArmageddon) return false;
+    if (handModelReceipt.presentation.family!=XRWeaponFamily::StockPistol) return false;
     int const role=uniqueID==W_PISTOL ? 1 : uniqueID==W_PISTOL_CLIP ? 2 : uniqueID==W_PISTOL_HAND ? 4 : 0;
     if (!handModelReceipt.runtime || !role) return false;
     // Classify claimed roles first: a wrong auxiliary tile must latch failure,
@@ -757,7 +771,7 @@ bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
     bool const validTile=role==1 ? (tile==FIRSTGUN || tile==FIRSTGUN+1 || tile==FIRSTGUN+2
                                          || tile==FIRSTGUN+4 || tile==FIRSTGUN+5 || tile==FIRSTGUNRELOADWIDE)
                                  : tile==FIRSTGUN+(role==2 ? 6 : 8);
-    if (!validTile || (handModelReceipt.seen&role) || !pistolReceiptMatches())
+    if (!validTile || (handModelReceipt.seen&role) || !weaponReceiptMatches())
     { handModelReceipt.mismatch=true; return false; }
     handModelReceipt.seen|=role;
     return true;
@@ -767,23 +781,27 @@ static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int3
                                 int32_t flags,int32_t angle,int32_t alpha,int32_t blend)
 {
     auto &receipt=handModelReceipt;
-    if (!receipt.runtime || !receipt.presentation.alienArmageddon) return false;
-    // Classify claimed body/magazine roles before validating their counter,
-    // attributes or multiplicity. Native hand artwork remains unclaimed.
-    int const role=tile==FIRSTGUN+6 ? 2 :
-        (tile==FIRSTGUN || tile==FIRSTGUN+1 || tile==FIRSTGUN+2 || tile==FIRSTGUN+4
-         || tile==FIRSTGUN+5 || tile==FIRSTGUNRELOADWIDE) ? 1 : 0;
-    if (!role) return false;
-    XRPistolPresentation fresh;
     auto const &saved=receipt.presentation;
+    if (!receipt.runtime || !aaWeaponFamily(saved.family)) return false;
+    bool const rpg=saved.family==XRWeaponFamily::AARpg;
+    // Classify claimed roles before validation, including a wrong tile carrying
+    // the RPG's unique ID after its valid body already consumed the receipt.
+    int const role=rpg ? ((tile>=10228 && tile<=10230) || uniqueID==24 ? 1 : 0)
+        : tile==FIRSTGUN+6 ? 2 :
+          (tile==FIRSTGUN || tile==FIRSTGUN+1 || tile==FIRSTGUN+2 || tile==FIRSTGUN+4
+           || tile==FIRSTGUN+5 || tile==FIRSTGUNRELOADWIDE) ? 1 : 0;
+    if (!role) return false;
+    XRWeaponPresentation fresh;
     int const counter=saved.counter;
-    int const bodyTile=FIRSTGUN+(counter<6 ? 0 : counter<10 ? 4 : 5);
-    bool const validRole=role==1 ? tile==bodyTile && uniqueID==PISTOL_WEAPON
+    int const bodyTile=rpg ? 10228 : FIRSTGUN+(counter<6 ? 0 : counter<10 ? 4 : 5);
+    bool const validRole=role==1 ? tile==bodyTile && uniqueID==(rpg ? 24 : PISTOL_WEAPON)
         : counter>=10 && counter<20 && uniqueID==0;
-    bool const valid=receipt.weaponSegment && pistolReceiptOwned() && !(receipt.seen&role)
+    int const expectedFlags=rpg ? (2|4096) : (2|2048|4096|(counter>=6 ? 512 : 0));
+    bool const valid=receipt.weaponSegment && weaponReceiptOwned() && !(receipt.seen&role)
         && validRole && palette==saved.palette && shade==saved.shade
-        && flags==(2|2048|4096|(counter>=6 ? 512 : 0)) && !angle && !alpha && !blend
-        && P_XRAAPistolPresentation(fresh) && fresh.palette==saved.palette && fresh.shade==saved.shade
+        && flags==expectedFlags && !angle && !alpha && !blend
+        && P_XRWeaponPresentation(fresh) && fresh.family==saved.family
+        && fresh.palette==saved.palette && fresh.shade==saved.shade
         && fresh.counter==saved.counter && fresh.reloading==saved.reloading;
     if (!valid)
     {
@@ -804,16 +822,16 @@ static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int3
     return true;
 }
 
-static bool pistolReceiptComplete()
+static bool weaponReceiptComplete()
 {
     auto const &saved=handModelReceipt.presentation;
-    unsigned const required=saved.alienArmageddon && saved.counter>=10 && saved.counter<20 ? 3 : 1;
+    unsigned const required=saved.family==XRWeaponFamily::AAPistol && saved.counter>=10 && saved.counter<20 ? 3 : 1;
     return (handModelReceipt.seen&required)==required;
 }
 
 void G_XRResetAim(int playerNum)
 {
-    if (playerNum==myconnectindex) crosshairViews.pistol.valid=false;
+    if (playerNum==myconnectindex) crosshairViews.weapon.valid=false;
     if (playerNum!=myconnectindex || aimHand()==-2) return;
     aimYawOffset=aimPitchOffset=0;
     aimPoseWasValid=false;
@@ -866,7 +884,7 @@ void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
 void G_XRUpdateShotInput()
 {
     VRShotInput input;
-    crosshairViews.pistol.valid=false;
+    crosshairViews.weapon.valid=false;
     // A live session with temporarily lost tracking remains fail-closed.
     // Terminal initialization/presentation failure returns to native flat
     // controls, so an invalid hand pose must not suppress keyboard fire there.
@@ -883,13 +901,13 @@ void G_XRUpdateShotInput()
             auto const tracking=multiply(pitchRoll(nativePitch(p->q16horiz)-aimPitchOffset,gtang),inverseYaw);
             auto const &pose=rawInput.hands[hand].aimPose;
             XrVector3f position=pose.position;
-            auto const family=pistolMountRequested() ? P_XRPistolFamily() : XRPistolFamily::Unsupported;
+            auto const family=mountedWeaponFamily();
             int model=-1;
             bool calibrated=true;
-            if (family!=XRPistolFamily::Unsupported)
+            if (family!=XRWeaponFamily::Unsupported)
             {
                 vec3f_t muzzle{}, palm{};
-                calibrated=pistolMuzzle(hand,model,muzzle,palm,position);
+                calibrated=weaponMuzzle(family,hand,model,muzzle,palm,position);
             }
             auto const local=rotate(tracking,{position.x-origin.x,position.y-origin.y,position.z-origin.z});
             auto const forward=rotate(multiply(tracking,pose.orientation),{0,0,-1});
@@ -904,17 +922,19 @@ void G_XRUpdateShotInput()
             }
             input.flags|=VRShotValid;
             if (!bounded || !G_VRValidateShot(input)) { input={}; input.flags=VRShotEnabled; }
-            else if (family!=XRPistolFamily::Unsupported)
+            else
             {
-                if (std::getenv("EDUKE32_XR_TEST_PISTOL_MOUNT") && p->kickback_pic>0 && p->kickback_pic<=26)
+                bool const weaponDiagnostic=std::getenv("EDUKE32_XR_TEST_WEAPON_MOUNT")!=nullptr;
+                if ((weaponDiagnostic || (family!=XRWeaponFamily::Unsupported
+                    && std::getenv("EDUKE32_XR_TEST_PISTOL_MOUNT"))) && p->kickback_pic>0 && p->kickback_pic<=26)
                 {
                     static unsigned samples;
                     if (samples++<128)
                     {
                         auto const &g=rawInput.hands[hand].gripPose.position;
                         auto const &q=pose.orientation; auto const &a=pose.position;
-                        LOG_F(INFO,"OpenXR pistol mount input: clock=%u counter=%d hand=%d grip=%.9g,%.9g,%.9g aim=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g origin=%.9g,%.9g,%.9g tracking=%.9g,%.9g,%.9g,%.9g yaw=%.9g offset=%d,%d,%d.",
-                              unsigned(totalclock),p->kickback_pic,hand,g.x,g.y,g.z,q.x,q.y,q.z,q.w,a.x,a.y,a.z,
+                        LOG_F(INFO,"OpenXR %s mount input: clock=%u counter=%d hand=%d grip=%.9g,%.9g,%.9g aim=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g origin=%.9g,%.9g,%.9g tracking=%.9g,%.9g,%.9g,%.9g yaw=%.9g offset=%d,%d,%d.",
+                              weaponDiagnostic ? "weapon" : "pistol",unsigned(totalclock),p->kickback_pic,hand,g.x,g.y,g.z,q.x,q.y,q.z,q.w,a.x,a.y,a.z,
                               origin.x,origin.y,origin.z,tracking.x,tracking.y,tracking.z,tracking.w,bodyYaw,
                               input.offset[0],input.offset[1],input.offset[2]);
                     }
@@ -976,7 +996,7 @@ bool G_XRCrosshairPosition(vec2_t &position)
 
 void G_XRClearInput()
 {
-    crosshairViews.pistol.valid=false;
+    crosshairViews.weapon.valid=false;
     VRShotInput shot; if (handShotsRequested()) shot.flags=VRShotEnabled;
     G_VRSetShotInput(myconnectindex,shot);
     for (unsigned hand=0;hand<2;++hand)
@@ -1101,10 +1121,10 @@ void G_XREndWeapon(bool captured)
     if (hand<0) return;
     XrPosef pose=rawInput.hands[hand].aimPose;
     bool visible=aimPoseUsable();
-    if (crosshairViews.pistol.selected)
+    if (crosshairViews.weapon.selected)
     {
-        visible=visible && pistolVisualOwned();
-        if (visible) pose=crosshairViews.pistol.pose;
+        visible=visible && weaponVisualOwned();
+        if (visible) pose=crosshairViews.weapon.pose;
     }
     else if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
     {
@@ -1180,7 +1200,7 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
 {
     if (!captured || !crosshairViews.valid || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
     auto const p=g_player[myconnectindex].ps;
-    auto const body=crosshairViews.pistol.selected ? crosshairViews.body : aimBodyCamera(camera());
+    auto const body=crosshairViews.weapon.selected ? crosshairViews.body : aimBodyCamera(camera());
     bool visible=screenpeek==myconnectindex && !ud.recstat && p->newowner<0 && !p->over_shoulder_on
         && !(p->gm & MODE_MENU) && rawInput.headValid && validPose(rawInput.headPose)
         && (aimHand()==-2 || aimPoseUsable())
@@ -1192,10 +1212,10 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
     float const pitch=nativePitch(p->q16horiz+p->q16horizoff), angle=fix16_to_float(p->q16ang)*Pi/1024.f;
     vec3_t ray={int32_t(std::lround(std::cos(angle)*std::cos(pitch)*32767.f)),
                 int32_t(std::lround(std::sin(angle)*std::cos(pitch)*32767.f)),int32_t(std::lround(-std::sin(pitch)*32767.f))*16};
-    if (crosshairViews.pistol.selected)
+    if (crosshairViews.weapon.selected)
     {
-        auto const &visual=crosshairViews.pistol;
-        visible=visible && pistolVisualOwned();
+        auto const &visual=crosshairViews.weapon;
+        visible=visible && weaponVisualOwned();
         start=visual.root; sector=visual.sector; clamped=visual.clamped;
         ray={visual.ray.direction[0],visual.ray.direction[1],visual.ray.direction[2]*16};
     }
@@ -1320,11 +1340,11 @@ void G_XRArmMenuPresentation()
         LOG_F(INFO,"OpenXR hand model receipt: serial=%llu counter=%d reloading=%d roles=%u valid=%d.",
               (unsigned long long)handModelReceipt.serial,handModelReceipt.presentation.counter,
               handModelReceipt.presentation.reloading,unsigned(handModelReceipt.seen),
-              pistolReceiptComplete() && !handModelReceipt.mismatch && pistolReceiptOwned());
+              weaponReceiptComplete() && !handModelReceipt.mismatch && weaponReceiptOwned());
     // Native menus poll authoritative packets after the weapon pixels, even
     // when no menu is open. Late field changes belong to subsequent draws;
     // the completed image requires its receipt and target ownership to survive.
-    if (handModelReceipt.runtime && (!pistolReceiptComplete() || handModelReceipt.mismatch || !pistolReceiptOwned()))
+    if (handModelReceipt.runtime && (!weaponReceiptComplete() || handModelReceipt.mismatch || !weaponReceiptOwned()))
     {
         if (std::getenv("EDUKE32_XR_TEST_MODELS"))
             LOG_F(INFO,"OpenXR hand model frame canceled: serial=%llu submitted=%llu.",
@@ -1332,9 +1352,9 @@ void G_XRArmMenuPresentation()
                   (unsigned long long)handModelReceipt.runtime->lastSubmittedSerial());
         if (std::getenv("EDUKE32_XR_TEST_MODEL_ANIMATION"))
         {
-            XRPistolPresentation fresh;
+            XRWeaponPresentation fresh;
             auto const &saved=handModelReceipt.presentation;
-            bool const qualified=saved.alienArmageddon ? P_XRAAPistolPresentation(fresh) : P_XRPistolPresentation(fresh);
+            bool const qualified=P_XRWeaponPresentation(fresh) && fresh.family==saved.family;
             LOG_F(INFO,"OpenXR hand model rejected: qualified=%d saved=%d,%d,%d,%d fresh=%d,%d,%d,%d bound=%d roles=%u mismatch=%d serial=%llu,%llu.",
                   qualified,saved.palette,saved.shade,saved.counter,saved.reloading,
                   fresh.palette,fresh.shade,fresh.counter,fresh.reloading,
@@ -1435,7 +1455,7 @@ void G_XRBeginFrame()
     }
     if (inputRuntime != runtime || inputGeneration != pendingGeneration)
     {
-        crosshairViews.pistol.valid=false;
+        crosshairViews.weapon.valid=false;
         activeInputButtons={}; blockedInputButtons={};
         if (aimHand()!=-2)
         {
@@ -1446,7 +1466,7 @@ void G_XRBeginFrame()
     }
     else for (auto const &change:pendingFrame.referenceChanges)
     {
-        crosshairViews.pistol.valid=false;
+        crosshairViews.weapon.valid=false;
         if (change.poseValid && validPose(change.poseInPreviousSpace))
         {
             // new->previous is supplied by OpenXR. Move the existing tracking
@@ -1635,7 +1655,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     }
     Camera logical = camera();
     Camera const body=aimBodyCamera(logical);
-    preparePistolVisual(body,runtime);
+    prepareWeaponVisual(body,runtime);
     std::array<Eye,2> eyes;
     char const *zeroValue=std::getenv("EDUKE32_XR_TEST_ZERO_IPD");
     bool const zeroTest=zeroValue && !Bstrcmp(zeroValue,"1");
@@ -1914,7 +1934,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             // ordinary frame60 diagnostic can precede the first eligible model.
             // Capture the first actual accepted AA model, without advancing it.
             static bool capturedAAModel;
-            if (weaponModel && handModel.presentation.alienArmageddon && !capturedAAModel
+            if (weaponModel && aaWeaponFamily(handModel.presentation.family) && !capturedAAModel
                 && std::getenv("EDUKE32_XR_TEST_MODELS"))
                 if (auto prefix=std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
                 {
@@ -1938,7 +1958,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 crosshairViews.diagnosticCrosshairPrefix=gripPrefix+"-crosshair";
             static unsigned mountStreamSamples;
             bool const mountStream=worldFrames>=60 && mountStreamSamples<240 && weaponModel
-                && crosshairViews.pistol.valid && (gripMask & (1u<<crosshairViews.pistol.hand))
+                && crosshairViews.weapon.valid && (gripMask & (1u<<crosshairViews.weapon.hand))
                 && std::getenv("EDUKE32_XR_TEST_MOUNT_STREAM");
             if (gripLog)
                 LOG_F(INFO,"OpenXR floating hands: serial=%llu state=%d mask=%u left=%d right=%d capture=%d.",
@@ -2075,17 +2095,17 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 if (weaponModel)
                 {
                     handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,handModel.presentation,0,false};
-                    if (handModel.presentation.alienArmageddon) polymost_xrWeaponTileConsumer=consumeAAWeaponTile;
+                    if (aaWeaponFamily(handModel.presentation.family)) polymost_xrWeaponTileConsumer=consumeAAWeaponTile;
                 }
                 if (oracleCompared[0] && oracleCompared[1]) LOG_F(INFO,"OpenXR hand model oracle inputs: identical=1.");
                 if (mountStream)
                 {
                     ++mountStreamSamples;
-                    int const hand=crosshairViews.pistol.hand;
+                    int const hand=crosshairViews.weapon.hand;
                     auto const &g=rawInput.hands[hand].gripPose; auto const &a=rawInput.hands[hand].aimPose.orientation;
                     auto const &v=frame.views[1]; auto const &q=v.pose.orientation; auto const &p=v.pose.position;
                     LOG_F(INFO,"OpenXR mount stream: serial=%llu tick=%u hand=%d clamped=%d grip=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g aim=%.9g,%.9g,%.9g,%.9g.",
-                          (unsigned long long)frame.serial,g_moveThingsCount,hand,crosshairViews.pistol.clamped,
+                          (unsigned long long)frame.serial,g_moveThingsCount,hand,crosshairViews.weapon.clamped,
                           g.orientation.x,g.orientation.y,g.orientation.z,g.orientation.w,g.position.x,g.position.y,g.position.z,a.x,a.y,a.z,a.w);
                     LOG_F(INFO,"OpenXR mount stream view: pose=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g fov=%.9g,%.9g,%.9g,%.9g.",
                           q.x,q.y,q.z,q.w,p.x,p.y,p.z,v.fov.angleLeft,v.fov.angleRight,v.fov.angleUp,v.fov.angleDown);
@@ -2104,9 +2124,9 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                         LOG_F(INFO,"OpenXR hand model: eye=%u model=%d root=%d,%d,%d direction=%d,%d,%d.",i,
                               handModel.context.modelid,handModel.root.x,handModel.root.y,handModel.root.z,
                               handModel.shot.direction[0],handModel.shot.direction[1],handModel.shot.direction[2]);
-                        if (crosshairViews.pistol.selected)
+                        if (crosshairViews.weapon.selected)
                         {
-                            auto const &visual=crosshairViews.pistol;
+                            auto const &visual=crosshairViews.weapon;
                             auto const &p=rawInput.hands[visual.hand].gripPose.position;
                             auto const &q=rawInput.hands[visual.hand].aimPose.orientation;
                             LOG_F(INFO,"OpenXR pistol mount pose: eye=%u hand=%d grip=%.9g,%.9g,%.9g aim=%.9g,%.9g,%.9g,%.9g.",

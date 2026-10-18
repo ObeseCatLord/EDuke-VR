@@ -1,10 +1,10 @@
 # AA standard Duke RPG: native reference and calibrated asset
 
 The actual AA 5.66 standard Duke RPG now has a passing native firing reference
-and a privately authored, counter-addressable MD3 package. **Its held mesh is
-not integrated yet.** Current runtime replacement still supports the previously
-qualified pistol families. No new RPG firing, networking, renderer or model
-selection policy was introduced here.
+and a privately authored, counter-addressable MD3 package. The opt-in held-model
+adapter now extends the existing pistol path to this family. Native firing,
+networking, model loading and renderer ordering remain authoritative. Current
+qualification and outstanding acceptance work are recorded below.
 
 ## Native behavior established
 
@@ -77,17 +77,95 @@ hardware fit. Original AA arsenal remains complete offline: 68 physical designs
 covering 69 dispatch entries, plus two basic floating hands and no AA bodies.
 `../duke-vr-assets/CURRENT_REVISION.md` now correctly indexes the current sets.
 
-## Next decision — not approved
+## Incremental adapter and Astra design disposition
 
-`work/aa-rpg-design-brief.md` proposes extending the existing before-MASK world
-MD3 sample/receipt/mount to this one family, with stable identity separate from
-appearance, canonical palette-zero tags and exact actual-draw validation.
-The fresh explicit Astra/xhigh review spawn hit the session agent-thread limit;
-**no design review occurred and the generalized adapter was not implemented**.
-Do not treat the proposal as approval. Obtain a fresh explicitly selected Astra
-review when available, verify its effective settings, then integrate and prove
-native/SPS image-depth equivalence, supported mesh states, unchanged composite
-fallback, missing-asset/pose behavior and pistol regressions. Preserve the prior
-[AA renderer ordering decision](AA_MODEL_DESIGN.md) and
-[shared mount authority](PISTOL_MOUNT.md). No 69-way duplicate AA dispatcher,
-late opaque HUD emission, new network protocol or invented recoil is justified.
+The adapter uses `XRWeaponFamily` / `XRWeaponPresentation` and the same native
+MD3 emitter, before-MASK ordering, current-frame visual and receipt owner.
+Standard Duke RPG maps through palette-zero `RPGSPRITE` (23); its sampler reads
+persistent native fields and actor-sector floor palette. It admits only the
+observed standard settings, no nuke/upgrades, supported actions and counters
+0..3 / 8..20. All four baked flame counters remain complete native ART.
+
+`EDUKE32_XR_WEAPON_MOUNT=1` enables canonical palm-to-muzzle calibration for the
+qualified pistol and RPG families. The legacy `EDUKE32_XR_PISTOL_MOUNT=1` still
+changes only pistol origins. Missing mesh frames/skin retains native ART while
+valid mount metadata continues to own firing. Missing selected calibration
+keeps shot input enabled-invalid and retains the existing release latch; it
+must not silently fall back to a different firing origin. The shared mounted
+origin also supplies selected-weapon quick kick, as in the pistol contract.
+
+Fresh explicit Astra/xhigh design review completed this increment: thread
+`01a14f3b-b926-71c1-8e25-96ea6a6c5159`, turn
+`01a14f3b-b970-7a73-a346-eb936fb8235c`; actual thread and current-turn settings
+independently verified. Brief: `work/aa-rpg-design-brief.md`.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Extend the existing owner/renderer; do not duplicate AA dispatch, animation or networking | Adopted: one small family enum, model-tile mapping, native samplers. |
+| Stable calibration must survive the native shot's ART fallback | Adopted; counter-independent family. Actual counter-4 origin proof is required below. |
+| Missing frame/skin differs from missing calibration | Adopted: preflight fallback versus enabled-invalid input. |
+| RPG palette comes from player sprite sector; normalize 10..25 to 0 | Adopted, with bounds check. No pistol shade-history policy on RPG. |
+| Classify RPG tile range OR unique ID 24 before validating exact body and family | Adopted; wrong/duplicate claimed draws invalidate the current receipt. |
+| Preserve cancellation and avoid a late post-HUD resample | Adopted; existing ownership/cancellation path retained. |
+| Prove actual spawn, supported frame pixels, native flash, family switches and failure recovery | Required acceptance; only completed evidence may be claimed below. |
+
+A subsequent fresh Astra/xhigh **implementation** review spawn hit the session
+agent-thread limit. No substitute reviewer was used; that focused code review
+remains pending. The earlier checkpoint's reviews do not cover this code.
+
+## Current runtime qualification
+
+Durable evidence: sibling `../evidence/aa-rpg-model-validation.json`. All five
+final suites use the same XR binary, GPU-denied llvmpipe/LVP, private Monado/Xvfb,
+unmapped drawables without desktop focus, clean observed OpenXR validation and
+successful owned-process cleanup. No installed AA files were changed.
+
+| Final actual suite | Checks | Evidence |
+| --- | ---: | --- |
+| Mounted right RPG | 40 | Native counter 4 commits one actual RPG at independently reconstructed palm/muzzle; 0.612886 m from old aim origin. All supported observed frames render with native/SPS exact RGB/raw depth and zero collection writes. |
+| Mounted left, missing frame 8 | 45 | Left palm independently reconstructed; frame 8 falls back to actual ART, later frames recover, same mounted firing origin retained. |
+| Legacy pistol option, RPG selected | 40 | Actual shot remains at old aim pose; it does not adopt the RPG mount. Supported model frames and native flame cards still pass. |
+| Existing AA pistol | 45 | Native trigger, ammo, firing ART/reload MD3 sequence, calibrated origin and stereo regression. |
+| Existing stock pistol, native server/client | 34 | Actual multiplayer ammo/reload, native server ray, mounted world crosshair pixels/depth and model stereo remain functional. |
+
+The origin check joins the last accepted raw input sample, independent MD3 tag
+math, read-only native PREWEAPONSHOOT body anchor, authoritative collision-resolved
+origin, inserted native projectile and AA EGS observation. Both palms have zero
+rounded offset error in the final runs; all RPG shots here are **unclamped**.
+At counter 4, native ammo decreases once, POSTWEAPONSHOOT occurs once and one
+player-owned tile-2605 projectile is inserted. Actual model counters are 1..3
+and 8..19, with nonempty whole-native ART cards and no mesh receipts at 4..7.
+Counter 20 remains source/asset-covered only.
+
+Real-log negative controls reject absent input, a moved inserted projectile,
+the wrong hand, the old aim-origin expectation for a mounted shot and absent EGS
+observations. These parser controls are separate from runtime behavior tests.
+
+XR+NETCODE SHA256:
+`293058de2077293344187cfd23aac92daee245806f66f9472cf70ada443fa1d6`.
+Non-XR NETCODE also builds; its native server was used in the stock regression:
+`a0b71546a7dc417d4d50c939426cf465f2947aaf2f159103c5f3d3d7be8dfea7`.
+Logs: `work/aa-rpg-model-build-v3.log`, `work/aa-rpg-flat-build.log` (existing
+smmalloc warnings). Test diagnostic `EDUKE32_XR_TEST_WEAPON_MOUNT` observes raw
+accepted input for both mounted and old aim modes; it does not change selection.
+
+The first RPG model run failed a test list-versus-tuple comparison of body
+receipts. Its separate reanalysis confirms all 15 real receipts; the original
+failed result remains unchanged. The first AA pistol regression failed in private
+Xvfb setup with an owned `/proc` fd permission error before game/Monado launch;
+a fresh-directory retry passed. All failed attempts cleaned up successfully.
+
+## Remaining acceptance
+
+The fresh implementation review remains pending. RPG-specific wall-clamp,
+missing-skin, calibration-loss/recovery and wrong/duplicate-draw cancellation
+controls are not yet qualified. Neither is switching between both mapped pistol
+and RPG models in one continuous session. Existing pistol proofs do not replace
+these RPG checks. No RPG multiplayer/damage qualification follows from the stock
+pistol regression. Controller-specific fitting, moving-trigger alignment, full
+3D muzzle effects and complete AA arsenal runtime bindings remain unfinished.
+
+Preserve the prior [AA renderer ordering decision](AA_MODEL_DESIGN.md) and
+[shared mount authority](PISTOL_MOUNT.md). This experimental opt-in increment
+adds no duplicate AA state machine, animation clock, protocol or late opaque HUD
+renderer.
