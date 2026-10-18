@@ -1,7 +1,7 @@
 # Experimental native hand-shot authority
 
 Updated 2026-10-17. Opt-in `EDUKE32_XR_HAND_SHOTS=1`, with right/left tracked aim.
-Ordinary hardcoded pistol, shotgun, chaingun, grow, RPG/Devastator, freezer, shrinker, pipebomb and tripmine use this origin and
+Ordinary hardcoded kick, pistol, shotgun, chaingun, grow, RPG/Devastator, freezer, shrinker, pipebomb and tripmine use this origin and
 full vector when the selected WorksLike family, configured Shoots tile and actual
 shot tile agree. Custom-projectile replacements are excluded by the same shared
 firing/card/crosshair predicate. Other weapons retain their native firing paths.
@@ -290,3 +290,19 @@ physical reach is additionally bounded, including steep rays. Existing invalid
 pose/release policy prevents held recovery shots. See [TRIPMINES.md](TRIPMINES.md)
 for actual native multiplayer placement, flat reference, range and recovery
 evidence. Tripmine graphics/model/headset qualification remains open.
+
+## Melee and quick-kick
+
+Feature32 expands mask31 to63 for native KNEE contact. Quick-kick's independent
+native counter explicitly permits KNEE while another weapon is selected.
+Existing physical hand resolution/ray and Proj_HandleKnee retain native effects,
+damage and ammo. Finite physical Manhattan reach includes Z. Shared-key queueing
+is gated before the later input filter, preventing lost tracking from creating
+pending quick-kicks that hit after recovery. Read [MELEE.md](MELEE.md) for actual
+negative/positive native multiplayer proof and its limits.
+
+NETVERSION4 requires matching builds: a real prior revision3 server accepted
+raw Quick_Kick without melee support and fired from the body. The existing
+native auth guard now rejects that mix. Capability/pose wire layouts stay the
+same. Controller right stick click is mapped but runtime/headset/foot/model
+presentation is still unqualified during the GPU hold.

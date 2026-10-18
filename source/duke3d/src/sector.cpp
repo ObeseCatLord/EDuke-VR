@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #define sector_c_
 
 #include "duke3d.h"
+#include "vrshoot.h"
 #include "input.h"
 
 // PRIMITIVE
@@ -2634,6 +2635,10 @@ void P_HandleSharedKeys(int playerNum)
 
     uint32_t playerBits = g_player[playerNum].input.bits;
     uint32_t const extBits = g_player[playerNum].input.extbits;
+
+    // Quick-kick starts here, before P_ProcessInput filters the raw held
+    // source. Reuse its readiness latch without consuming the release twice.
+    if (G_VRQuickKickBlocked(playerNum)) playerBits &= ~BIT(SK_QUICK_KICK);
 
     // 1<<0  =  jump
     // 1<<1  =  crouch

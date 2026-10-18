@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// CPU-native melee observation fixture. It places actual network players and
+// selects stock weapons once; stock input, P_ProcessWeapon, P_DoCounters,
+// A_Shoot and Proj_HandleKnee remain the only kick/damage implementation.
+include controller_test.con
+
+// Runner-editable setup.  Player 1 is the local SDL client and player 0 is
+// the native dedicated-server peer used as the close-range target.
+gamevar vrmelee_selected_weapon 0 0
+gamevar vrmelee_shooter_x 1024 0
+gamevar vrmelee_target_x 1600 0
+gamevar vrmelee_y 4096 0
+gamevar vrmelee_target_y 4120 0
+gamevar vrmelee_steroids 0 0
+
+gamevar vrmelee_given 0 1
+gamevar vrmelee_tick 0 1
+gamevar vrmelee_player 0 1
+gamevar vrmelee_index 0 1
+gamevar vrmelee_weapon 0 1
+gamevar vrmelee_frame 0 1
+gamevar vrmelee_quick 0 1
+gamevar vrmelee_lastquick 0 1
+gamevar vrmelee_bits 0 1
+gamevar vrmelee_health 0 1
+gamevar vrmelee_ammo0 0 1
+gamevar vrmelee_ammo1 0 1
+gamevar vrmelee_x 0 1
+gamevar vrmelee_y_now 0 1
+gamevar vrmelee_z 0 1
+gamevar vrmelee_angle 0 1
+gamevar vrmelee_steroids_now 0 1
+
+onevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrmelee_player
+    ifvare vrmelee_given 0
+    {
+        ifvare vrmelee_player 0
+        {
+            setplayer[THISACTOR].posx vrmelee_target_x
+            setplayer[THISACTOR].oposx vrmelee_target_x
+            setactor[THISACTOR].x vrmelee_target_x
+            setplayer[THISACTOR].posy vrmelee_target_y
+            setplayer[THISACTOR].oposy vrmelee_target_y
+            setactor[THISACTOR].y vrmelee_target_y
+            setplayer[THISACTOR].q16ang 67108864
+            setplayer[THISACTOR].oq16ang 67108864
+        }
+        else
+        {
+            setplayer[THISACTOR].posx vrmelee_shooter_x
+            setplayer[THISACTOR].oposx vrmelee_shooter_x
+            setactor[THISACTOR].x vrmelee_shooter_x
+            setplayer[THISACTOR].posy vrmelee_y
+            setplayer[THISACTOR].oposy vrmelee_y
+            setactor[THISACTOR].y vrmelee_y
+            setplayer[THISACTOR].q16ang 0
+            setplayer[THISACTOR].oq16ang 0
+        }
+        setplayer[THISACTOR].cursectnum 0
+        changespritesect THISACTOR 0
+        setplayer[THISACTOR].gotweapon 0 1
+        setplayer[THISACTOR].gotweapon 1 1
+        setplayer[THISACTOR].ammo_amount 0 0
+        // Keep the pistol selected for the quick-kick case; Q must produce the
+        // native KNEE without expending this ordinary pistol ammo.
+        setplayer[THISACTOR].ammo_amount 1 12
+        setplayer[THISACTOR].curr_weapon vrmelee_selected_weapon
+        setplayer[THISACTOR].last_weapon -1
+        setplayer[THISACTOR].weapon_pos 0
+        setplayer[THISACTOR].knuckle_incs 0
+        setplayer[THISACTOR].kickback_pic 0
+        setplayer[THISACTOR].quick_kick 0
+        setplayer[THISACTOR].last_quick_kick 0
+        setplayer[THISACTOR].steroids_amount vrmelee_steroids
+        setvar vrmelee_given 1
+    }
+    addvar vrmelee_tick 1
+    getplayer[THISACTOR].i vrmelee_index
+    getplayer[THISACTOR].curr_weapon vrmelee_weapon
+    getplayer[THISACTOR].kickback_pic vrmelee_frame
+    getplayer[THISACTOR].quick_kick vrmelee_quick
+    getplayer[THISACTOR].last_quick_kick vrmelee_lastquick
+    getinput[THISACTOR].bits vrmelee_bits
+    getactor[THISACTOR].extra vrmelee_health
+    getplayer[THISACTOR].ammo_amount 0 vrmelee_ammo0
+    getplayer[THISACTOR].ammo_amount 1 vrmelee_ammo1
+    getplayer[THISACTOR].posx vrmelee_x
+    getplayer[THISACTOR].posy vrmelee_y_now
+    getplayer[THISACTOR].posz vrmelee_z
+    getplayer[THISACTOR].q16ang vrmelee_angle
+    getplayer[THISACTOR].steroids_amount vrmelee_steroids_now
+    addlog vrmelee_tick
+    addlog vrmelee_player
+    addlog vrmelee_index
+    addlog vrmelee_weapon
+    addlog vrmelee_frame
+    addlog vrmelee_quick
+    addlog vrmelee_lastquick
+    addlog vrmelee_bits
+    addlog vrmelee_health
+    addlog vrmelee_ammo0
+    addlog vrmelee_ammo1
+    addlog vrmelee_x
+    addlog vrmelee_y_now
+    addlog vrmelee_z
+    addlog vrmelee_angle
+    addlog vrmelee_steroids_now
+endevent
+
+// A stock knee hit inserts a KNEE actor before it invokes A_DamageObject.
+// This event only records that native actor; it never allocates or modifies it.
+gamevar vrmelee_knee_event 0 0
+gamevar vrmelee_knee_index 0 0
+gamevar vrmelee_knee_owner 0 0
+gamevar vrmelee_knee_ownerplayer 0 0
+gamevar vrmelee_knee_sector 0 0
+gamevar vrmelee_knee_x 0 0
+gamevar vrmelee_knee_y 0 0
+gamevar vrmelee_knee_z 0 0
+gamevar vrmelee_knee_angle 0 0
+gamevar vrmelee_knee_extra 0 0
+gamevar vrmelee_knee_totalclock 0 0
+
+onevent EVENT_EGS
+    ifactor KNEE
+    {
+        setvarvar vrmelee_knee_index THISACTOR
+        getactor[THISACTOR].owner vrmelee_knee_owner
+        getactor[vrmelee_knee_owner].yvel vrmelee_knee_ownerplayer
+        getactor[THISACTOR].sectnum vrmelee_knee_sector
+        getactor[THISACTOR].x vrmelee_knee_x
+        getactor[THISACTOR].y vrmelee_knee_y
+        getactor[THISACTOR].z vrmelee_knee_z
+        getactor[THISACTOR].ang vrmelee_knee_angle
+        getactor[THISACTOR].extra vrmelee_knee_extra
+        setvarvar vrmelee_knee_totalclock totalclock
+        setvar vrmelee_knee_event 71
+        addlog vrmelee_knee_index
+        addlog vrmelee_knee_owner
+        addlog vrmelee_knee_ownerplayer
+        addlog vrmelee_knee_sector
+        addlog vrmelee_knee_x
+        addlog vrmelee_knee_y
+        addlog vrmelee_knee_z
+        addlog vrmelee_knee_angle
+        addlog vrmelee_knee_extra
+        addlog vrmelee_knee_totalclock
+        addlog vrmelee_knee_event
+    }
+endevent

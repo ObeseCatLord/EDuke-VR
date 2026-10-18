@@ -175,8 +175,8 @@ static void publishInput()
         // Pose recovery is not a new trigger press. Hold fire until release.
         if (!valid || !aimPoseWasValid)
         {
-            blockedInputButtons[1] |= rawInput.hands[1].buttons & ButtonSelect;
-            down[1] &= ~ButtonSelect;
+            blockedInputButtons[1] |= rawInput.hands[1].buttons & (ButtonSelect|ButtonStickClick);
+            down[1] &= ~(ButtonSelect|ButtonStickClick);
         }
         aimPoseWasValid=valid;
     }
@@ -189,6 +189,7 @@ static void publishInput()
     auto const button=[&](bool pressed, unsigned gamefunc) { if (pressed) buttons |= uint64_t(1)<<gamefunc; };
     button(down[1]&ButtonSelect,gamefunc_Fire); button(down[0]&ButtonSelect,gamefunc_Open);
     button(down[1]&ButtonPrimary,gamefunc_Jump); button(down[1]&ButtonSecondary,gamefunc_Crouch);
+    button(down[1]&ButtonStickClick,gamefunc_Quick_Kick);
     button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(down[0]&ButtonSecondary,gamefunc_Next_Weapon);
     button((down[0]|down[1])&ButtonGrip,gamefunc_Run);
     UserInput menu{false,false,false,dir_None};
@@ -404,7 +405,7 @@ void G_XRUpdateShotInput()
         input.flags=VRShotEnabled;
         int const hand=aimHand();
         if (hand>=0 && localAimCamera() && aimPoseUsable() && recentered && shotLookAllowed
-            && !shotReferenceInvalidated && !(blockedInputButtons[1]&eduke_xr::ButtonSelect) && Net_VRShotAvailable())
+            && !shotReferenceInvalidated && !(blockedInputButtons[1]&(eduke_xr::ButtonSelect|eduke_xr::ButtonStickClick)) && Net_VRShotAvailable())
         {
             auto const p=g_player[myconnectindex].ps;
             float const bodyYaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset;
@@ -894,7 +895,7 @@ void G_XRBeginFrame()
             trackingRebase=trackingRebase || (recentered && lastHeadValid);
             recentered=false; aimPoseWasValid=false;
             shotReferenceInvalidated=true;
-            blockedInputButtons[1]|=sample.hands[1].buttons&eduke_xr::ButtonSelect;
+            blockedInputButtons[1]|=sample.hands[1].buttons&(eduke_xr::ButtonSelect|eduke_xr::ButtonStickClick);
             G_VRBlockShot(myconnectindex);
         }
         if (std::getenv("EDUKE32_XR_TEST_INPUT"))

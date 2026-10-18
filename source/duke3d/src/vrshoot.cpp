@@ -89,6 +89,7 @@ uint8_t G_VRHandShotFeature(int player, int tile)
     int const works=PWEAPON(player,weapon,WorksLike);
     switch (tileGetMapping(tile))
     {
+        case KNEE__: return works==KNEE_WEAPON ? VRShotFeatureMelee : 0;
         case SHOTSPARK1__: return works==PISTOL_WEAPON ? VRShotFeatureHitscan : 0;
         case SHOTGUN__: return works==SHOTGUN_WEAPON ? VRShotFeatureHitscan : 0;
         case CHAINGUN__: return works==CHAINGUN_WEAPON ? VRShotFeatureHitscan : 0;
@@ -109,15 +110,20 @@ bool G_VRShotReady(int player)
 }
 bool G_VRShotCanFire(int player) { return G_VRShotReady(player) && !shots[player].blocked; }
 void G_VRBlockShot(int player) { if (unsigned(player)<MAXPLAYERS) shots[player].blocked=true; }
+bool G_VRQuickKickBlocked(int player)
+{
+    return G_VRShotEnabled(player) && (!Net_VRShotAvailable(player,VRShotFeatureMelee) || !G_VRShotCanFire(player));
+}
 void G_VRFilterShotInput(int player, input_t &input)
 {
     if (!G_VRShotEnabled(player)) return;
     auto &state=shots[player];
-    bool const held=(input.bits & BIT(SK_FIRE)) || (input.extbits & BIT(EK_ALT_FIRE));
+    bool const held=(input.bits & (BIT(SK_FIRE)|BIT(SK_QUICK_KICK))) || (input.extbits & BIT(EK_ALT_FIRE));
     if (!G_VRShotReady(player)) state.blocked=true;
     if (!held) state.blocked=false;
     if (!G_VRShotReady(player) || state.blocked)
-    { input.bits &= ~BIT(SK_FIRE); input.extbits &= ~BIT(EK_ALT_FIRE); }
+    { input.bits &= ~(BIT(SK_FIRE)|BIT(SK_QUICK_KICK)); input.extbits &= ~BIT(EK_ALT_FIRE); }
+    if (G_VRQuickKickBlocked(player)) input.bits &= ~BIT(SK_QUICK_KICK);
 }
 
 bool G_VRResolveShot(int player, vec3_t &position, int16_t &sect, bool &clamped, vec3_t const *muzzlePosition)

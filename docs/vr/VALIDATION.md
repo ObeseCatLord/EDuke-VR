@@ -939,3 +939,29 @@ actual native F12 shows the placed mine. GPU hold remains in force. This does
 not qualify tripmine headset/model presentation, WAN/reordering, full-body
 integration or complete SPS. Bounded results and binary hashes are saved in
 sibling `outputs/evidence/tripmine-native-validation.json`.
+
+## CPU-native melee and quick-kick continuation
+
+[MELEE.md](MELEE.md) records native reference, minimal hand-ray adapter and
+actual negative cases. `work/melee-hand-net4-{selected,quick,pitched,wall,far,vertical,vertical-far,loss,quick-loss,steroids}.json`
+all pass on final revision4 source: native target damage/health convergence,
+ammo, collision/physical reach, existing counters and recovery are observed.
+The last steroids assertion observes a real bonus beyond unboosted knee damage;
+it does not require a particular random damage draw or mitigation amount.
+Native flat selected/quick/range cases pass and match pre-adapter impact/ammo
+fields (`work/melee-native-net4.json`). EGS strength precedes random/bonus damage.
+
+Retained quick-loss negative repeatedly queued counters before the input
+filter, then caused two impacts on recovery. The shared-key handler now uses
+the same readiness gate before starting quick-kick. No counter/protocol layer
+is added. Actual mixed revision3 probe showed an old server firing a body kick
+without feature32; NETVERSION4 now rejects that mix using native authentication
+(`work/melee-protocol4-rejection.json`). Same capability/pose layouts, mask63.
+
+Native/OpenXR/CPU/input builds pass (`work/build-*-melee-net4.log`). Devastator
+loss and tripmine rejected-commit regressions pass on the same gameplay source
+before only the final native version constant advanced3→4. Their evidence is
+`work/devastator-melee-regression.json`, `work/tripmine-melee-regression.json`.
+All tests are GPU-denied CPU/private input; actual OpenXR stick-click and current
+model/headset behavior remain unqualified. Durable bounded results and hashes
+are in sibling `outputs/evidence/melee-native-validation.json`.

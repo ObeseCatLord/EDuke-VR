@@ -712,7 +712,7 @@ static bool P_TripbombWallAllowed(hitdata_t const &hit)
     return true;
 }
 
-static bool P_HandTripbombHit(int player, vec3_t &origin, int &angle, hitdata_t &hit,
+static bool P_HandWeaponHitscan(int player, vec3_t &origin, int &angle, hitdata_t &hit,
                               bool allowOverride, bool &clamped)
 {
     HandHitscan hand;
@@ -1312,24 +1312,37 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             Zvel = 1024 - (krand() & 2047);
             fallthrough__;
         case KNEE__:
-            if (projecTile == KNEE)
+        {
+            // Quick-kick's native counter fires KNEE independently of the
+            // selected weapon. Custom projectiles never enter this function.
+            bool const tracked=projecTile==KNEE && playerNum>=0 && G_VRShotEnabled(playerNum)
+                && (G_VRHandShotFeature(playerNum,projecTile)==VRShotFeatureMelee || pPlayer->quick_kick==8);
+            if (tracked)
             {
-                if (playerNum >= 0)
-                {
-                    Zvel = fix16_to_int(F16(100) - pPlayer->q16horiz - pPlayer->q16horizoff) << 5;
-                    startPos.z += (6 << 8);
-                    shootAng += 15;
-                }
-                else
-                {
-                    int32_t   playerDist;
-                    int const playerSprite = g_player[A_FindPlayer(pSprite, &playerDist)].ps->i;
-                    Zvel                   = tabledivide32_noinline((sprite[playerSprite].z - startPos.z) << 8, playerDist + 1);
-                    shootAng             = getangle(sprite[playerSprite].x - startPos.x, sprite[playerSprite].y - startPos.y);
-                }
+                if (!Net_VRShotAvailable(playerNum,VRShotFeatureMelee)
+                    || !P_HandWeaponHitscan(playerNum,startPos,shootAng,hitData,true,clamped)) return -1;
             }
+            else
+            {
+                if (projecTile == KNEE)
+                {
+                    if (playerNum >= 0)
+                    {
+                        Zvel = fix16_to_int(F16(100) - pPlayer->q16horiz - pPlayer->q16horizoff) << 5;
+                        startPos.z += (6 << 8);
+                        shootAng += 15;
+                    }
+                    else
+                    {
+                        int32_t   playerDist;
+                        int const playerSprite = g_player[A_FindPlayer(pSprite, &playerDist)].ps->i;
+                        Zvel                   = tabledivide32_noinline((sprite[playerSprite].z - startPos.z) << 8, playerDist + 1);
+                        shootAng             = getangle(sprite[playerSprite].x - startPos.x, sprite[playerSprite].y - startPos.y);
+                    }
+                }
 
-            Proj_DoHitscan(spriteNum, 0, &startPos, Zvel, shootAng, &hitData);
+                Proj_DoHitscan(spriteNum, 0, &startPos, Zvel, shootAng, &hitData);
+            }
 
             if (projecTile >= BLOODSPLAT1 && projecTile <= BLOODSPLAT4)
             {
@@ -1363,9 +1376,20 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             if (hitData.sect < 0)
                 break;
 
-            if (klabs(startPos.x - hitData.x) + klabs(startPos.y - hitData.y) < 1024)
+            // Extend the original Manhattan reach to physical Z for a hand
+            // ray; full vertical aiming cannot hit arbitrarily high surfaces.
+            int64_t const reach=tracked ? (std::abs(int64_t(startPos.x)-hitData.x)
+                +std::abs(int64_t(startPos.y)-hitData.y))*16+std::abs(int64_t(startPos.z)-hitData.z) : 0;
+            bool const inRange=tracked ? reach<1024*16
+                : klabs(startPos.x-hitData.x)+klabs(startPos.y-hitData.y)<1024;
+            if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR native melee: player=%d quick=%d hand=%d,%d,%d hit=%d,%d,%d sector=%d target=%d wall=%d angle=%d clamped=%d inRange=%d.",
+                      playerNum,pPlayer->quick_kick==8,startPos.x,startPos.y,startPos.z,hitData.x,hitData.y,hitData.z,
+                      hitData.sect,hitData.sprite,hitData.wall,shootAng,clamped,inRange);
+            if (inRange)
                 Proj_HandleKnee(&hitData, spriteNum, playerNum, projecTile, shootAng, NULL, KNEE, 7, SMALLSMOKE, KICK_HIT);
             break;
+        }
 
         case SHOTSPARK1__:
         case SHOTGUN__:
@@ -1706,7 +1730,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             int placeMine=0;
             if (tracked)
             {
-                if (P_HandTripbombHit(playerNum,startPos,shootAng,hitData,true,clamped)
+                if (P_HandWeaponHitscan(playerNum,startPos,shootAng,hitData,true,clamped)
                     && P_TripbombWallAllowed(hitData) && P_TripbombInRange(pPlayer->pos,hitData)
                     && P_TripbombInRange(startPos,hitData,true)) placeMine=1;
                 else G_VRBlockShot(playerNum);
@@ -4660,7 +4684,7 @@ static void P_ProcessWeapon(int playerNum)
                             if (tracked)
                             {
                                 // Native press does not consume the preceding shot's Z override.
-                                if (!P_HandTripbombHit(playerNum,origin,angle,hitData,false,clamped))
+                                if (!P_HandWeaponHitscan(playerNum,origin,angle,hitData,false,clamped))
                                 { G_VRBlockShot(playerNum); break; }
                             }
                             else

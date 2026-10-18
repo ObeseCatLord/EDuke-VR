@@ -234,8 +234,9 @@ existing bounded protocol work without spending further milestones on legacy
 compatibility. Tracked pipebombs and the native Devastator adapter now exist;
 Devastator graphics/headset qualification remains pending. The tracked native
 tripmine adapter is now implemented with CPU placement/replication/recovery proof
-(TRIPMINES.md). Remaining weapon implementation families include melee and World
-Tour flames.
+(TRIPMINES.md). Native selected/quick melee now has CPU multiplayer/recovery
+proof too (MELEE.md). Remaining weapon implementation includes World Tour flames;
+headset/model integration and full SPS remain required.
 
 
 ## World-space crosshair follow-through
@@ -283,6 +284,14 @@ policy, including demonstrated final-barrel clearance and lost-source ammo
 corrections. No new pose protocol, actor simulation or weapon state machine.
 Details, baseline comparison and explicit transient-snapshot limits are in
 DEVASTATOR.md. The subsequent native tripmine press/commit adapter and CPU
-multiplayer proof are recorded in TRIPMINES.md. Continue with native melee paths
-and model integration;
+multiplayer proof are recorded in TRIPMINES.md. Melee now reuses the native
+counter/hitscan/damage path, with an observed early shared-key readiness defect
+corrected and actual revision4 matching-peer proof (MELEE.md). Continue with
+World Tour flames and model integration;
 GPU/headset acceptance is still required before declaring the full port done.
+
+The user requested a further complete model pass: Quake-like chunky geometry,
+lower-resolution diffuse textures and proportions/silhouettes grounded in the
+original 2D sprites. Astra owns the entire separate private asset `v2` set,
+including World Tour flamethrower. The original exported set is preserved.
+Its production completion does not qualify native loading, IK or stereo.

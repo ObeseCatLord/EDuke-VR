@@ -143,6 +143,7 @@ Keyboard and mouse remain available.
 |---|---|
 | Left stick | Move / strafe; radial 20% dead zone |
 | Right stick | Native smooth turn / look |
+| Right stick click | Quick kick (new mapping; headset qualification pending) |
 | Right trigger / select | Fire |
 | Left trigger / select | Open / use |
 | Right primary / secondary face button | Jump / crouch |
@@ -513,9 +514,12 @@ bug required three native weapon-state bytes in server snapshots and network
 version2. Rebuild every peer together. Details and remaining coverage limits
 are in [HAND_SHOTS.md](docs/vr/HAND_SHOTS.md).
 
-The private sibling Duke/weapon asset package is complete as an art deliverable;
-native loading, controller binding, animated grip/muzzle and full-body integration
-remain separate work. Native MD3 rendering currently uses the reference fallback,
+The private sibling Duke/weapon asset package has a completed first export set.
+At the user's request, Astra is revising the entire set in a separate `v2`
+directory toward chunkier Quake-like geometry, smaller diffuse textures and
+original Duke3D sprite silhouettes/proportions, also adding World Tour's flame
+weapon. Native loading, controller binding, animated grip/muzzle and full-body
+integration remain separate work. Native MD3 rendering currently uses the reference fallback,
 so this does not establish model single-pass coverage or a complete VR port.
 
 
@@ -527,3 +531,11 @@ projectile/random-state reference matches. See [DEVASTATOR.md](docs/vr/DEVASTATO
 Native network revision3 requires matching builds for the expanded RPG
 capability; no packet fields are added. Devastator graphics/headset/model attachment is
 not yet qualified; GPU testing remains on hold after the recorded driver errors.
+
+Native tracked tripmine and melee/quick-kick adapters now have CPU gameplay and
+multiplayer proof; see [TRIPMINES.md](docs/vr/TRIPMINES.md) and
+[MELEE.md](docs/vr/MELEE.md). Current network revision is **4**; rebuild all peers
+together. An actual prior server could apply a body-aimed quick-kick without
+melee capability, so the existing native version guard rejects that mix.
+The same9byte capability exchange and14byte hand tail remain. Actual headset
+input/presentation, completed body/model integration and full SPS remain open.

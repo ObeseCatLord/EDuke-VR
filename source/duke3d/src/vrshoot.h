@@ -15,6 +15,7 @@ constexpr uint8_t VRShotEnabled=1, VRShotValid=2;
 constexpr size_t VRShotWireSize=14;
 constexpr uint8_t VRShotFeatureRPG=1, VRShotFeatureHitscan=2, VRShotFeatureFreezeShrink=4;
 constexpr uint8_t VRShotFeatureHandBomb=8, VRShotFeatureTripmine=16;
+constexpr uint8_t VRShotFeatureMelee=32;
 bool G_VRValidateShot(VRShotInput const &input);
 bool G_VRDecodeShot(uint8_t const *bytes, size_t size, VRShotInput &input);
 void G_VREncodeShot(VRShotInput const &input, uint8_t *bytes);
@@ -27,6 +28,8 @@ bool G_VRShotEnabled(int player);
 uint8_t G_VRHandShotFeature(int player, int tile=-1);
 bool G_VRShotReady(int player);
 bool G_VRShotCanFire(int player);
+// Native shared keys run before P_ProcessInput's release/readiness filter.
+bool G_VRQuickKickBlocked(int player);
 // Reuse the existing release-to-rearm latch after a rejected spatial throw.
 void G_VRBlockShot(int player);
 void G_VRFilterShotInput(int player, input_t &input);
