@@ -14,7 +14,7 @@ struct VRShotInput
 constexpr uint8_t VRShotEnabled=1, VRShotValid=2;
 constexpr size_t VRShotWireSize=14;
 constexpr uint8_t VRShotFeatureRPG=1, VRShotFeatureHitscan=2, VRShotFeatureFreezeShrink=4;
-constexpr uint8_t VRShotFeatureHandBomb=8;
+constexpr uint8_t VRShotFeatureHandBomb=8, VRShotFeatureTripmine=16;
 bool G_VRValidateShot(VRShotInput const &input);
 bool G_VRDecodeShot(uint8_t const *bytes, size_t size, VRShotInput &input);
 void G_VREncodeShot(VRShotInput const &input, uint8_t *bytes);

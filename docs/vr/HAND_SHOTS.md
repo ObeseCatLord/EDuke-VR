@@ -1,7 +1,7 @@
 # Experimental native hand-shot authority
 
 Updated 2026-10-17. Opt-in `EDUKE32_XR_HAND_SHOTS=1`, with right/left tracked aim.
-Ordinary hardcoded pistol, shotgun, chaingun, grow, RPG/Devastator, freezer, shrinker and pipebomb use this origin and
+Ordinary hardcoded pistol, shotgun, chaingun, grow, RPG/Devastator, freezer, shrinker, pipebomb and tripmine use this origin and
 full vector when the selected WorksLike family, configured Shoots tile and actual
 shot tile agree. Custom-projectile replacements are excluded by the same shared
 firing/card/crosshair predicate. Other weapons retain their native firing paths.
@@ -278,3 +278,15 @@ Network revision3 advances the existing version guard because feature1 now
 promises tracked Devastator as well as ordinary RPG. A revision2 server could
 accept the same tail yet use a body origin for Devastator. Requiring the new
 build prevents that semantic mismatch; the revision adds no packet fields.
+
+## Tripmines
+
+Feature16 extends capability mask15 to31 without new wire fields or a native
+revision change. Both press and commit now use the same constrained physical
+hand ray. Native surface/occupancy/reach/arming/timer/owner/damage behavior stays
+in the existing weapon and actor; tracked commit rechecks current geometry and
+uses the original ammo refund if it fails. Body XY reach is retained and hand
+physical reach is additionally bounded, including steep rays. Existing invalid
+pose/release policy prevents held recovery shots. See [TRIPMINES.md](TRIPMINES.md)
+for actual native multiplayer placement, flat reference, range and recovery
+evidence. Tripmine graphics/model/headset qualification remains open.

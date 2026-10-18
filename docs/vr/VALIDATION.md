@@ -920,3 +920,22 @@ including native F12 frames before/after firing in the tracked case.
 authentication version guard rejects a real prior revision2 executable before
 gameplay. Revision3 changes the feature1 promise to include Devastator; it adds
 no packet fields. Older-peer compatibility is not required.
+
+## CPU-native tracked tripmine continuation
+
+[TRIPMINES.md](TRIPMINES.md) records the native press/commit adapter, unchanged
+flat reference, actual hand-ray/closed-wall/steep-range behavior, native surface
+and occupancy rejection, tracking loss and rejected-commit ammo refund/release
+proof. Ten tracked placement cases pass108 checks. Flat placement/range passes15
+checks and4 explicit pre-adapter comparisons. Native lifecycle tests pass on
+tracked placements (21checks total), and flat current/reference each pass13.
+Real beam crossing and timer expiry cause native damage and converged client
+health. Current CPU Devastator17check and pipebomb14check regressions pass.
+
+The native capability mask expands15 to31 with family bit16; wire layouts and
+NETVERSION3 remain unchanged. Native, OpenXR and normal/special CPU builds pass.
+All gameplay tests use the GPU-denied SDL-dummy/private FIFO environment;
+actual native F12 shows the placed mine. GPU hold remains in force. This does
+not qualify tripmine headset/model presentation, WAN/reordering, full-body
+integration or complete SPS. Bounded results and binary hashes are saved in
+sibling `outputs/evidence/tripmine-native-validation.json`.

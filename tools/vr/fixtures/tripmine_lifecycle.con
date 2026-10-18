@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// CPU-native tripmine lifecycle observation fixture.
+//
+// This supplies a deterministic player/weapon setup plus game-variable values
+// before the runner sends ordinary SDL movement and fire input.  It only logs
+// stock actors.  In particular, it never creates, moves, arms, detonates, or
+// removes a mine or laserline.
+include controller_test.con
+
+// The runner replaces these native C++ lookup labels per independent lifecycle
+// case.  GAME.CON is included above, so their declarations must follow it.
+gamevar TRIPBOMB_CONTROL 1 0
+gamevar STICKYBOMB_LIFETIME 18 0
+gamevar STICKYBOMB_LIFETIME_VAR 0 0
+gamevar vrtrip_client_x 1024 0
+gamevar vrtrip_client_y 4096 0
+gamevar vrtrip_host_x 256 0
+gamevar vrtrip_host_y 2048 0
+
+gamevar vrtrip_given 0 1
+gamevar vrtrip_tick 0 1
+gamevar vrtrip_player 0 1
+gamevar vrtrip_index 0 1
+gamevar vrtrip_ammo 0 1
+gamevar vrtrip_weapon 0 1
+gamevar vrtrip_frame 0 1
+gamevar vrtrip_health 0 1
+gamevar vrtrip_x 0 1
+gamevar vrtrip_y 0 1
+gamevar vrtrip_z 0 1
+gamevar vrtrip_angle 0 1
+
+onevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrtrip_player
+    ifvare vrtrip_given 0
+    {
+        // Player 1 is the actual network client.  Player 0 remains away from
+        // the mine and is never used to manufacture a trigger.
+        setplayer[THISACTOR].gotweapon 8 1
+        setplayer[THISACTOR].ammo_amount 8 6
+        setplayer[THISACTOR].curr_weapon 8
+        setplayer[THISACTOR].last_weapon -1
+        setplayer[THISACTOR].weapon_pos 0
+        setplayer[THISACTOR].knuckle_incs 0
+        setplayer[THISACTOR].kickback_pic 0
+        setactor[THISACTOR].extra 240
+        setplayer[THISACTOR].last_extra 240
+        ifvare vrtrip_player 0
+        {
+            setplayer[THISACTOR].posx vrtrip_host_x
+            setplayer[THISACTOR].oposx vrtrip_host_x
+            setactor[THISACTOR].x vrtrip_host_x
+            setplayer[THISACTOR].posy vrtrip_host_y
+            setplayer[THISACTOR].oposy vrtrip_host_y
+            setactor[THISACTOR].y vrtrip_host_y
+        }
+        else
+        {
+            setplayer[THISACTOR].posx vrtrip_client_x
+            setplayer[THISACTOR].oposx vrtrip_client_x
+            setactor[THISACTOR].x vrtrip_client_x
+            setplayer[THISACTOR].posy vrtrip_client_y
+            setplayer[THISACTOR].oposy vrtrip_client_y
+            setactor[THISACTOR].y vrtrip_client_y
+        }
+        setplayer[THISACTOR].cursectnum 0
+        changespritesect THISACTOR 0
+        setplayer[THISACTOR].q16ang 0
+        setplayer[THISACTOR].oq16ang 0
+        setvar vrtrip_given 1
+    }
+    addvar vrtrip_tick 1
+    getplayer[THISACTOR].i vrtrip_index
+    getplayer[THISACTOR].ammo_amount 8 vrtrip_ammo
+    getplayer[THISACTOR].curr_weapon vrtrip_weapon
+    getplayer[THISACTOR].kickback_pic vrtrip_frame
+    getactor[THISACTOR].extra vrtrip_health
+    getplayer[THISACTOR].posx vrtrip_x
+    getplayer[THISACTOR].posy vrtrip_y
+    getplayer[THISACTOR].posz vrtrip_z
+    getplayer[THISACTOR].q16ang vrtrip_angle
+    addlog vrtrip_tick
+    addlog vrtrip_player
+    addlog vrtrip_index
+    addlog vrtrip_ammo
+    addlog vrtrip_weapon
+    addlog vrtrip_frame
+    addlog vrtrip_health
+    addlog vrtrip_x
+    addlog vrtrip_y
+    addlog vrtrip_z
+    addlog vrtrip_angle
+endevent
+
+gamevar vrtrip_actor 0 0
+gamevar vrtrip_tile 0 0
+gamevar vrtrip_event 0 0
+gamevar vrtrip_owner 0 0
+gamevar vrtrip_ownerplayer 0 0
+gamevar vrtrip_sector 0 0
+gamevar vrtrip_stat 0 0
+gamevar vrtrip_xa 0 0
+gamevar vrtrip_ya 0 0
+gamevar vrtrip_za 0 0
+gamevar vrtrip_anglea 0 0
+gamevar vrtrip_t1 0 0
+gamevar vrtrip_t3 0 0
+gamevar vrtrip_t5 0 0
+gamevar vrtrip_t6 0 0
+gamevar vrtrip_t7 0 0
+gamevar vrtrip_hitag 0 0
+gamevar vrtrip_xrepeat 0 0
+gamevar vrtrip_yrepeat 0 0
+gamevar vrtrip_clock 0 0
+
+defstate vrtrip_log_actor
+    getactor[vrtrip_actor].picnum vrtrip_tile
+    getactor[vrtrip_actor].owner vrtrip_owner
+    getactor[vrtrip_owner].yvel vrtrip_ownerplayer
+    getactor[vrtrip_actor].sectnum vrtrip_sector
+    getactor[vrtrip_actor].statnum vrtrip_stat
+    getactor[vrtrip_actor].x vrtrip_xa
+    getactor[vrtrip_actor].y vrtrip_ya
+    getactor[vrtrip_actor].z vrtrip_za
+    getactor[vrtrip_actor].ang vrtrip_anglea
+    // htg_t is zero-based while the native macros T1/T3 are one-based.
+    getactor[vrtrip_actor].htg_t 0 vrtrip_t1
+    getactor[vrtrip_actor].htg_t 2 vrtrip_t3
+    getactor[vrtrip_actor].htg_t 5 vrtrip_t5
+    getactor[vrtrip_actor].htg_t 6 vrtrip_t6
+    getactor[vrtrip_actor].htg_t 7 vrtrip_t7
+    getactor[vrtrip_actor].hitag vrtrip_hitag
+    getactor[vrtrip_actor].xrepeat vrtrip_xrepeat
+    getactor[vrtrip_actor].yrepeat vrtrip_yrepeat
+    setvarvar vrtrip_clock totalclock
+    addlog vrtrip_actor
+    addlog vrtrip_tile
+    addlog vrtrip_event
+    addlog vrtrip_owner
+    addlog vrtrip_ownerplayer
+    addlog vrtrip_sector
+    addlog vrtrip_stat
+    addlog vrtrip_xa
+    addlog vrtrip_ya
+    addlog vrtrip_za
+    addlog vrtrip_anglea
+    addlog vrtrip_t1
+    addlog vrtrip_t3
+    addlog vrtrip_t5
+    addlog vrtrip_t6
+    addlog vrtrip_t7
+    addlog vrtrip_hitag
+    addlog vrtrip_xrepeat
+    addlog vrtrip_yrepeat
+    addlog vrtrip_clock
+ends
+
+onevent EVENT_EGS
+    setvarvar vrtrip_actor THISACTOR
+    setvar vrtrip_event 71
+    state vrtrip_log_actor
+endevent
+
+onevent EVENT_GAME
+    setvarvar vrtrip_actor THISACTOR
+    setvar vrtrip_event 65
+    getactor[vrtrip_actor].picnum vrtrip_tile
+    ifvare vrtrip_tile TRIPBOMB state vrtrip_log_actor
+    ifvare vrtrip_tile LASERLINE state vrtrip_log_actor
+    ifvare vrtrip_tile EXPLOSION2 state vrtrip_log_actor
+endevent
+
+onevent EVENT_POSTWEAPONSHOOT
+    setvarvar vrtrip_actor RETURN
+    ifvarg vrtrip_actor -1
+    ifvarl vrtrip_actor 16384
+    {
+        setvar vrtrip_event 170
+        state vrtrip_log_actor
+    }
+endevent

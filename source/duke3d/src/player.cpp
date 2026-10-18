@@ -530,9 +530,9 @@ static void P_HandBombVelocity(int player, int sectorNum, int speed, bool rollin
 // No extra per-player state or alternative weapon simulation.
 struct HandHitscan { int16_t sector; vec3_t ray; };
 
-static vec3_t P_HandHitscanRay(vec3_t const &forward, int angle, int spreadZ, int spreadAngle)
+static vec3_t P_HandHitscanRay(vec3_t const &forward, int angle, int spreadZ, int spreadAngle, bool allowOverride=true)
 {
-    if (g_overrideShootZvel)
+    if (allowOverride && g_overrideShootZvel)
         return {sintable[(angle+spreadAngle+512)&2047],sintable[(angle+spreadAngle)&2047],g_shootZvel*64};
     double const length=std::sqrt(double(forward.x)*forward.x+double(forward.y)*forward.y+double(forward.z)*forward.z);
     double const x=forward.x/length, y=forward.y/length, z=forward.z/length;
@@ -682,6 +682,46 @@ static int Proj_DoHitscan(int spriteNum, int32_t const cstatmask, const vec3_t *
     pSprite->cstat |= cstatmask;
 
     return (hitData->sect < 0);
+}
+
+// Original placement radius, with a physical Z component only for a hand ray.
+// Bound differences before squaring: distant walls cannot wrap into legal reach.
+static bool P_TripbombInRange(vec3_t const &origin, hitdata_t const &hit, bool physical=false)
+{
+    int64_t const x=int64_t(hit.x)-origin.x, y=int64_t(hit.y)-origin.y, z=int64_t(hit.z)-origin.z;
+    if (x<=-290 || x>=290 || y<=-290 || y>=290) return false;
+    if (!physical) return x*x+y*y<290*290;
+    if (z<=-290*16 || z>=290*16) return false;
+    return (x*x+y*y)*256+z*z<int64_t(290*290)*256;
+}
+
+// Native press-time surface/occupancy policy, also used at tracked commit.
+static bool P_TripbombWallAllowed(hitdata_t const &hit)
+{
+    if (hit.sect<0 || hit.sprite>=0 || hit.wall<0 || sector[hit.sect].lotag>2) return false;
+    auto const &w=wall[hit.wall];
+    if (w.overpicnum==BIGFORCE || (w.cstat&16)) return false;
+    if (!((w.nextsector>=0 && sector[w.nextsector].lotag<=2)
+          || (w.nextsector==-1 && sector[hit.sect].lotag<=2))) return false;
+    for (int i=headspritesect[hit.sect];i>=0;i=nextspritesect[i])
+    {
+        int64_t const dz=int64_t(sprite[i].z)-hit.z;
+        if (sprite[i].picnum==TRIPBOMB && dz>-ZOFFSET4 && dz<ZOFFSET4
+            && P_TripbombInRange(sprite[i].xyz,hit)) return false;
+    }
+    return true;
+}
+
+static bool P_HandTripbombHit(int player, vec3_t &origin, int &angle, hitdata_t &hit,
+                              bool allowOverride, bool &clamped)
+{
+    HandHitscan hand;
+    if (!G_VRShotCanFire(player) || !G_VRResolveShot(player,origin,hand.sector,clamped)) return false;
+    auto const shot=G_VRGetShotInput(player);
+    hand.ray=P_HandHitscanRay({shot.direction[0],shot.direction[1],shot.direction[2]},angle,0,0,allowOverride);
+    if (hand.ray.x || hand.ray.y) angle=getangle(hand.ray.x,hand.ray.y);
+    return !Proj_DoHitscan(g_player[player].ps->i,CSTAT_SPRITE_BLOCK|CSTAT_SPRITE_BLOCK_HITSCAN,
+                          &origin,0,angle,&hit,&hand);
 }
 
 static void Proj_DoRandDecalSize(int const spriteNum, int const projecTile)
@@ -1661,33 +1701,32 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
 
         case HANDHOLDINGLASER__:
         {
-            int const zOffset     = (playerNum >= 0) ? g_player[playerNum].ps->pyoff : 0;
-            Zvel                  = (playerNum >= 0) ? fix16_to_int(F16(100) - pPlayer->q16horiz - pPlayer->q16horizoff) * 32 : 0;
-
-            startPos.z -= zOffset;
-            Proj_DoHitscan(spriteNum, 0, &startPos, Zvel, shootAng, &hitData);
-            startPos.z += zOffset;
-
-            int placeMine = 0;
-            if (hitData.sprite >= 0)
-                break;
-
-            if (hitData.wall >= 0 && hitData.sect >= 0)
+            bool const tracked=playerNum>=0 && G_VRHandShotFeature(playerNum,projecTile)==VRShotFeatureTripmine
+                && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,VRShotFeatureTripmine);
+            int placeMine=0;
+            if (tracked)
             {
-                uint32_t xdiff_sq = (hitData.x - startPos.x) * (hitData.x - startPos.x);
-                uint32_t ydiff_sq = (hitData.y - startPos.y) * (hitData.y - startPos.y);
-                if (xdiff_sq + ydiff_sq < (290 * 290))
+                if (P_HandTripbombHit(playerNum,startPos,shootAng,hitData,true,clamped)
+                    && P_TripbombWallAllowed(hitData) && P_TripbombInRange(pPlayer->pos,hitData)
+                    && P_TripbombInRange(startPos,hitData,true)) placeMine=1;
+                else G_VRBlockShot(playerNum);
+            }
+            else
+            {
+                int const zOffset=(playerNum>=0) ? pPlayer->pyoff : 0;
+                Zvel=(playerNum>=0) ? fix16_to_int(F16(100)-pPlayer->q16horiz-pPlayer->q16horizoff)*32 : 0;
+                startPos.z-=zOffset;
+                Proj_DoHitscan(spriteNum,0,&startPos,Zvel,shootAng,&hitData);
+                startPos.z+=zOffset;
+                if (hitData.sprite>=0) break;
+                if (hitData.wall>=0 && hitData.sect>=0 && P_TripbombInRange(startPos,hitData))
                 {
-                    // ST_2_UNDERWATER
-                    if (wall[hitData.wall].nextsector >= 0)
+                    if (wall[hitData.wall].nextsector>=0)
                     {
-                        if (sector[wall[hitData.wall].nextsector].lotag <= 2 && sector[hitData.sect].lotag <= 2)
-                            placeMine = 1;
+                        if (sector[wall[hitData.wall].nextsector].lotag<=2 && sector[hitData.sect].lotag<=2) placeMine=1;
                     }
-                    else if (sector[hitData.sect].lotag <= 2)
-                        placeMine = 1;
+                    else if (sector[hitData.sect].lotag<=2) placeMine=1;
                 }
-
             }
             if (placeMine == 1)
             {
@@ -1718,6 +1757,10 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
                 int const wallAng = getangle(wall[hitData.wall].x - wall[p2].x, wall[hitData.wall].y - wall[p2].y) - 512;
 
                 actor[spawnedSprite].t_data[5] = sprite[spawnedSprite].ang = wallAng;
+                if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                    LOG_F(INFO,"VR native tripmine: player=%d index=%d hand=%d,%d,%d hit=%d,%d,%d wall=%d sector=%d clamped=%d mode=%d fuse=%d.",
+                          playerNum,spawnedSprite,startPos.x,startPos.y,startPos.z,hitData.x,hitData.y,hitData.z,
+                          hitData.wall,hitData.sect,clamped,actor[spawnedSprite].t_data[6],actor[spawnedSprite].t_data[7]);
 
                 return spawnedSprite;
             }
@@ -4609,51 +4652,30 @@ static void P_ProcessWeapon(int playerNum)
                         if (pPlayer->ammo_amount[pPlayer->curr_weapon] > 0)
                         {
                             hitdata_t hitData;
-                            int const pq16ang = fix16_to_int(pPlayer->q16ang);
-                            hitscan((const vec3_t *)pPlayer, pPlayer->cursectnum, sintable[(pq16ang + 512) & 2047],
-                                    sintable[pq16ang & 2047], fix16_to_int(F16(100) - pPlayer->q16horiz - pPlayer->q16horizoff) * 32, &hitData,
-                                    CLIPMASK1);
-
-                            if ((hitData.sect < 0 || hitData.sprite >= 0) ||
-                                (hitData.wall >= 0 && sector[hitData.sect].lotag > 2))
-                                break;
-
-                            if (hitData.wall >= 0 && wall[hitData.wall].overpicnum >= 0)
-                                if (wall[hitData.wall].overpicnum == BIGFORCE)
-                                    break;
-
-                            uint32_t xdiff_sq, ydiff_sq;
-                            int spriteNum = headspritesect[hitData.sect];
-                            while (spriteNum >= 0)
+                            int angle=fix16_to_int(pPlayer->q16ang);
+                            vec3_t origin=pPlayer->pos;
+                            bool const tracked=G_VRHandShotFeature(playerNum)==VRShotFeatureTripmine
+                                && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,VRShotFeatureTripmine);
+                            bool clamped=false;
+                            if (tracked)
                             {
-                                xdiff_sq = (sprite[spriteNum].x - hitData.x) * (sprite[spriteNum].x - hitData.x);
-                                ydiff_sq = (sprite[spriteNum].y - hitData.y) * (sprite[spriteNum].y - hitData.y);
-
-                                if (sprite[spriteNum].picnum == TRIPBOMB && klabs(sprite[spriteNum].z - hitData.z) < ZOFFSET4
-                                        && xdiff_sq + ydiff_sq < (290 * 290))
-                                    break;
-                                spriteNum = nextspritesect[spriteNum];
+                                // Native press does not consume the preceding shot's Z override.
+                                if (!P_HandTripbombHit(playerNum,origin,angle,hitData,false,clamped))
+                                { G_VRBlockShot(playerNum); break; }
                             }
-
-                            // ST_2_UNDERWATER
-                            if (spriteNum == -1 && hitData.wall >= 0 && (wall[hitData.wall].cstat & 16) == 0)
-                                if ((wall[hitData.wall].nextsector >= 0 && sector[wall[hitData.wall].nextsector].lotag <= 2) ||
-                                    (wall[hitData.wall].nextsector == -1 && sector[hitData.sect].lotag <= 2))
-                                {
-                                    xdiff_sq = (hitData.x - pPlayer->pos.x) * (hitData.x - pPlayer->pos.x);
-                                    ydiff_sq = (hitData.y - pPlayer->pos.y) * (hitData.y - pPlayer->pos.y);
-
-                                    if (xdiff_sq + ydiff_sq < (290 * 290))
-                                    {
-                                        pPlayer->pos.z = pPlayer->opos.z;
-                                        pPlayer->vel.z = 0;
-                                        startFiring    = true;
-                                        if (PWEAPON(playerNum, pPlayer->curr_weapon, InitialSound) > 0)
-                                        {
-                                            A_PlaySound(PWEAPON(playerNum, pPlayer->curr_weapon, InitialSound), pPlayer->i);
-                                        }
-                                    }
-                                }
+                            else
+                                hitscan((const vec3_t *)pPlayer,pPlayer->cursectnum,sintable[(angle+512)&2047],
+                                        sintable[angle&2047],fix16_to_int(F16(100)-pPlayer->q16horiz-pPlayer->q16horizoff)*32,
+                                        &hitData,CLIPMASK1);
+                            if (P_TripbombWallAllowed(hitData) && P_TripbombInRange(pPlayer->pos,hitData)
+                                && (!tracked || P_TripbombInRange(origin,hitData,true)))
+                            {
+                                pPlayer->pos.z=pPlayer->opos.z;
+                                pPlayer->vel.z=0;
+                                startFiring=true;
+                                if (PWEAPON(playerNum,pPlayer->curr_weapon,InitialSound)>0)
+                                    A_PlaySound(PWEAPON(playerNum,pPlayer->curr_weapon,InitialSound),pPlayer->i);
+                            }
                         }
                         break;
 

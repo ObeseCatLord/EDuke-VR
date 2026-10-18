@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// CPU-native tripmine observation fixture.  It gives players a fixed native
+// start state and observes stock HANDHOLDINGLASER/TRIPBOMB processing only.
+// It never creates, moves, arms, damages, or detonates a tripmine itself.
+include controller_test.con
+
+// Runner-editable input settings.  Keep these at the top so fixed native
+// placement cases can use this source without adding any game-side hook.
+gamevar vrtrip_weapon 8 0
+gamevar vrtrip_ammo_initial 6 0
+gamevar vrtrip_controlled_x 1024 0
+gamevar vrtrip_controlled_y 4096 0
+gamevar vrtrip_controlled_angle 0 0
+// Closed-room placement target; the runner builds this wall at x=1152.
+gamevar vrtrip_target_x 1152 0
+gamevar vrtrip_target_y 4096 0
+gamevar vrtrip_target_sector 0 0
+gamevar vrtrip_host_x 256 0
+gamevar vrtrip_host_y 2048 0
+
+gamevar vrtrip_given 0 1
+gamevar vrtrip_tick 0 1
+gamevar vrtrip_player 0 1
+gamevar vrtrip_index 0 1
+gamevar vrtrip_ammo 0 1
+gamevar vrtrip_weapon_now 0 1
+gamevar vrtrip_frame 0 1
+gamevar vrtrip_health 0 1
+gamevar vrtrip_x 0 1
+gamevar vrtrip_y 0 1
+gamevar vrtrip_z 0 1
+gamevar vrtrip_angle 0 1
+
+onevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrtrip_player
+    ifvare vrtrip_given 0
+    {
+        // Fixture-only player initialization.  Player 1 is the actual client;
+        // player 0 remains well away from the closed +X wall.
+        setplayer[THISACTOR].gotweapon 8 1
+        setplayer[THISACTOR].ammo_amount 8 vrtrip_ammo_initial
+        setplayer[THISACTOR].curr_weapon 8
+        setplayer[THISACTOR].last_weapon -1
+        setplayer[THISACTOR].weapon_pos 0
+        setplayer[THISACTOR].knuckle_incs 0
+        setplayer[THISACTOR].kickback_pic 0
+        setactor[THISACTOR].extra 240
+        setplayer[THISACTOR].last_extra 240
+        ifvare vrtrip_player 0
+        {
+            setplayer[THISACTOR].posx vrtrip_host_x
+            setplayer[THISACTOR].oposx vrtrip_host_x
+            setactor[THISACTOR].x vrtrip_host_x
+            setplayer[THISACTOR].posy vrtrip_host_y
+            setplayer[THISACTOR].oposy vrtrip_host_y
+            setactor[THISACTOR].y vrtrip_host_y
+        }
+        else
+        {
+            setplayer[THISACTOR].posx vrtrip_controlled_x
+            setplayer[THISACTOR].oposx vrtrip_controlled_x
+            setactor[THISACTOR].x vrtrip_controlled_x
+            setplayer[THISACTOR].posy vrtrip_controlled_y
+            setplayer[THISACTOR].oposy vrtrip_controlled_y
+            setactor[THISACTOR].y vrtrip_controlled_y
+        }
+        setplayer[THISACTOR].cursectnum 0
+        changespritesect THISACTOR 0
+        setplayer[THISACTOR].q16ang vrtrip_controlled_angle
+        setplayer[THISACTOR].oq16ang vrtrip_controlled_angle
+        setvar vrtrip_given 1
+    }
+    addvar vrtrip_tick 1
+    getplayer[THISACTOR].i vrtrip_index
+    getplayer[THISACTOR].ammo_amount 8 vrtrip_ammo
+    getplayer[THISACTOR].curr_weapon vrtrip_weapon_now
+    getplayer[THISACTOR].kickback_pic vrtrip_frame
+    getactor[THISACTOR].extra vrtrip_health
+    getplayer[THISACTOR].posx vrtrip_x
+    getplayer[THISACTOR].posy vrtrip_y
+    getplayer[THISACTOR].posz vrtrip_z
+    getplayer[THISACTOR].q16ang vrtrip_angle
+    addlog vrtrip_tick
+    addlog vrtrip_player
+    addlog vrtrip_index
+    addlog vrtrip_ammo
+    addlog vrtrip_weapon_now
+    addlog vrtrip_frame
+    addlog vrtrip_health
+    addlog vrtrip_x
+    addlog vrtrip_y
+    addlog vrtrip_z
+    addlog vrtrip_angle
+endevent
+
+gamevar vrtrip_mine_event 0 0
+gamevar vrtrip_post_return -1 0
+gamevar vrtrip_mine_index 0 0
+gamevar vrtrip_mine_tile 0 0
+gamevar vrtrip_mine_owner 0 0
+gamevar vrtrip_mine_ownerplayer 0 0
+gamevar vrtrip_mine_sector 0 0
+gamevar vrtrip_mine_stat 0 0
+gamevar vrtrip_mine_x 0 0
+gamevar vrtrip_mine_y 0 0
+gamevar vrtrip_mine_z 0 0
+gamevar vrtrip_mine_angle 0 0
+gamevar vrtrip_mine_t0 0 0
+gamevar vrtrip_mine_t1 0 0
+gamevar vrtrip_mine_t2 0 0
+gamevar vrtrip_mine_t5 0 0
+gamevar vrtrip_mine_t6 0 0
+gamevar vrtrip_mine_t7 0 0
+gamevar vrtrip_mine_hitag 0 0
+gamevar vrtrip_mine_totalclock 0 0
+
+defstate vrtrip_observe_mine
+    getactor[vrtrip_mine_index].picnum vrtrip_mine_tile
+    ifvare vrtrip_mine_tile TRIPBOMB
+    {
+        getactor[vrtrip_mine_index].owner vrtrip_mine_owner
+        getactor[vrtrip_mine_owner].yvel vrtrip_mine_ownerplayer
+        getactor[vrtrip_mine_index].sectnum vrtrip_mine_sector
+        getactor[vrtrip_mine_index].statnum vrtrip_mine_stat
+        getactor[vrtrip_mine_index].x vrtrip_mine_x
+        getactor[vrtrip_mine_index].y vrtrip_mine_y
+        getactor[vrtrip_mine_index].z vrtrip_mine_z
+        getactor[vrtrip_mine_index].ang vrtrip_mine_angle
+        getactor[vrtrip_mine_index].htg_t 0 vrtrip_mine_t0
+        getactor[vrtrip_mine_index].htg_t 1 vrtrip_mine_t1
+        getactor[vrtrip_mine_index].htg_t 2 vrtrip_mine_t2
+        getactor[vrtrip_mine_index].htg_t 5 vrtrip_mine_t5
+        getactor[vrtrip_mine_index].htg_t 6 vrtrip_mine_t6
+        getactor[vrtrip_mine_index].htg_t 7 vrtrip_mine_t7
+        getactor[vrtrip_mine_index].hitag vrtrip_mine_hitag
+        setvarvar vrtrip_mine_totalclock totalclock
+        addlog vrtrip_mine_index
+        addlog vrtrip_mine_tile
+        addlog vrtrip_mine_owner
+        addlog vrtrip_mine_ownerplayer
+        addlog vrtrip_mine_sector
+        addlog vrtrip_mine_stat
+        addlog vrtrip_mine_x
+        addlog vrtrip_mine_y
+        addlog vrtrip_mine_z
+        addlog vrtrip_mine_angle
+        addlog vrtrip_mine_t0
+        addlog vrtrip_mine_t1
+        addlog vrtrip_mine_t2
+        addlog vrtrip_mine_t5
+        addlog vrtrip_mine_t6
+        addlog vrtrip_mine_t7
+        addlog vrtrip_mine_hitag
+        addlog vrtrip_mine_totalclock
+        addlog vrtrip_mine_event
+    }
+ends
+
+onevent EVENT_EGS
+    setvarvar vrtrip_mine_index THISACTOR
+    setvar vrtrip_mine_event 71
+    state vrtrip_observe_mine
+endevent
+
+onevent EVENT_GAME
+    setvarvar vrtrip_mine_index THISACTOR
+    setvar vrtrip_mine_event 65
+    state vrtrip_observe_mine
+endevent
+
+onevent EVENT_POSTWEAPONSHOOT
+    setvarvar vrtrip_post_return RETURN
+    addlog vrtrip_post_return
+    ifvarg vrtrip_post_return -1
+    ifvarl vrtrip_post_return 16384
+    {
+        setvarvar vrtrip_mine_index vrtrip_post_return
+        setvar vrtrip_mine_event 170
+        state vrtrip_observe_mine
+    }
+endevent
