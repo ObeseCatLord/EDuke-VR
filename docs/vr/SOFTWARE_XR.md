@@ -65,9 +65,12 @@ CPU Vulkan identity, device denial and cleanup separately.
   Distinct eye images inspected, core validation clean and all processes reaped.
 - `work/software-xr-lab-world-ui`: same actual single-player world with UI2;
   opaque60 multiview, masks58 multiview/2 two-pass, full58 multiview. Clean client
-  validation and owned cleanup. An initial multiplayer crosshair run joined
-  successfully and delivered input but timed out awaiting presentation frames;
-  that separate path remains unqualified by the new software lab.
+  validation and owned cleanup.
+- Initial multiplayer crosshair runs joined and received input but timed out
+  after native centering overshot during slow frames. The narrow native fix and
+  passing base/occluded real multiplayer reticle tests are recorded in
+  [VIEW_CENTERING.md](VIEW_CENTERING.md). Those tests preserve depth, independently
+  qualify both-eye projection and match the native authoritative shot ray.
 - Sibling `outputs/evidence/software-xr-validation.json` records bounded results
   and hashes; `software-xr-world.png` contains actual world eye readbacks.
 

@@ -983,3 +983,13 @@ Astra art revision: Duke678tri/256², weapons44–236tri/128²,28 structural mod
 19 roundtrip samples,281 independently verified manifest hashes. Original v1
 files are preserved. Eight weapons have rest-only geometry; controller fit,
 runtime animation/body IK and model stereo rendering remain integration work.
+
+The initial software multiplayer reticle timeout exposed native centering
+overshoot after slow frames. [VIEW_CENTERING.md](VIEW_CENTERING.md) records the
+narrow convergence correction and native reference proof. Final base and
+occluded crosshair cases each pass13 checks using actual native revision4 peers,
+real runtime poses and shots,60 world/HUD receipts and independent eye/depth
+oracles. The visible marker matches both-eye projection within1 color unit;
+world depth blocks all24 covered pixels per eye in the occluded case. Both
+reticle rays exactly match the server's shot origin and impact. No renderer
+coverage relaxation, new camera state or hardware GPU use was needed.

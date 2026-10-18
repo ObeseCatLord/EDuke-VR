@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// CPU-native view-centering observation fixture.  It sets the controlled
+// horizon exactly once, then leaves P_UpdateAngles to perform every centering
+// update.  The one-shot POSTUPDATEANGLES loop delays the following native view
+// update so its elapsed interval is part of the real engine calculation.
+include GAME.CON
+
+gamevar vrcenter_started 0 1
+gamevar vrcenter_delayed 0 1
+gamevar vrcenter_spin 0 1
+gamevar vrcenter_sample 0 1
+gamevar vrcenter_horizon 0 1
+gamevar vrcenter_return 0 1
+gamevar vrcenter_totalclock 0 1
+
+onevent EVENT_PREUPDATEANGLES
+    ifvare vrcenter_started 0
+    {
+        setplayer[THISACTOR].q16horiz 9175040 // fixed16(140)
+        setplayer[THISACTOR].q16horizoff 0
+        setplayer[THISACTOR].return_to_center 9
+        setvar vrcenter_started 1
+    }
+endevent
+
+onevent EVENT_POSTUPDATEANGLES
+    addvar vrcenter_sample 1
+    getplayer[THISACTOR].q16horiz vrcenter_horizon
+    getplayer[THISACTOR].return_to_center vrcenter_return
+    setvarvar vrcenter_totalclock totalclock
+    addlog vrcenter_sample
+    addlog vrcenter_horizon
+    addlog vrcenter_return
+    addlog vrcenter_totalclock
+
+    ifvare vrcenter_delayed 0
+    {
+        setvar vrcenter_delayed 1
+        setvar vrcenter_spin 0
+        // The runner substitutes this count into the owned lab copy.  This is
+        // deliberately after the sample: no later sample is script-modified.
+        whilevarl vrcenter_spin 15000000
+            addvar vrcenter_spin 1
+    }
+endevent

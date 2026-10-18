@@ -287,7 +287,7 @@ bool testFailure(char const *point)
 }
 
 
-bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye)
+bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye, char const *&rejection)
 {
     float const pitch = std::atan((fix16_to_float(base.horizon)-100.f)/128.f);
     XrQuaternionf const bodyPitch {std::sin(pitch*.5f),0,0,std::cos(pitch*.5f)};
@@ -307,13 +307,16 @@ bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye)
     updatesectorz(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,&eye.camera.sector);
     if (eye.camera.sector < 0 || !cansee(base.pos.x,base.pos.y,base.pos.z,base.sector,
         eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,eye.camera.sector))
+    {
+        rejection="collision";
         return false;  // Camera collision/fade policy is a subsequent gameplay slice.
+    }
 
     auto const q = multiply(trackingRotation,view.pose.orientation);
     auto forward = rotate(q,{0,0,-1});
     float const horizontal = std::hypot(forward.x,forward.z);
     if (horizontal < 1e-4f)
-        return false;
+    { rejection="vertical"; return false; }
     XrVector3f const right {-forward.z/horizontal,0,forward.x/horizontal};
     auto const up = cross(right,forward);
     auto actualRight = rotate(q,{1,0,0});
@@ -325,14 +328,14 @@ bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye)
     eye.cover = std::max({std::fabs(eye.left),std::fabs(eye.right),
                          std::fabs(eye.down)*aspect,std::fabs(eye.up)*aspect});
     if (!(eye.cover > 0.f && eye.cover < 16.f))
-        return false;
+    { rejection="fov"; return false; }
     // Native Polymost clips CPU rays to the yaw-forward half-space. Reject an
     // unsupported frame instead of silently clamping tracked head orientation.
     XrVector3f const yawForward {forward.x/horizontal,0,forward.z/horizontal};
     for (float x : {eye.left,eye.right})
         for (float y : {eye.down,eye.up})
             if (dot(rotate(q,{x,y,-1}),yawForward) <= .001f)
-                return false;
+            { rejection="half-space"; return false; }
     return true;
 }
 void eyeState(Eye const &eye)
@@ -1097,15 +1100,26 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     }
     else
         for (unsigned i=0;i<2;++i)
-            if (!makeEye(frame.views[i],body,float(frame.width)/frame.height,eyes[i]))
+        {
+            char const *rejection=nullptr;
+            if (!makeEye(frame.views[i],body,float(frame.width)/frame.height,eyes[i],rejection))
             {
                 static bool warned;
                 if (!warned)
+                {
                     LOG_F(WARNING,"XR oracle frame outside native camera coverage/collision domain; full-pitch/room-scale support remains pending.");
+                    if (std::getenv("EDUKE32_XR_TEST_AIM"))
+                        LOG_F(INFO,"OpenXR rejected eye: eye=%u reason=%s bodyPitch=%.6f pos=%d,%d,%d sector=%d fov=%.6f,%.6f,%.6f,%.6f.",
+                              i,rejection ? rejection : "unknown",nativePitch(body.horizon),
+                              eyes[i].camera.pos.x,eyes[i].camera.pos.y,eyes[i].camera.pos.z,eyes[i].camera.sector,
+                              frame.views[i].fov.angleLeft,frame.views[i].fov.angleRight,
+                              frame.views[i].fov.angleUp,frame.views[i].fov.angleDown);
+                }
                 warned = true;
                 runtime->finishFrame(false,error);
                 return false;
             }
+        }
     if (!fixtureTest && std::getenv("EDUKE32_XR_TEST_AIM")
         && (worldFrames==59 || std::getenv("EDUKE32_TEST_REFERENCE_MARKER")))
     {

@@ -3371,7 +3371,11 @@ void P_UpdateAngles(int const playerNum, input_t &input)
     }
     else if (pPlayer->return_to_center > 0 || thisPlayer.horizRecenter)
     {
+        auto const beforeCenter=pPlayer->q16horiz;
         pPlayer->q16horiz = fix16_sadd(pPlayer->q16horiz, fix16_from_float(scaleToInterval(fix16_to_float(F16(66.666) - fix16_sdiv(pPlayer->q16horiz, F16(1.5))))));
+        // A slow view frame can span several native ticks. Centering must
+        // converge to level rather than cross it and amplify on the next frame.
+        pPlayer->q16horiz = fix16_clamp(pPlayer->q16horiz, fix16_min(beforeCenter,F16(100)), fix16_max(beforeCenter,F16(100)));
 
         if ((!pPlayer->return_to_center && thisPlayer.horizRecenter) || (pPlayer->q16horiz >= F16(99.9) && pPlayer->q16horiz <= F16(100.1)))
         {
@@ -3747,8 +3751,22 @@ void P_GetInput(int const playerNum)
         G_XRApplyAim(input,!(locked & IL_NOANGLE),!(locked & IL_NOHORIZ));
     }
 #endif
+#ifdef USE_OPENXR
+    auto const xrBeforeHorizon=pPlayer->q16horiz;
+#endif
     if (!ud.recstat)
         P_UpdateAngles(playerNum, input);
+#ifdef USE_OPENXR
+    if (playerNum==myconnectindex && std::getenv("EDUKE32_XR_TEST_AIM"))
+    {
+        static unsigned xrAngleTrace;
+        if (xrAngleTrace++ < 24)
+            LOG_F(INFO,"OpenXR native angle update: clock=%d before=%d after=%d offset=%d input=%d center=%d recenter=%d adjust=%d skew=%d.",
+                  int32_t(totalclock),xrBeforeHorizon,pPlayer->q16horiz,pPlayer->q16horizoff,input.q16horz,
+                  pPlayer->return_to_center,int(g_player[playerNum].horizRecenter),
+                  g_player[playerNum].horizAngleAdjust,g_player[playerNum].horizSkew);
+    }
+#endif
 
     // in case bits were altered
     localInput.bits = input.bits;
