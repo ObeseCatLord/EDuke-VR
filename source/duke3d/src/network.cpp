@@ -1494,6 +1494,13 @@ static void Net_AddWorldToSnapshot(netmapstate_t* snapshot)
 //------------------------------------------------------------------------------------------------------------------------
 
 
+static void Net_ClearPlayerInputDeltas(int32_t player)
+{
+    for (int slot = 0; slot < MOVEFIFOSIZ; ++slot)
+        P_ClearInputDeltas(&inputfifo[slot][player]);
+    P_ClearInputDeltas(&g_player[player].input);
+}
+
 static void P_RemovePlayer(int32_t p)
 {
     // server obviously can't leave the game, and index 0 shows up for disconnect events from
@@ -1504,6 +1511,7 @@ static void P_RemovePlayer(int32_t p)
     g_player[p].playerquitflag = 0;
     vrClientCapability[p]=false;
     G_VRResetShot(p);
+    Net_ClearPlayerInputDeltas(p);
 
     Bsprintf(recbuf,"%s^00 is history!",g_player[p].user_name);
     G_AddUserQuote(recbuf);
@@ -1596,6 +1604,7 @@ static void Net_SyncPlayer(ENetEvent *event)
     event->peer->data = (void *)(intptr_t)newPlayerIndex;
     vrClientCapability[newPlayerIndex]=false;
     G_VRResetShot(newPlayerIndex);
+    Net_ClearPlayerInputDeltas(newPlayerIndex);
 
     g_player[newPlayerIndex].netsynctime = (int32_t) totalclock;
     g_player[newPlayerIndex].playerquitflag = 1;
@@ -1831,7 +1840,7 @@ static void Net_ReceiveClientUpdate(ENetEvent *event)
     // Never let a new pose/input extension name another player's authority.
     if (update.player.playerindex!=playeridx) { reject("identity"); return; }
     g_player[playeridx].revision=update.RevisionNumber;
-    inputfifo[0][playeridx]=update.nsyn;
+    P_AccumulateInput(&inputfifo[0][playeridx], &update.nsyn);
     Net_ExtractPlayerUpdate(&update.player,PACKET_SLAVE_TO_MASTER);
     G_VRSetShotInput(playeridx,shot); // a base update explicitly leaves VR mode
 }
@@ -5186,6 +5195,9 @@ void Net_SendClientUpdate(void)
     update.header         = PACKET_SLAVE_TO_MASTER;
     update.RevisionNumber = g_netMapRevisionNumber;
     update.nsyn           = inputfifo[0][myconnectindex];
+    // Catch-up ticks may send again before dukeFillInputForTic produces new
+    // input. Keep the current tick's g_player input, but send each delta once.
+    P_ClearInputDeltas(&inputfifo[0][myconnectindex]);
 
     Net_FillPlayerUpdate(&update.player, myconnectindex);
 

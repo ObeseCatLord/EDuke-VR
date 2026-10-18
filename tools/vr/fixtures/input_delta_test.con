@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Observation-only native input transport fixture. It never writes input state.
+include controller_test.con
+
+gamevar vrdelta_tick 0 1
+gamevar vrdelta_player 0 1
+gamevar vrdelta_q16avel 0 1
+gamevar vrdelta_q16horz 0 1
+gamevar vrdelta_bits 0 1
+gamevar vrdelta_fvel 0 1
+gamevar vrdelta_svel 0 1
+gamevar vrdelta_extbits 0 1
+gamevar vrdelta_x 0 1
+gamevar vrdelta_y 0 1
+gamevar vrdelta_q16ang 0 1
+
+appendevent EVENT_PROCESSINPUT
+    addvar vrdelta_tick 1
+    getplayer[THISACTOR].index vrdelta_player
+    getinput[THISACTOR].q16avel vrdelta_q16avel
+    getinput[THISACTOR].q16horz vrdelta_q16horz
+    getinput[THISACTOR].bits vrdelta_bits
+    getinput[THISACTOR].fvel vrdelta_fvel
+    getinput[THISACTOR].svel vrdelta_svel
+    getinput[THISACTOR].extbits vrdelta_extbits
+    getplayer[THISACTOR].posx vrdelta_x
+    getplayer[THISACTOR].posy vrdelta_y
+    getplayer[THISACTOR].q16ang vrdelta_q16ang
+    addlog vrdelta_tick
+    addlog vrdelta_player
+    addlog vrdelta_q16avel
+    addlog vrdelta_q16horz
+    addlog vrdelta_bits
+    addlog vrdelta_fvel
+    addlog vrdelta_svel
+    addlog vrdelta_extbits
+    addlog vrdelta_x
+    addlog vrdelta_y
+    addlog vrdelta_q16ang
+endevent

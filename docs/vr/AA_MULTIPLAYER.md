@@ -1,5 +1,10 @@
 # AA native multiplayer startup
 
+For the later native angular-input correction, actual matching Duke/START
+selection, and the remaining starting-inventory diagnosis, read
+[INPUT_DELTAS.md](INPUT_DELTAS.md). This startup section retains the earlier
+checkpoint's scope. CON-state replication and campaign combat remain open.
+
 This checkpoint qualifies Alien Armageddon 5.66 **native startup and joining**.
 AA campaign combat, character selection across peers, and script-state
 replication remain incomplete. The native packet format stays at NETVERSION6.
@@ -156,12 +161,13 @@ serialization is separate and is not transmitted by ENet.
 AA's `startmode` and `charsel` are global NORESET variables; `pchar` is per-player.
 Weapon script values are also not transferred. AA's character selection chooses
 local player/AI companions; its CTF/DM/Survive labels do not establish a working
-network game mode. On the observed joined pair, both remain at `startmode=-1`,
+network game mode. At the startup-only checkpoint, both remained at `startmode=-1`,
 `charsel=0`, pistol ammo0. Agreement of defaults is not replication evidence.
 
-Before adding compatibility code, prove a deliberate server-only AA state
-change across join and later snapshots, trace the native selector's input and
-side effects, and compare a narrow AA script adapter with extending the existing
+The later diagnostic in [INPUT_DELTAS.md](INPUT_DELTAS.md) now proves that a
+server-only AA state change is absent across both join and later snapshots;
+native input and selector side effects are traced separately. Before adding
+replication, compare a narrow AA script adapter with extending the existing
 native snapshot codec. Identify which values are authoritative gameplay versus
 local menu/HUD state. Do not globally replicate every CON variable or invent a
 second AA weapon/menu state machine. A completed acceptance test must include

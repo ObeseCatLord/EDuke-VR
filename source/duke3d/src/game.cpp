@@ -7365,7 +7365,14 @@ int G_DoMoveThings(void)
         randomseed = ticrandomseed;
 
     for (bssize_t TRAVERSE_CONNECT(i))
-        Bmemcpy(&g_player[i].input, &inputfifo[(g_netServer && myconnectindex == i)][i], sizeof(input_t));
+    {
+        auto &pending = inputfifo[(g_netServer && myconnectindex == i)][i];
+        g_player[i].input = pending;
+        // Remote angular input is an increment, unlike held buttons/movement.
+        // Consume even while paused so unpausing cannot replay old motion.
+        if (g_netServer && myconnectindex != i)
+            P_ClearInputDeltas(&pending);
+    }
 
     G_UpdateInterpolations();
 

@@ -29,7 +29,7 @@ from smoke_crosshair import raster
 
 AA_SELECT_BIT = 1 << 29  # Native Open / AA ifhitspace, mapped to left Select.
 
-AA_FIELDS = ('tick', 'bits', 'q16avel', 'q16horz', 'cursorx', 'cursory',
+AA_FIELDS = ('tick', 'player', 'bits', 'q16avel', 'q16horz', 'cursorx', 'cursory',
              'startmode', 'charsel', 'pchar', 'currentweapon', 'ammo', 'gm',
              'counter', 'reloading', 'weaponpos', 'shoots', 'workslike', 'firedelay', 'shots',
              'volume', 'level')
@@ -50,11 +50,12 @@ def aa_samples(text):
     return rows
 
 
-def aa_wrapper():
+def aa_wrapper(local_only=False):
     """Append observations without replacing AA's EVENT_PROCESSINPUT handler."""
     fields = '\n'.join(f'gamevar aaobserve_{name} 0 1' for name in AA_FIELDS)
     reads = '''
     addvar aaobserve_tick 1
+    getplayer[THISACTOR].index aaobserve_player
     getinput[].bits aaobserve_bits
     getinput[].q16avel aaobserve_q16avel
     getinput[].q16horz aaobserve_q16horz
@@ -76,6 +77,8 @@ def aa_wrapper():
     getuserdef[THISACTOR].level_number aaobserve_level
 '''
     logs = ''.join(f'    addlog aaobserve_{name}\n' for name in AA_FIELDS)
+    if local_only:
+        logs = 'ifvarvare aaobserve_player myconnectindex\n{\n' + logs + '}\n'
     return ('// Private read-only AA controller observation wrapper.\n'
             'include scripts/AAGAME.CON\n\n' + fields +
             '\n\nappendevent EVENT_PROCESSINPUT\n' + reads + logs + 'endevent\n'
@@ -189,7 +192,7 @@ def drive_combat(observer, remote, root):
             'native_trigger_seen': any(row['bits'] & 4 for row in held)}
 
 
-def drive_character_selection(observer, remote):
+def drive_character_selection(observer, remote, stages=None, before_start=None):
     """Use only remote-controller axes and trigger presses to enter AA play.
 
     Cursor direction is calibrated from the installed script's own native input
@@ -200,7 +203,9 @@ def drive_character_selection(observer, remote):
     initial = aa_samples(initial_text)[-1]
     if initial['startmode'] >= 0:
         raise RuntimeError('AA character-select state was not observed before controller input')
-    stages = {'initial': initial}
+    if stages is None:
+        stages = {}
+    stages['initial'] = initial
 
     def select_press():
         remote.packet.left.trigger_value = 1
@@ -291,6 +296,8 @@ def drive_character_selection(observer, remote):
     if not 265 <= cursor['cursorx'] <= 316 or not 21 <= cursor['cursory'] <= 54:
         raise RuntimeError('native AA cursor did not enter the installed START hit box')
     stages['start_cursor'] = cursor
+    if before_start is not None:
+        before_start()
 
     captures_before_start = [int(value) for value in PVP_CAPTURE.findall(observer.text())]
     start_press, start_release = select_edge(

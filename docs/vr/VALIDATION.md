@@ -2,6 +2,15 @@
 
 ## Current checkpoint — 2026-10-18
 
+Native client angular increments now accumulate and are consumed once, including
+sender catch-up ticks and reused player slots. Actual AA peers reach the same
+cursor and confirm Duke/START with an explicit per-player button-history lab
+override. CPU and XR listen-server pulse totals agree under batching/catch-up;
+the previous binary fails both total comparisons. Stock native25 passes again.
+See [INPUT_DELTAS.md](INPUT_DELTAS.md) and sibling
+`evidence/native-input-deltas-validation.json`. AA starting inventory and CON
+replication still fail; selection agreement is not campaign gameplay acceptance.
+
 Actual AA native multiplayer early and late joins now pass eight checks each:
 the remote player reaches input processing on both peers and the client renders
 AA's real character selector. Startup admission retains ENet keepalives while

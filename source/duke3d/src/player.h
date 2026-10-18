@@ -175,6 +175,28 @@ typedef struct {
     uint32_t extbits;
 } input_t;
 
+static inline void P_ClearInputDeltas(input_t *input)
+{
+    input->q16avel = input->q16horz = 0;
+}
+
+static inline int32_t P_AddInputDelta(int32_t pending, int32_t incoming)
+{
+    // Packet values can cover the whole signed range, including INT32_MIN.
+    // fix16_sadd reserves that value as an overflow sentinel.
+    int64_t const sum = (int64_t)pending + incoming;
+    return sum > INT32_MAX ? INT32_MAX : sum < INT32_MIN ? INT32_MIN : (int32_t)sum;
+}
+
+static inline void P_AccumulateInput(input_t *pending, input_t const *incoming)
+{
+    int32_t const yaw = P_AddInputDelta(pending->q16avel, incoming->q16avel);
+    int32_t const pitch = P_AddInputDelta(pending->q16horz, incoming->q16horz);
+    *pending = *incoming; // Held controls retain the latest packet's values.
+    pending->q16avel = yaw;
+    pending->q16horz = pitch;
+}
+
 #define MAX_LOOGIES 6
 
 // XXX: r1625 changed a lot types here, among others
