@@ -1771,9 +1771,9 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     if (!reported || g_frameCounter == 12)
                     {
                         auto const stats=polymost_xrCollectionStats();
-                        LOG_F(INFO,"OpenXR opaque single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u flatSky=%u skyDepth=%u npot=%u",
+                        LOG_F(INFO,"OpenXR opaque single-pass: frame=%u paired=%u eyeOnly=%u pairedVertices=%u eyeOnlyVertices=%u flatSky=%u skyDepth=%u npot=%u skybox=%u skyboxPaired=%u",
                               unsigned(g_frameCounter),stats.pairedCalls,stats.eyeOnlyCalls,stats.pairedVertices,stats.eyeOnlyVertices,
-                              stats.flatSkyCalls,stats.skyDepthCalls,stats.npotCalls);
+                              stats.flatSkyCalls,stats.skyDepthCalls,stats.npotCalls,stats.skyboxCalls,stats.skyboxPairedCalls);
                         reported=true;
                     }
                 }
@@ -1783,7 +1783,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         if (!committed && good)
         {
             static unsigned reported;
-            if (reported < 3)
+            if (reported < 3 || g_frameCounter == 12)
             {
                 LOG_F(INFO,"OpenXR opaque candidate uses two-pass oracle: %s (frame=%u)",
                       polymost_xrCollectionReason(),unsigned(g_frameCounter));

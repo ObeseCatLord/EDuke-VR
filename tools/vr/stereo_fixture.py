@@ -24,13 +24,25 @@ SKY_TILE = 89  # LA, native eight-panel sky configured by G_InitMultiPsky.
 MASK_TILE = 285  # MASKWALL1, indexed ART with transparent texels.
 
 
-def sector(wallptr: int, wallnum: int, sky_ceiling=False, sky_floor=False) -> bytes:
+def sector(wallptr: int, wallnum: int, sky_ceiling=False, sky_floor=False, *,
+           ceiling_shade=None, ceiling_palette=None, floor_shade=None,
+           floor_palette=None, visibility=0) -> bytes:
     # sectortypev7, source/build/include/buildtypes.h: 40 bytes.
     return struct.pack(
         "<hhiiHHhhbBBBhhbBBBBBhhh",
         wallptr, wallnum, -16384, 0, int(sky_ceiling), int(sky_floor),
-        SKY_TILE if sky_ceiling else WALL_TILE, 0, 0, 0, 17 if sky_ceiling else 0, 9 if sky_ceiling else 0,
-        SKY_TILE if sky_floor else WALL_TILE, 0, 0, 0, 17 if sky_floor else 0, 9 if sky_floor else 0, 0, 0, 0, 0, -1,
+        # shade/palette precede x/y panning.  Preserve the old scenes' 17/9
+        # panning bytes exactly; only the new private skybox scene overrides
+        # the actual shade/palette fields.
+        SKY_TILE if sky_ceiling else WALL_TILE, 0,
+        0 if ceiling_shade is None else ceiling_shade,
+        0 if ceiling_palette is None else ceiling_palette,
+        17 if sky_ceiling else 0, 9 if sky_ceiling else 0,
+        SKY_TILE if sky_floor else WALL_TILE, 0,
+        0 if floor_shade is None else floor_shade,
+        0 if floor_palette is None else floor_palette,
+        17 if sky_floor else 0, 9 if sky_floor else 0,
+        visibility, 0, 0, 0, -1,
     )
 
 
@@ -60,7 +72,8 @@ def sprite(x: int, y: int, z: int, sectnum: int, *, cstat=0, tile=BOTTLE_TILE,
 
 
 def build_map(scene="room") -> bytes:
-    if scene not in ("room", "sky", "sky-floor", "masks", "masks-animated"):
+    if scene not in ("room", "sky", "sky-floor", "skybox", "skybox-ceiling-fog-control",
+                     "skybox-floor-fog-control", "masks", "masks-animated"):
         raise ValueError("unknown fixture scene")
     # A six-wall first room with a portal only in its middle east-wall span.
     # Wall 2 and wall 6 are exact reversed twins, required by Build portals.
@@ -90,14 +103,59 @@ def build_map(scene="room") -> bytes:
             sprite(2800, 2100, -4096, 0, cstat=32, tile=MASK_TILE, palette=1, xrepeat=32, yrepeat=32),
             sprite(3400, 1900, -3072, 0, cstat=32 | 2, tile=MASK_TILE, xrepeat=32, yrepeat=32),
         ]
+    if scene.startswith("skybox"):
+        # The two regions deliberately share tile 89 but have different native
+        # ceiling/floor palette, shade and visibility inputs.  The portal puts
+        # the remote floor and local ceiling in one camera view.  Controls vary
+        # only visibility, so their native pixel deltas demonstrate fog input
+        # ownership without treating the mode-4 sky blend as a distance ramp.
+        ceiling_visibility = 32 if scene != "skybox-ceiling-fog-control" else 160
+        # Shade 24 / visibility 96 clamps to fully black native mode-4 fog.
+        # Keep visibility 16 in the baseline so the remote floor contributes
+        # visible sky pixels alongside the ceiling before the control hides it.
+        floor_visibility = 16 if scene != "skybox-floor-fog-control" else 96
+        sectors = (
+            sector(0, 6, True, False, ceiling_shade=8, ceiling_palette=0,
+                   visibility=ceiling_visibility),
+            sector(6, 4, False, True, floor_shade=24, floor_palette=1,
+                   visibility=floor_visibility),
+        )
+    else:
+        sectors = (
+            sector(0, 6, scene == "sky", scene == "sky-floor"),
+            sector(6, 4, scene == "sky", scene == "sky-floor"),
+        )
     header = struct.pack("<iiiihh", VERSION, 1024, 2048, -PHEIGHT, 0, 0)
     return b"".join((
         header, struct.pack("<h", 2),
-        sector(0, 6, scene == "sky", scene == "sky-floor"),
-        sector(6, 4, scene == "sky", scene == "sky-floor"),
+        *sectors,
         struct.pack("<h", len(walls)), *walls,
         struct.pack("<h", len(sprites)), *sprites,
     ))
+
+
+def _assert_sector_layout() -> None:
+    """Keep the v7 byte layout honest without relying on a renderer run."""
+    # Exact byte equivalence with the pre-skybox packer for every old form.
+    def legacy(wallptr, wallnum, sky_ceiling=False, sky_floor=False):
+        return struct.pack(
+            "<hhiiHHhhbBBBhhbBBBBBhhh",
+            wallptr, wallnum, -16384, 0, int(sky_ceiling), int(sky_floor),
+            SKY_TILE if sky_ceiling else WALL_TILE, 0, 0, 0, 17 if sky_ceiling else 0, 9 if sky_ceiling else 0,
+            SKY_TILE if sky_floor else WALL_TILE, 0, 0, 0, 17 if sky_floor else 0, 9 if sky_floor else 0,
+            0, 0, 0, 0, -1)
+    for ceiling, floor in ((False, False), (True, False), (False, True), (True, True)):
+        assert sector(6, 4, ceiling, floor) == legacy(6, 4, ceiling, floor)
+
+    # struct unpack indexes are the actual v7 sector field order, not byte
+    # guesses: ceiling shade/palette 8/9, floor shade/palette 14/15.
+    first = struct.unpack_from("<hhiiHHhhbBBBhhbBBBBBhhh", build_map("skybox"), 22)
+    second = struct.unpack_from("<hhiiHHhhbBBBhhbBBBBBhhh", build_map("skybox"), 62)
+    assert (first[6], first[8], first[9], first[10], first[11], first[18]) == (SKY_TILE, 8, 0, 17, 9, 32)
+    assert (second[12], second[14], second[15], second[16], second[17], second[18]) == (SKY_TILE, 24, 1, 17, 9, 16)
+
+
+_assert_sector_layout()
 
 
 def generate(directory: Path, scene="room") -> Path:
@@ -126,7 +184,9 @@ def generate(directory: Path, scene="room") -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="output .map path")
-    parser.add_argument("--scene", choices=("room", "sky", "sky-floor", "masks", "masks-animated"), default="room")
+    parser.add_argument("--scene", choices=("room", "sky", "sky-floor", "skybox",
+                                               "skybox-ceiling-fog-control", "skybox-floor-fog-control",
+                                               "masks", "masks-animated"), default="room")
     args = parser.parse_args()
     output = generate(args.output.parent, args.scene)
     if output != args.output:

@@ -266,6 +266,7 @@ static vec4f_t polymost1UploadedColorCorrection = { 1.f, 1.f, 1.f, 0.f };
 // final fan submission is diverted while a collection is active.
 static constexpr uint32_t XR_OPAQUE_MAX_PACKETS = 8192;
 static constexpr uint32_t XR_OPAQUE_MAX_VERTICES = 262144;
+static constexpr uint32_t XR_SKYBOX_COLOR = 3;
 
 struct xr_opaque_vertex_t
 {
@@ -279,7 +280,7 @@ struct xr_opaque_packet_t
     vec4f_t texturePosSize, npot, color, correction;
     vec2f_t halfTexel, palswapPos, palswapSize, clamp, numShades;
     float shade, vis, fog, colorOnly, paletteEnabled, shadeInterpolate;
-    uint32_t skyKind;  // 0 ordinary, 1 native flat-sky color, 2 native sky-Z depth-only
+    uint32_t skyKind;  // 0 ordinary, 1 native flat-sky color, 2 sky-Z depth-only, 3 truecolor skybox
     uint32_t phase;
     GLenum alphaFunc, blendSrc, blendDst;
     float alphaRef;
@@ -1081,10 +1082,28 @@ static void polymost_xrUploadOpaquePacket(xr_opaque_packet_t const &left, xr_opa
         glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE);
         if (left.cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
         glCullFace(left.cullMode); glFrontFace(left.frontFace);
-        glFogf(GL_FOG_START,left.fogStart); glFogf(GL_FOG_END,left.fogEnd);
-        glFogfv(GL_FOG_COLOR,&left.fogColor.x);
         GLint matrixMode; glGetIntegerv(GL_MATRIX_MODE,&matrixMode);
         glActiveTexture(GL_TEXTURE0); glMatrixMode(GL_TEXTURE); glLoadMatrixf(left.textureMatrix); glMatrixMode(matrixMode);
+    }
+    if (left.phase == POLYMOST_XR_MODELS || left.skyKind == XR_SKYBOX_COLOR)
+    {
+        // Indexed ART has no captured fixed-function fog range. Upload only
+        // for the native families that own it; zero endpoints are singular.
+        auto const fixture=Bgetenv("EDUKE32_XR_TEST_ZERO_IPD");
+        auto const fault=Bgetenv("EDUKE32_XR_TEST_FAIL");
+        bool const skip=left.skyKind==XR_SKYBOX_COLOR && fixture && !Bstrcmp(fixture,"1")
+            && fault && !Bstrcmp(fault,"skybox-fog-upload");
+        if (!skip)
+        {
+            glFogf(GL_FOG_START,left.fogStart); glFogf(GL_FOG_END,left.fogEnd);
+            glFogfv(GL_FOG_COLOR,&left.fogColor.x);
+        }
+        else
+        {
+            static bool reported;
+            if (!reported) LOG_F(INFO,"XR skybox fog upload intentionally skipped.");
+            reported=true;
+        }
     }
     GLboolean const writesColor = opaque ? left.skyKind != 2 : left.colorWrite;
     glColorMask(writesColor,writesColor,writesColor,writesColor);
@@ -1240,6 +1259,8 @@ polymost_xr_collect_result polymost_xrReplayCollection()
             polymost_xrReplayOpaqueDraw(xrOpaque.packets[0][left], 0, &xrOpaque.packets[1][right]);
             xrOpaque.stats.flatSkyCalls += xrOpaque.packets[0][left].skyKind == 1;
             xrOpaque.stats.skyDepthCalls += xrOpaque.packets[0][left].skyKind == 2;
+            xrOpaque.stats.skyboxCalls += xrOpaque.packets[0][left].skyKind == XR_SKYBOX_COLOR;
+            xrOpaque.stats.skyboxPairedCalls += xrOpaque.packets[0][left].skyKind == XR_SKYBOX_COLOR;
             xrOpaque.stats.npotCalls += xrOpaque.packets[0][left].npot.z != 0.f;
             recordPacket(xrOpaque.packets[0][left]);
             ++xrOpaque.stats.pairedCalls; xrOpaque.stats.pairedVertices += xrOpaque.packets[0][left].count + xrOpaque.packets[1][right].count; ++left; ++right;
@@ -1252,6 +1273,7 @@ polymost_xr_collect_result polymost_xrReplayCollection()
             polymost_xrReplayOpaqueDraw(packet,eye,nullptr);
             xrOpaque.stats.flatSkyCalls += packet.skyKind == 1;
             xrOpaque.stats.skyDepthCalls += packet.skyKind == 2;
+            xrOpaque.stats.skyboxCalls += packet.skyKind == XR_SKYBOX_COLOR;
             xrOpaque.stats.npotCalls += packet.npot.z != 0.f;
             recordPacket(packet);
             ++xrOpaque.stats.eyeOnlyCalls;
@@ -4074,6 +4096,12 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
 
     int const sampler = gl.currentBoundSampler[0];
     bool const opaque = xrOpaque.phase == POLYMOST_XR_OPAQUE;
+    // One native truecolor family, retaining native sky traversal/UVs. Ordinary
+    // high-tile replacements, alpha and the masked sky-depth companion stay
+    // outside this admission boundary.
+    uint32_t const skyFlags=PTH_CLAMPED|PTH_HIGHTILE|PTH_SKYBOX;
+    bool const skybox=opaque && !skyDepth && method==DAMETH_CLAMPED
+        && (pth->flags&skyFlags)==skyFlags && !(pth->flags&(PTH_INDEXED|PTH_HASALPHA)) && pth->hicr;
     bool const maskColorWrite = colorMask[0] && colorMask[1] && colorMask[2] && colorMask[3];
     bool const maskDepthOnly = !colorMask[0] && !colorMask[1] && !colorMask[2] && !colorMask[3];
     auto const nativeBlendFactor = [](GLint const factor)
@@ -4117,11 +4145,11 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
         return rejectUnsupported("unsupported render mode");
     if (!buildgl_samplerObjectsEnabled())
         return rejectUnsupported("sampler objects disabled");
-    if (!(pth->flags & PTH_INDEXED))
+    if (!(pth->flags & PTH_INDEXED) && !skybox)
         return rejectUnsupported("non-indexed texture");
-    if (pth->flags & PTH_HIGHTILE)
+    if ((pth->flags & PTH_HIGHTILE) && !skybox)
         return rejectUnsupported("high-resolution texture");
-    if (pth->hicr)
+    if (pth->hicr && !skybox)
         return rejectUnsupported("high-resolution texture replacement");
     if (polymost_usetileshades() != TS_SHADETABLE)
         return rejectUnsupported("non-shadetable tile shading");
@@ -4181,12 +4209,14 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
         return rejectUnsupported("non-identity modelview matrix");
     if (!polymost_xrIdentityMatrix(textureMatrix))
         return rejectUnsupported("non-identity texture matrix");
-    if (polymost1FogEnabled != 0.f)
-        return rejectUnsupported("fog enabled");
+    if (polymost1FogEnabled != (skybox ? 1.f : 0.f))
+        return rejectUnsupported("unsupported material fog enable");
+    if (skybox && r_usenewshading != 4)
+        return rejectUnsupported("skybox shading mode is not qualified");
     if (polymost1UseColorOnly != 0.f)
         return rejectUnsupported("color-only material");
-    if (polymost1UsePalette != 1.f)
-        return rejectUnsupported("palette material disabled");
+    if (polymost1UsePalette != (skybox ? 0.f : 1.f))
+        return rejectUnsupported("unsupported material palette enable");
     if (polymost1UseDetailMapping != 0.f)
         return rejectUnsupported("detail mapping enabled");
     if (polymost1UseGlowMapping != 0.f)
@@ -4229,7 +4259,19 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
     packet.palette = paletteTextureIDs[curbasepal];
     packet.sampler = samplerObjectIDs[sampler];
     polymost_xrCaptureNativeMaterial(packet,color);
-    packet.skyKind = opaque ? (skyDepth ? 2 : (xrOpaque.flatSky ? 1 : 0)) : 0;
+    packet.skyKind = skybox ? XR_SKYBOX_COLOR : opaque ? (skyDepth ? 2 : (xrOpaque.flatSky ? 1 : 0)) : 0;
+    if (skybox)
+    {
+        // Capture resolved native state, never recreate the sky fog policy.
+        // A reversed range is intentional in native mode4's no-fog result.
+        glGetFloatv(GL_FOG_START,&packet.fogStart); glGetFloatv(GL_FOG_END,&packet.fogEnd);
+        glGetFloatv(GL_FOG_COLOR,&packet.fogColor.x);
+        if (!std::isfinite(packet.fogStart) || !std::isfinite(packet.fogEnd)
+            || !std::isfinite(packet.fogEnd-packet.fogStart) || packet.fogStart==packet.fogEnd
+            || !std::isfinite(packet.fogColor.x) || !std::isfinite(packet.fogColor.y)
+            || !std::isfinite(packet.fogColor.z) || !std::isfinite(packet.fogColor.w))
+            return rejectUnsupported("invalid native skybox fog range or color");
+    }
     packet.phase = xrOpaque.phase;
     packet.alphaFunc = opaque ? 0 : alphaFunc;
     packet.alphaRef = opaque ? 0.f : alphaRef;

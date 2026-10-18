@@ -4,7 +4,7 @@ Status: experimental Linux OpenXR port with bounded ART multiview, native contro
 
 ## Current implementation checkpoint
 
-- Submitted-frame mounted pistol/holding-hand collision and recovery now pass for both aim hands, including same-root world reticle, native/SPS color/depth and actual paired replay. See PISTOL_MOUNT.md. AA's first production world blocker is now identified as its truecolor fogged tile89 skybox; the reviewed minimal packet/fog extension and required proof are in AA_SKYBOX_SPS.md. That extension is planned, not yet implemented.
+- Submitted-frame mounted pistol/holding-hand collision and recovery pass for both aim hands, including same-root world reticle, native/SPS color/depth and actual paired replay. See PISTOL_MOUNT.md. AA truecolor skyboxes now reuse the existing world packets with native per-packet fog. Exact three-pose color/depth and meaningful fault/fallback controls pass; production AA opaque rendering advances to 59/60 multiview frames. Masks remain 0/60 because of world model/voxel sprites. See AA_SKYBOX_SPS.md for qualification, reviews and the next resolved-candidate diagnostic.
 - Runtime foundation and actual EDuke-context single-pass diagnostic pass.
 - First ordinary Polymost room renders to two exact XR eye layers using a two-pass reference transaction; 60-frame E1L1 captures pass.
 - The native world snapshot payload bug is corrected. A native dedicated server plus XR client passes join and replacement/reconnect, with 60 stereo frames/readbacks per join and visible gameplay input changes.

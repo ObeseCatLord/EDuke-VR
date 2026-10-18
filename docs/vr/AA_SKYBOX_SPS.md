@@ -1,10 +1,89 @@
-# AA truecolor skybox: next bounded world SPS increment
+# AA truecolor skybox: bounded world SPS increment
 
-Status: investigated and reviewed; **skybox admission is not implemented yet**.
-Full-world single-pass stereo remains incomplete. The existing fallback keeps
-native AA rendering available while the unsupported families are qualified.
+Status: **implemented and privately qualified for native shading mode 4**.
+Full-world single-pass stereo remains incomplete. The final AA run uses opaque
+multiview for 59/60 frames (one cold texture fallback); all 60 mask phases still
+use native two-pass rendering because world model/voxel sprites are excluded.
 
-## Actual blocker and behavioral reference
+## Implemented behavior and qualification
+
+The implementation follows the reviewed native packet adapter below. It admits
+only clamped, opaque truecolor skyboxes with a native replacement record and
+the existing shader/material/state guards. It captures native fog start/end/color
+into existing packet fields, includes them in existing pairing, and restores
+them for classified skybox packets or model packets. Indexed ART never receives
+the model/sky fog upload. Native sky geometry, UVs, shaders and traversal remain
+the reference; no asset, protocol or gameplay policy changed.
+
+Final XR binary SHA256:
+`5c12ba81cb88c2f6be06e3c95b6b249a798bdd614a9071fe43cfcc945de124fb`.
+Build: `work/aa-sky-build-xr-v2.log`, existing smmalloc warnings only.
+Both final runtime suites used private CPU llvmpipe/LVP Monado/Xvfb namespaces,
+clean OpenXR core validation and complete owned-process cleanup. No desktop
+input/focus or installed-game changes occurred.
+
+- `work/software-xr-aa-sky-diff-v2/stereo-diff-21wizfjx/result.json`: exact RGB
+  and raw depth for native/two-pass/SPS at zero IPD and two-pass/SPS at stereo and
+  unequal poses. Actual skybox replay counts: zero 8/8 paired, stereo 19/19
+  paired, unequal 33 eye-only. Unequal clipping does not claim paired draws.
+- The same captured frame contains ceiling shade8/pal0/visibility32 and floor
+  shade24/pal1/visibility16. Independent native visibility controls alter
+  110647 ceiling sky pixels (32379 unsaturated) and 496 floor sky pixels
+  (37 unsaturated), inside a native replacement-versus-ART mask of 121190 pixels.
+- Omitting sky fog upload deliberately changes 110646 sky pixels per eye while
+  preserving complete depth. The fault requires valid two-eye captures, visible
+  unsaturated color differences inside the native sky mask, unchanged depth,
+  and actual frame-12 skybox replay. Missing captures cannot count as success.
+- Ordinary RGBA walls and `r_skyzbufferhack=1` retain explicit capture-frame
+  fallback with exact two-pass color/depth. Opaque fallback logs now also emit
+  at frame12, matching the existing bounded capture diagnostic convention.
+- `work/sky-fog-oracle-negative-controls.json`: all seven oracle checks pass,
+  including rejecting missing capture/eye/depth, changed depth, no RGB change,
+  and changes outside the sky mask.
+- `work/software-xr-aa-sky-final/aa-hand-model-wmemxh88/result.json`: all 45 AA
+  gameplay/model checks pass, including native shot/ammo/reload, model stereo
+  color/depth equivalence and zero collection writes. The world tally is opaque
+  59 multiview / 1 two-pass, masks 0 / 60, full multiview 0. Held-model SPS is
+  separate (24 observed frames in this run).
+
+The first matrix was a useful failed qualification: all parity passed, but the
+floor baseline was fully fog-saturated and invisible in its ART-derived mask,
+and fallback logging stopped before frame12. Both fixture/diagnostic issues were
+fixed; no renderer workaround or weakened acceptance was used. Main inspected
+`work/aa-sky-proof-preview.png` as well as the numerical evidence.
+
+## Code review disposition
+
+Effective reviewer independently verified as Astra/xhigh, turn
+`01a14edd-101d-7e43-8193-85ada8a17c58`. Source-only review; no reviewer edits or
+runtime launches. No concrete production rendering defect found in this seam.
+
+| Finding | Disposition |
+| --- | --- |
+| Persistent fallback logs cannot satisfy a frame12 assertion | Fixed: retain initial three logs and add the capture-frame log. Actual fallback controls now pass. |
+| Missing/depth-only fault captures can falsely prove fog use | Fixed: require complete two-eye sky RGB effects with unchanged nontrivial depth; seven negative checks pass. |
+| Second visible fog state unproven | Fixed: invert the floor visibility control so the baseline is unsaturated; both native region gates pass. |
+
+## Next actual world boundary
+
+The final AA log rejects `unsupported model or voxel mask sprite` after its
+cold texture mutation. The current diagnostic does not identify the tile or
+distinguish MD3 from voxel; do not assume which renderer needs extending.
+`polymost_drawsprite` rejects after `tileUpdatePicnum` and before native direct
+draw, preserving the no-write collection contract. The next small step is a
+bounded resolved-candidate diagnostic at that guard (owner/tile/palette/cstat,
+sector, model/frame/skin or voxel identity), followed by a controlled AA run.
+
+For MD3, the native raw-tsprite path already resolves animation, transform,
+offsets, fog, skin and tint. Existing held-model geometry/material capture is
+reusable, but currently demands an explicit context and separate model-instance
+stream. The mask traversal mixes models with ordered sprite/wall fans; wrapping
+all masks in the held-model phase would violate that contract. Voxels instead
+draw indexed VBOs and have no corresponding geometry capture seam yet. Preserve
+native partition/sort/interleave and qualified fallback while choosing the
+smallest demonstrated family; no new visibility pass or renderer is justified.
+
+## Pre-implementation blocker and behavioral reference
 
 `work/software-xr-aa-world-diagnostics-v2/aa-hand-model-057viubl/eduke32.log`
 records the first 16 opaque rejections as tile89, method0x4, flags0x107:
@@ -31,11 +110,11 @@ keep the existing eye-owned world vertex payload and paired multiview draw.
 
 The generic packet already has `fogStart`, `fogEnd`, `fogColor`; material
 compatibility compares them and the outer replay saves/restores GL fog state.
-Only the model collector/uploader currently populates/restores them. Opaque
-collection captures the fog enable uniform alone. Relaxing the truecolor guard
+Before this increment only the model collector/uploader populated/restored them.
+Opaque collection captured the fog enable uniform alone. Relaxing the truecolor guard
 without fixing that gap would render using incidental final collection state.
 
-The next implementation should:
+The reviewed implementation contract was:
 
 1. Recognize only opaque, color, clamped skybox+hightile packets with a native
    high-tile record, no indexed/alpha flags, palette0/fog1/colorOnly0/detail0/glow0,
