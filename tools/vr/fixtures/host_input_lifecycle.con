@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Observation-only host input lifecycle marker.  It never writes input or
+// pause/map state: native SDL binds and the engine own both transitions.
+gamevar vrhostlife_display 0 0
+gamevar vrhostlife_display_pause 0 1
+gamevar vrhostlife_display_volume 0 1
+gamevar vrhostlife_display_level 0 1
+gamevar vrhostlife_draw 0 1
+gamevar vrhostlife_tick 0 0
+gamevar vrhostlife_player 0 1
+gamevar vrhostlife_q16avel 0 1
+gamevar vrhostlife_q16horz 0 1
+gamevar vrhostlife_q16ang 0 1
+gamevar vrhostlife_pause 0 1
+gamevar vrhostlife_volume 0 1
+gamevar vrhostlife_level 0 1
+
+onevent EVENT_DISPLAYREST
+    addvar vrhostlife_display 1
+    getuserdef[THISACTOR].pause_on vrhostlife_display_pause
+    getuserdef[THISACTOR].volume_number vrhostlife_display_volume
+    getuserdef[THISACTOR].level_number vrhostlife_display_level
+    addlog vrhostlife_display
+    addlog vrhostlife_display_pause
+    addlog vrhostlife_display_volume
+    addlog vrhostlife_display_level
+endevent
+
+appendevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrhostlife_player
+    ifvare vrhostlife_player 0
+    {
+        addvar vrhostlife_tick 1
+        setvarvar vrhostlife_draw vrhostlife_display
+        getinput[THISACTOR].q16avel vrhostlife_q16avel
+        getinput[THISACTOR].q16horz vrhostlife_q16horz
+        getplayer[THISACTOR].q16ang vrhostlife_q16ang
+        getuserdef[THISACTOR].pause_on vrhostlife_pause
+        getuserdef[THISACTOR].volume_number vrhostlife_volume
+        getuserdef[THISACTOR].level_number vrhostlife_level
+        addlog vrhostlife_tick
+        addlog vrhostlife_draw
+        addlog vrhostlife_q16avel
+        addlog vrhostlife_q16horz
+        addlog vrhostlife_q16ang
+        addlog vrhostlife_pause
+        addlog vrhostlife_volume
+        addlog vrhostlife_level
+    }
+endevent

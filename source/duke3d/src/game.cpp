@@ -7375,7 +7375,7 @@ int G_DoMoveThings(void)
         g_player[i].input = pending;
         // Remote angular input is an increment, unlike held buttons/movement.
         // Consume even while paused so unpausing cannot replay old motion.
-        if (g_netServer && myconnectindex != i)
+        if ((g_netServer || g_netClient) && myconnectindex != i)
             P_ClearInputDeltas(&pending);
     }
 

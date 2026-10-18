@@ -1,5 +1,9 @@
 # Native co-op starting inventory
 
+The subsequent [host-input correction](HOST_INPUT_DELTAS.md) resolves the
+XR-host selector failure retained below and qualifies actual AA tracked pistol
+firing in both VR roles. This document preserves the earlier checkpoint.
+
 Command-line co-op hosts now run the existing native player reset before their
 first level. Stock players start with a pistol and 48 rounds; CON reset hooks
 can change that loadout. A real AA XR client can select Duke, confirm START,

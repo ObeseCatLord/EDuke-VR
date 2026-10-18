@@ -2393,7 +2393,7 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
     Bmemcpy(&serverupdate, updatebuf, sizeof(serverupdate_t));
     if (records>MAXPLAYERS || serverupdate.numplayers!=records) return;
     updatebuf += sizeof(serverupdate_t);
-    inputfifo[0][0] = serverupdate.nsyn;
+    P_AccumulateInput(&inputfifo[0][0], &serverupdate.nsyn);
     ud.pause_on     = serverupdate.pause_on;
 
     ticrandomseed = serverupdate.seed;
@@ -5125,6 +5125,9 @@ void Net_SendServerUpdates(void)
     if (g_netServer)
     {
         Bmemcpy(&osyn[0], &nsyn[0], sizeof(input_t));
+        // Preserve the host's next-tick input, then consume this sample even
+        // when alone. Catch-up ticks must not stage or broadcast it again.
+        P_ClearInputDeltas(nsyn);
     }
 
     if (!g_netServer || numplayers < 2)
@@ -5134,7 +5137,7 @@ void Net_SendServerUpdates(void)
 
     serverupdate.header   = PACKET_MASTER_TO_SLAVE;
     serverupdate.seed     = ticrandomseed;
-    serverupdate.nsyn     = *nsyn;
+    serverupdate.nsyn     = *osyn;
     serverupdate.pause_on = ud.pause_on;
 
     serverupdate.numplayers = 0;

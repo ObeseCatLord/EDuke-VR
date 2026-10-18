@@ -2,6 +2,19 @@
 
 ## Current checkpoint — 2026-10-18
 
+AA tracked selection and pistol firing now pass in both XR-host and XR-client
+roles. Native host increments are staged once, accumulated on receivers and
+consumed once. A separate producer oracle catches the old binary replaying
+input during no-draw catch-up ticks, alone and with two clients. Both receivers
+now match complete host turn pulses under batching and catch-up; native25 passes.
+See [HOST_INPUT_DELTAS.md](HOST_INPUT_DELTAS.md) and sibling
+`evidence/host-input-deltas-validation.json`. The earlier inventory failure was
+fixed through native startup reset hooks; see
+[STARTING_INVENTORY.md](STARTING_INVENTORY.md). AA tests still require the explicit
+lab-only per-player button-history override. Full script authority, campaign
+combat, weapon/model bindings and full VR/SPS remain incomplete. The following
+paragraphs retain earlier checkpoint claims.
+
 Native client angular increments now accumulate and are consumed once, including
 sender catch-up ticks and reused player slots. Actual AA peers reach the same
 cursor and confirm Duke/START with an explicit per-player button-history lab

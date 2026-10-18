@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Observation-only producer marker for the host-input delta smoke test.
+// It records renderer epochs and host0's native input/angle observations.
+gamevar vrhostdraw_epoch 0 0
+gamevar vrhostobs_tick 0 0
+gamevar vrhostobs_player 0 1
+gamevar vrhostobs_draw 0 1
+gamevar vrhostobs_q16avel 0 1
+gamevar vrhostobs_q16horz 0 1
+gamevar vrhostobs_q16ang 0 1
+
+onevent EVENT_DISPLAYREST
+    addvar vrhostdraw_epoch 1
+    addlog vrhostdraw_epoch
+endevent
+
+appendevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrhostobs_player
+    ifvare vrhostobs_player 0
+    {
+        addvar vrhostobs_tick 1
+        setvarvar vrhostobs_draw vrhostdraw_epoch
+        getinput[THISACTOR].q16avel vrhostobs_q16avel
+        getinput[THISACTOR].q16horz vrhostobs_q16horz
+        getplayer[THISACTOR].q16ang vrhostobs_q16ang
+        addlog vrhostobs_tick
+        addlog vrhostobs_draw
+        addlog vrhostobs_q16avel
+        addlog vrhostobs_q16horz
+        addlog vrhostobs_q16ang
+    }
+endevent

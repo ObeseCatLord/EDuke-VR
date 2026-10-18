@@ -1,5 +1,9 @@
 # Native multiplayer angular input
 
+The subsequent [host-input correction](HOST_INPUT_DELTAS.md) extends the native
+increment lifetime to the server-to-client path and qualifies actual AA tracked
+pistol firing in both VR roles. The failures below describe this earlier checkpoint.
+
 The later startup-inventory fix and actual AA tracked firing are recorded in
 [STARTING_INVENTORY.md](STARTING_INVENTORY.md), including a newly reproduced
 server-to-client selector failure. The inventory diagnosis below is historical.
