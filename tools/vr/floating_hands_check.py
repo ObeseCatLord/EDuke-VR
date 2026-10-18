@@ -42,7 +42,33 @@ def _project(point, fov):
     return np.array(((2*x/-z-right-left)/(right-left), (2*y/-z-up-down)/(up-down)))
 
 
-def inspect(root, text):
+def _raw_pose_projection_error(serial, hand, pivot, pose, eyes, projections, matrices):
+    """Project an emitted matrix against a supplied raw grip pose.
+
+    Passing the preceding pose is a deliberate negative control: the matrix
+    was submitted for ``serial`` and therefore must not still match it after a
+    sufficiently large controller move.
+    """
+    mapping = np.array(((0,0,1 if hand else -1),(-1,0,0),(0,-1 if hand else 1,0)))
+    errors=[]
+    for eye in (0,1):
+        if (serial,eye) not in eyes or (serial,eye) not in projections or (serial,hand,eye) not in matrices:
+            return None
+        view,fov=eyes[serial,eye]
+        inverse_view=rotation(view[:4]).T
+        expected_root=inverse_view@(pose[4:]-view[4:])
+        expected_axes=inverse_view@rotation(pose[:4])@mapping
+        actual=projections[serial,eye]@matrices[serial,hand,eye]
+        actual_points=[];expected_points=[]
+        for offset in (np.zeros(3),np.array((3.2,0,0)),np.array((0,3.2,0)),np.array((0,0,3.2))):
+            clip=actual@np.r_[pivot+offset,1]
+            actual_points.append(clip[:2]/clip[3])
+            expected_points.append(_project(expected_root+expected_axes@(offset/64),fov))
+        errors.append(float(np.max(np.abs(np.array(actual_points)-expected_points))))
+    return max(errors)
+
+
+def inspect(root, text, require_prior_pose_rejection=False):
     states = [tuple(map(int, row)) for row in STATES.findall(text)]
     eyes = {(int(s), int(e)): (_numbers(p), _numbers(f)) for s,e,p,f in re.findall(
         r'OpenXR floating eye: serial=(\d+) eye=(\d+) pose=([^ ]+) fov=([^\n]+)\.', text)}
@@ -54,7 +80,7 @@ def inspect(root, text):
         r'OpenXR floating hand: serial=(\d+) hand=(\d+) model=(\d+) frame=(\d+) root=([^ ]+) pivot=([^ ]+) pose=([^\n]+)\.', text)}
     replays = {int(s):tuple(map(int,(n,p,e,g,v))) for s,n,p,e,g,v in re.findall(
         r'OpenXR floating replay: serial=(\d+) instances=(\d+) paired=(\d+) eyeOnly=(\d+) shared=(\d+) vertices=(\d+)\.',text)}
-    results, errors, axis_errors, frame_matches = {}, [], [], []
+    results, errors, axis_errors, frame_matches, raw_poses = {}, [], [], [], []
     for serial,state,mask,left,right,captured in states:
         if not captured: continue
         prefix = root / f'hands-state-{state:02d}'
@@ -79,6 +105,7 @@ def inspect(root, text):
         for hand in (0,1):
             if not mask & (1<<hand): continue
             frame,pivot,pose,model = hands[serial,hand]
+            raw_poses.append((serial,hand,pivot,pose))
             frame_matches.append(frame == (0,2,1)[left if hand==0 else right])
             # Independently apply the authored anatomical axis contract to the
             # actual OpenXR grip relative to the actual OpenXR eye. No emitted
@@ -109,6 +136,22 @@ def inspect(root, text):
             detail['hands'][hand] = {'changed_pixels': changed, 'visible_both_eyes': min(changed)>0, 'frame': frame, 'model': model}
             prior = hand+1
         results[state] = detail
+    prior_by_hand={}; prior_rejections=[]
+    for serial,hand,pivot,pose in sorted(raw_poses):
+        prior=prior_by_hand.get(hand)
+        if prior is not None:
+            prior_serial,prior_pose=prior
+            moved=np.linalg.norm(pose[4:]-prior_pose[4:])>.03
+            turned=np.max(np.abs(rotation(pose[:4])-rotation(prior_pose[:4])))>.04
+            if moved or turned:
+                current_error=_raw_pose_projection_error(serial,hand,pivot,pose,eyes,projections,matrices)
+                prior_error=_raw_pose_projection_error(serial,hand,pivot,prior_pose,eyes,projections,matrices)
+                if current_error is not None and prior_error is not None:
+                    prior_rejections.append({'serial':serial,'hand':hand,'previous_serial':prior_serial,
+                                             'translation_m':float(np.linalg.norm(pose[4:]-prior_pose[4:])),
+                                             'current_pose_projection_error':current_error,
+                                             'previous_pose_projection_error':prior_error})
+        prior_by_hand[hand]=(serial,pose)
     checks = {
         'both_grips_rendered': any(row[2]==3 and row[5] for row in states),
         'all_captured_grip_frames_match_button_geometry': bool(frame_matches) and all(frame_matches),
@@ -121,10 +164,15 @@ def inspect(root, text):
         'raw_grip_to_eye_projection_matches': bool(errors) and max(errors)<.008,
         'raw_grip_axis_projection_matches': bool(axis_errors) and max(axis_errors)<.0015,
     }
-    return {'checks':checks, 'states':states, 'captures':results, 'projection_errors':errors, 'axis_errors':axis_errors}
+    if require_prior_pose_rejection:
+        checks['raw_grip_prior_pose_rejected_by_absolute_projection']=bool(prior_rejections) and all(
+            row['current_pose_projection_error']<.008 and row['previous_pose_projection_error']>.008
+            for row in prior_rejections)
+    return {'checks':checks, 'states':states, 'captures':results, 'projection_errors':errors,
+            'axis_errors':axis_errors, 'prior_pose_rejections':prior_rejections}
 
 
-def exercise(observer, remote, root, mount_motion=False):
+def exercise(observer, remote, root, mount_motion=False, selected_hand='right'):
     def state_after(state, start=0, require_capture=False):
         def ready(text):
             rows=[tuple(map(int,row)) for row in STATES.findall(text[start:])]
@@ -142,29 +190,57 @@ def exercise(observer, remote, root, mount_motion=False):
     transitions=[]
     def change(state, callback):
         start=len(observer.text());callback();remote.send();state_after(state,start);transitions.append(state)
+    selected=getattr(remote.packet,selected_hand)
+    movement=remote.packet.left.thumbstick
     def pose_and_button(state):
         if mount_motion:
-            remote.packet.right.pose.position.x=.18 if state==6 else .06
-            remote.packet.right.pose.orientation=Quat(*quaternion(12,8,70 if state==6 else -35))
+            direction=1 if selected_hand=='right' else -1
+            selected.pose.position.x=direction*(.18 if state==6 else .06)
+            selected.pose.orientation=Quat(*quaternion(12,8,70 if state==6 else -35))
+            # Keep native locomotion active while each changed controller pose
+            # is captured.  The mount oracle consumes the render-frame body
+            # diagnostic, never a guessed tic count.
+            movement.y=.65
         setattr(remote.packet.left,'squeeze_value' if state==6 else 'trigger_value',1)
-    change(6,lambda:pose_and_button(6))
-    change(7,lambda:pose_and_button(7))
-    change(6,lambda:setattr(remote.packet.left,'trigger_value',0))
-    change(5,lambda:setattr(remote.packet.left,'squeeze_value',0))
-    if mount_motion:
-        remote.packet.left.thumbstick.y=.65; remote.send(); observer.pause(.2)
-    change(9,lambda:setattr(remote.packet.right,'squeeze_value',1))
-    if mount_motion:
-        remote.packet.left.thumbstick.y=0; remote.send(); observer.pause(.1)
-    change(5,lambda:setattr(remote.packet.right,'squeeze_value',0))
-    change(4,lambda:setattr(remote.packet.left,'active',False))
-    change(5,lambda:setattr(remote.packet.left,'active',True))
-    change(1,lambda:setattr(remote.packet.right,'active',False))
-    change(0,lambda:setattr(remote.packet.left,'active',False))
-    change(1,lambda:setattr(remote.packet.left,'active',True))
-    change(5,lambda:setattr(remote.packet.right,'active',True))
-    observer.pause(.3)
-    result=inspect(root,observer.text())
+    try:
+        change(6,lambda:pose_and_button(6))
+        if mount_motion: observer.pause(.15)
+        change(7,lambda:pose_and_button(7))
+        if mount_motion:
+            # Captures 6 and 7 already include simultaneous locomotion. Stop
+            # before further image readbacks so a slow CPU lab cannot carry
+            # the fixture across the room and turn a loss test into occlusion.
+            movement.y=0; remote.send(); observer.pause(.1)
+        change(6,lambda:setattr(remote.packet.left,'trigger_value',0))
+        change(5,lambda:setattr(remote.packet.left,'squeeze_value',0))
+        change(9,lambda:setattr(remote.packet.right,'squeeze_value',1))
+        if mount_motion:
+            # Keep subsequent button/loss fixtures stationary.
+            movement.y=0; remote.send()
+        change(5,lambda:setattr(remote.packet.right,'squeeze_value',0))
+        if mount_motion:
+            # Actual remote poses at ~100 Hz, with no native-tick override.
+            # Bounded transform records establish whether the renderer follows
+            # more than one acquired pose within an observed unchanged tic.
+            direction=1 if selected_hand=='right' else -1
+            for step in range(60):
+                selected.pose.position.x=direction*(.06+.0015*(step if step<30 else 60-step))
+                remote.send(); observer.pause(.01)
+        change(4,lambda:setattr(remote.packet.left,'active',False))
+        change(5,lambda:setattr(remote.packet.left,'active',True))
+        change(1,lambda:setattr(remote.packet.right,'active',False))
+        change(0,lambda:setattr(remote.packet.left,'active',False))
+        change(1,lambda:setattr(remote.packet.left,'active',True))
+        change(5,lambda:setattr(remote.packet.right,'active',True))
+        observer.pause(.3)
+        result=inspect(root,observer.text(),require_prior_pose_rejection=mount_motion)
+    finally:
+        # A timeout must never leave the disposable runtime walking or either
+        # controller firing when the caller proceeds to another evidence step.
+        for side in (remote.packet.left,remote.packet.right):
+            side.trigger_value=0;side.trigger_click=False;side.squeeze_value=0;side.active=True
+        movement.y=0
+        remote.send()
     result['checks']['both_hands_lose_and_recover_independently']=transitions[-6:]==[4,5,1,0,1,5]
     result['transitions']=transitions
     return result

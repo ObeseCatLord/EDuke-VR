@@ -2,7 +2,7 @@
 
 This opt-in increment derives the existing authoritative shot point from a
 measured handle contact. It does not complete controller fitting, the full
-arsenal, continuous hand contact, or animated reload attachment.
+arsenal, physical headset acceptance, or animated reload attachment.
 
 `EDUKE32_XR_PISTOL_MOUNT=1` selects this calibration for a qualified stock or
 standard AA Duke pistol. Map the supplied private tagged MD3 to palette-zero
@@ -21,9 +21,10 @@ muzzle_LOCAL = grip.position + aim.rotation * (d.y, d.z, -d.x) / 64
 The normal native input sample transforms and quantizes that point into the
 existing `VRShotInput`. The existing reach bound, wire format, native server
 collision resolver, weapon events, spread and firing timers remain in use.
-No server-side asset load or additional protocol is introduced. A local
-presentation record keeps the sampled right vector together with the accepted
-shot and its ownership; the model uses that roll and the quantized shot direction.
+No server-side asset load or additional protocol is introduced. Native firing
+continues to consume the accepted simulation sample. Local mounted presentation
+uses the current acquired XR frame, as described below; its reticle is an aiming
+preview and can differ from the last accepted shot during motion.
 
 Asset identity is independent of fire/reload counters, shade, palette, texture
 availability and HUD appearance. It distinguishes unsupported, stock and
@@ -38,7 +39,7 @@ families retain the previous aim-point behavior.
 The shared origin also supplies pistol-selected quick kick. Its impact placement
 and reach therefore change with this opt-in; missing calibration suppresses
 both fire and quick kick. This is explicit shared-origin behavior, not a claim
-that melee is unchanged. Native collision can displace the gun from the hand,
+that melee is unchanged. Native collision translates the visual gun and its holding hand together,
 and the existing two-metre muzzle reach limit includes the barrel extension.
 
 ## Private asset contract
@@ -63,7 +64,7 @@ remain on the rest/fire handle geometry; unchanged reload motion drifts up to
 10.025 mm at the left tag and 21.896 mm at the right. The loader exposes the
 first frame's tags only. No animated palm-contact claim follows from these tags.
 
-## Focused Astra design review
+## Earlier authoritative-muzzle design review
 
 Explicit `gpt-6-astra` / `xhigh`, independently verified current turn
 `01a14e90-bc74-7662-aac9-f1a464e91afb` (thread
@@ -96,7 +97,7 @@ The main also repaired the gameplay runner's missing model-output diagnostic
 configuration before qualifying it. Motion/contact measurement was outside
 the review's code scope and is separately described with its actual evidence.
 
-## Validation status
+## Earlier authoritative-muzzle validation
 
 Bounded acceptance is recorded in sibling `evidence/pistol-mount-validation.json`.
 All runs use GPU-denied private CPU Monado/Xvfb, clean core validation and owned
@@ -123,18 +124,109 @@ every run used one build. The earlier AA model-only mount pass is superseded by
 the independent origin suite above. Parser negative controls reject both a
 missing calibration sample and an actual ray moved back to the old aim origin.
 
-**Measured remaining attachment defect:** floating hands still use current
-render-frame grip/body while the gun uses the native simulation sample. At rest
+**Prior attachment defect (6dfef7d):** floating hands used current
+render-frame grip/body while the gun used the native simulation sample. At rest
 the measured tag separation was 1.45 mm. Deliberate 60 mm and 120 mm controller
 position steps produced 60.99 mm and 121.39 mm visible separation on the first
 captured frames; after settling/body movement it was 1.76 mm. The gun's relative
 axes still matched its own saved roll to 1.26e-5, so this is temporal hand/gun
 separation, not a tag/roll transform error. These step tests do not estimate
-normal hardware motion latency. Coherent hand-and-gun presentation is the next
-required implementation decision; this opt-in is not promoted as finished fit.
+normal hardware motion latency. This evidence led to the current-frame presentation change below; the opt-in
+is still not promoted as finished controller fit.
 
-Also unqualified: isolated grip-only loss/recovery, fresh mounted-crosshair
-pixel/depth proof, exact reload-surface contact, controller-specific anatomical
+Other remaining qualifications are described below, including isolated
+grip-only loss/recovery, exact reload-surface contact, controller-specific anatomical
 orientation/finger wrapping, physical headset acceptance, and broader arsenal
 bindings. Native AA fire still uses ART; static root correctness does not turn
 those weapon effects into complete 3D presentation.
+
+
+## Current-frame mounted presentation
+
+The mounted pistol now uses current raw grip/aim poses and the same frozen
+interpolated body as the eyes. A stateless calibration calculation supplies both
+the existing native input path and this visual path. The visual request passes
+finite, integer and two-metre reach validation before the existing
+`G_VRResolveShot(..., muzzlePosition)` collision path; it does not call
+`G_VRSetShotInput`, poll XR again, change native clocks or add network state.
+
+The existing world/HUD frame data carries the resolved visual origin, direction,
+orientation and collision translation. The mesh, native weapon ART and projected
+reticle consume it. The selected floating hand stays on its current raw grip and
+receives the same translation correction. Its corrected palm must pass the
+existing sector/visibility checks; it is never independently clamped. The other
+hand retains ordinary live grip presentation. Mesh counter/material eligibility
+is separate from this spatial policy, including AA firing's ART fallback.
+Missing current supported calibration hides its mounted presentation until valid;
+unsupported weapon families retain ordinary floating-hand behavior.
+
+This removes the persistent native-to-render `PistolMountSample` cache. Reset,
+tracking-reference, input-clear and frame cancellation invalidate the visual data
+through existing ownership boundaries. No additional attachment lifecycle exists.
+
+**Changed contract:** local reticle/muzzle preview follows current visual aim;
+actual firing, impacts, damage and packets remain on the accepted 30 Hz native
+sample. Static equality is tested. Exact moving-trigger correspondence and the
+visual-versus-accepted difference during fire remain unqualified. Static tag
+contact still does not prove animated reload surface or anatomical finger fit.
+
+### Astra design disposition
+
+Astra/xhigh current turn `01a14eae-a533-71b1-8eaa-eeb7770116e4`, independently
+verified. Main brief: ignored `work/MOVING_MOUNT_REVIEW.md`.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Prefer current-frame visuals over delaying the hand to the 30 Hz sample | Adopted; absolute current-pose projection is required alongside contact. |
+| Reuse optional-muzzle collision resolver and explicitly bound reach | Adopted; no second resolver or gameplay stream. |
+| One acquired-frame spatial policy for mesh, ART and reticle | Adopted; existing frame-owned geometry extended, native snapshot cache deleted. |
+| Translate gun/holding hand together, revalidate corrected palm | Adopted; no independent hand clamp or saved correction. |
+| Preserve native accepted-shot authority and revise the preview contract | Adopted; exact equality is claimed only for the stationary proof. |
+| Require current-pose negative controls, both hands, simultaneous movement | Adopted; prior-pose substitution fails independent absolute projection. |
+| Prove multiple moving XR frames within one unchanged native tick | Still open; explicit `subtick_qualification.passed=false`, required for full acceptance. |
+
+The system Monado null compositor is hardcoded to 20 Hz
+(`/usr/src/debug/monado-multilib-git/monado/src/xrt/compositor/null/null_compositor.c:617`).
+The supported immediate-wait debug pacing experiment still produced no qualifying
+within-tick pair. Its temporary lab option was removed. No native time override
+or weakened cadence threshold was introduced. `--require-subtick` makes this
+additional gate fail explicitly; ordinary motion suites report its unqualified
+status separately from their bounded geometry checks.
+
+### Current validation
+
+Final evidence is in sibling `evidence/moving-pistol-validation.json`. Both hands
+are checked against actual acquired raw poses and actual submitted matrices, with
+native/SPS color and depth comparison. Controller translation/roll occurs while
+native locomotion moves the body hundreds of Build units. Right maximum palm
+separation is 1.764 mm; left is 1.862 mm (3 mm tolerance). Previous-pose controls
+produce projection errors above 0.10 NDC while current-pose errors stay below
+0.004 NDC. Static mounted crosshair pixels match the independently depth-tested
+projection within one channel value, preserve world depth exactly, and match the
+real native server origin/impact.
+
+Remaining gates: within-tick moving-frame cadence, moving-trigger authority and
+visual divergence, mounted wall-contact/recovery geometry, isolated grip-only
+loss, reset/generation/family transitions, AA ART-to-mesh moving continuity,
+reload/anatomical/controller fit, broader arsenal, hardware performance/headset.
+These are completion gates, not claims inferred from passing static tests.
+
+
+### Current implementation review
+
+Astra/xhigh turn `01a14ebd-66f9-7071-9e88-173caab5a810`, independently verified.
+The reviewer found one concrete flag regression, verified its fix, and reported
+no remaining concrete implementation defect in scope. Main dispositions:
+
+| Finding | Disposition |
+| --- | --- |
+| Mount option alone could hide ART/reticle when hand shots were disabled | Fixed: select this spatial policy only with hand shots enabled and actual hand aim. Added real-runtime disabled-hand-shots regression with floating hands. |
+| Tiny same-tic movements could pass while a prior pose was stale | Strengthened: qualification requires both gun and hand prior-pose projections to fail on that same-tic pair. Cadence remains unqualified in the 20 Hz lab. |
+| Render stream rows preceded final mask/HUD submission | Fixed: only rows whose serial matches existing next-frame `lastSubmittedSerial`/`worldReceipt` accounting enter the submitted-transform oracle. No second owner or lifecycle. |
+| Native wall tests do not prove clamped visual hand/gun contact | Retained as an explicit next gate; no claim that native wall damage tests qualify the visual correction. |
+
+The final stream checks require actual submission receipts. Removing all receipt
+lines must make the submitted current-pose check fail; this is separately recorded
+as a parser negative control. A first motion fixture incorrectly accepted tiny
+angle rounding as body motion; it was repaired to require more than 20 horizontal
+Build units during captured movement, with an above-dead-zone stick input.

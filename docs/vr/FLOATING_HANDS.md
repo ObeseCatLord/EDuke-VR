@@ -1,14 +1,15 @@
 # Tracked floating hands
 
 Basic left and right hands now use actual OpenXR grip poses through the native
-opaque MD3 renderer. They work independently of the selected weapon and its
-model eligibility, including AA 5.66. Each hand is opt-in through a native DEF
+opaque MD3 renderer. They work independently of native weapon mesh eligibility, including AA 5.66.
+The optional calibrated pistol mount shares its visual collision correction
+with the selected hand; unsupported weapons retain ordinary grip tracking. Each hand is opt-in through a native DEF
 tile binding. They do not alter gameplay, multiplayer packets, native CON,
 weapon timing, or the projected aiming crosshair.
 
 This does **not** complete weapon attachment. Experimental pistol palm/muzzle
-calibration is described in [PISTOL_MOUNT.md](PISTOL_MOUNT.md); it measures a
-remaining temporal gap between current hands and the sampled gun. Native weapon ART
+calibration is described in [PISTOL_MOUNT.md](PISTOL_MOUNT.md); it now shares current-frame presentation and collision translation between the
+selected hand and gun, while physical fit and several transition gates remain. Native weapon ART
 can include additional hands, especially AA reload hand 2532; it remains visible
 until its own replacement is qualified. These are independent floating hands,
 not a full-body or hand-tracking/IK implementation.
@@ -34,7 +35,8 @@ Keep the existing XR world/overlay setup (`EDUKE32_XR=1`,
 `EDUKE32_XR_UI=2`, native Polymost models enabled). `EDUKE32_XR_SINGLE_PASS=1`
 requests the existing stereo collector. The hands do not require
 `EDUKE32_XR_MODELS`, weapon replacement, hand-shot negotiation, or a valid aim
-pose. Omitting one tile gives one hand. Missing/invalid/out-of-range bindings,
+pose. The optional pistol mount adds its own selected-hand calibration/readiness
+gates while active. Omitting one tile gives one hand. Missing/invalid/out-of-range bindings,
 missing model/frame/tag, or unsupported native materials omit only that hand
 before rendering. No global tile numbers are reserved by this feature.
 

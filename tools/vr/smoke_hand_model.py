@@ -83,8 +83,10 @@ def main():
     p.add_argument('--model-mode',choices=('native','sps'),default='native',help='retain the native two-eye reference or require model multiview')
     p.add_argument('--vertex-mode',choices=('arrays','immediate'),default='arrays')
     p.add_argument('--model-file',type=Path,help='private native multi-surface fixture, retaining pistol geometry/tags')
+    p.add_argument('--hand-shots-off',action='store_true',help='Regression: retained mount option must preserve native card/crosshair and independent hands when hand shots are disabled')
     p.add_argument('--palm-mount',action='store_true',help='Require the opt-in sampled grip-to-muzzle calibration')
     p.add_argument('--aim-hand',choices=('left','right'),default='right')
+    p.add_argument('--require-subtick',action='store_true',help='Additionally require multiple moving XR frames within one native tic; default Monado null pacing cannot provide this')
     p.add_argument('--mount-motion',action='store_true',help='Measure changing grip/roll/body against the sampled mounted weapon')
     p.add_argument('--fault',choices=('collect-right','surface-1','skin-last','replay-before','replay-after','mask-retry'))
     p.add_argument('--case',choices=('base','roll','fog','asymmetric','translucent','missing-skin','custom','second-eye-failure'),default='base')
@@ -99,8 +101,10 @@ def main():
     if a.floating_hands and (a.animation or a.model_mode!='sps' or a.receipt_fault):
         p.error('--floating-hands requires SPS without animation/receipt fault')
     if a.hands_same_model and not a.floating_hands:p.error('--hands-same-model requires --floating-hands')
-    if a.mount_motion and not (a.palm_mount and a.floating_hands and a.aim_hand=='right'):
-        p.error('--mount-motion requires a right palm mount with floating hands')
+    if a.hand_shots_off and a.mount_motion:p.error('--hand-shots-off cannot use --mount-motion')
+    if a.require_subtick and not a.mount_motion:p.error('--require-subtick requires --mount-motion')
+    if a.mount_motion and not (a.palm_mount and a.floating_hands):
+        p.error('--mount-motion requires a palm mount with floating hands')
     if a.animation_fallback and not a.animation:p.error('--animation-fallback requires --animation')
     if a.receipt_fault and (a.animation or a.fault):p.error('--receipt-fault is a separate cancellation case')
     if a.late_field and not a.animation:p.error('--late-field requires --animation')
@@ -136,6 +140,8 @@ def main():
                     script+=' ifvare vrpistol_latecounter 60\n'
                     script+=' { setactor[THISACTOR].shade 1 setvar vrpistol_late 1 addlog vrpistol_late }\nendevent\n'
                 fixture.write_text(script)
+                with (lab/'autoexec.cfg').open('a') as f:f.write('r_maxfps 120\n')
+            if a.mount_motion:
                 with (lab/'autoexec.cfg').open('a') as f:f.write('r_maxfps 120\n')
             data=bytearray(room())
             if a.case=='fog':
@@ -175,6 +181,8 @@ def main():
             EDUKE32_XR_CROSSHAIR_OUTPUT=str(cl/'crosshair'))
         if a.animation:ce['EDUKE32_XR_TEST_MODEL_ANIMATION']='1'
         if a.palm_mount:ce['EDUKE32_XR_PISTOL_MOUNT']='1'
+        if a.hand_shots_off:ce['EDUKE32_XR_HAND_SHOTS']='0'
+        if a.mount_motion:ce['EDUKE32_XR_TEST_MOUNT_STREAM']='1'
         if a.floating_hands:
             from floating_hands_check import configure
             configure(cl,cl/'hand-model.def',a.floating_hands,ce,a.hands_same_model)
@@ -245,7 +253,7 @@ def main():
             else:
                 co.wait(lambda t:'OpenXR world oracle: 60 frames' in t and 'OpenXR HUD presentation: 60 frames' in t,timeout=25)
                 text=co.text()
-                fallback=a.case in ('missing-skin','custom')
+                fallback=a.case in ('missing-skin','custom') or a.hand_shots_off
                 checks={'sixty_world_and_HUD_submissions':'OpenXR world oracle: 60 frames' in text,
                     'core_validation_active':'Core Validation output type:' in text,
                     'core_validation_clean':not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',text)}
@@ -268,7 +276,10 @@ def main():
                 details={}
                 if fallback:
                     checks.pop('requested_native_vertex_path_observed')
-                    checks['unsupported_case_retains_native_ART']='OpenXR hand model:' not in text and not (cl/'model-after-left.ppm').exists() and Image.open(cl/'weapon-coverage.pgm').getbbox() is not None
+                    checks['unsupported_case_retains_native_ART']='OpenXR hand model:' not in text and (a.floating_hands is not None or not (cl/'model-after-left.ppm').exists()) and Image.open(cl/'weapon-coverage.pgm').getbbox() is not None
+                    if a.hand_shots_off:
+                        checks['disabled_hand_shots_preserve_native_reticle']='OpenXR world crosshair:' in text and Image.open(cl/'crosshair-coverage.pgm').getbbox() is not None
+                        checks['disabled_hand_shots_draw_visible_weapon_card']='OpenXR weapon card: visible=1' in text
                 else:
                     rows=re.findall(r'OpenXR hand model: eye=(\d) model=(\d+) root=(-?\d+),(-?\d+),(-?\d+) direction=(-?\d+),(-?\d+),(-?\d+)\.',text)
                     checks['exactly_two_eye_emissions']=len(rows)==2 and [int(r[0]) for r in rows]==[0,1]
@@ -373,6 +384,10 @@ def main():
                     native_direction/=np.linalg.norm(native_direction)
                     direction_error=float(np.abs(model_direction-native_direction).max())
                     checks['model_uses_actual_native_server_root_and_ray']=sampled[:3]==[shot[k] for k in ('x','y','z')] and direction_error<1e-4
+                    if a.palm_mount:
+                        from pistol_mount_check import crosshair
+                        details['mounted_crosshair']=crosshair(cl,text,shot)
+                        checks.update(details['mounted_crosshair']['checks'])
                     if a.animation:
                         phase='actual native clip-boundary reload'
                         co.wait(lambda t:completed_reload(t,player),timeout=8)
@@ -427,15 +442,14 @@ def main():
             if a.floating_hands and a.case!='second-eye-failure' and a.fault!='replay-after':
                 from floating_hands_check import exercise
                 phase='actual floating grip models'
-                before_motion=players(co.text(),player)[-1]
-                details['floating_hands']=exercise(co,remote,cl,a.mount_motion)
+                details['floating_hands']=exercise(co,remote,cl,a.mount_motion,a.aim_hand)
                 checks.update(details['floating_hands']['checks'])
                 if a.mount_motion:
                     from pistol_mount_check import contacts
                     details['mount_motion']=contacts(co.text(),model_file)
                     checks.update(details['mount_motion']['checks'])
-                    after_motion=players(co.text(),player)[-1]
-                    checks['native_body_moved_during_mount_measurement']=sum(abs(after_motion[k]-before_motion[k]) for k in ('x','y'))>20
+                    if a.require_subtick:
+                        checks['moving_frames_within_one_native_tick']=details['mount_motion']['stream']['subtick_qualification']['passed']
                 if a.hands_same_model:
                     both=[c['hands'] for c in details['floating_hands']['captures'].values() if c['mask']==3]
                     checks['same_native_model_object_has_two_distinct_instances']=bool(both) and all(h[0]['model']==h[1]['model'] for h in both)
