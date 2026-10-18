@@ -110,6 +110,8 @@ def main():
                         help='Owned SDL-dummy keyboard helper required for the --xr-host CPU client')
     parser.add_argument('--per-player-selector-edge', action='store_true',
                         help='Causal lab experiment: predeclare AA oldbits as per-player on both peers')
+    parser.add_argument('--compat-con', type=Path,
+                        help='Read-only production AA main CON loaded with native -x on both peers')
     args = parser.parse_args()
     if args.xr_host and (not args.input_helper or not args.input_helper.is_file()):
         parser.error('--xr-host requires --input-helper')
@@ -117,6 +119,12 @@ def main():
         args.input_helper = args.input_helper.resolve()
     for name in ('binary', 'client_binary', 'mod_root', 'work_dir'):
         setattr(args, name, getattr(args, name).resolve())
+    if args.compat_con:
+        args.compat_con = args.compat_con.resolve()
+        if not args.compat_con.is_file():
+            parser.error('missing --compat-con: '+str(args.compat_con))
+    if args.compat_con and args.per_player_selector_edge:
+        parser.error('--compat-con cannot be combined with --per-player-selector-edge')
     assert_gpu_devices_absent()
     assert_cpu_binary(args.binary)
     xr_role = 'server' if args.xr_host else 'client'
@@ -126,6 +134,13 @@ def main():
     result = {'passed': False, 'checks': {}, 'stages': {}, 'evidence_directory': str(root),
               'qualification': 'Actual AA selection, tracked firing and native ammo authority; not full campaign or SPS acceptance.',
               'xr_role': xr_role}
+    main_con = args.compat_con.name if args.compat_con else 'aa_mp_observer.con'
+    observer_con = 'aa_mp_observer.con' if args.compat_con else None
+    result['con_launch'] = {'main_cli': ['-x', main_con],
+                            'observer_cli': ['-mx', observer_con] if observer_con else []}
+    if args.compat_con:
+        result['compat_con'] = {'path': str(args.compat_con),
+                                 'sha256': hashlib.sha256(args.compat_con.read_bytes()).hexdigest()}
     result['selector_edge_experiment'] = args.per_player_selector_edge
     result['selector_edge_definition_order'] = 'before installed script; native first definition wins'
     phase = 'setup'
@@ -138,13 +153,18 @@ def main():
             (lab / 'eduke32.cfg').write_text(config)
             (lab / 'settings.cfg').write_text('// Private AA multiplayer observation.\n')
             (lab / 'autoexec.cfg').write_text('r_maxfps ' + (str(args.client_fps) if role == xr_role else '30') + '\n')
-            wrapper = aa_wrapper(local_only=role == xr_role)
+            wrapper = aa_wrapper(local_only=role == xr_role, include_game=not bool(args.compat_con))
             if args.per_player_selector_edge:
                 wrapper = 'gamevar oldbits 0 GAMEVAR_PERPLAYER\n' + wrapper
             (lab / 'aa_mp_observer.con').write_text(wrapper + policy_wrapper())
         common = ['-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
-                  '-j', str(args.mod_root), '-g', str(args.mod_root / 'AA.grp'),
-                  '-x', 'aa_mp_observer.con', '-h', 'duke3d.def']
+                  '-j', str(args.mod_root)]
+        if args.compat_con:
+            common.extend(('-j', str(args.compat_con.parent)))
+        common.extend(('-g', str(args.mod_root / 'AA.grp'), '-x', main_con))
+        if observer_con:
+            common.extend(('-mx', observer_con))
+        common.extend(('-h', 'duke3d.def'))
         server_env = sanitised_env()
         server_env['EDUKE32_XR_TEST_SHOTS'] = '1'
         client_env = {k: v for k, v in os.environ.items() if not k.startswith('EDUKE32_XR')}

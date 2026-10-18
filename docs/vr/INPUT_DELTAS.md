@@ -1,5 +1,9 @@
 # Native multiplayer angular input
 
+The later [AA compatibility entry](AA_COMPAT_ENTRY.md) ships the narrow
+button-history override through native script selection. Lab-only override
+descriptions below are historical; broader AA state authority remains open.
+
 The subsequent [host-input correction](HOST_INPUT_DELTAS.md) extends the native
 increment lifetime to the server-to-client path and qualifies actual AA tracked
 pistol firing in both VR roles. The failures below describe this earlier checkpoint.

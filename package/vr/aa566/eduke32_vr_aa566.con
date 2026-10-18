@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// AA 5.66: each player's previous input belongs to that player.
+// Keep this before AA's declaration; native first-definition-wins semantics
+// preserve the per-player flag and emit the expected duplicate warning.
+// This does not replicate AA script state or replace its gameplay.
+gamevar oldbits 0 GAMEVAR_PERPLAYER
+include scripts/AAGAME.CON

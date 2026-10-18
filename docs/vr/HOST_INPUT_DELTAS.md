@@ -1,5 +1,9 @@
 # Native listen-host angular input
 
+The subsequent [AA compatibility entry](AA_COMPAT_ENTRY.md) replaces the lab-only
+button-history predeclaration in qualification launches. The original commands
+and results below retain their historical diagnostic scope.
+
 AA's character selection and tracked pistol firing now pass with the XR player
 either hosting or joining. The listen host previously repeated its last angular
 input during catch-up ticks, and ordinary clients repeated or discarded host

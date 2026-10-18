@@ -2,6 +2,17 @@
 
 ## Current checkpoint — 2026-10-18
 
+An explicit native [AA 5.66 compatibility entry](AA_COMPAT_ENTRY.md) now makes
+the per-player `oldbits` correction available outside the diagnostic wrapper.
+With the shipped main script, both VR multiplayer roles and the single-player
+opening/controller/pistol/world-crosshair paths pass. A two-input held-button
+regression fails on unwrapped AA and passes all twelve phases with the entry.
+Ordinary fresh-wrapper gameplay save/restart/load also restores AA state and
+accepts a new tracked shot, without any CON observation module. See sibling
+`evidence/aa-compat-entry-validation.json` for the reset gate and exact scope.
+General AA campaign authority, weapon/model integration, full SPS and headset
+acceptance remain incomplete. Lab-only override descriptions below are historical.
+
 AA tracked selection and pistol firing now pass in both XR-host and XR-client
 roles. Native host increments are staged once, accumulated on receivers and
 consumed once. A separate producer oracle catches the old binary replaying

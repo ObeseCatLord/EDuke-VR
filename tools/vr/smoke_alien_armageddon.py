@@ -50,8 +50,8 @@ def aa_samples(text):
     return rows
 
 
-def aa_wrapper(local_only=False):
-    """Append observations without replacing AA's EVENT_PROCESSINPUT handler."""
+def aa_wrapper(local_only=False, include_game=True):
+    """Return AA observations, optionally with the installed AA entry include."""
     fields = '\n'.join(f'gamevar aaobserve_{name} 0 1' for name in AA_FIELDS)
     reads = '''
     addvar aaobserve_tick 1
@@ -79,8 +79,8 @@ def aa_wrapper(local_only=False):
     logs = ''.join(f'    addlog aaobserve_{name}\n' for name in AA_FIELDS)
     if local_only:
         logs = 'ifvarvare aaobserve_player myconnectindex\n{\n' + logs + '}\n'
-    return ('// Private read-only AA controller observation wrapper.\n'
-            'include scripts/AAGAME.CON\n\n' + fields +
+    entry = 'include scripts/AAGAME.CON\n\n' if include_game else ''
+    return ('// Private read-only AA controller observation wrapper.\n' + entry + fields +
             '\n\nappendevent EVENT_PROCESSINPUT\n' + reads + logs + 'endevent\n'
             'appendevent EVENT_POSTWEAPONSHOOT\n addvar aaobserve_shots 1\nendevent\n')
 
@@ -348,6 +348,8 @@ def main():
     p.add_argument('--remote-port', type=int,
         help='Loopback mndrmt3 port for --play-controller; the runtime must already be running')
     p.add_argument('--texture-cache-seed', type=Path, help='Reuse an owned prior lab cache without changing installed content')
+    p.add_argument('--compat-con', type=Path,
+        help='Read-only production AA main CON loaded with native -x')
     a = p.parse_args()
     if a.play_controller and not a.remote_port:
         p.error('--play-controller requires --remote-port')
@@ -356,6 +358,10 @@ def main():
     if a.play_controller and (a.episode, a.level) != (1, 2):
         p.error('--play-controller is the fixed Hollywood (episode 1, level 2) proof')
     binary, mod = a.binary.resolve(), a.mod_root.resolve()
+    if a.compat_con:
+        a.compat_con = a.compat_con.resolve()
+        if not a.compat_con.is_file():
+            p.error('missing --compat-con: '+str(a.compat_con))
     entry = mod/'scripts/AAGAME.CON'
     for path in (binary, entry, mod/'AA.grp', mod/'duke3d.def'):
         if not path.is_file():
@@ -382,17 +388,29 @@ def main():
     if a.play_controller:
         env['EDUKE32_XR_TEST_INPUT'] = '1'
         env['EDUKE32_XR_TEST_PVP'] = '1'
-        (root/'aa_controller_observer.con').write_text(aa_wrapper())
+        (root/'aa_controller_observer.con').write_text(aa_wrapper(include_game=not bool(a.compat_con)))
     if a.combat:
         env['EDUKE32_XR_TEST_SHOTS'] = '1'
         env['EDUKE32_XR_CROSSHAIR_OUTPUT'] = str(root/'crosshair')
         env['EDUKE32_XR_CROSSHAIR_FRAME'] = '120'
+    main_con = a.compat_con.name if a.compat_con else (
+        'aa_controller_observer.con' if a.play_controller else 'scripts/AAGAME.CON')
+    observer_con = 'aa_controller_observer.con' if a.compat_con and a.play_controller else None
     command = [str(binary), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
-        '-j', str(mod), '-g', str(mod/'AA.grp'),
-        '-x', 'aa_controller_observer.con' if a.play_controller else 'scripts/AAGAME.CON', '-h', 'duke3d.def',
-        '-v'+str(a.episode), '-l'+str(a.level), '-s1']
+        '-j', str(mod)]
+    if a.compat_con:
+        command.extend(('-j', str(a.compat_con.parent)))
+    command.extend(('-g', str(mod/'AA.grp'), '-x', main_con))
+    if observer_con:
+        command.extend(('-mx', observer_con))
+    command.extend(('-h', 'duke3d.def', '-v'+str(a.episode), '-l'+str(a.level), '-s1'))
     process = None
-    result = {'passed': False}
+    result = {'passed': False,
+              'con_launch': {'main_cli': ['-x', main_con],
+                             'observer_cli': ['-mx', observer_con] if observer_con else []}}
+    if a.compat_con:
+        result['compat_con'] = {'path': str(a.compat_con),
+                                'sha256': hashlib.sha256(a.compat_con.read_bytes()).hexdigest()}
     try:
         with (root/'game.log').open('w') as log:
             process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
@@ -476,7 +494,8 @@ def main():
                              and (row['charsel'] & 1) and row['volume'] == 0 and row['level'] == 1]
                 axis_rows = [row for row in final_rows if row['q16avel'] or row['q16horz']]
                 checks.update(
-                    controller_wrapper_compiled='Compiling: aa_controller_observer.con' in text,
+                    controller_wrapper_compiled=('Compiling: aa_controller_observer.con' in text or
+                                                 bool(observer_con and 'Including: aa_controller_observer.con' in text)),
                     controller_native_axis_to_cursor=bool(axis_rows) and any(
                         row['cursorx'] != controller['stages']['initial']['cursorx'] or
                         row['cursory'] != controller['stages']['initial']['cursory'] for row in axis_rows),
@@ -515,9 +534,19 @@ def main():
                 'initial_world_capture': initial_world_capture,
                 'controller_observation': controller,
                 'post_gameplay_capture': controller.get('post_gameplay_capture') if controller else None,
+                'con_launch': {'main_cli': ['-x', main_con],
+                               'observer_cli': ['-mx', observer_con] if observer_con else []},
                 'qualification': 'Actual AA entry, with optional Duke-pistol tracked combat/crosshair proof; full arsenal/campaign/AA multiplayer and general SPS remain unqualified.'}
+            if a.compat_con:
+                result['compat_con'] = {'path': str(a.compat_con),
+                                        'sha256': hashlib.sha256(a.compat_con.read_bytes()).hexdigest()}
     except Exception as error:
-        result = {'passed': False, 'episode': a.episode, 'level': a.level, 'error': str(error)}
+        result = {'passed': False, 'episode': a.episode, 'level': a.level, 'error': str(error),
+                  'con_launch': {'main_cli': ['-x', main_con],
+                                 'observer_cli': ['-mx', observer_con] if observer_con else []}}
+        if a.compat_con:
+            result['compat_con'] = {'path': str(a.compat_con),
+                                    'sha256': hashlib.sha256(a.compat_con.read_bytes()).hexdigest()}
     finally:
         stop(process)
     result.update(evidence_directory=str(root), cleanup=process is None or process.poll() is not None,

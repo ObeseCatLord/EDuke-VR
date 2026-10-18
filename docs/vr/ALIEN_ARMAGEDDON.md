@@ -4,6 +4,11 @@ The installed AA content is an additional required target. It remains outside
 this repository; tests read the installation without changing its scripts,
 assets, configuration, cache, or saves. The test owns a separate working directory.
 
+The explicit [AA 5.66 compatibility entry](AA_COMPAT_ENTRY.md) now supplies the
+per-player button-history correction through native `-x`/`-j`. Use that entry
+for the qualified selection and tracked-pistol paths; the original launch below
+is the unwrapped reference. Full AA campaign/multiplayer support remains open.
+
 ## Native entry and presentation
 
 AA supplies `AA.grp`, `alien_armageddon.grpinfo`, `scripts/AAGAME.CON`, and
