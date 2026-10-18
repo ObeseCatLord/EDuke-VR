@@ -8,6 +8,8 @@ MD3/skin remain read-only.  ``model`` proves the idle standard pistol only;
 firing and reload frames deliberately retain AA's native ART.  ``missing``
 does not install a DEF mapping, while ``missing-frame`` uses a private MD3
 copy whose named rest frame cannot resolve; both retain native weapon-card ART.
+``duplicate-body`` issues an extra native CON body draw after a valid model
+frame and proves cancellation before that mismatched frame can be submitted.
 """
 import argparse
 import hashlib
@@ -54,6 +56,54 @@ ifvare aamodel_reported 0 ifvare startmode 1 ifvare aaobserve_weaponpos 0
  setvarvar aamodel_upgrades dukeupgrades[PISTOL_WEAPON]
  addlog aamodel_upgrades
 ''' + ''.join(f' addlog {label}\n' for label in labels) + '}\nendevent\n')
+
+
+DUPLICATE_BODY = '''
+// Armed only after the runner observes a successful real AA model frame.
+// The native VM issues a second body draw inside the owned weapon segment.
+gamevar aamodelfault 0 1
+appendevent EVENT_DRAWWEAPON
+ifvare aamodelfault 1
+{
+ guniqhudid PISTOL_WEAPON
+ rotatesprite16 10485760 6553600 32768 0 FIRSTGUN 2 0 6146 0 0 xdim ydim
+ guniqhudid 0
+ set aamodelfault 2
+ addlog aamodelfault
+}
+endevent
+'''
+
+
+def duplicate_body_fault(observer: Observer, process: subprocess.Popen, display: str) -> dict:
+    start = len(observer.text())
+    x11 = X11(display)
+    window, _ = x11.owned_window(process.pid)
+    if not window:
+        raise RuntimeError('owned AA drawable missing before duplicate-body fault')
+    x11.press(window, 'F4', .08, True)
+    # Observer deliberately rejects XR shutdown during normal gameplay. This
+    # fault alone expects it, so read the owned log directly after arming it.
+    deadline = time.monotonic() + 12
+    while True:
+        if process.poll() is not None:
+            raise RuntimeError('owned AA game exited during duplicate-body fault')
+        text = observer.path.read_text(errors='replace')[start:]
+        if 'OpenXR world stopped:' in text:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError('duplicate-body cancellation timeout')
+        time.sleep(.05)
+    canceled = [tuple(map(int, row)) for row in re.findall(
+        r'OpenXR hand model frame canceled: serial=(\d+) submitted=(\d+)\.', text)]
+    mismatch = re.findall(r'OpenXR AA hand model draw mismatch: ([^\n]+)', text)
+    return {'canceled': canceled, 'mismatch': mismatch,
+            'checks': {
+                'native_duplicate_body_event_executed': bool(re.search(r'addlog aamodelfault.* = 2', text)),
+                'duplicate_rejected_inside_owned_segment': any('tile=2524 id=1 shade=2 palette=0 flags=6146 angle=0 alpha=0 blend=0 segment=1 roles=1.' in row for row in mismatch),
+                'written_frame_canceled_before_submission': len(canceled) == 1 and canceled[0][0] > canceled[0][1],
+                'XR_disabled_for_receipt_mismatch': 'held-model/native weapon receipt mismatch' in text,
+            }}
 
 
 def image_contribution(root: Path, prefix: str) -> dict:
@@ -188,7 +238,7 @@ def write_private_def(root: Path, model: Path, skin: Path, frame_name: str = 're
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--case', choices=('model', 'missing', 'missing-frame'), default='model')
+    parser.add_argument('--case', choices=('model', 'missing', 'missing-frame', 'duplicate-body'), default='model')
     parser.add_argument('--model-mode', choices=('native', 'sps'), default='native')
     for name in ('binary', 'mod-root', 'work-dir'):
         parser.add_argument('--' + name, type=Path, required=True)
@@ -199,6 +249,7 @@ def main() -> int:
     parser.add_argument('--remote-port', type=int, required=True)
     parser.add_argument('--timeout', type=int, default=65)
     args = parser.parse_args()
+    model_case = args.case in ('model', 'duplicate-body')
     args.binary, args.mod_root, args.work_dir = (args.binary.resolve(), args.mod_root.resolve(), args.work_dir.resolve())
     args.compat_con = args.compat_con.resolve()
     args.model, args.skin = args.model.resolve(), args.skin.resolve()
@@ -206,7 +257,7 @@ def main() -> int:
                  args.mod_root / 'scripts/AAGAME.CON'):
         if not path.is_file():
             parser.error('missing required read-only input: ' + str(path))
-    if args.case in ('model', 'missing-frame'):
+    if model_case or args.case == 'missing-frame':
         for path in (args.model, args.skin):
             if not path.is_file():
                 parser.error('missing required private AA asset: ' + str(path))
@@ -221,14 +272,15 @@ def main() -> int:
     try:
         (root / 'eduke32.cfg').write_text(CONFIG + '\n[Screen Setup]\nPolymer = 0\n')
         (root / 'settings.cfg').write_text('// Private AA hand-model smoke preferences.\n')
-        (root / 'autoexec.cfg').write_text('r_maxfps 5\n')
-        (root / 'aa_hand_model_observer.con').write_text(model_observer())
+        fault = args.case == 'duplicate-body'
+        (root / 'autoexec.cfg').write_text('r_maxfps 5\n' + ('bind F4 norepeat "setvar aamodelfault 1"\n' if fault else ''))
+        (root / 'aa_hand_model_observer.con').write_text(model_observer() + (DUPLICATE_BODY if fault else ''))
         if args.case == 'missing-frame':
             result['missing_frame_fixture'] = missing_rest_fixture(root, args.model)
             result['model_mapping'] = write_private_def(
                 root, Path(result['missing_frame_fixture']['path']), args.skin, 'no_rest')
         else:
-            result['model_mapping'] = write_private_def(root, args.model, args.skin) if args.case == 'model' else None
+            result['model_mapping'] = write_private_def(root, args.model, args.skin) if model_case else None
         env = {key: value for key, value in os.environ.items() if not key.startswith('EDUKE32_XR')}
         env.update(DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
                    EDUKE32_XR='1', EDUKE32_XR_SINGLE_PASS='1', EDUKE32_XR_UI='2',
@@ -241,7 +293,7 @@ def main() -> int:
                    EDUKE32_XR_WORLD_OUTPUT=str(root / 'world'), EDUKE32_XR_HUD_OUTPUT=str(root / 'hud'))
         if args.model_mode == 'native':
             env['EDUKE32_XR_TEST_MODELS_TWO_PASS'] = '1'
-        definition = 'aa-hand-model.def' if args.case in ('model', 'missing-frame') else 'duke3d.def'
+        definition = 'aa-hand-model.def' if model_case or args.case == 'missing-frame' else 'duke3d.def'
         command = [str(args.binary), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
                    '-j', str(args.mod_root), '-j', str(args.compat_con.parent), '-g', str(args.mod_root / 'AA.grp'),
                    '-x', args.compat_con.name, '-mx', 'aa_hand_model_observer.con', '-h', definition,
@@ -261,7 +313,7 @@ def main() -> int:
                           timeout=12)
             prior_capture = max(map(int, PVP_CAPTURE.findall(observer.text())), default=0)
             phase = 'idle AA model/native card evidence'
-            if args.case == 'model':
+            if model_case:
                 required = [root / f'model-{suffix}-{eye}{extension}'
                             for suffix in ('before', 'after') for eye in ('left', 'right')
                             for extension in ('.ppm', '-depth.bin')]
@@ -285,9 +337,13 @@ def main() -> int:
                 observer.pause(2)
             result['gameplay_capture'] = post_gameplay_capture(observer, root, prior_capture, timeout=25)
             result['weapon_card'] = native_weapon_card(root)
-            phase = 'actual AA pistol fire'
-            result['fire'] = fire_actual_aa_pistol(observer, remote)
-        text = observer.text()
+            if fault:
+                phase = 'actual native AA duplicate-body draw'
+                result['fault'] = duplicate_body_fault(observer, process, args.display)
+            else:
+                phase = 'actual AA pistol fire'
+                result['fire'] = fire_actual_aa_pistol(observer, remote)
+        text = observer.path.read_text(errors='replace') if fault else observer.text()
         rows = aa_samples(text)
         idle = [row for row in rows if row['startmode'] == 1 and row['pchar'] == 0 and row['currentweapon'] == 1]
         checks = result['checks']
@@ -303,11 +359,15 @@ def main() -> int:
                                          'OpenXR hand model frame canceled:' not in text,
                       core_validation_clean=not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)', text),
                       game_remains_running=process.poll() is None)
-        checks.update(result['fire']['checks'])
-        positive_cards = [path for path in root.glob('weapon-counter-*-coverage.pgm')
-                          if Image.open(path).getbbox() is not None]
-        checks['positive_AA_counter_retains_native_ART'] = bool(positive_cards)
-        if args.case == 'model':
+        if fault:
+            del checks['no_XR_cancellation']
+            checks.update(result['fault']['checks'])
+        else:
+            checks.update(result['fire']['checks'])
+            positive_cards = [path for path in root.glob('weapon-counter-*-coverage.pgm')
+                              if Image.open(path).getbbox() is not None]
+            checks['positive_AA_counter_retains_native_ART'] = bool(positive_cards)
+        if model_case:
             receipts = [tuple(map(int, row)) for row in AA_RECEIPT.findall(text)]
             receipt = result['receipt']
             contribution = result['model_images']
@@ -385,7 +445,7 @@ def main() -> int:
     result['cleanup'] = process is None or process.poll() is not None
     inputs = [args.binary, args.compat_con, args.mod_root / 'AA.grp', args.mod_root / 'duke3d.def',
               args.mod_root / 'scripts/AAGAME.CON']
-    if args.case in ('model', 'missing-frame'):
+    if model_case or args.case == 'missing-frame':
         inputs.extend((args.model, args.skin))
     result['sha256'] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}
     (root / 'result.json').write_text(json.dumps(result, indent=2) + '\n')

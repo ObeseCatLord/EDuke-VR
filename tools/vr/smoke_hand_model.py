@@ -27,7 +27,7 @@ from smoke_aim import orientation, players
 from smoke_hand_shots import room
 from smoke_hitscan import rays
 from smoke_multiplayer import X11, setup_lab, stop
-from smoke_weapon import quaternion
+from smoke_weapon import quaternion, rotation
 
 
 def pistol_states(text, player):
@@ -47,6 +47,30 @@ def completed_reload(text, player):
             return any(s['counter'] == 0 and s['reloading'] == 0 and s['ammo'] == 12
                        and s['weapon'] == 1 for s in rows[i+1:])
     return False
+
+
+def world_from_eye(yaw, pitch, roll):
+    """Map OpenXR eye axes to physical Build-world X/Y/Z-up axes."""
+    forward = np.array((math.cos(yaw)*math.cos(pitch), math.sin(yaw)*math.cos(pitch), math.sin(pitch)))
+    right = np.array((-math.sin(yaw), math.cos(yaw), 0.))
+    up = np.cross(forward, right)
+    right = right*math.cos(roll) + up*math.sin(roll)
+    up = np.cross(forward, right)
+    return np.column_stack((right, up, -forward))
+
+
+def physical_from_build(point, eye):
+    """Convert a Build-world displacement into metres, with Z increasing up."""
+    return (np.asarray(point, dtype=float) - np.asarray(eye, dtype=float))*np.array((1/384, 1/384, -1/6144))
+
+
+def expected_projection(world_eye, eye, point, fov):
+    """Project a physical world point through the native logged eye basis."""
+    horizontal, vertical, back = world_eye.T @ physical_from_build(point, eye)
+    distance = -back
+    left, right, top, bottom = np.tan(fov)
+    return np.array(((2*horizontal/distance-right-left)/(right-left),
+                     (2*vertical/distance-top-bottom)/(top-bottom)))
 
 
 def main():
@@ -238,13 +262,10 @@ def main():
                     tags={model[offset+i*112:offset+i*112+64].split(b'\0')[0].decode():struct.unpack_from('<3f',model,offset+i*112+64) for i in range(ntags)}
                     eyes=np.array(list(map(int,re.findall(r'OpenXR aim eye positions: left=(-?\d+),(-?\d+),(-?\d+) right=(-?\d+),(-?\d+),(-?\d+)',text)[-1]))).reshape(2,3)
                     angles=list(map(float,re.findall(r'leftYaw=([-+\d.eE]+) leftPitch=([-+\d.eE]+) rightYaw=([-+\d.eE]+) rightPitch=([-+\d.eE]+)\.',text)[-1]))
-                    forward=np.array(list(map(int,rows[0][5:])),dtype=float)*np.array([1,1,-1])
-                    forward/=np.linalg.norm(forward)
-                    right=np.array([-forward[1],forward[0],0]);right/=np.linalg.norm(right)
-                    up=np.cross(forward,right)
-                    right=right*math.cos(math.radians(roll))+up*math.sin(math.radians(roll))
-                    up=np.cross(forward,right)
-                    physical_axes=(forward,right,up)
+                    eye_rolls=list(map(float,re.findall(r'OpenXR aim eye roll: left=([-+\d.eE]+) right=([-+\d.eE]+)\.',text)[-1]))
+                    view_rows=re.findall(r'OpenXR weapon view: eye=(\d) pos=[^\n]*? quat=([^ ]+) fov=([^\n]+)\.',text)
+                    views={int(index):(np.fromstring(quat,sep=','),np.fromstring(fov,sep=','))
+                           for index,quat,fov in view_rows}
                     for eye in ('left','right'):
                         index=('left','right').index(eye)
                         before=np.array(Image.open(cl/f'model-before-{eye}.ppm'))
@@ -256,29 +277,25 @@ def main():
                         depth_changed.append(int(np.count_nonzero(raw_before!=raw_after)))
                         checks[f'{eye}_model_depth_is_native_nearer_surface']=bool(np.all(raw_after<=raw_before))
                         # Independent physical projection of the constrained
-                        # muzzle, including native unequal XY/Z scale.
+                        # muzzle.  Reconstruct this from logged native eye
+                        # yaw/pitch/roll and the actual runtime view pose;
+                        # emitted model axes and matrices remain actual-side
+                        # evidence only.
                         root_position=np.array(list(map(int,rows[index][2:5])))
-                        rel=(root_position-eyes[index])/np.array([384,384,6144])
                         yaw,pitch=angles[index*2:index*2+2]
-                        front=rel[0]*math.cos(yaw)+rel[1]*math.sin(yaw)
-                        horizontal=-rel[0]*math.sin(yaw)+rel[1]*math.cos(yaw);up=-rel[2]
-                        forward=front*math.cos(pitch)+up*math.sin(pitch)
-                        vertical=up*math.cos(pitch)-front*math.sin(pitch)
-                        fov=np.tan(np.fromstring(re.findall(r'OpenXR weapon view: eye='+str(index)+r'.*? fov=([^\n]+)\.',text)[-1],sep=','))
-                        left,right_t,top,bottom=fov
-                        expected=np.array([(2*horizontal/forward-right_t-left)/(right_t-left),(2*vertical/forward-top-bottom)/(top-bottom)])
+                        eye_world=world_from_eye(yaw,pitch,eye_rolls[index])
+                        view_quaternion,fov=views[index]
+                        world_tracking=eye_world@rotation(view_quaternion).T
+                        expected_hand=world_tracking@rotation(quaternion(12,8,roll))
+                        physical_axes=(-expected_hand[:,2],expected_hand[:,0],expected_hand[:,1])
+                        expected=expected_projection(eye_world,eyes[index],root_position,fov)
                         actual=projections[index]@matrices[index]@np.array([*tags['tag_muzzle'],1])
                         projection_errors.append(float(np.abs(actual[:2]/actual[3]-expected).max()))
                         # Three five-centimetre offsets independently qualify
                         # orientation, tracked roll and scale, beyond the pivot.
                         for axis,physical in enumerate(physical_axes):
                             point=root_position+physical*np.array([384,384,-6144])*.05
-                            rel=(point-eyes[index])/np.array([384,384,6144])
-                            front=rel[0]*math.cos(yaw)+rel[1]*math.sin(yaw)
-                            horizontal=-rel[0]*math.sin(yaw)+rel[1]*math.cos(yaw);vertical=-rel[2]
-                            distance=front*math.cos(pitch)+vertical*math.sin(pitch)
-                            height=vertical*math.cos(pitch)-front*math.sin(pitch)
-                            expected=np.array([(2*horizontal/distance-right_t-left)/(right_t-left),(2*height/distance-top-bottom)/(top-bottom)])
+                            expected=expected_projection(eye_world,eyes[index],point,fov)
                             vertex=np.array([*tags['tag_muzzle'],1]);vertex[axis]+=3.2
                             actual=projections[index]@matrices[index]@vertex
                             axis_errors.append(float(np.abs(actual[:2]/actual[3]-expected).max()))

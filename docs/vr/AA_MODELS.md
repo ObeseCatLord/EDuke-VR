@@ -43,7 +43,9 @@ unsupported states choose ART before model emission.
 installed AA entry plus a read-only observer, native Duke/START controller
 selection and real trigger input. Cases are `model` with `native` or `sps`
 submission, `missing` without the optional model mapping, and `missing-frame`
-with a private metadata-only copy lacking the named `rest` frame. Evidence includes
+with a private metadata-only copy lacking the named `rest` frame. `duplicate-body`
+arms one additional native CON rotatesprite call after a valid model frame;
+it must reject the duplicate and cancel before submitting that frame. Evidence includes
 body receipts, before/after eye color and depth, native ART coverage, actual
 ammo/shot events, and owned private-window cleanup. The SPS case additionally
 requires identical same-frame native inputs, byte-exact reference color/depth,
@@ -60,16 +62,17 @@ exceptional cancellation, mirror/crosshair/menu effects, native animation and
 multiplayer presentation. Current firing/reload frames deliberately use native
 ART; no new animation clock has been introduced.
 
-The stock animated-pistol regression is **not fully passing** at this checkpoint:
-26 of 27 checks pass, including native ammo/reload, every animated stereo oracle,
-muzzle projection and authoritative ray agreement. The independent right/up-axis
-comparison fails (maximum about 0.0133 NDC). Its oracle assumes horizontal right
-plus fixture roll, while the existing emitter derives right from the current
-tracked/native transform against a stored shot direction. The sampled native
-pitch differs from older accepted runs. The AA diff does not change that math,
-but a fixture/oracle assumption versus temporal pose mismatch is not yet resolved.
-Do not weaken the tolerance or call this a clean stock regression. Keep the
-retained result and investigate the matched pose/body/shot sample next.
+The stock animated-pistol regression now passes. The retained earlier failure
+(about 0.0133 NDC) came from the test assuming horizontal world right before
+controller roll. That assumption loses the native body's pitched tracking
+transform. The corrected independent oracle composes logged native eye
+yaw/pitch/roll, inverse actual XR view orientation and the prescribed controller
+orientation. Expected axes do not use emitted model matrices or basis vectors.
+The engine transform and `2e-5` tolerance are unchanged. Real native firing/reload,
+25-degree controller roll and asymmetric runtime FOV cases pass, with maximum
+axis errors of `8.12e-7`, `8.77e-7` and `2.43e-6` NDC respectively. Earlier failed
+evidence remains recorded. Moving-pose temporal coherence is a separate future
+test; this corrected static-pose oracle does not establish it.
 
 ## Focused code review
 
@@ -81,5 +84,5 @@ runner, without runtime/build execution. This was not another broad port review.
 | Finding | Disposition |
 |---|---|
 | AA without named `rest` inherited legacy frame-zero substitution | Fixed: retain that compatibility behavior only for stock models; AA requires the named frame. Add a private missing-rest fixture. |
-| Existing stock receipt fault injection bypasses the AA consumer | Open qualification gap: no AA duplicate/mismatch cancellation runtime claim. Test at the actual AA draw boundary before broader binding. |
+| Existing stock receipt fault injection bypasses the AA consumer | Closed for a duplicate body: an appended native CON draw, armed after valid model gameplay, reports the duplicate inside the owned segment and cancels the frame before submission. The actual draw path is exercised. |
 | Keep bounded sampler and existing world renderer | Adopted; no renderer rescheduling, draw replay or independent animation state. |
