@@ -993,3 +993,23 @@ oracles. The visible marker matches both-eye projection within1 color unit;
 world depth blocks all24 covered pixels per eye in the occluded case. Both
 reticle rays exactly match the server's shot origin and impact. No renderer
 coverage relaxation, new camera state or hardware GPU use was needed.
+
+## Native tracked idle MD3 pistol
+
+[MODEL_HAND_DESIGN.md](MODEL_HAND_DESIGN.md) records the focused Astra/xhigh
+review and its adopted pre-mask native-renderer boundary. Base and nearer
+translucent-wall cases render sixty actual world/HUD frames with native model
+color/depth in both eyes and empty idle ART coverage. All 8,106/7,903 model
+pixels receive the nearer translucent composition while retaining exact depth.
+Independent muzzle projection error is below 7e-7 NDC; actual server shot origin
+matches exactly and normalized native physical ray error is below 1.2e-5.
+A separate 25-degree roll case qualifies three 5 cm basis offsets/scale below 3e-7 NDC.
+Missing-skin/custom-weapon-handler cases retain native ART. Injected second-eye
+failure ends an empty frame: failed serial exceeds last submitted serial and
+there is no completed model receipt. Hardware GPU devices remain denied,
+private drawables unmapped, client core validation clean and owned processes
+reaped. The forced-shutdown case retains Monado's separate known
+destroy-nonexistent-space teardown warning. A separate nonzero native world-model
+fixture retains exact two-pass/candidate color/depth and callback counts 14/14/14; the model masks correctly
+use sequential-eye fallback, with zero collection writes. Model SPS is not
+claimed. Durable results/hashes are sibling `evidence/hand-model-validation.json`.

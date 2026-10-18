@@ -2178,6 +2178,9 @@ static void G_DrawTileScaled(int drawX, int drawY, int tileNum, int drawShade, i
     if (videoGetRenderMode() >= REND_POLYMOST && usemodels && md_tilehasmodel(tileNum,drawPal) >= 0)
         drawYOffset += (224<<16)-weapsc(224<<16);
 #endif
+#ifdef USE_OPENXR
+    if (!G_XRSuppressWeaponTile(tileNum,uniqueID))
+#endif
     rotatesprite(weapsc(drawX<<16) + (drawXOffset-weapsc(drawXOffset)),
                  weapsc((drawY<<16) + g_dts_yadd) + ((200<<16)-weapsc(200<<16)) + drawYOffset,
                  weapsc(65536L),drawAng,tileNum,drawShade,drawPal,(2|drawBits),
@@ -2515,6 +2518,35 @@ static int P_DisplayAccess(int accessShade)
 
     return 1;
 }
+
+#ifdef USE_OPENXR
+bool P_XRIdlePistolAppearance(int32_t &palette, int32_t &shade)
+{
+#ifndef EDUKE32_STANDALONE
+    auto const p=g_player[myconnectindex].ps;
+    if (!DUKE || FURY || NAM_WW2GI || screenpeek!=myconnectindex || ud.recstat
+        || ud.show_help || ud.overhead_on || ud.camerasprite>=0 || ud.drawweapon!=1
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
+        || p->dead_flag || (unsigned)p->i>=MAXSPRITES || sprite[p->i].extra<=0
+        || sprite[p->i].xrepeat<40 || sprite[p->i].pal==1
+        || p->curr_weapon!=PISTOL_WEAPON || p->last_weapon>=0 || p->weapon_pos || p->holster_weapon
+        || p->kickback_pic || p->fist_incs || p->knuckle_incs || p->tipincs || p->access_incs
+        || p->knee_incs || p->quick_kick || p->last_quick_kick
+        || PWEAPON(myconnectindex,PISTOL_WEAPON,WorksLike)!=PISTOL_WEAPON
+        || G_VRHandShotFeature(myconnectindex)!=VRShotFeatureHitscan
+        || VM_HaveEvent(EVENT_DISPLAYROOMSEND) || VM_HaveEvent(EVENT_DISPLAYREST)
+        || VM_HaveEvent(EVENT_DISPLAYWEAPON) || VM_HaveEvent(EVENT_DRAWWEAPON)) return false;
+#ifdef SPLITSCREEN_MOD_HACKS
+    if (g_fakeMultiMode) return false;
+#endif
+    palette=P_GetHudPal(p);
+    shade=min<int32_t>(sprite[p->i].shade,24);
+    return palette==0; // First native opaque-diffuse family; tinted cases keep ART.
+#else
+    return false;
+#endif
+}
+#endif
 
 void P_DisplayWeapon(void)
 {

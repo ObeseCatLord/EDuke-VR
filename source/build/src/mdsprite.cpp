@@ -11,6 +11,8 @@
 #include "common.h"
 #include "polymost.h"
 
+#include <cmath>
+
 //#include "baselayer.h"
 //#include "cache1d.h"
 //#include "compat.h"
@@ -76,6 +78,8 @@ static int32_t nummodelsalloced = 0;
 static int32_t maxmodelverts = 0, allocmodelverts = 0;
 static int32_t maxmodeltris = 0, allocmodeltris = 0;
 static vec3f_t *vertlist = NULL; //temp array to store interpolated vertices for drawing
+
+static void mdensure_draw_buffers(void);
 
 #ifdef USE_GLEXT
 static int32_t allocvbos = 0, curvbo = 0;
@@ -1980,7 +1984,82 @@ static inline mdskinmap_t* mdgetskinmap(md3model_t* m, uint8_t pal, int number, 
     return NULL;
 }
 
-static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
+static md3model_t *md3contextmodel(md3drawcontext_t const *ctx)
+{
+    if (!ctx || (unsigned)ctx->modelid >= (unsigned)nextmodelid || !models)
+        return nullptr;
+
+    mdmodel_t *const model = models[ctx->modelid];
+    return model && model->mdnum == 3 ? (md3model_t *)model : nullptr;
+}
+
+int32_t md3_preflightcontext(md3drawcontext_t const *ctx)
+{
+    md3model_t *const m = md3contextmodel(ctx);
+    if (!m || ctx->skinnum < 0 || (unsigned)ctx->palette >= (unsigned)MAXPALOOKUPS ||
+        ctx->shade < -128 || ctx->shade > 127 ||
+        !std::isfinite(ctx->interpol) || ctx->interpol < 0.f || ctx->interpol > 1.f ||
+        m->numframes <= 0 || m->head.numframes != m->numframes ||
+        m->head.numsurfs <= 0 || !m->head.surfs ||
+        (unsigned)ctx->cframe >= (unsigned)m->numframes ||
+        (unsigned)ctx->nframe >= (unsigned)m->numframes)
+        return 0;
+
+    for (int32_t i = 0; i < 16; ++i)
+        if (!std::isfinite(ctx->modelToEye[i]))
+            return 0;
+
+    if (ctx->modelToEye[3] != 0.f || ctx->modelToEye[7] != 0.f ||
+        ctx->modelToEye[11] != 0.f || ctx->modelToEye[15] != 1.f)
+        return 0;
+    float const *a=ctx->modelToEye;
+    float const determinant=a[0]*(a[5]*a[10]-a[9]*a[6])-a[4]*(a[1]*a[10]-a[9]*a[2])+a[8]*(a[1]*a[6]-a[5]*a[2]);
+    if (!std::isfinite(determinant) || determinant==0.f) return 0;
+
+    for (mdskinmap_t const *skin=m->skinmap;skin;skin=skin->next)
+        if (skin->skinnum==ctx->skinnum && (skin->palette==DETAILPAL || skin->palette==GLOWPAL))
+            return 0; // Unsupported material must fall back, not silently lose a layer.
+
+    // The initial explicit path supports only already-native opaque base skins.
+    for (int32_t surfi = 0; surfi < m->head.numsurfs; ++surfi)
+    {
+        md3surf_t const *const s = &m->head.surfs[surfi];
+        if (s->numframes != m->numframes || s->numverts <= 0 || s->numtris <= 0 ||
+            !s->tris || !s->uv || !s->xyzn)
+            return 0;
+
+        if (!mdloadskin((md2model_t *)m, ctx->skinnum, ctx->palette, surfi) || m->usesalpha)
+            return 0;
+    }
+
+    return 1;
+}
+
+int32_t md3_gettagposition(int32_t modelid, char const *name, vec3f_t *position)
+{
+    if (!name || !name[0] || !position || (unsigned)modelid >= (unsigned)nextmodelid || !models)
+        return 0;
+
+    mdmodel_t *const model = models[modelid];
+    if (!model || model->mdnum != 3)
+        return 0;
+
+    md3model_t *const m = (md3model_t *)model;
+    if (!m->head.tags)
+        return 0;
+
+    // md3load retains only one tag set, so this is deliberately frame zero.
+    for (int32_t i = 0; i < m->head.numtags; ++i)
+        if (!Bstrncasecmp(m->head.tags[i].nam, name, sizeof(m->head.tags[i].nam)))
+        {
+            *position = m->head.tags[i].p;
+            return std::isfinite(position->x) && std::isfinite(position->y) && std::isfinite(position->z);
+        }
+
+    return 0;
+}
+
+static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext_t const *ctx)
 {
     vec3f_t m0, m1, a0;
     md3xyzn_t *v0, *v1;
@@ -1989,10 +2068,34 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
     GLfloat pc[4];
     int32_t texunits = GL_TEXTURE0;
 
-    const int32_t owner = tspr->owner;
-    const spriteext_t *const sext = &spriteext[((unsigned)owner < MAXSPRITES+MAXUNIQHUDID) ? owner : MAXSPRITES+MAXUNIQHUDID-1];
-    const uint8_t lpal = ((unsigned)owner < MAXSPRITES) ? sprite[tspr->owner].pal : tspr->pal;
-    const int32_t sizyrep = tilesiz[tspr->picnum].y*tspr->yrepeat;
+    bool const explicitContext = ctx != nullptr;
+    tspritetype explicitTspr{};
+    spriteext_t explicitSext{};
+    spriteext_t const *sext;
+    uint8_t lpal;
+    int32_t tsprflags;
+    int32_t sizyrep;
+    int32_t cframe, nframe;
+    float interpol;
+
+    if (explicitContext)
+    {
+        tspr = &explicitTspr;
+        sext = &explicitSext;
+        lpal = (uint8_t)ctx->palette;
+        tsprflags = 0;
+        cframe = ctx->cframe;
+        nframe = ctx->nframe;
+        interpol = ctx->interpol;
+    }
+    else
+    {
+        const int32_t owner = tspr->owner;
+        sext = &spriteext[((unsigned)owner < MAXSPRITES+MAXUNIQHUDID) ? owner : MAXSPRITES+MAXUNIQHUDID-1];
+        lpal = ((unsigned)owner < MAXSPRITES) ? sprite[tspr->owner].pal : tspr->pal;
+        tsprflags = tspr->clipdist;
+        sizyrep = tilesiz[tspr->picnum].y*tspr->yrepeat;
+    }
 
     buildgl_outputDebugMessage(3, "polymost_md3draw(m:%p, tspr:%p)", m, tspr);
 
@@ -2001,30 +2104,39 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
         mdloadvbos(m);
 #endif
 
-    // if (tspr->cstat & CSTAT_SPRITE_ALIGNMENT_FLOOR) return 0;
-
-    updateanimation((md2model_t *)m, tspr, lpal);
-
-    auto const tsprflags = tspr->clipdist;
-
-    //create current&next frame's vertex list from whole list
-
-    f = m->interpol; g = 1.f - f;
-
-    if (m->interpol < 0.f || m->interpol > 1.f ||
-        (unsigned)m->cframe >= (unsigned)m->numframes ||
-            (unsigned)m->nframe >= (unsigned)m->numframes)
+    if (explicitContext)
     {
+        Bmemcpy(mat, ctx->modelToEye, sizeof(mat));
+    }
+    else
+    {
+        // if (tspr->cstat & CSTAT_SPRITE_ALIGNMENT_FLOOR) return 0;
+        updateanimation((md2model_t *)m, tspr, lpal);
+
+        //create current&next frame's vertex list from whole list
+        f = m->interpol; g = 1.f - f;
+
+        if (m->interpol < 0.f || m->interpol > 1.f ||
+            (unsigned)m->cframe >= (unsigned)m->numframes ||
+                (unsigned)m->nframe >= (unsigned)m->numframes)
+        {
 #ifdef DEBUGGINGAIDS
-        OSD_Printf("%s: mdframe oob: c:%d n:%d total:%d interpol:%.02f\n",
-                   m->head.nam, m->cframe, m->nframe, m->numframes, m->interpol);
+            OSD_Printf("%s: mdframe oob: c:%d n:%d total:%d interpol:%.02f\n",
+                       m->head.nam, m->cframe, m->nframe, m->numframes, m->interpol);
 #endif
 
-        m->interpol = fclamp(m->interpol, 0.f, 1.f);
-        m->cframe = clamp(m->cframe, 0, m->numframes-1);
-        m->nframe = clamp(m->nframe, 0, m->numframes-1);
+            m->interpol = fclamp(m->interpol, 0.f, 1.f);
+            m->cframe = clamp(m->cframe, 0, m->numframes-1);
+            m->nframe = clamp(m->nframe, 0, m->numframes-1);
+        }
+
+        cframe = m->cframe;
+        nframe = m->nframe;
+        interpol = m->interpol;
     }
 
+    if (!explicitContext)
+    {
     m0.z = m0.y = m0.x = g *= m->scale * (1.f/64.f);
     m1.z = m1.y = m1.x = f *= m->scale * (1.f/64.f);
 
@@ -2086,13 +2198,14 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
 
     //Mirrors
     if (grhalfxdown10x < 0) { mat[0] = -mat[0]; mat[4] = -mat[4]; mat[8] = -mat[8]; mat[12] = -mat[12]; }
+    }
 
     //------------
     // TSPR_FLAGS_MDHACK is an ugly hack in game.c:G_DoSpriteAnimations() telling md2sprite
     // to use Z-buffer hacks to hide overdraw problems with the flat-tsprite-on-floor shadows,
     // also disabling detail, glow, normal, and specular maps.
 
-    if (tsprflags & TSPR_FLAGS_MDHACK)
+    if (!explicitContext && (tsprflags & TSPR_FLAGS_MDHACK))
     {
 #ifdef __arm__ // GL ES has a glDepthRangef and the loss of precision is OK there
         float f = (float) (tspr->owner + 1) * (std::numeric_limits<float>::epsilon() * 8.0);
@@ -2107,17 +2220,26 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
     }
 
 //    glPushAttrib(GL_POLYGON_BIT);
-    if ((grhalfxdown10x >= 0) ^((globalorientation&8) != 0) ^((globalorientation&4) != 0)) glFrontFace(GL_CW); else glFrontFace(GL_CCW);
+    bool clockwise;
+    if (explicitContext)
+    {
+        float const *a=ctx->modelToEye;
+        clockwise=(a[0]*(a[5]*a[10]-a[9]*a[6])-a[4]*(a[1]*a[10]-a[9]*a[2])+a[8]*(a[1]*a[6]-a[5]*a[2]))>0.f;
+    }
+    else clockwise=(grhalfxdown10x >= 0) ^((globalorientation&8) != 0) ^((globalorientation&4) != 0);
+    glFrontFace(clockwise ? GL_CW : GL_CCW);
     buildgl_setEnabled(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
     // tinting
-    pc[0] = pc[1] = pc[2] = ((float)numshades - min(max((globalshade * shadescale) + m->shadeoff, 0.f), (float)numshades)) / (float)numshades;
-    polytintflags_t const tintflags = hictinting[globalpal].f;
+    int32_t const drawpal = explicitContext ? ctx->palette : globalpal;
+    int32_t const drawshade = explicitContext ? ctx->shade : globalshade;
+    pc[0] = pc[1] = pc[2] = ((float)numshades - min(max((drawshade * shadescale) + m->shadeoff, 0.f), (float)numshades)) / (float)numshades;
+    polytintflags_t const tintflags = hictinting[drawpal].f;
     if (!(tintflags & HICTINT_PRECOMPUTED))
     {
         if (!(m->flags&1))
-            hictinting_apply(pc, globalpal);
+            hictinting_apply(pc, drawpal);
         else globalnoeffect=1;
     }
 
@@ -2194,8 +2316,8 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
 
         const md3surf_t *const s = &m->head.surfs[surfi];
 
-        v0 = &s->xyzn[m->cframe*s->numverts];
-        v1 = &s->xyzn[m->nframe*s->numverts];
+        v0 = &s->xyzn[cframe*s->numverts];
+        v1 = &s->xyzn[nframe*s->numverts];
 
 #ifdef USE_GLEXT
         if (r_vertexarrays)
@@ -2209,7 +2331,26 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
         }
 #endif
 
-        if (sext->mdpitch || sext->mdroll)
+        if (explicitContext)
+        {
+            float const currentWeight = (1.f - interpol) * (1.f/64.f);
+            float const nextWeight = interpol * (1.f/64.f);
+
+            for (i=s->numverts-1; i>=0; i--)
+            {
+                fp.x = v0[i].x*currentWeight + v1[i].x*nextWeight;
+                fp.y = v0[i].y*currentWeight + v1[i].y*nextWeight;
+                fp.z = v0[i].z*currentWeight + v1[i].z*nextWeight;
+
+#ifdef USE_GLEXT
+                if (r_vertexarrays)
+                    vertexhandle[i] = fp;
+#endif
+
+                vertlist[i] = fp;
+            }
+        }
+        else if (sext->mdpitch || sext->mdroll)
         {
             vec3f_t fp1, fp2;
 
@@ -2271,13 +2412,13 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
         mat[3] = mat[7] = mat[11] = 0.f; mat[15] = 1.f; glLoadMatrixf(mat);
         // PLAG: End
 
-        auto skinNum = tile2model[Ptile2tile(tspr->picnum, lpal)].skinnum;
-        i = mdloadskin((md2model_t *)m, skinNum, globalpal, surfi);
+        auto skinNum = explicitContext ? ctx->skinnum : tile2model[Ptile2tile(tspr->picnum, lpal)].skinnum;
+        i = mdloadskin((md2model_t *)m, skinNum, drawpal, surfi);
         if (!i)
             continue;
         //i = mdloadskin((md2model *)m,tile2model[Ptile2tile(tspr->picnum,lpal)].skinnum,surfi); //hack for testing multiple surfaces per MD3
 
-        auto sk = mdgetskinmap(m, globalpal, skinNum, surfi);
+        auto sk = mdgetskinmap(m, drawpal, skinNum, surfi);
 
         if (sk)
             buildgl_bindSamplerObject(0, (sk->flags & HICR_FORCEFILTER) ? (PTH_HIGHTILE | PTH_FORCEFILTER) : PTH_HIGHTILE);
@@ -2289,7 +2430,7 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr)
         glTranslatef(xpanning, ypanning, 1.0f);
         glMatrixMode(GL_MODELVIEW);
 
-        if (!(tsprflags & TSPR_FLAGS_MDHACK))
+        if (!explicitContext && !(tsprflags & TSPR_FLAGS_MDHACK))
         {
 #ifdef USE_GLEXT
             //POGOTODO: if we add support for palette indexing on model skins, the texture for the palswap could be setup here
@@ -2622,7 +2763,7 @@ void md_allocvbos(void)
 }
 #endif
 
-int32_t polymost_mddraw(tspriteptr_t tspr)
+static void mdensure_draw_buffers(void)
 {
 #ifdef USE_GLEXT
     if (r_vbocount > allocvbos)
@@ -2634,13 +2775,28 @@ int32_t polymost_mddraw(tspriteptr_t tspr)
         vertlist = (vec3f_t *) Xrealloc(vertlist, sizeof(vec3f_t)*maxmodelverts);
         allocmodelverts = maxmodelverts;
     }
+}
+
+int32_t polymost_md3drawcontext(md3drawcontext_t const *ctx)
+{
+    md3model_t *const m = md3contextmodel(ctx);
+    if (!m || !md3_preflightcontext(ctx))
+        return 0;
+
+    mdensure_draw_buffers();
+    return polymost_md3draw(m, nullptr, ctx);
+}
+
+int32_t polymost_mddraw(tspriteptr_t tspr)
+{
+    mdensure_draw_buffers();
 
     mdmodel_t *const vm = models[tile2model[Ptile2tile(tspr->picnum,
     (tspr->owner >= MAXSPRITES) ? tspr->pal : sprite[tspr->owner].pal)].modelid];
     if (vm->mdnum == 1)
         return polymost_voxdraw((voxmodel_t *)vm,tspr);
     else if (vm->mdnum == 3)
-        return polymost_md3draw((md3model_t *)vm,tspr);
+        return polymost_md3draw((md3model_t *)vm,tspr, nullptr);
     return 0;
 }
 

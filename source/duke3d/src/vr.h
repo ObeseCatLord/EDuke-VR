@@ -11,6 +11,8 @@ void G_XRClearInput();
 void G_XRResetAim(int playerNum);
 bool G_XRBeginWeapon();
 void G_XREndWeapon(bool captured);
+bool P_XRIdlePistolAppearance(int32_t &palette, int32_t &shade);
+bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID);
 void G_XRUpdateShotInput();
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
 fix16_t G_XRMovementAngle(fix16_t nativeAngle);

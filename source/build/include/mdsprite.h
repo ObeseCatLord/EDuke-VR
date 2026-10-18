@@ -183,6 +183,17 @@ typedef struct
 #endif
 } md3model_t;
 
+#ifdef USE_OPENGL
+// A sampled MD3 draw which is independent of a Build sprite/actor. modelToEye
+// is a column-major affine matrix for canonical MD3 coordinates (x, y, z)/64.
+typedef struct
+{
+    int32_t modelid, cframe, nframe, skinnum, palette, shade;
+    float interpol;
+    float modelToEye[16];
+} md3drawcontext_t;
+#endif
+
 #define VOXBORDWIDTH 1 //use 0 to save memory, but has texture artifacts; 1 looks better...
 #define VOXUSECHAR 0
 
@@ -225,6 +236,11 @@ void mdinit(void);
 void freeallmodels(void);
 void clearskins(int32_t type);
 int32_t polymost_mddraw(tspriteptr_t tspr);
+#ifdef USE_OPENGL
+int32_t md3_preflightcontext(md3drawcontext_t const *ctx);
+int32_t polymost_md3drawcontext(md3drawcontext_t const *ctx);
+int32_t md3_gettagposition(int32_t modelid, char const *name, vec3f_t *position);
+#endif
 EXTERN void md3_vox_calcmat_common(tspriteptr_t tspr, const vec3f_t *a0, float f, float mat[16]);
 
 EXTERN int32_t mdpause;

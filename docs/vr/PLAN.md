@@ -294,4 +294,19 @@ The user requested a further complete model pass: Quake-like chunky geometry,
 lower-resolution diffuse textures and proportions/silhouettes grounded in the
 original 2D sprites. Astra owns the entire separate private asset `v2` set,
 including World Tour flamethrower. The original exported set is preserved.
-Its production completion does not qualify native loading, IK or stereo.
+The v2 export set is complete and verified; a separate Astra-owned v3 completes
+cosmetic action clips for reconstructed weapons while keeping v2 stable.
+Neither asset production pass establishes IK or complete runtime presentation.
+
+The first native tracked-model boundary is now implemented and qualified for
+vanilla idle pistol frame zero. A focused Astra/xhigh design review moved its
+opaque draw before native masks to preserve nearer translucent glass. Reuse the
+native MD3 loader/materials/triangle emission with a local sampled instance;
+world owners and animation remain native. A serial/generation/player receipt
+suppresses only the matching idle ART tile after both eyes succeed. Actual
+private software-XR multiplayer proves visible depth, physical muzzle/axes/
+scale/roll projection, native server ray alignment, transparent composition,
+unsupported-case ART fallback and partial-frame cancellation. See
+MODEL_HAND_DESIGN.md. This model path is sequential-eye and explicitly excluded
+from full-multiview accounting; animated weapons, grip fitting, body/IK and
+model SPS remain open.

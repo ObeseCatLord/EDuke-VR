@@ -7,6 +7,7 @@
 #include "vrshoot.h"
 #include "network.h"
 #include "menus.h"
+#include "mdsprite.h"
 #include "../../vr/eduke_xr.h"
 #include <algorithm>
 #include <array>
@@ -67,6 +68,7 @@ static std::array<uint8_t, MAXSPRITESONSCREEN> membership;
 static bool animating, generationSaturated;
 static uint64_t worldFrames, worldMultiviewFrames, worldOracleFrames;
 static uint64_t worldMaskMultiviewFrames, worldMaskOracleFrames, worldFullMultiviewFrames;
+static uint64_t worldModelOracleFrames;
 static eduke_xr::Runtime *previousRuntime;
 static uint64_t worldGeneration;
 static eduke_xr::Runtime *pendingRuntime, *inputRuntime;
@@ -80,19 +82,28 @@ struct WorldReceipt
     eduke_xr::Runtime *runtime=nullptr;
     uint64_t generation=0, serial=0;
     bool opaque=false, masks=false;
+    bool models=true;
 };
 static WorldReceipt worldReceipt;
+static struct
+{
+    eduke_xr::Runtime *runtime=nullptr;
+    uint64_t generation=0, serial=0;
+    int player=-1;
+    bool consumed=false, mismatch=false;
+} handModelReceipt;
 
-static void accountWorldFrame(bool opaque, bool masks, bool fixture)
+static void accountWorldFrame(bool opaque, bool masks, bool fixture, bool models=true)
 {
     ++worldFrames;
     if (opaque) ++worldMultiviewFrames; else ++worldOracleFrames;
     if (masks) ++worldMaskMultiviewFrames; else ++worldMaskOracleFrames;
-    if (opaque && masks) ++worldFullMultiviewFrames;
+    if (!models) ++worldModelOracleFrames;
+    if (opaque && masks && models) ++worldFullMultiviewFrames;
     if (!fixture && worldFrames==60)
-        LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; masks multiview=%u twoPass=%u full multiview=%u; one animation transaction per frame.",
+        LOG_F(INFO,"OpenXR world oracle: 60 frames, opaque multiview=%u twoPass=%u; masks multiview=%u twoPass=%u full multiview=%u; hand models twoPass=%u; one animation transaction per frame.",
               unsigned(worldMultiviewFrames),unsigned(worldOracleFrames),unsigned(worldMaskMultiviewFrames),
-              unsigned(worldMaskOracleFrames),unsigned(worldFullMultiviewFrames));
+              unsigned(worldMaskOracleFrames),unsigned(worldFullMultiviewFrames),unsigned(worldModelOracleFrames));
 }
 
 static bool overlayEnabled()
@@ -344,7 +355,99 @@ void eyeState(Eye const &eye)
     renderSetAspect(std::lround(eye.cover*65536.f),81920);
     polymost_xrProjection(eye.left,eye.right,eye.down,eye.up);
 }
+
+struct HandModelSample
+{
+    md3drawcontext_t context{};
+    vec3_t root{};
+    vec3f_t muzzle{}, grip{};
+    XrVector3f basis[3]{}; // Canonical model unit to physical Build X/Y/Z-down.
+    VRShotInput shot{};
+};
+
+bool prepareHandModel(HandModelSample &sample)
+{
+    auto enabled=std::getenv("EDUKE32_XR_MODELS");
+    auto weapon=std::getenv("EDUKE32_XR_WEAPON");
+    if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
+        || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
+        || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)
+        || !P_XRIdlePistolAppearance(sample.context.palette,sample.context.shade)) return false;
+
+    int16_t sector; bool clamped;
+    sample.shot=G_VRGetShotInput(myconnectindex);
+    if (!G_VRResolveShot(myconnectindex,sample.root,sector,clamped)) return false;
+    // Reuse the current native pickup DEF routing, loader and skin cache.
+    // This opt-in contract uses the supplied 64-model-units/metre MD3 assets.
+    int const tile=Ptile2tile(FIRSTGUNSPRITE,sample.context.palette);
+    sample.context.modelid=md_tilehasmodel(FIRSTGUNSPRITE,sample.context.palette);
+    sample.context.skinnum=tile2model[tile].skinnum;
+    if (!md3_gettagposition(sample.context.modelid,"tag_muzzle",&sample.muzzle)
+        || !md3_gettagposition(sample.context.modelid,"tag_grip",&sample.grip)) return false;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    if (!md3_preflightcontext(&sample.context)) return false;
+
+    XrVector3f forward={float(sample.shot.direction[0]),float(sample.shot.direction[1]),-float(sample.shot.direction[2])};
+    float length=std::sqrt(dot(forward,forward));
+    if (!(length>0.f)) return false;
+    forward={forward.x/length,forward.y/length,forward.z/length};
+    // Keep roll from the tracked sample, but orthogonalize against the stored
+    // authoritative direction. Never combine its root with a different aim ray.
+    auto const p=g_player[myconnectindex].ps;
+    float const yaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset, co=std::cos(yaw), si=std::sin(yaw);
+    auto const tracking=multiply(pitchRoll(nativePitch(p->q16horiz)-aimPitchOffset,gtang),inverseYaw);
+    auto const r=rotate(multiply(tracking,rawInput.hands[aimHand()].aimPose.orientation),{1,0,0});
+    XrVector3f right={-r.z*co-r.x*si,-r.z*si+r.x*co,r.y};
+    float const along=dot(right,forward);
+    right={right.x-forward.x*along,right.y-forward.y*along,right.z-forward.z*along};
+    length=std::sqrt(dot(right,right));
+    if (!(length>1e-4f)) return false;
+    right={right.x/length,right.y/length,right.z/length};
+    auto const up=cross(forward,right);
+    XrVector3f const axes[3]={forward,right,up};
+    for (int i=0;i<3;++i)
+        sample.basis[i]={axes[i].x*UnitsPerMetre/64.f,axes[i].y*UnitsPerMetre/64.f,-axes[i].z*ZUnitsPerMetre/64.f};
+    return true;
+}
+
+void handModelMatrix(HandModelSample &sample, Eye const &eye)
+{
+    float toEye[16]; polymost_xrRelativeWorldToEye(toEye);
+    float local[16]={};
+    for (int column=0;column<3;++column)
+    {
+        local[column*4]=sample.basis[column].x;
+        local[column*4+1]=sample.basis[column].y;
+        local[column*4+2]=sample.basis[column].z;
+    }
+    local[12]=float(int64_t(sample.root.x)-eye.camera.pos.x);
+    local[13]=float(int64_t(sample.root.y)-eye.camera.pos.y);
+    local[14]=float(int64_t(sample.root.z)-eye.camera.pos.z);
+    float const muzzle[3]={sample.muzzle.x,sample.muzzle.y,sample.muzzle.z};
+    for (int column=0;column<3;++column)
+        for (int row=0;row<3;++row) local[12+row]-=local[column*4+row]*muzzle[column];
+    local[15]=1.f;
+    for (int column=0;column<4;++column)
+        for (int row=0;row<4;++row)
+        {
+            sample.context.modelToEye[column*4+row]=0;
+            for (int k=0;k<4;++k) sample.context.modelToEye[column*4+row]+=toEye[k*4+row]*local[column*4+k];
+        }
+}
 } // namespace
+
+bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
+{
+    if (!handModelReceipt.runtime || uniqueID!=W_PISTOL || tile!=FIRSTGUN) return false;
+    int32_t palette, shade;
+    if (handModelReceipt.runtime!=menuRuntime || handModelReceipt.generation!=menuGeneration
+        || handModelReceipt.serial!=pendingFrame.serial || handModelReceipt.player!=screenpeek
+        || !menuRuntime->menuOverlayTargetBound() || !P_XRIdlePistolAppearance(palette,shade)
+        || handModelReceipt.consumed)
+    { handModelReceipt.mismatch=true; return false; }
+    handModelReceipt.consumed=true;
+    return true;
+}
 
 void G_XRResetAim(int playerNum)
 {
@@ -502,6 +605,7 @@ bool G_XRConsumeWorldDraw()
 
 void G_XRCancelMenuPresentation()
 {
+    handModelReceipt={};
     // A world may have finished before its outer display-end callback. Nested
     // room draws must cancel that retained image too, before native callbacks.
     auto *waiting=presentationRuntime;
@@ -776,6 +880,12 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
 
 void G_XRArmMenuPresentation()
 {
+    if (handModelReceipt.runtime && (!handModelReceipt.consumed || handModelReceipt.mismatch))
+    {
+        G_XRCancelMenuPresentation();
+        sdlayer_xr_disableWorld("held-model/native weapon receipt mismatch");
+        return;
+    }
     if (auto test=std::getenv("EDUKE32_XR_TEST_HUD_MENU"))
     {
         static unsigned testFrames;
@@ -827,7 +937,7 @@ void G_XRBeginFrame()
     // was later canceled by a nested native draw, resize, or early swap.
     if (worldReceipt.runtime && worldReceipt.runtime->generation()==worldReceipt.generation
         && worldReceipt.runtime->lastSubmittedSerial()==worldReceipt.serial)
-        accountWorldFrame(worldReceipt.opaque,worldReceipt.masks,false);
+        accountWorldFrame(worldReceipt.opaque,worldReceipt.masks,false,worldReceipt.models);
     worldReceipt={};
     // Only the ordinary game/demo frame owners may acquire/synchronize input.
     G_XRCancelMenuPresentation();
@@ -1034,6 +1144,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         worldFrames=0;
         worldMultiviewFrames=worldOracleFrames=0;
         worldMaskMultiviewFrames=worldMaskOracleFrames=worldFullMultiviewFrames=0;
+        worldModelOracleFrames=0;
     }
     if (!recentered && aimHand()!=-2)
     {
@@ -1133,7 +1244,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     vec2_t const oldStart=windowxy1, oldEnd=windowxy2;
     int const oldRange=viewingrange, oldAspect=yxaspect;
     int const frozenVisibility=g_visibility, frozenParallax=parallaxvisibility;
-    bool animated=false, good=true, usedMultiview=false, usedMaskMultiview=false;
+    bool animated=false, good=true, usedMultiview=false, usedMaskMultiview=false, usedHandModel=false, attemptedHandModel=false;
     videoSetViewableArea(0,0,xdim-1,ydim-1);
     auto const drawOpaque = [&](bool collect) {
         for (unsigned i=0;i<2 && good;++i)
@@ -1273,6 +1384,58 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             error="injected failure after animation, before first masks";
         }
         std::vector<tspritetype> pristine(tsprite,tsprite+spritesortcnt);
+        HandModelSample handModel;
+        if (good && !fixtureTest && prepareHandModel(handModel))
+        {
+            attemptedHandModel=true;
+            auto const captureModels = [&](char const *suffix) {
+                auto const prefix=std::getenv("EDUKE32_XR_MODEL_OUTPUT");
+                return worldFrames!=59 || !prefix
+                    || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
+            };
+            good=captureModels("-before");
+            for (unsigned i=0;i<2 && good;++i)
+            {
+                good=runtime->bindEye(i,error);
+                if (!good) break;
+                videoSetViewableArea(0,0,xdim-1,ydim-1);
+                eyeState(eyes[i]);
+                int const scriptVisibility=g_visibility, scriptParallax=parallaxvisibility;
+                g_visibility=frozenVisibility; parallaxvisibility=frozenParallax;
+                renderPrepareMasksQ16(eyes[i].camera.pos.x,eyes[i].camera.pos.y,eyes[i].camera.pos.z,
+                                     eyes[i].camera.angle,eyes[i].camera.horizon,eyes[i].camera.sector);
+                g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
+                handModelMatrix(handModel,eyes[i]);
+                if (i==1 && testFailure("model-eye-1"))
+                { good=false; error="injected held-model failure before second eye"; break; }
+                good=polymost_xrBeginModelDraw();
+                if (good)
+                {
+                    good=polymost_md3drawcontext(&handModel.context)!=0;
+                    polymost_xrEndModelDraw();
+                }
+                if (!good) error="native held-model emission failed";
+                if (good && worldFrames==59 && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                {
+                    LOG_F(INFO,"OpenXR hand model: eye=%u model=%d root=%d,%d,%d direction=%d,%d,%d.",i,
+                          handModel.context.modelid,handModel.root.x,handModel.root.y,handModel.root.z,
+                          handModel.shot.direction[0],handModel.shot.direction[1],handModel.shot.direction[2]);
+                    float const *a=handModel.context.modelToEye;
+                    LOG_F(INFO,"OpenXR hand model matrix: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
+                          a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
+                    float projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
+                    a=projection;
+                    LOG_F(INFO,"OpenXR hand model projection: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
+                          a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);
+                }
+            }
+            if (good) good=captureModels("-after");
+            if (good)
+            {
+                usedHandModel=true;
+                handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,false,false};
+            }
+        }
         auto const drawMasks = [&](bool collect) {
             bool accepted=true;
             for (unsigned i=0;i<2 && good;++i)
@@ -1393,7 +1556,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     if (deferPresentation)
     {
         presentationRuntime=runtime; presentationGeneration=runtime->generation();
-        worldReceipt={runtime,runtime->generation(),frame.serial,usedMultiview,usedMaskMultiview};
+        worldReceipt={runtime,runtime->generation(),frame.serial,usedMultiview,usedMaskMultiview,!usedHandModel};
     }
     // Display-end callbacks must not observe the right eye's renderer globals.
     // Preserve script visibility mutations while rebuilding native derived fog.
@@ -1403,7 +1566,13 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                          logical.angle,logical.horizon,logical.sector);
     g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
     if (!good)
+    {
+        handModelReceipt={};
+        if (attemptedHandModel && std::getenv("EDUKE32_XR_TEST_MODELS"))
+            LOG_F(INFO,"OpenXR hand model frame canceled: serial=%llu submitted=%llu.",
+                  (unsigned long long)frame.serial,(unsigned long long)runtime->lastSubmittedSerial());
         sdlayer_xr_disableWorld(error.c_str());
+    }
     else
     {
         if (!deferPresentation) accountWorldFrame(usedMultiview,usedMaskMultiview,fixtureTest);

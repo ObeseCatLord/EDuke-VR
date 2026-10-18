@@ -51,6 +51,9 @@ void polymost_prepareMasksView();
 // Current XR native camera: relative Build coordinates to exact GL clip/depth.
 // Call immediately after camera preparation, before drawing masks/UI.
 void polymost_xrRelativeWorldToClip(float *matrix);
+void polymost_xrRelativeWorldToEye(float *matrix);
+bool polymost_xrBeginModelDraw();
+void polymost_xrEndModelDraw();
 vec2f_t polymost_xrRotateSpriteAnchor(vec2_t position, int32_t scale, int32_t flags);
 
 enum polymost_xr_collect_result

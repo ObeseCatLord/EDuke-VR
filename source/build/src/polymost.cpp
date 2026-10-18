@@ -7988,9 +7988,8 @@ vec2f_t polymost_xrRotateSpriteAnchor(vec2_t position, int32_t scale, int32_t fl
 // Same world-relative vertex construction as native face sprites/drawpoly,
 // followed by the actual native shader rotation and GL projection. Keeping the
 // native depth convention is essential for depth-tested world-space overlays.
-void polymost_xrRelativeWorldToClip(float *matrix)
+void polymost_xrRelativeWorldToEye(float *matrix)
 {
-    float projection[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
     float const scale=1.f/(gviewxrange*1024.f);
     float const coordinates[16]={-gsinang*scale,0,gcosang2*scale,0,
                                 gcosang*scale,0,gsinang2*scale,0,
@@ -7998,16 +7997,38 @@ void polymost_xrRelativeWorldToClip(float *matrix)
                                 0,0,0,1};
     for (int column=0;column<4;++column)
     {
-        float rotated[4]={};
-        for (int row=0;row<4;++row)
-            for (int k=0;k<4;++k) rotated[row]+=polymost1RotMatrix[k*4+row]*coordinates[column*4+k];
         for (int row=0;row<4;++row)
         {
             matrix[column*4+row]=0;
-            for (int k=0;k<4;++k) matrix[column*4+row]+=projection[k*4+row]*rotated[k];
+            for (int k=0;k<4;++k) matrix[column*4+row]+=polymost1RotMatrix[k*4+row]*coordinates[column*4+k];
         }
     }
 }
+
+void polymost_xrRelativeWorldToClip(float *matrix)
+{
+    float projection[16], eye[16]; glGetFloatv(GL_PROJECTION_MATRIX,projection);
+    polymost_xrRelativeWorldToEye(eye);
+    for (int column=0;column<4;++column)
+        for (int row=0;row<4;++row)
+        {
+            matrix[column*4+row]=0;
+            for (int k=0;k<4;++k) matrix[column*4+row]+=projection[k*4+row]*eye[column*4+k];
+        }
+}
+
+bool polymost_xrBeginModelDraw()
+{
+    // This is native emission between world phases, never a collector callback
+    // or a UI-to-world state handoff. The supplied model-to-eye matrix already
+    // includes this camera's rotation; do not rotate the source vertices twice.
+    if (xrOpaque.active || videoGetRenderMode()!=REND_POLYMOST
+        || gl.currentShaderProgramID!=polymost1CurrentShaderProgramID) return false;
+    polymost_identityrotmat();
+    return true;
+}
+
+void polymost_xrEndModelDraw() { polymost_updaterotmat(); }
 
 void polymost_prepareMasksView()
 {

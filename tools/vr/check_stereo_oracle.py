@@ -9,28 +9,51 @@ Synthetic fixtures end empty XR frames, never submit synthetic headset views.
 import argparse
 import array
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import time
 from PIL import Image, ImageChops
-from stereo_fixture import generate
+from stereo_fixture import generate, sprite
 from smoke_world import CONFIG
 
 
 COUNTER = re.compile(r'addlog vrfixture_(displayrooms|animatesprites|displayroomsend) = (\d+)')
 
 
-def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_attachment, single_pass=False, pose="zero", inject_init=False, scene="room", sky_depth=0, sky_panning=1, mask_failure=None):
+def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_attachment, single_pass=False, pose="zero", inject_init=False, scene="room", sky_depth=0, sky_panning=1, mask_failure=None, model_root=None, model_name="pistol", model_scale=1.0, models_enabled=True, model_skin=True):
     directory.mkdir()
     generate(directory, scene)
     shutil.copyfile(fixture_con, directory/'stereo_test.con')
     (directory/'DUKE3D.GRP').symlink_to(grp)
     (directory/'eduke32.cfg').write_text(CONFIG)
     (directory/'autoexec.cfg').write_text(f'r_size 0\nr_projectionhack 0\nr_yshearing 0\nr_flatsky 1\nr_skyzbufferhack {sky_depth}\nr_parallaxskypanning {sky_panning}\n')
+    if model_root:
+        # Keep the actual mesh clearly in view rather than accepting equality
+        # when a tiny pickup is hidden at the distant portal's floor edge.
+        map_path = directory/'stereo_fixture.map'
+        data = map_path.read_bytes()
+        map_path.write_bytes(data[:-44] + sprite(2300,2048,-8192,0,tile=954,angle=512,xrepeat=64,yrepeat=64))
+        (directory/'duke_assets').symlink_to(model_root/'duke_assets', target_is_directory=True)
+        model = (model_root/'duke_assets'/f'{model_name}.md3').read_bytes()
+        if len(model) < 108 or model[:8] != b'IDP3\x0f\0\0\0':
+            raise ValueError('model fixture requires a native MD3 v15 export')
+        surfaces = struct.unpack_from('<i', model, 84)[0]
+        if not 1 <= surfaces <= 32:
+            raise ValueError('model fixture surface count is outside its bounded range')
+        with (directory/'stereo_fixture.def').open('a') as defs:
+            defs.write(f'\nmodel "duke_assets/{model_name}.md3"\n{{\n scale {model_scale}\n')
+            if model_skin:
+                for surface in range(surfaces):
+                    defs.write(f' skin {{ pal 0 surface {surface} file "duke_assets/{model_name}.png" }}\n')
+            defs.write(' frame { name "rest" tile 954 }\n}\n')
+        with (directory/'autoexec.cfg').open('a') as cfg:
+            cfg.write(f'r_models {int(models_enabled)}\n')
     prefix = directory/'world'
     env = dict(os.environ, DISPLAY=display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
                EDUKE32_XR_TEST_CAPTURE=str(prefix))
@@ -90,7 +113,9 @@ def run(binary, grp, directory, fixture_con, display, zero_ipd, timeout, native_
                          and all(a.read_bytes() == b.read_bytes() for a, b in zip(snapshots[:4], snapshots[4:])))
             fault_observed = bool(mask_failure and re.search(
                 r'OpenXR masks candidate uses two-pass oracle: .*injected.*mask-'+re.escape(mask_failure)+r'.*\(frame=12\)', output))
+            model_fallback = bool(re.search(r'OpenXR masks candidate uses two-pass oracle: .*model.*\(frame=12\)', output))
             return {'captured': good, 'masks_at_capture': mask_submission,
+                    'native_model_fallback_at_capture': model_fallback,
                     'mask_collection_untouched': untouched if single_pass else None, 'mask_fault_observed': fault_observed,
                     'counts': counts, 'single_pass_at_capture': submission,
                     'init_failure_recovered': 'injected opaque replay initialization' in output and submission is not None,
@@ -122,21 +147,34 @@ def main():
     parser.add_argument('--scene', choices=('room', 'sky', 'sky-floor', 'masks', 'masks-animated'), default='room')
     parser.add_argument('--sky-depth', choices=(0, 1), type=int, default=0, help='native sky depth-only companion pass')
     parser.add_argument('--sky-panning', choices=(0, 1), type=int, default=1)
+    parser.add_argument('--model-root', type=Path, help='private export root containing duke_assets/*.md3 and PNG; never copied into the repository')
+    parser.add_argument('--model-name', default='pistol', choices=('duke','pistol','shotgun','chaingun','rpg','pipebomb','detonator','shrinker','expander','devastator','tripmine','freezer','kick','flamethrower'))
+    parser.add_argument('--model-scale', type=float, default=.5859375, help='native DEF scale for 64-repeat fixture and 64 model units/metre')
     args = parser.parse_args()
     if args.mask_failure and (not args.single_pass or args.inject_replay_init_failure):
         parser.error('--mask-failure requires --single-pass and cannot combine with opaque init failure')
     if args.inject_replay_init_failure and not args.single_pass:
         parser.error('--inject-replay-init-failure requires --single-pass')
     binary, grp = args.binary.resolve(), args.grp.resolve()
+    if not math.isfinite(args.model_scale) or not 0 < args.model_scale <= 1000:
+        parser.error('--model-scale must be finite and in 0..1000')
+    model_options = {}
+    if args.model_root:
+        args.model_root = args.model_root.resolve()
+        if args.scene != 'room' or args.mask_failure:
+            parser.error('model proof requires the ordinary room without injected mask failures')
+        if any(not (args.model_root/'duke_assets'/f'{args.model_name}.{ext}').is_file() for ext in ('md3','png')):
+            parser.error('model root must contain the requested MD3 and PNG')
+        model_options = dict(model_root=args.model_root, model_name=args.model_name, model_scale=args.model_scale)
     if not binary.is_file() or not grp.is_file() or not args.display:
         parser.error('existing XR-enabled binary, owned GRP and display are required')
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='stereo-diff-', dir=args.work_dir.resolve()))
     fixture_con = Path(__file__).resolve().parent/'fixtures/stereo_test.con'
-    native, reference = run(binary, grp, lab/'native', fixture_con, args.display, False, args.timeout, args.native_attachment, pose=args.pose, scene=args.scene, sky_depth=args.sky_depth, sky_panning=args.sky_panning)
-    oracle, oracle_eyes = run(binary, grp, lab/'oracle', fixture_con, args.display, True, args.timeout, args.native_attachment, pose=args.pose, scene=args.scene, sky_depth=args.sky_depth, sky_panning=args.sky_panning)
+    native, reference = run(binary, grp, lab/'native', fixture_con, args.display, False, args.timeout, args.native_attachment, pose=args.pose, scene=args.scene, sky_depth=args.sky_depth, sky_panning=args.sky_panning, **model_options)
+    oracle, oracle_eyes = run(binary, grp, lab/'oracle', fixture_con, args.display, True, args.timeout, args.native_attachment, pose=args.pose, scene=args.scene, sky_depth=args.sky_depth, sky_panning=args.sky_panning, **model_options)
     if args.single_pass:
-        stereo, eyes = run(binary, grp, lab/'single-pass', fixture_con, args.display, True, args.timeout, args.native_attachment, True, args.pose, args.inject_replay_init_failure, args.scene, args.sky_depth, args.sky_panning, args.mask_failure)
+        stereo, eyes = run(binary, grp, lab/'single-pass', fixture_con, args.display, True, args.timeout, args.native_attachment, True, args.pose, args.inject_replay_init_failure, args.scene, args.sky_depth, args.sky_panning, args.mask_failure, **model_options)
     else:
         stereo, eyes = oracle, oracle_eyes
     pixel_results = []
@@ -181,6 +219,27 @@ def main():
                 and submission['flat_sky_calls'] > 0 and (not args.sky_depth or submission['sky_depth_calls'] > 0)))
     masks = stereo['masks_at_capture']
     masks_good = (not args.single_pass or bool(masks and masks['paired_calls'] + masks['eye_only_calls'] > 0))
+    model_reference = None
+    if args.model_root:
+        control, control_files = run(binary, grp, lab/'native-art-control', fixture_con, args.display, False,
+                                     args.timeout, args.native_attachment, pose=args.pose, models_enabled=False, **model_options)
+        changed = control['captured'] and native['captured'] and ImageChops.difference(
+            Image.open(reference[0]).convert('RGB'), Image.open(control_files[0]).convert('RGB')).getbbox() is not None
+        empty, empty_files = run(binary, grp, lab/'native-no-skin-control', fixture_con, args.display, False,
+                                 args.timeout, args.native_attachment, pose=args.pose, model_skin=False, **model_options)
+        footprint = None
+        if empty['captured'] and native['captured']:
+            footprint = ImageChops.difference(Image.open(reference[0]).convert('RGB'),Image.open(empty_files[0]).convert('RGB'))
+        footprint_bytes = footprint.tobytes() if footprint else b''
+        footprint_pixels = sum(any(footprint_bytes[i:i+3]) for i in range(0,len(footprint_bytes),3))
+        model_reference = {'asset': args.model_name, 'DEF_scale': args.model_scale,
+                           'native_ART_control_captured': control['captured'], 'native_model_changes_ART_pixels': bool(changed),
+                           'native_no_skin_control_captured': empty['captured'],
+                           'textured_model_visible_pixels': footprint_pixels,
+                           'textured_model_pixel_bounds': footprint.getbbox() if footprint else None,
+                           'model_draw_is_sequential_eye_fallback': stereo['native_model_fallback_at_capture'] if args.single_pass else None}
+        if args.single_pass:
+            masks_good = stereo['native_model_fallback_at_capture'] and masks is None
     if args.single_pass and args.scene.startswith('masks'):
         masks_good = bool(masks and masks['translucent_calls'] > 0 and masks['depth_only_calls'] > 0
                           and masks['depth_write_off_calls'] > 0)
@@ -189,6 +248,8 @@ def main():
     untouched = not args.single_pass or stereo['mask_collection_untouched']
     recovered = not args.inject_replay_init_failure or stereo['init_failure_recovered']
     passed = (masks_good and untouched and sky_good and depth_good and recovered and pose_good and native['captured'] and stereo['captured'] and counts_equal and oracle_equal and promoted
+              and (model_reference is None or model_reference['native_model_changes_ART_pixels']
+                   and model_reference['native_no_skin_control_captured'] and model_reference['textured_model_visible_pixels'] > 25)
               and len(pixel_results) == 2 and all(p['exact'] for p in pixel_results))
     result = {'stereo_differential_passed': passed,
               'zero_ipd_native_equivalence': passed if args.pose == 'zero' else None,
@@ -203,6 +264,8 @@ def main():
               'mask_replayed_at_capture': bool(masks),
               'mask_collection_zero_color_depth_writes': untouched,
               'projection_submission': 'none: synthetic offscreen fixture', 'evidence_directory': str(lab)}
+    if model_reference is not None:
+        result['private_model_reference'] = model_reference
     (lab/'result.json').write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps(result, indent=2))
     return 0 if passed else 1

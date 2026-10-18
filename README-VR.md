@@ -519,13 +519,20 @@ bug required three native weapon-state bytes in server snapshots and network
 version2. Rebuild every peer together. Details and remaining coverage limits
 are in [HAND_SHOTS.md](docs/vr/HAND_SHOTS.md).
 
-The private sibling Duke/weapon asset package has a completed first export set.
-At the user's request, Astra is revising the entire set in a separate `v2`
-directory toward chunkier Quake-like geometry, smaller diffuse textures and
-original Duke3D sprite silhouettes/proportions, also adding World Tour's flame
-weapon. Native loading, controller binding, animated grip/muzzle and full-body
-integration remain separate work. Native MD3 rendering currently uses the reference fallback,
-so this does not establish model single-pass coverage or a complete VR port.
+The private sibling Duke/weapon asset package has a completed chunky `v2` set:
+Duke plus all thirteen equipment entries, including World Tour's flame weapon,
+with original sprite silhouettes/proportions and small diffuse atlases. Further
+art completion remains with Astra in a separate `v3`; v2 stays stable for engine
+qualification. See [MODEL_ASSETS.md](docs/vr/MODEL_ASSETS.md).
+
+An opt-in native MD3 adapter now renders a qualified **idle pistol** from the
+constrained aiming ray, with stereo depth and correct ordering behind nearer
+translucency. Enable `EDUKE32_XR_MODELS=1` alongside the existing tracked
+weapon/UI settings and the supplied private native DEF binding. Firing, reload,
+custom presentation and unsupported models retain native ART. This first
+muzzle-alignment proof does not finish controller grip fit, animated weapons,
+full-body integration or model SPS. Hand models currently draw per eye and are
+excluded from full-multiview counts. See [the focused design and qualification](docs/vr/MODEL_HAND_DESIGN.md).
 
 
 The native tracked **Devastator** now reuses the RPG path, retaining native
