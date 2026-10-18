@@ -8,9 +8,11 @@ unmodified scripts plus observations. No selection/gameplay values are seeded.
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
+import struct
 import subprocess
 import tempfile
 import time
@@ -27,6 +29,17 @@ from smoke_native_levels import assert_cpu_binary, assert_gpu_devices_absent, sa
 SYNC = 'Multiplayer client level synchronization complete.'
 POLICY_FIELDS = ('tick', 'player', 'reset_event', 'startguns', 'permanent', 'marathon', 'gametype', 'gotpistol')
 POLICY_ROW = re.compile(r'addlog aapolicy_(\w+)(?: \(player \d+\))? = (-?\d+)')
+ENEMY_FIELDS = ('tick', 'index', 'tile', 'health', 'x', 'y', 'z', 'sector', 'stat',
+                'xrepeat', 'yrepeat', 'cstat')
+ENEMY_STATE_FIELDS = ('action', 'actioncount', 'actionframe', 'actiontics')
+ENEMY_ROW = re.compile(r'addlog aaenemy_(\w+)(?: \(player \d+\))? = (-?\d+)')
+ENEMY_TILE = 16898  # NEWTROOPGUARD, defined by the installed AADEFS.CON.
+ENEMY_SECTOR = 306
+ENEMY_MAP_PATH = 'maps/oldeps/aa_enemy_e1l1.map'
+# This is a solid part of E1L1's roof sector, verified from the owned v7 map.
+# It remains near the stock pistol's previous wall-ray path without occupying a
+# portal boundary or existing sprite position.
+ENEMY_POSITION = (-30750, 8500)
 
 
 def policy_wrapper():
@@ -55,6 +68,130 @@ def policy_rows(text):
         if name == 'gotpistol' and all(key in row for key in POLICY_FIELDS):
             result.append(row)
     return result
+
+
+def enemy_rows(text):
+    """Read the native actor slot appended to the owned fixture map."""
+    result, row = [], {}
+    for name, value in ENEMY_ROW.findall(text):
+        if name == 'tick':
+            row = {}
+        row[name] = int(value)
+        if name == 'cstat' and all(key in row for key in ENEMY_FIELDS):
+            result.append(row)
+    return result
+
+
+def enemy_wrapper(target_index):
+    """Select the owned map copy in the native slot; observe its ordinary actor."""
+    declarations = ''.join(f'gamevar aaenemy_{name} 0 1\n' for name in ENEMY_FIELDS + ENEMY_STATE_FIELDS)
+    logs = ''.join(f' addlog aaenemy_{name}\n' for name in ENEMY_FIELDS[:-1] + ENEMY_STATE_FIELDS + ('cstat',))
+    return (f'definelevelname 0 1 {ENEMY_MAP_PATH} 01:45 00:53 HOLLYWOOD HOLOCAUST\n'
+            + declarations + f'''
+appendevent EVENT_PROCESSINPUT
+  addvar aaenemy_tick 1
+  setvar aaenemy_index {target_index}
+  getactor[aaenemy_index].picnum aaenemy_tile
+  getactor[aaenemy_index].extra aaenemy_health
+  getactor[aaenemy_index].x aaenemy_x
+  getactor[aaenemy_index].y aaenemy_y
+  getactor[aaenemy_index].z aaenemy_z
+  getactor[aaenemy_index].sectnum aaenemy_sector
+  getactor[aaenemy_index].statnum aaenemy_stat
+  getactor[aaenemy_index].xrepeat aaenemy_xrepeat
+  getactor[aaenemy_index].yrepeat aaenemy_yrepeat
+  getactor[aaenemy_index].htg_t 4 aaenemy_action
+  getactor[aaenemy_index].htg_t 2 aaenemy_actioncount
+  getactor[aaenemy_index].htg_t 3 aaenemy_actionframe
+  getactor[aaenemy_index].lotag aaenemy_actiontics
+  getactor[aaenemy_index].cstat aaenemy_cstat
+{logs}
+endevent
+''')
+
+
+def _map_layout(data):
+    """Return the v7 map sections without interpreting or rewriting them."""
+    if len(data) < 22 or struct.unpack_from('<i', data)[0] != 7:
+        raise RuntimeError('AA enemy fixture requires a v7 Build map')
+    start_x, start_y, start_z, start_ang, start_sector = struct.unpack_from('<iiihh', data, 4)
+    sectors = struct.unpack_from('<h', data, 20)[0]
+    if sectors <= ENEMY_SECTOR:
+        raise RuntimeError(f'map has no requested enemy sector {ENEMY_SECTOR}')
+    sector_offset = 22
+    walls_offset = sector_offset + sectors * 40
+    if walls_offset + 2 > len(data):
+        raise RuntimeError('truncated sector table in AA source map')
+    walls = struct.unpack_from('<h', data, walls_offset)[0]
+    if walls < 1:
+        raise RuntimeError('invalid wall count in AA source map')
+    sprite_count_offset = walls_offset + 2 + walls * 32
+    if sprite_count_offset + 2 > len(data):
+        raise RuntimeError('truncated wall table in AA source map')
+    sprites = struct.unpack_from('<h', data, sprite_count_offset)[0]
+    sprite_offset = sprite_count_offset + 2
+    sprite_end = sprite_offset + sprites * 44
+    if sprites < 0 or sprite_end > len(data):
+        raise RuntimeError('truncated sprite table in AA source map')
+    floor = struct.unpack_from('<i', data, sector_offset + ENEMY_SECTOR * 40 + 8)[0]
+    return {'start': (start_x, start_y, start_z, start_ang, start_sector), 'sectors': sectors,
+            'walls': walls, 'sprite_count': sprites, 'sprite_count_offset': sprite_count_offset,
+            'sprite_offset': sprite_offset, 'sprite_end': sprite_end, 'floor': floor}
+
+
+def _inside_sector(data, layout, sector, x, y):
+    """Use the map's exact sector polygon before writing a placement."""
+    sector_offset = 22 + sector * 40
+    wallptr, wallnum = struct.unpack_from('<hh', data, sector_offset)
+    inside = False
+    for wall_index in range(wallptr, wallptr + wallnum):
+        offset = 22 + layout['sectors'] * 40 + 2 + wall_index * 32
+        ax, ay, point2 = struct.unpack_from('<iih', data, offset)
+        bx, by = struct.unpack_from('<ii', data, 22 + layout['sectors'] * 40 + 2 + point2 * 32)
+        if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
+            inside = not inside
+    return inside
+
+
+def write_enemy_fixture(source, output):
+    """Copy one owned AA map and append a single ordinary native enemy sprite.
+
+    Existing map bytes (including a possible trailing extension) are preserved
+    exactly. The observer reads this appended map slot from player input events,
+    avoiding any dependency on the enemy's own event-dispatch flags.
+    """
+    data = source.read_bytes()
+    layout = _map_layout(data)
+    if not _inside_sector(data, layout, ENEMY_SECTOR, *ENEMY_POSITION):
+        raise RuntimeError('chosen AA enemy position is outside its declared sector')
+    enemy = struct.pack(
+        '<iiiHhbBBBBBbbhhhhhhhhhh',
+        *ENEMY_POSITION, layout['floor'], 257, ENEMY_TILE, 0, 0, 40, 0, 24, 22,
+        0, 0, ENEMY_SECTOR, 0, 1536, -1, 0, 0, 0, 0, 0, -1,
+    )
+    amended = bytearray(data[:layout['sprite_end']] + enemy + data[layout['sprite_end']:])
+    struct.pack_into('<h', amended, layout['sprite_count_offset'], layout['sprite_count'] + 1)
+    if (bytes(amended[:layout['sprite_count_offset']]) != data[:layout['sprite_count_offset']] or
+            bytes(amended[layout['sprite_count_offset'] + 2:layout['sprite_end']]) !=
+            data[layout['sprite_count_offset'] + 2:layout['sprite_end']] or
+            bytes(amended[layout['sprite_end'] + 44:]) != data[layout['sprite_end']:]):
+        raise AssertionError('AA fixture changed native map data outside its sprite count/addition')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(amended)
+    # Per-map ART follows the map basename. Keep the actual AA textures while
+    # giving this fixture a unique native VFS path; installed files stay read-only.
+    art_files = []
+    for art in sorted(source.parent.glob(source.stem + '_*.art')):
+        destination = output.with_name(output.stem + art.name[len(source.stem):])
+        destination.symlink_to(art.resolve())
+        art_files.append({'path': str(destination), 'source': str(art),
+                          'sha256': hashlib.sha256(art.read_bytes()).hexdigest()})
+    return {'source': str(source), 'source_sha256': hashlib.sha256(data).hexdigest(),
+            'fixture_sha256': hashlib.sha256(amended).hexdigest(), 'target_index': layout['sprite_count'],
+            'target_tile': ENEMY_TILE, 'position': [*ENEMY_POSITION, layout['floor']],
+            'sector': ENEMY_SECTOR, 'source_start': list(layout['start']),
+            'source_sprite_count': layout['sprite_count'], 'trailing_bytes_preserved': len(data) - layout['sprite_end'],
+            'native_level_slot': [0, 1], 'per_map_art': art_files}
 
 
 def fire_selected_weapon(server, client, tracked, remote, player):
@@ -96,6 +233,132 @@ def fire_selected_weapon(server, client, tracked, remote, player):
                            for row in aa_samples(tracked.text()[offsets['server' if tracked is server else 'client']:]))}}
 
 
+def _angle_delta(target, actual):
+    """Return the shortest degree adjustment from a logged Build ray."""
+    return (target - actual + 180) % 360 - 180
+
+
+def fire_enemy_until_dead(server, client, tracked, remote, player, fixture_index, evidence):
+    """Fire tracked AA pistol shots, steering from native target/ray observations.
+
+    The aim loop does not seed enemy health, movement, weapons, inputs, or
+    packets.  It only changes the real Monado controller pose between normal
+    trigger presses after reading the target's native actor state.
+    """
+    player_rows = lambda observer: [row for row in aa_samples(observer.text()) if row['player'] == player]
+    target_rows = lambda observer: enemy_rows(observer.text())
+    tracked.wait(lambda text: player_rows(tracked)[-1]['weaponpos'] == 0 and
+                 player_rows(tracked)[-1]['counter'] == 0, timeout=12)
+    server.wait(lambda text: bool(target_rows(server)) and target_rows(server)[-1]['health'] > 0, timeout=12)
+    client.wait(lambda text: bool(target_rows(client)) and target_rows(client)[-1]['health'] > 0, timeout=12)
+    before = {'server': target_rows(server)[-1], 'client': target_rows(client)[-1],
+              'ammo': {'server': player_rows(server)[-1], 'client': player_rows(client)[-1]}}
+    if before['server']['index'] != fixture_index:
+        raise RuntimeError(f'fixture observer selected sprite {before["server"]["index"]}, expected {fixture_index}')
+    for role in ('server', 'client'):
+        target = before[role]
+        if (target['tile'] != ENEMY_TILE or target['sector'] != ENEMY_SECTOR or
+                (target['x'], target['y']) != ENEMY_POSITION or target['health'] <= 0):
+            raise RuntimeError(f'{role} did not observe the live map-authored NEWTROOPGUARD at the fixture position')
+    remote.neutral()
+    hand = remote.packet.right
+    hand.pose.position.x, hand.pose.position.y, hand.pose.position.z = .2, 1.3, -.5
+    yaw, pitch = 12.0, -10.0
+    hand.pose.orientation = orientation(yaw, pitch)
+    remote.send()
+    tracked.pause(.4)
+    attempts, all_rays, target_hits = [], [], []
+    evidence.update(stage='tracked firing', before=before, attempts=attempts, authoritative_tracked_hits=all_rays)
+    for attempt in range(12):
+        target = target_rows(server)[-1]
+        # The first pose follows the known AA stock-start ray.  Thereafter use
+        # the real prior ray's origin/vector to correct both axes toward the
+        # actor's observed body centre while the native AI is free to move.
+        prior = all_rays[-1] if all_rays else None
+        if prior:
+            desired_yaw = math.degrees(math.atan2(target['y'] - prior['y'], target['x'] - prior['x']))
+            actual_yaw = math.degrees(math.atan2(prior['dy'], prior['dx']))
+            yaw += _angle_delta(desired_yaw, actual_yaw)
+            horizontal = math.hypot(target['x'] - prior['x'], target['y'] - prior['y'])
+            if horizontal:
+                body_z = target['z'] - max(1024, target['yrepeat'] * 192)
+                # Native Build Z coordinates/vectors have sixteen times the
+                # scale of horizontal coordinates. Controller angles do not.
+                desired_pitch = -math.degrees(math.atan2((body_z - prior['z']) / 16, horizontal))
+                actual_pitch = math.degrees(math.atan2(-prior['dz'] / 16, math.hypot(prior['dx'], prior['dy'])))
+                pitch = max(-80.0, min(80.0, pitch + desired_pitch - actual_pitch))
+        hand.pose.orientation = orientation(yaw, pitch)
+        remote.send()
+        offsets = {'server': len(server.text()), 'client': len(client.text()), 'tracked': len(tracked.text())}
+        ammunition = player_rows(server)[-1]['ammo']
+        hand.trigger_value, hand.trigger_click = 1, True
+        remote.send()
+        try:
+            server.wait(lambda text: any(row['player'] == player and row['shots'] > before['ammo']['server']['shots'] + attempt
+                                        and row['ammo'] < ammunition
+                                        for row in aa_samples(text[offsets['server']:])), timeout=8)
+        finally:
+            hand.trigger_value, hand.trigger_click = 0, False
+            remote.send()
+        server.wait(lambda text: player_rows(server)[-1]['counter'] == 0 and
+                    not (player_rows(server)[-1]['bits'] & 4), timeout=8)
+        observed = rays(server.text()[offsets['server']:], player)
+        all_rays.extend(observed)
+        hit = [ray for ray in observed if ray['sprite'] == fixture_index]
+        target_hits.extend(hit)
+        latest = target_rows(server)[-1]
+        attempts.append({'number': attempt + 1, 'pose_degrees': {'yaw': yaw, 'pitch': pitch},
+                         'target_before': target, 'target_after': latest, 'rays': observed,
+                         'fixture_hits': hit})
+        if hit and latest['health'] <= 0:
+            break
+        if player_rows(server)[-1]['ammo'] <= 0:
+            break
+        tracked.pause(.15)
+    evidence['stage'] = 'native health loss and death transition'
+    server.wait(lambda text: target_rows(server)[-1]['health'] <= 0, timeout=6)
+    def corpse_converged(_text):
+        authority, replica = target_rows(server)[-1], target_rows(client)[-1]
+        # AA may briefly report negative overkill before its native death
+        # state normalizes health to zero and clears collision. Do not freeze
+        # that transient value as a value every client must receive.
+        return (authority['health'] <= 0 and not (authority['cstat'] & 257)
+                and all(authority[key] == replica[key]
+                        for key in ('tile', 'health', 'x', 'y', 'z', 'sector', 'cstat')))
+    evidence['stage'] = 'native corpse collision and position convergence'
+    try:
+        # Native AA suffering deliberately keeps collision until actioncount14,
+        # roughly 84 simulation updates. The CPU XR lab can run below real time.
+        client.wait(corpse_converged, timeout=30)
+    finally:
+        evidence['latest'] = {role: target_rows(observer)[-1]
+                              for role, observer in (('server', server), ('client', client))}
+    server_after = target_rows(server)[-1]
+    client_after = target_rows(client)[-1]
+    server_ammo, client_ammo = player_rows(server)[-1], player_rows(client)[-1]
+    return {'stage': 'complete', 'before': before, 'after': {'server': server_after, 'client': client_after,
+                                         'ammo': {'server': server_ammo, 'client': client_ammo}},
+            'attempts': attempts, 'authoritative_tracked_hits': all_rays,
+            'checks': {'fixture_target_observed_on_native_server': bool(target_rows(server)),
+                       'fixture_target_observed_on_native_client': bool(target_rows(client)),
+                       'fixture_target_initial_identity_matches_map': all(
+                           before[role]['tile'] == ENEMY_TILE and before[role]['sector'] == ENEMY_SECTOR and
+                           (before[role]['x'], before[role]['y']) == ENEMY_POSITION
+                           for role in ('server', 'client')),
+                       'authoritative_hand_hits_fixture_sprite': bool(target_hits),
+                       'native_enemy_health_lost': server_after['health'] < before['server']['health'],
+                       'native_enemy_death_converged': server_after['health'] <= 0 and
+                           client_after['health'] == server_after['health'],
+                       'native_corpse_collision_and_position_converged': not (server_after['cstat'] & 257) and
+                           all(server_after[key] == client_after[key]
+                               for key in ('tile', 'x', 'y', 'z', 'sector', 'cstat')),
+                       'native_ammo_decreased_and_converged': 0 <= server_ammo['ammo'] < before['ammo']['server']['ammo'] and
+                           client_ammo['ammo'] == server_ammo['ammo'],
+                       'actual_AA_native_weapon_fired': server_ammo['shots'] > before['ammo']['server']['shots'],
+                       'actual_tracked_player_trigger_seen': any(row['player'] == player and row['bits'] & 4
+                           for row in aa_samples(tracked.text()[offsets['tracked']:]))}}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('binary', 'client-binary', 'mod-root', 'work-dir'):
@@ -112,6 +375,10 @@ def main():
                         help='Causal lab experiment: predeclare AA oldbits as per-player on both peers')
     parser.add_argument('--compat-con', type=Path,
                         help='Read-only production AA main CON loaded with native -x on both peers')
+    parser.add_argument('--enemy-fixture', action='store_true',
+                        help='copy an owned E1L1 v7 map into each lab and append one observed native NEWTROOPGUARD')
+    parser.add_argument('--enemy-map', type=Path,
+                        help='owned E1L1 map source required by --enemy-fixture')
     args = parser.parse_args()
     if args.xr_host and (not args.input_helper or not args.input_helper.is_file()):
         parser.error('--xr-host requires --input-helper')
@@ -125,6 +392,14 @@ def main():
             parser.error('missing --compat-con: '+str(args.compat_con))
     if args.compat_con and args.per_player_selector_edge:
         parser.error('--compat-con cannot be combined with --per-player-selector-edge')
+    if args.enemy_fixture:
+        if not args.compat_con:
+            parser.error('--enemy-fixture requires --compat-con so installed AA actor scripts remain the gameplay source')
+        if not args.enemy_map:
+            parser.error('--enemy-fixture requires --enemy-map')
+        args.enemy_map = args.enemy_map.resolve()
+        if not args.enemy_map.is_file():
+            parser.error('missing --enemy-map: ' + str(args.enemy_map))
     assert_gpu_devices_absent()
     assert_cpu_binary(args.binary)
     xr_role = 'server' if args.xr_host else 'client'
@@ -156,6 +431,15 @@ def main():
             wrapper = aa_wrapper(local_only=role == xr_role, include_game=not bool(args.compat_con))
             if args.per_player_selector_edge:
                 wrapper = 'gamevar oldbits 0 GAMEVAR_PERPLAYER\n' + wrapper
+            if args.enemy_fixture:
+                # E1L1.MAP also exists under the installed -j directory.
+                # Use an otherwise-unreferenced basename so the native VFS
+                # cannot silently select that unmodified loose copy.
+                destination = lab / ENEMY_MAP_PATH
+                fixture = write_enemy_fixture(args.enemy_map, destination)
+                result.setdefault('enemy_fixture', {'map': fixture, 'copies': {}})['copies'][role] = {
+                    'path': str(destination), 'sha256': hashlib.sha256(destination.read_bytes()).hexdigest()}
+                wrapper += enemy_wrapper(fixture['target_index'])
             (lab / 'aa_mp_observer.con').write_text(wrapper + policy_wrapper())
         common = ['-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
                   '-j', str(args.mod_root)]
@@ -184,7 +468,10 @@ def main():
         def launch(role, binary, options, env):
             log = (labs[role] / 'game.log').open('w')
             logs.append(log)
-            process = subprocess.Popen([str(binary), *common, *options], cwd=labs[role], env=env,
+            # AA's installed directory is needed for its original scripts and
+            # assets; the lab directory supplies the uniquely named map copy.
+            fixture_search = ['-j', str(labs[role])] if args.enemy_fixture else []
+            process = subprocess.Popen([str(binary), *common, *fixture_search, *options], cwd=labs[role], env=env,
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
             processes[role] = process
             observers[role] = Observer(process, labs[role] / 'game.log')
@@ -279,7 +566,12 @@ def main():
                           fresh_stereo_gameplay=capture['eyes_distinct'] and capture['eyes_nonconstant'],
                           core_validation_clean=not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)', tracked.text()))
             phase = 'actual AA tracked fire and native ammo authority'
-            result['fire'] = fire_selected_weapon(server, client, tracked, remote, index)
+            if args.enemy_fixture:
+                result['fire'] = {}
+                result['fire'] = fire_enemy_until_dead(
+                    server, client, tracked, remote, index, result['enemy_fixture']['map']['target_index'], result['fire'])
+            else:
+                result['fire'] = fire_selected_weapon(server, client, tracked, remote, index)
             checks.update(result['fire']['checks'])
             phase = 'complete'
             result['passed'] = all(checks.values())

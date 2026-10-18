@@ -2,6 +2,16 @@
 
 ## Current checkpoint — 2026-10-18
 
+An owned Hollywood fixture now exercises a real AA NEWTROOPGUARD with native
+AI, tracked pistol sprite hits, health loss, corpse state and ammo convergence.
+See [AA_ENEMY_DAMAGE.md](AA_ENEMY_DAMAGE.md) and sibling
+`evidence/aa-enemy-damage-validation.json` for exact role results, failed test
+attempts and remaining native AA diagnostics. This changes tests, not gameplay
+or the protocol. [AA_MODEL_DESIGN.md](AA_MODEL_DESIGN.md) records the focused
+Astra decision to preserve the existing world model pass: late opaque HUD
+emission would overwrite foreground translucency. Runtime AA model bindings
+remain pending; the private chunky weapon/hand assets are complete.
+
 An explicit native [AA 5.66 compatibility entry](AA_COMPAT_ENTRY.md) now makes
 the per-player `oldbits` correction available outside the diagnostic wrapper.
 With the shipped main script, both VR multiplayer roles and the single-player
