@@ -7112,6 +7112,11 @@ MAIN_LOOP_RESTART:
         // for the initial snapshot. Do not replace it with local logo/demo flow.
         if (ud.warp_on == 1)
         {
+            // Command-line hosts bypass Net_StartNewGame. Run its reset hooks
+            // before co-op level entry preserves the starting inventory.
+            if (g_netServer)
+                Net_ResetPlayers();
+
             G_NewGame_EnterLevel();
             // may change ud.warp_on in an error condition
         }

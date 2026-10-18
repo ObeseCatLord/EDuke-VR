@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Stock initial-inventory observation for native co-op startup.
+include GAME.CON
+
+gamevar vrinv_tick 0 1
+gamevar vrinv_sample 0 1
+gamevar vrinv_player 0 1
+gamevar vrinv_weapon 0 1
+gamevar vrinv_owned 0 1
+gamevar vrinv_ammo 0 1
+gamevar vrinv_shield 0 1
+gamevar vrinv_bits 0 1
+gamevar vrinv_event_code 0 1
+gamevar vrinv_event_player 0 1
+
+onevent EVENT_PROCESSINPUT
+    addvar vrinv_tick 1
+    addvar vrinv_sample 1
+    ifvare vrinv_sample 5
+    {
+        setvar vrinv_sample 0
+        getplayer[THISACTOR].index vrinv_player
+        getplayer[THISACTOR].curr_weapon vrinv_weapon
+        getplayer[THISACTOR].gotweapon PISTOL_WEAPON vrinv_owned
+        getplayer[THISACTOR].ammo_amount PISTOL_WEAPON vrinv_ammo
+        getplayer[THISACTOR].shield_amount vrinv_shield
+        getinput[THISACTOR].bits vrinv_bits
+        addlog vrinv_tick
+        addlog vrinv_player
+        addlog vrinv_weapon
+        addlog vrinv_owned
+        addlog vrinv_ammo
+        addlog vrinv_shield
+        addlog vrinv_bits
+    }
+endevent
+
+onevent EVENT_RESETINVENTORY
+    setvar vrinv_event_code 1
+    getplayer[THISACTOR].index vrinv_event_player
+    addlog vrinv_event_code
+    addlog vrinv_event_player
+endevent
+
+onevent EVENT_RESETWEAPONS
+    setvar vrinv_event_code 2
+    getplayer[THISACTOR].index vrinv_event_player
+    addlog vrinv_event_code
+    addlog vrinv_event_player
+endevent
+
+onevent EVENT_RESETPLAYER
+    setvar vrinv_event_code 3
+    getplayer[THISACTOR].index vrinv_event_player
+    addlog vrinv_event_code
+    addlog vrinv_event_player
+endevent
+
+onevent EVENT_NEWGAME
+    setvar vrinv_event_code 4
+    getplayer[THISACTOR].index vrinv_event_player
+    addlog vrinv_event_code
+    addlog vrinv_event_player
+endevent
+
+onevent EVENT_ENTERLEVEL
+    setvar vrinv_event_code 5
+    getplayer[THISACTOR].index vrinv_event_player
+    addlog vrinv_event_code
+    addlog vrinv_event_player
+endevent
+
+onevent EVENT_DISPLAYREST
+    addlog myconnectindex
+endevent

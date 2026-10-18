@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Reset-hook policy: native reset events choose the initial pistol and shield.
+include starting_inventory_stock_test.con
+
+appendevent EVENT_RESETINVENTORY
+    setplayer[THISACTOR].shield_amount 37
+endevent
+
+appendevent EVENT_RESETWEAPONS
+    setplayer[THISACTOR].gotweapon PISTOL_WEAPON 1
+    setplayer[THISACTOR].ammo_amount PISTOL_WEAPON 17
+    setplayer[THISACTOR].curr_weapon PISTOL_WEAPON
+endevent

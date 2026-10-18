@@ -268,6 +268,7 @@ void    Net_SendClientUpdate(void);
 void    Net_SendMessage(void);
 
 void    Net_StartNewGame();
+void    Net_ResetPlayers();
 void    Net_NotifyNewGame();
 void    Net_SendNewGame(int32_t frommenu, ENetPeer *peer);
 
@@ -321,6 +322,7 @@ void Net_WaitForInitialSnapshot();
 #define Net_SendMessage(...) ((void)0)
 
 #define Net_StartNewGame(...) ((void)0)
+#define Net_ResetPlayers(...) ((void)0)
 #define Net_SendNewGame(...) ((void)0)
 
 #define Net_FillNewGame(...) ((void)0)

@@ -1,5 +1,9 @@
 # Native multiplayer angular input
 
+The later startup-inventory fix and actual AA tracked firing are recorded in
+[STARTING_INVENTORY.md](STARTING_INVENTORY.md), including a newly reproduced
+server-to-client selector failure. The inventory diagnosis below is historical.
+
 AA's character cursor exposed a native multiplayer input-lifetime bug. A real
 XR client produced eleven distinct nonzero angular increments, but its dedicated
 server applied them 47 times. The server retained the latest `input_t` between

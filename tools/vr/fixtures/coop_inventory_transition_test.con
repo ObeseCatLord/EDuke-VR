@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Native co-op exit observation; inventory policy comes from real reset hooks.
+include starting_inventory_test.con
+
+definelevelname 0 0 first.map 00:00 00:00 Co-op Exit First
+definelevelname 0 1 second.map 00:00 00:00 Co-op Exit Second
+
+gamevar vrtrans_tick 0 1
+gamevar vrtrans_sample 0 1
+gamevar vrtrans_player 0 1
+gamevar vrtrans_x 0 1
+gamevar vrtrans_y 0 1
+gamevar vrtrans_fvel 0 1
+gamevar vrtrans_svel 0 1
+gamevar vrtrans_bits 0 1
+gamevar vrtrans_gm 0 1
+gamevar vrtrans_volume 0 1
+gamevar vrtrans_level 0 1
+
+appendevent EVENT_PROCESSINPUT
+    addvar vrtrans_tick 1
+    addvar vrtrans_sample 1
+    ifvare vrtrans_sample 5
+    {
+        setvar vrtrans_sample 0
+        getplayer[THISACTOR].index vrtrans_player
+        getplayer[THISACTOR].posx vrtrans_x
+        getplayer[THISACTOR].posy vrtrans_y
+        getinput[THISACTOR].fvel vrtrans_fvel
+        getinput[THISACTOR].svel vrtrans_svel
+        getinput[THISACTOR].bits vrtrans_bits
+        getplayer[THISACTOR].gm vrtrans_gm
+        getuserdef[THISACTOR].volume_number vrtrans_volume
+        getuserdef[THISACTOR].level_number vrtrans_level
+        addlog vrtrans_tick
+        addlog vrtrans_player
+        addlog vrtrans_x
+        addlog vrtrans_y
+        addlog vrtrans_fvel
+        addlog vrtrans_svel
+        addlog vrtrans_bits
+        addlog vrtrans_gm
+        addlog vrtrans_volume
+        addlog vrtrans_level
+    }
+endevent
+
+onevent EVENT_ENDLEVELSCREEN
+    setvar RETURN 1
+    return
+endevent

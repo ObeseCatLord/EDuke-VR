@@ -2760,7 +2760,7 @@ static void Net_InitMapState(netmapstate_t* mapState)
 }
 
 // Both client and server execute this
-static void Net_ResetPlayers()
+void Net_ResetPlayers()
 {
     int32_t playerIndex;
 

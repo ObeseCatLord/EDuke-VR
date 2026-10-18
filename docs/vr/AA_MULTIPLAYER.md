@@ -1,9 +1,11 @@
 # AA native multiplayer startup
 
-For the later native angular-input correction, actual matching Duke/START
-selection, and the remaining starting-inventory diagnosis, read
-[INPUT_DELTAS.md](INPUT_DELTAS.md). This startup section retains the earlier
-checkpoint's scope. CON-state replication and campaign combat remain open.
+For the later native angular-input correction and matching Duke/START selection,
+read [INPUT_DELTAS.md](INPUT_DELTAS.md). The subsequent starting-inventory fix and
+actual tracked multiplayer pistol firing are in
+[STARTING_INVENTORY.md](STARTING_INVENTORY.md). This startup section retains the
+earlier checkpoint's scope. CON-state replication, reverse-direction AA hosting
+and campaign combat remain open.
 
 This checkpoint qualifies Alien Armageddon 5.66 **native startup and joining**.
 AA campaign combat, character selection across peers, and script-state
