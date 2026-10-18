@@ -6,7 +6,8 @@ from pathlib import Path
 import re
 import numpy as np
 from PIL import Image
-from smoke_weapon import rotation
+from smoke_weapon import quaternion, rotation
+from monado_remote import Quat
 
 STATES = re.compile(r'OpenXR floating hands: serial=(\d+) state=(\d+) mask=(\d+) left=(\d+) right=(\d+) capture=(\d+)\.')
 
@@ -123,7 +124,7 @@ def inspect(root, text):
     return {'checks':checks, 'states':states, 'captures':results, 'projection_errors':errors, 'axis_errors':axis_errors}
 
 
-def exercise(observer, remote, root):
+def exercise(observer, remote, root, mount_motion=False):
     def state_after(state, start=0, require_capture=False):
         def ready(text):
             rows=[tuple(map(int,row)) for row in STATES.findall(text[start:])]
@@ -141,11 +142,20 @@ def exercise(observer, remote, root):
     transitions=[]
     def change(state, callback):
         start=len(observer.text());callback();remote.send();state_after(state,start);transitions.append(state)
-    change(6,lambda:setattr(remote.packet.left,'squeeze_value',1))
-    change(7,lambda:setattr(remote.packet.left,'trigger_value',1))
+    def pose_and_button(state):
+        if mount_motion:
+            remote.packet.right.pose.position.x=.18 if state==6 else .06
+            remote.packet.right.pose.orientation=Quat(*quaternion(12,8,70 if state==6 else -35))
+        setattr(remote.packet.left,'squeeze_value' if state==6 else 'trigger_value',1)
+    change(6,lambda:pose_and_button(6))
+    change(7,lambda:pose_and_button(7))
     change(6,lambda:setattr(remote.packet.left,'trigger_value',0))
     change(5,lambda:setattr(remote.packet.left,'squeeze_value',0))
+    if mount_motion:
+        remote.packet.left.thumbstick.y=.65; remote.send(); observer.pause(.2)
     change(9,lambda:setattr(remote.packet.right,'squeeze_value',1))
+    if mount_motion:
+        remote.packet.left.thumbstick.y=0; remote.send(); observer.pause(.1)
     change(5,lambda:setattr(remote.packet.right,'squeeze_value',0))
     change(4,lambda:setattr(remote.packet.left,'active',False))
     change(5,lambda:setattr(remote.packet.left,'active',True))

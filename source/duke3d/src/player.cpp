@@ -2558,11 +2558,36 @@ static bool P_XRPistolBaseReady()
 }
 #endif
 
+XRPistolFamily P_XRPistolFamily()
+{
+#ifndef EDUKE32_STANDALONE
+    auto const p=g_player[myconnectindex].ps;
+    if (FURY || NAM_WW2GI || !p || unsigned(p->i)>=MAXSPRITES
+        || p->curr_weapon!=PISTOL_WEAPON
+        || PWEAPON(myconnectindex,PISTOL_WEAPON,WorksLike)!=PISTOL_WEAPON
+        || G_VRHandShotFeature(myconnectindex)!=VRShotFeatureHitscan) return XRPistolFamily::Unsupported;
+    if (DUKE && !VM_HaveEvent(EVENT_DISPLAYROOMSEND) && !VM_HaveEvent(EVENT_DISPLAYREST)
+        && !VM_HaveEvent(EVENT_DISPLAYWEAPON) && !VM_HaveEvent(EVENT_DRAWWEAPON)) return XRPistolFamily::Stock;
+    auto const enabled=Bgetenv("EDUKE32_XR_AA_MODELS");
+    if (!enabled || Bstrcmp(enabled,"1") || (!DUKE && g_gameType!=GAMEFLAG_NOPOLYMER)
+        || !VM_HaveEvent(EVENT_DISPLAYWEAPON) || !VM_HaveEvent(EVENT_DRAWWEAPON)
+        || Gv_GetVarByLabel("pchar",INT32_MIN,p->i,myconnectindex)!=0
+        || Gv_GetVarByLabel("LASERMODE",INT32_MIN,p->i,myconnectindex)!=0) return XRPistolFamily::Unsupported;
+    for (int i=0;i<g_gameArrayCount;++i)
+        if (aGameArrays[i].szLabel && !Bstrcmp(aGameArrays[i].szLabel,"dukeupgrades"))
+        {
+            if (aGameArrays[i].size>PISTOL_WEAPON && aGameArrays[i].pValues
+                && Gv_GetArrayValue(i,PISTOL_WEAPON)==0) return XRPistolFamily::AlienArmageddon;
+            break;
+        }
+#endif
+    return XRPistolFamily::Unsupported;
+}
+
 bool P_XRPistolPresentation(XRPistolPresentation &sample)
 {
 #ifndef EDUKE32_STANDALONE
-    if (!DUKE || !P_XRPistolBaseReady() || VM_HaveEvent(EVENT_DISPLAYROOMSEND) || VM_HaveEvent(EVENT_DISPLAYREST)
-        || VM_HaveEvent(EVENT_DISPLAYWEAPON) || VM_HaveEvent(EVENT_DRAWWEAPON)) return false;
+    if (!P_XRPistolBaseReady() || P_XRPistolFamily()!=XRPistolFamily::Stock) return false;
     auto const p=g_player[myconnectindex].ps;
     if (p->kickback_pic
         && (PWEAPON(myconnectindex,PISTOL_WEAPON,Clip)!=12
@@ -2582,12 +2607,10 @@ bool P_XRPistolPresentation(XRPistolPresentation &sample)
 bool P_XRAAPistolPresentation(XRPistolPresentation &sample)
 {
 #ifndef EDUKE32_STANDALONE
-    auto const enabled=Bgetenv("EDUKE32_XR_AA_MODELS");
     // AA's own grpinfo sets only GAMEFLAG_NOPOLYMER, without GAMEFLAG_DUKE. The stock
     // qualifier still requires DUKE; this explicit adapter also accepts AA's
     // custom-game identity, with the exact script/presentation checks below.
-    if (!enabled || Bstrcmp(enabled,"1") || (!DUKE && g_gameType!=GAMEFLAG_NOPOLYMER)
-        || !P_XRPistolBaseReady()) return false;
+    if (!P_XRPistolBaseReady() || P_XRPistolFamily()!=XRPistolFamily::AlienArmageddon) return false;
     auto const p=g_player[myconnectindex].ps;
     // Standard single Duke pistol, idle/reload only. Fire includes baked flashes
     // and a changing native shade history; preserve that entire native sequence.
@@ -2603,21 +2626,12 @@ bool P_XRAAPistolPresentation(XRPistolPresentation &sample)
         || PWEAPON(myconnectindex,PISTOL_WEAPON,HoldDelay)!=0
         || PWEAPON(myconnectindex,PISTOL_WEAPON,Flags)!=WEAPON_RELOAD_TIMING)) return false;
     auto const value=[&](char const *label) { return Gv_GetVarByLabel(label,INT32_MIN,p->i,myconnectindex); };
-    static char const *const zero[] = {"pchar","LASERMODE","brutalcount","PLAYERONTHEBIKE",
+    static char const *const zero[] = {"brutalcount","PLAYERONTHEBIKE",
         "slimpush","juice_pos","idleanim","slidekick","sidekick","jumpkick","qk_proxy","doubletop"};
     for (auto label:zero) if (value(label)!=0) return false;
     static char const *const none[] = {"movecam","thiscam","onturret","zombieonplayer"};
     for (auto label:none) if (value(label)!=-1) return false;
     if (value("startmode")!=1 || value("newhud")<-1) return false;
-    int upgrades=-1;
-    for (int i=0;i<g_gameArrayCount;++i)
-        if (aGameArrays[i].szLabel && !Bstrcmp(aGameArrays[i].szLabel,"dukeupgrades"))
-        {
-            if (aGameArrays[i].size>PISTOL_WEAPON && aGameArrays[i].pValues)
-                upgrades=Gv_GetArrayValue(i,PISTOL_WEAPON);
-            break;
-        }
-    if (upgrades!=0) return false;
     int const baseShade=min<int32_t>(sprite[p->i].shade,24);
     // AA advances shade history inside G_DrawWeaponTile and adds two for
     // FIRSTGUN. Until the history converges, let that native state draw ART.

@@ -420,6 +420,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case', choices=('model', 'missing', 'missing-frame', 'duplicate-body'), default='model')
     parser.add_argument('--model-mode', choices=('native', 'sps'))
+    parser.add_argument('--palm-mount', action='store_true', help='Enable the tagged standard-pistol muzzle calibration')
     parser.add_argument('--animation', action='store_true',
                         help='qualify native AA firing ART and reload model frames from an explicit private MD3')
     parser.add_argument('--floating-hands', type=Path, help='Private calibrated hand MD3/PNG directory')
@@ -476,7 +477,9 @@ def main() -> int:
             f'r_maxfps {60 if args.animation else 5}\n' +
             ('bind End "gamefunc_RELOAD_WEAPON"\n' if args.animation else '') +
             ('bind F4 norepeat "setvar aamodelfault 1"\n' if fault else ''))
-        (root / 'aa_hand_model_observer.con').write_text(model_observer() + (DUPLICATE_BODY if fault else ''))
+        from pistol_mount_check import observer as mount_observer
+        (root / 'aa_hand_model_observer.con').write_text(model_observer() + (DUPLICATE_BODY if fault else '')
+                                                       + (mount_observer() if args.palm_mount else ''))
         if args.case == 'missing-frame':
             result['missing_frame_fixture'] = missing_rest_fixture(root, args.model)
             result['model_mapping'] = write_private_def(
@@ -502,6 +505,9 @@ def main() -> int:
                    EDUKE32_XR_WORLD_OUTPUT=str(root / 'world'), EDUKE32_XR_HUD_OUTPUT=str(root / 'hud'))
         if args.model_mode == 'native':
             env['EDUKE32_XR_TEST_MODELS_TWO_PASS'] = '1'
+        if args.palm_mount:
+            env['EDUKE32_XR_PISTOL_MOUNT'] = '1'
+            env['EDUKE32_XR_TEST_PISTOL_MOUNT'] = '1'
         definition = 'aa-hand-model.def' if model_case or args.case == 'missing-frame' else 'duke3d.def'
         if args.floating_hands:
             from floating_hands_check import configure
@@ -592,6 +598,11 @@ def main() -> int:
                                   if Image.open(path).getbbox() is not None]
                 checks['positive_AA_counter_retains_native_ART'] = bool(positive_cards)
         if model_case:
+            if args.palm_mount:
+                checks['sampled_palm_mount_observed'] = 'OpenXR pistol mount pose:' in text
+                from pistol_mount_check import firing
+                result['palm_mount_firing']=firing(text,args.model)
+                checks.update(result['palm_mount_firing']['checks'])
             receipts = aa_body_receipts(text)
             receipt = result['receipt']
             contribution = result['model_images']

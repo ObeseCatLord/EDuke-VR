@@ -1,5 +1,8 @@
 # Native tracked MD3 increment
 
+Latest positional attachment increment: [PISTOL_MOUNT.md](PISTOL_MOUNT.md).
+This document retains the historical muzzle-first proof and review below.
+
 Current extension (2026-10-18): the qualified stock pistol also uses native
 firing/reload counters, with exact stereo model-oracle tests and matching
 NETVERSION5 peers. See [PISTOL_ANIMATION.md](PISTOL_ANIMATION.md); the idle-only

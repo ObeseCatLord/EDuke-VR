@@ -83,6 +83,9 @@ def main():
     p.add_argument('--model-mode',choices=('native','sps'),default='native',help='retain the native two-eye reference or require model multiview')
     p.add_argument('--vertex-mode',choices=('arrays','immediate'),default='arrays')
     p.add_argument('--model-file',type=Path,help='private native multi-surface fixture, retaining pistol geometry/tags')
+    p.add_argument('--palm-mount',action='store_true',help='Require the opt-in sampled grip-to-muzzle calibration')
+    p.add_argument('--aim-hand',choices=('left','right'),default='right')
+    p.add_argument('--mount-motion',action='store_true',help='Measure changing grip/roll/body against the sampled mounted weapon')
     p.add_argument('--fault',choices=('collect-right','surface-1','skin-last','replay-before','replay-after','mask-retry'))
     p.add_argument('--case',choices=('base','roll','fog','asymmetric','translucent','missing-skin','custom','second-eye-failure'),default='base')
     p.add_argument('--animation',action='store_true',help='Actual native MP shot/clip reload and per-counter stereo model oracles')
@@ -96,12 +99,15 @@ def main():
     if a.floating_hands and (a.animation or a.model_mode!='sps' or a.receipt_fault):
         p.error('--floating-hands requires SPS without animation/receipt fault')
     if a.hands_same_model and not a.floating_hands:p.error('--hands-same-model requires --floating-hands')
+    if a.mount_motion and not (a.palm_mount and a.floating_hands and a.aim_hand=='right'):
+        p.error('--mount-motion requires a right palm mount with floating hands')
     if a.animation_fallback and not a.animation:p.error('--animation-fallback requires --animation')
     if a.receipt_fault and (a.animation or a.fault):p.error('--receipt-fault is a separate cancellation case')
     if a.late_field and not a.animation:p.error('--late-field requires --animation')
     if a.last_shot and a.animation:p.error('--last-shot and --animation are separate native cases')
     if a.animation and (a.case!='base' or a.fault or a.model_mode!='sps'):
         p.error('--animation requires the base SPS case without a collection fault')
+    model_file=a.model_file.resolve() if a.model_file else a.model_root.resolve()/'duke_assets/pistol.md3'
     a.work_dir.mkdir(parents=True,exist_ok=True)
     root=Path(tempfile.mkdtemp(prefix='hand-model-',dir=a.work_dir.resolve()))
     server=client=None;logs=[];phase='setup';result={'passed':False}
@@ -149,7 +155,6 @@ def main():
             (lab/'hand.map').write_bytes(data)
         (cl/'duke_assets').symlink_to(a.model_root.resolve()/'duke_assets',target_is_directory=True)
         skin='missing.png' if a.case=='missing-skin' else 'pistol.png'
-        model_file=a.model_file.resolve() if a.model_file else a.model_root.resolve()/'duke_assets/pistol.md3'
         (cl/'held-pistol.md3').symlink_to(model_file)
         surfaces=struct.unpack_from('<i',model_file.read_bytes(),84)[0]
         (cl/'hand-model.def').write_text('model "held-pistol.md3" {\n'
@@ -162,13 +167,14 @@ def main():
         se={k:v for k,v in env.items() if not k.startswith('XR_')}
         se['EDUKE32_XR_TEST_SHOTS']='1'
         ce=dict(env,EDUKE32_XR='1',EDUKE32_XR_UI='2',EDUKE32_XR_SINGLE_PASS='1',
-            EDUKE32_XR_AIM='right',EDUKE32_XR_WEAPON='1',EDUKE32_XR_HAND_SHOTS='1',
+            EDUKE32_XR_AIM=a.aim_hand,EDUKE32_XR_WEAPON='1',EDUKE32_XR_HAND_SHOTS='1',
             EDUKE32_XR_MODELS='1',EDUKE32_XR_TEST_MODELS='1',EDUKE32_XR_TEST_INPUT='1',
             EDUKE32_XR_TEST_AIM='1',EDUKE32_XR_TEST_SHOTS='1',
             EDUKE32_XR_MODEL_OUTPUT=str(cl/'model'),EDUKE32_XR_WORLD_OUTPUT=str(cl/'world'),
             EDUKE32_XR_HUD_OUTPUT=str(cl/'hud'),EDUKE32_XR_WEAPON_OUTPUT=str(cl/'weapon'),
             EDUKE32_XR_CROSSHAIR_OUTPUT=str(cl/'crosshair'))
         if a.animation:ce['EDUKE32_XR_TEST_MODEL_ANIMATION']='1'
+        if a.palm_mount:ce['EDUKE32_XR_PISTOL_MOUNT']='1'
         if a.floating_hands:
             from floating_hands_check import configure
             configure(cl,cl/'hand-model.def',a.floating_hands,ce,a.hands_same_model)
@@ -186,15 +192,17 @@ def main():
         so=Observer(server,sl/'server.log')
         so.wait(lambda t:'Multiplayer server initialized.' in t)
         with Remote(a.remote_port) as remote:
-            hand=remote.packet.right
-            hand.pose.position.x=.12;hand.pose.position.y=1.5;hand.pose.position.z=-.65
+            hand=getattr(remote.packet,a.aim_hand)
+            hand.pose.position.x=.12 if a.aim_hand=='right' else -.12
+            hand.pose.position.y=1.5;hand.pose.position.z=-.65
             roll=25 if a.case=='roll' else 0
             hand.pose.orientation=Quat(*quaternion(12,8,roll))
             if a.floating_hands:
-                remote.packet.left.pose.position.x=-.22
-                remote.packet.left.pose.position.y=1.4
-                remote.packet.left.pose.position.z=-.6
-                remote.packet.left.pose.orientation=Quat(*quaternion(-12,5,-15))
+                other=getattr(remote.packet,'left' if a.aim_hand=='right' else 'right')
+                other.pose.position.x=-.22 if a.aim_hand=='right' else .22
+                other.pose.position.y=1.4
+                other.pose.position.z=-.6
+                other.pose.orientation=Quat(*quaternion(-12,5,-15))
             remote.packet.head.center.orientation=orientation(-12,4)
             if a.case=='asymmetric':
                 # Monado r_head_data views are relative to head.center.
@@ -270,7 +278,7 @@ def main():
                     projections={int(i):np.fromstring(m,sep=',').reshape(4,4,order='F') for i,m in re.findall(r'OpenXR hand model projection: eye=(\d) values=([^\n]+)\.',text)}
                     # Read the actual MD3 static tag, rather than a duplicated
                     # copy of its authored position or the adapter's basis.
-                    model=(a.model_root/'duke_assets/pistol.md3').read_bytes()
+                    model=model_file.read_bytes()
                     ntags=struct.unpack_from('<i',model,80)[0];offset=struct.unpack_from('<i',model,96)[0]
                     tags={model[offset+i*112:offset+i*112+64].split(b'\0')[0].decode():struct.unpack_from('<3f',model,offset+i*112+64) for i in range(ntags)}
                     eyes=np.array(list(map(int,re.findall(r'OpenXR aim eye positions: left=(-?\d+),(-?\d+),(-?\d+) right=(-?\d+),(-?\d+),(-?\d+)',text)[-1]))).reshape(2,3)
@@ -279,6 +287,11 @@ def main():
                     view_rows=re.findall(r'OpenXR weapon view: eye=(\d) pos=[^\n]*? quat=([^ ]+) fov=([^\n]+)\.',text)
                     views={int(index):(np.fromstring(quat,sep=','),np.fromstring(fov,sep=','))
                            for index,quat,fov in view_rows}
+                    view_positions={int(index):np.fromstring(pos,sep=',') for index,pos in re.findall(
+                        r'OpenXR weapon view: eye=(\d) pos=([^ ]+) quat=',text)}
+                    mount_errors=[]
+                    mount_poses={int(i):(int(h),np.fromstring(g,sep=','),np.fromstring(q,sep=',')) for i,h,g,q in re.findall(
+                        r'OpenXR pistol mount pose: eye=(\d) hand=(\d) grip=([^ ]+) aim=([^\n]+)\.',text)}
                     for eye in ('left','right'):
                         index=('left','right').index(eye)
                         before=np.array(Image.open(cl/f'model-before-{eye}.ppm'))
@@ -304,6 +317,19 @@ def main():
                         expected=expected_projection(eye_world,eyes[index],root_position,fov)
                         actual=projections[index]@matrices[index]@np.array([*tags['tag_muzzle'],1])
                         projection_errors.append(float(np.abs(actual[:2]/actual[3]-expected).max()))
+                        if a.palm_mount:
+                            # Expected points come from the supplied runtime pose
+                            # and the actual asset, never the adapter's shot root.
+                            from floating_hands_check import _project
+                            mount_hand,grip,aim=mount_poses[index]
+                            checks['mount_uses_selected_hand']=mount_hand==int(a.aim_hand=='right')
+                            palm=np.array(tags['tag_palm_'+a.aim_hand])
+                            delta=np.array(tags['tag_muzzle'])-palm
+                            muzzle=grip+rotation(aim)@np.array((delta[1],delta[2],-delta[0]))/64
+                            for tag,point in ((palm,grip),(tags['tag_muzzle'],muzzle)):
+                                expected=_project(rotation(view_quaternion).T@(point-view_positions[index]),fov)
+                                actual=projections[index]@matrices[index]@np.array([*tag,1])
+                                mount_errors.append(float(np.abs(actual[:2]/actual[3]-expected).max()))
                         # Three five-centimetre offsets independently qualify
                         # orientation, tracked roll and scale, beyond the pivot.
                         for axis,physical in enumerate(physical_axes):
@@ -320,6 +346,9 @@ def main():
                     checks['stereo_model_has_parallax']=bounds[0]!=bounds[1]
                     checks['muzzle_matches_independent_physical_stereo_projection']=max(projection_errors)<2e-5
                     checks['physical_model_axes_scale_and_roll_match']=max(axis_errors)<2e-5
+                    if a.palm_mount:
+                        checks['palm_and_muzzle_match_independent_runtime_pose']=max(mount_errors)<.008
+                        details['palm_mount_projection_NDC_errors']=mount_errors
                     if a.model_mode=='sps':
                         checks['same_frame_native_inputs_identical']='OpenXR hand model oracle inputs: identical=1.' in text
                         checks['same_frame_native_model_color_depth_exact']=all(
@@ -398,8 +427,15 @@ def main():
             if a.floating_hands and a.case!='second-eye-failure' and a.fault!='replay-after':
                 from floating_hands_check import exercise
                 phase='actual floating grip models'
-                details['floating_hands']=exercise(co,remote,cl)
+                before_motion=players(co.text(),player)[-1]
+                details['floating_hands']=exercise(co,remote,cl,a.mount_motion)
                 checks.update(details['floating_hands']['checks'])
+                if a.mount_motion:
+                    from pistol_mount_check import contacts
+                    details['mount_motion']=contacts(co.text(),model_file)
+                    checks.update(details['mount_motion']['checks'])
+                    after_motion=players(co.text(),player)[-1]
+                    checks['native_body_moved_during_mount_measurement']=sum(abs(after_motion[k]-before_motion[k]) for k in ('x','y'))>20
                 if a.hands_same_model:
                     both=[c['hands'] for c in details['floating_hands']['captures'].values() if c['mask']==3]
                     checks['same_native_model_object_has_two_distinct_instances']=bool(both) and all(h[0]['model']==h[1]['model'] for h in both)
@@ -408,7 +444,7 @@ def main():
                 if not window:raise RuntimeError('owned XR drawable missing')
                 state=x11.window_visibility(window)
                 checks.update(private_drawable_unmapped=state['unmapped'],no_desktop_focus=not state['has_desktop_focus'])
-            result={'passed':all(checks.values()),'case':a.case,'model_mode':a.model_mode,'vertex_mode':a.vertex_mode,'fault':a.fault,'receipt_fault':a.receipt_fault,'checks':checks,**details}
+            result={'passed':all(checks.values()),'case':a.case,'model_mode':a.model_mode,'vertex_mode':a.vertex_mode,'fault':a.fault,'receipt_fault':a.receipt_fault,'palm_mount':a.palm_mount,'aim_hand':a.aim_hand,'checks':checks,**details}
     except Exception as exc:
         result={'passed':False,'case':a.case,'phase':phase,'error':str(exc)}
     finally:
@@ -416,7 +452,7 @@ def main():
         for log in logs:log.close()
     result['evidence_directory']=str(root)
     result['sha256']={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in
-        (a.binary.resolve(),a.client_binary.resolve(),a.model_root.resolve()/'duke_assets/pistol.md3',a.model_root.resolve()/'duke_assets/pistol.png')}
+        (a.binary.resolve(),a.client_binary.resolve(),model_file,a.model_root.resolve()/'duke_assets/pistol.png')}
     (root/'result.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps(result,indent=2))
     return 0 if result['passed'] else 1

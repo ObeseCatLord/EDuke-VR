@@ -6,6 +6,9 @@ named positive frames can follow its native counter as described below. The
 full AA arsenal attachment, complete firing effects and headset fitting
 remain incomplete. Independent tracked floating hands are now implemented; see
 [FLOATING_HANDS.md](FLOATING_HANDS.md). Exported art is not runtime qualification.
+The standard pistol also has experimental measured palm/muzzle calibration;
+see [PISTOL_MOUNT.md](PISTOL_MOUNT.md) for native firing proof and the measured
+remaining hand/gun separation during motion.
 
 ## Native boundary
 

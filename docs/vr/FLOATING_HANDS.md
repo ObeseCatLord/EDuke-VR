@@ -6,8 +6,9 @@ model eligibility, including AA 5.66. Each hand is opt-in through a native DEF
 tile binding. They do not alter gameplay, multiplayer packets, native CON,
 weapon timing, or the projected aiming crosshair.
 
-This does **not** complete weapon attachment. The current qualified pistol is
-muzzle-anchored and its grip does not yet fit the controller. Native weapon ART
+This does **not** complete weapon attachment. Experimental pistol palm/muzzle
+calibration is described in [PISTOL_MOUNT.md](PISTOL_MOUNT.md); it measures a
+remaining temporal gap between current hands and the sampled gun. Native weapon ART
 can include additional hands, especially AA reload hand 2532; it remains visible
 until its own replacement is qualified. These are independent floating hands,
 not a full-body or hand-tracking/IK implementation.

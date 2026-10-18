@@ -74,6 +74,25 @@ static uint64_t worldGeneration;
 static eduke_xr::Runtime *pendingRuntime, *inputRuntime;
 static eduke_xr::Runtime::Frame pendingFrame;
 static uint64_t pendingGeneration, inputGeneration;
+// Local presentation data for the same native sample as the serialized shot.
+// Roll is not gameplay/network state; the server continues to need only the ray.
+struct PistolMountSample
+{
+    eduke_xr::Runtime *runtime=nullptr;
+    uint64_t generation=0;
+    int player=-1, hand=-1, model=-1;
+    XRPistolFamily family=XRPistolFamily::Unsupported;
+    VRShotInput shot{};
+    XrVector3f right{};
+    XrPosef aim{}, grip{}; // Input provenance for opt-in calibration diagnostics.
+};
+static PistolMountSample pistolMount;
+
+bool pistolMountRequested()
+{
+    auto value=std::getenv("EDUKE32_XR_PISTOL_MOUNT");
+    return value && !Bstrcmp(value,"1");
+}
 static bool worldDrawArmed;
 static eduke_xr::Runtime *presentationRuntime;
 static uint64_t presentationGeneration;
@@ -549,13 +568,23 @@ bool prepareHandModel(HandModelSample &sample)
     float length=std::sqrt(dot(forward,forward));
     if (!(length>0.f)) return false;
     forward={forward.x/length,forward.y/length,forward.z/length};
-    // Keep roll from the tracked sample, but orthogonalize against the stored
-    // authoritative direction. Never combine its root with a different aim ray.
+    // A mounted muzzle includes roll in its positional offset. Keep that roll
+    // from the *same* native input sample, not a newer rendering-frame pose.
     auto const p=g_player[myconnectindex].ps;
     float const yaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset, co=std::cos(yaw), si=std::sin(yaw);
     auto const tracking=multiply(pitchRoll(nativePitch(p->q16horiz)-aimPitchOffset,gtang),inverseYaw);
     auto const r=rotate(multiply(tracking,rawInput.hands[aimHand()].aimPose.orientation),{1,0,0});
     XrVector3f right={-r.z*co-r.x*si,-r.z*si+r.x*co,r.y};
+    if (pistolMountRequested())
+    {
+        if (pistolMount.runtime!=inputRuntime || pistolMount.generation!=inputGeneration
+            || pistolMount.player!=myconnectindex || pistolMount.hand!=aimHand()
+            || pistolMount.model!=sample.context.modelid || pistolMount.family!=P_XRPistolFamily()
+            || pistolMount.shot.flags!=sample.shot.flags
+            || Bmemcmp(pistolMount.shot.offset,sample.shot.offset,sizeof(sample.shot.offset))
+            || Bmemcmp(pistolMount.shot.direction,sample.shot.direction,sizeof(sample.shot.direction))) return false;
+        right=pistolMount.right;
+    }
     float const along=dot(right,forward);
     right={right.x-forward.x*along,right.y-forward.y*along,right.z-forward.z*along};
     length=std::sqrt(dot(right,right));
@@ -677,6 +706,7 @@ static bool pistolReceiptComplete()
 
 void G_XRResetAim(int playerNum)
 {
+    if (playerNum==myconnectindex) pistolMount={};
     if (playerNum!=myconnectindex || aimHand()==-2) return;
     aimYawOffset=aimPitchOffset=0;
     aimPoseWasValid=false;
@@ -729,6 +759,7 @@ void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
 void G_XRUpdateShotInput()
 {
     VRShotInput input;
+    pistolMount={};
     // A live session with temporarily lost tracking remains fail-closed.
     // Terminal initialization/presentation failure returns to native flat
     // controls, so an invalid hand pose must not suppress keyboard fire there.
@@ -744,11 +775,32 @@ void G_XRUpdateShotInput()
             float const co=std::cos(bodyYaw), si=std::sin(bodyYaw);
             auto const tracking=multiply(pitchRoll(nativePitch(p->q16horiz)-aimPitchOffset,gtang),inverseYaw);
             auto const &pose=rawInput.hands[hand].aimPose;
-            auto const local=rotate(tracking,{pose.position.x-origin.x,pose.position.y-origin.y,pose.position.z-origin.z});
+            XrVector3f position=pose.position;
+            auto const family=pistolMountRequested() ? P_XRPistolFamily() : XRPistolFamily::Unsupported;
+            int model=-1;
+            bool calibrated=true;
+            if (family!=XRPistolFamily::Unsupported)
+            {
+                auto const &grip=rawInput.hands[hand];
+                vec3f_t muzzle{}, palm{};
+                // Stable palette-zero DEF metadata; texture, HUD shade and
+                // animation eligibility must never decide a firing origin.
+                model=md_tilehasmodel(FIRSTGUNSPRITE,0);
+                calibrated=grip.gripValid && validPose(grip.gripPose)
+                    && md3_gettagposition(model,"tag_muzzle",&muzzle)
+                    && md3_gettagposition(model,hand ? "tag_palm_right" : "tag_palm_left",&palm);
+                if (calibrated)
+                {
+                    auto const d=rotate(pose.orientation,{(muzzle.y-palm.y)/64.f,
+                                                         (muzzle.z-palm.z)/64.f,-(muzzle.x-palm.x)/64.f});
+                    position={grip.gripPose.position.x+d.x,grip.gripPose.position.y+d.y,grip.gripPose.position.z+d.z};
+                }
+            }
+            auto const local=rotate(tracking,{position.x-origin.x,position.y-origin.y,position.z-origin.z});
             auto const forward=rotate(multiply(tracking,pose.orientation),{0,0,-1});
             float const offsets[3]={(-local.z*co-local.x*si)*UnitsPerMetre,(-local.z*si+local.x*co)*UnitsPerMetre,-local.y*ZUnitsPerMetre};
             float const direction[3]={-forward.z*co-forward.x*si,-forward.z*si+forward.x*co,-forward.y};
-            bool bounded=true;
+            bool bounded=calibrated;
             for (int i=0;i<3;++i)
             {
                 bounded=bounded && std::isfinite(offsets[i]) && std::fabs(offsets[i])<32767.f;
@@ -757,6 +809,25 @@ void G_XRUpdateShotInput()
             }
             input.flags|=VRShotValid;
             if (!bounded || !G_VRValidateShot(input)) { input={}; input.flags=VRShotEnabled; }
+            else if (family!=XRPistolFamily::Unsupported)
+            {
+                auto const r=rotate(multiply(tracking,pose.orientation),{1,0,0});
+                pistolMount={inputRuntime,inputGeneration,myconnectindex,hand,model,family,input,
+                             {-r.z*co-r.x*si,-r.z*si+r.x*co,r.y},pose,rawInput.hands[hand].gripPose};
+                if (std::getenv("EDUKE32_XR_TEST_PISTOL_MOUNT") && p->kickback_pic>0 && p->kickback_pic<=26)
+                {
+                    static unsigned samples;
+                    if (samples++<128)
+                    {
+                        auto const &g=rawInput.hands[hand].gripPose.position;
+                        auto const &q=pose.orientation; auto const &a=pose.position;
+                        LOG_F(INFO,"OpenXR pistol mount input: clock=%u counter=%d hand=%d grip=%.9g,%.9g,%.9g aim=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g origin=%.9g,%.9g,%.9g tracking=%.9g,%.9g,%.9g,%.9g yaw=%.9g offset=%d,%d,%d.",
+                              unsigned(totalclock),p->kickback_pic,hand,g.x,g.y,g.z,q.x,q.y,q.z,q.w,a.x,a.y,a.z,
+                              origin.x,origin.y,origin.z,tracking.x,tracking.y,tracking.z,tracking.w,bodyYaw,
+                              input.offset[0],input.offset[1],input.offset[2]);
+                    }
+                }
+            }
         }
         else if (!Net_VRShotAvailable())
         {
@@ -813,6 +884,7 @@ bool G_XRCrosshairPosition(vec2_t &position)
 
 void G_XRClearInput()
 {
+    pistolMount={};
     VRShotInput shot; if (handShotsRequested()) shot.flags=VRShotEnabled;
     G_VRSetShotInput(myconnectindex,shot);
     for (unsigned hand=0;hand<2;++hand)
@@ -1253,6 +1325,7 @@ void G_XRBeginFrame()
     }
     if (inputRuntime != runtime || inputGeneration != pendingGeneration)
     {
+        pistolMount={};
         activeInputButtons={}; blockedInputButtons={};
         if (aimHand()!=-2)
         {
@@ -1263,6 +1336,7 @@ void G_XRBeginFrame()
     }
     else for (auto const &change:pendingFrame.referenceChanges)
     {
+        pistolMount={};
         if (change.poseValid && validPose(change.poseInPreviousSpace))
         {
             // new->previous is supplied by OpenXR. Move the existing tracking
@@ -1884,6 +1958,12 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                         LOG_F(INFO,"OpenXR hand model: eye=%u model=%d root=%d,%d,%d direction=%d,%d,%d.",i,
                               handModel.context.modelid,handModel.root.x,handModel.root.y,handModel.root.z,
                               handModel.shot.direction[0],handModel.shot.direction[1],handModel.shot.direction[2]);
+                        if (pistolMountRequested())
+                        {
+                            auto const &p=pistolMount.grip.position; auto const &q=pistolMount.aim.orientation;
+                            LOG_F(INFO,"OpenXR pistol mount pose: eye=%u hand=%d grip=%.9g,%.9g,%.9g aim=%.9g,%.9g,%.9g,%.9g.",
+                                  i,pistolMount.hand,p.x,p.y,p.z,q.x,q.y,q.z,q.w);
+                        }
                         float const *a=modelMatrices[i][0];
                         LOG_F(INFO,"OpenXR hand model matrix: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,
                               a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12],a[13],a[14],a[15]);

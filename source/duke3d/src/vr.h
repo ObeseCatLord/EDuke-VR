@@ -16,6 +16,9 @@ struct XRPistolPresentation
     int32_t palette=0, shade=0, counter=0, reloading=0;
     bool alienArmageddon=false;
 };
+enum class XRPistolFamily { Unsupported, Stock, AlienArmageddon };
+// Stable asset identity, independent of HUD appearance and animation counters.
+XRPistolFamily P_XRPistolFamily();
 // Read-only native presentation sample; never advances weapon/animation state.
 bool P_XRPistolPresentation(XRPistolPresentation &sample);
 bool P_XRAAPistolPresentation(XRPistolPresentation &sample);
