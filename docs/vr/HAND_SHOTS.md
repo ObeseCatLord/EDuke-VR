@@ -1,7 +1,7 @@
 # Experimental native hand-shot authority
 
 Updated 2026-10-17. Opt-in `EDUKE32_XR_HAND_SHOTS=1`, with right/left tracked aim.
-Ordinary hardcoded pistol, shotgun, chaingun, grow, RPG, freezer, shrinker and pipebomb use this origin and
+Ordinary hardcoded pistol, shotgun, chaingun, grow, RPG/Devastator, freezer, shrinker and pipebomb use this origin and
 full vector when the selected WorksLike family, configured Shoots tile and actual
 shot tile agree. Custom-projectile replacements are excluded by the same shared
 firing/card/crosshair predicate. Other weapons retain their native firing paths.
@@ -16,8 +16,9 @@ axes. The native player position/angle remain authoritative; no absolute second
 body or temporary player-struct replacement is maintained.
 
 The movement layouts `input_t=20`, `playerupdate_t=56`, and `clientupdate_t=81`
-retain their sizes, enforced by compile-time assertions. Native `NETVERSION=2`
-adds three existing weapon-state bytes to each server player record: `hbomb_on`,
+retain their sizes, enforced by compile-time assertions. Native `NETVERSION=3`
+includes the three weapon-state bytes added to server player records in
+revision2: `hbomb_on`,
 `hbomb_hold_delay`, and `rapid_fire_hold`, beside `kickback_pic`. All peers must
 use this version; older-peer compatibility is not required. This repairs an
 observed native skipped-commit snapshot failure, rather than creating a second
@@ -43,8 +44,8 @@ Ordinary flat clients continue sending native packets even when upgraded.
 The existing progressive capability exchange is retained: mask1 then3 then7
 then15 on the same reliable channel. Capabilities never downgrade during a
 connection. Bit4 promises only freezer/shrinker; bit8 promises only native
-handbombs. All current peers use NETVERSION2; the earlier capability scheme
-is not a promise of connectivity to pre-version2 binaries. Server firing gates
+handbombs. All current peers use NETVERSION3; the earlier capability scheme
+is not a promise of connectivity to older binaries. Server firing gates
 each family by the authenticated peer's mask. Client input/card availability
 uses the selected weapon's required feature; a valid pose alone grants no
 additional weapon capability.
@@ -259,3 +260,21 @@ mode entirely allowed an in-flight native Use+Fire input through the first
 post-respawn filter; the strengthened PvP harness caught that input even though
 weapon raising prevented a shot in the observed run. Join/disconnect/global
 map reset still clear the whole sample. No new replicated latch is added.
+
+
+## Devastator
+
+The native Devastator reuses RPG feature1, including the physical vector,
+autoaim/CON precedence and actor movement. Its alternating native muzzle offsets
+are applied to the constrained hand root and resolved before tracked insertion;
+native spread,
+damage/size and burst/event/ammo policy remain. Lost tracking cancels the
+existing delayed counter before ammo can be spent on rejected actors. See
+[DEVASTATOR.md](DEVASTATOR.md) for the actual negative/positive CPU-native
+multiplayer evidence, unchanged flat reference and reproduction. Graphics/model
+attachment and headset qualification remain open during the GPU hold.
+
+Network revision3 advances the existing version guard because feature1 now
+promises tracked Devastator as well as ordinary RPG. A revision2 server could
+accept the same tail yet use a body origin for Devastator. Requiring the new
+build prevents that semantic mismatch; the revision adds no packet fields.

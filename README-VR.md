@@ -517,3 +517,13 @@ The private sibling Duke/weapon asset package is complete as an art deliverable;
 native loading, controller binding, animated grip/muzzle and full-body integration
 remain separate work. Native MD3 rendering currently uses the reference fallback,
 so this does not establish model single-pass coverage or a complete VR port.
+
+
+The native tracked **Devastator** now reuses the RPG path, retaining native
+barrel alternation/spread, reduced damage/size and delayed bursts. CPU-native
+multiplayer tests cover hand vectors, final muzzle clearance, vertical flight,
+tracking-loss cancellation, native actors and replicated damage; the flat
+projectile/random-state reference matches. See [DEVASTATOR.md](docs/vr/DEVASTATOR.md).
+Native network revision3 requires matching builds for the expanded RPG
+capability; no packet fields are added. Devastator graphics/headset/model attachment is
+not yet qualified; GPU testing remains on hold after the recorded driver errors.

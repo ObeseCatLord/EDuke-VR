@@ -93,7 +93,7 @@ uint8_t G_VRHandShotFeature(int player, int tile)
         case SHOTGUN__: return works==SHOTGUN_WEAPON ? VRShotFeatureHitscan : 0;
         case CHAINGUN__: return works==CHAINGUN_WEAPON ? VRShotFeatureHitscan : 0;
         case GROWSPARK__: return works==GROW_WEAPON ? VRShotFeatureHitscan : 0;
-        case RPG__: return works==RPG_WEAPON ? VRShotFeatureRPG : 0;
+        case RPG__: return (works==RPG_WEAPON || works==DEVISTATOR_WEAPON) ? VRShotFeatureRPG : 0;
         case FREEZEBLAST__: return works==FREEZE_WEAPON ? VRShotFeatureFreezeShrink : 0;
         case SHRINKER__: return works==SHRINKER_WEAPON ? VRShotFeatureFreezeShrink : 0;
         case HEAVYHBOMB__: return works==HANDBOMB_WEAPON ? VRShotFeatureHandBomb : 0;
@@ -119,7 +119,7 @@ void G_VRFilterShotInput(int player, input_t &input)
     { input.bits &= ~BIT(SK_FIRE); input.extbits &= ~BIT(EK_ALT_FIRE); }
 }
 
-bool G_VRResolveShot(int player, vec3_t &position, int16_t &sect, bool &clamped)
+bool G_VRResolveShot(int player, vec3_t &position, int16_t &sect, bool &clamped, vec3_t const *muzzlePosition)
 {
     clamped=false;
     if (!G_VRShotReady(player)) return false;
@@ -129,12 +129,15 @@ bool G_VRResolveShot(int player, vec3_t &position, int16_t &sect, bool &clamped)
     int64_t const anchorZ=int64_t(p->pos.z)+p->pyoff;
     if (anchorZ<INT32_MIN || anchorZ>INT32_MAX) return false;
     vec3_t const anchor={p->pos.x,p->pos.y,int32_t(anchorZ)};
-    vec3_t const delta={input.offset[0],input.offset[1],input.offset[2]};
+    int64_t const requested[3]={muzzlePosition ? int64_t(muzzlePosition->x)-anchor.x : input.offset[0],
+                                muzzlePosition ? int64_t(muzzlePosition->y)-anchor.y : input.offset[1],
+                                muzzlePosition ? int64_t(muzzlePosition->z)-anchor.z : input.offset[2]};
     for (int i=0;i<3;++i)
     {
-        int64_t const sum=int64_t(i==0 ? anchor.x : i==1 ? anchor.y : anchor.z)+input.offset[i];
-        if (sum<INT32_MIN || sum>INT32_MAX) return false;
+        int64_t const sum=int64_t(i==0 ? anchor.x : i==1 ? anchor.y : anchor.z)+requested[i];
+        if (requested[i]<INT32_MIN || requested[i]>INT32_MAX || sum<INT32_MIN || sum>INT32_MAX) return false;
     }
+    vec3_t const delta={int32_t(requested[0]),int32_t(requested[1]),int32_t(requested[2])};
     position={anchor.x+delta.x,anchor.y+delta.y,anchor.z+delta.z};
     int16_t const bodySector=p->cursectnum;
     if (unsigned(bodySector)>=unsigned(numsectors)) return false;

@@ -231,8 +231,9 @@ User clarified that EDuke32's existing multiplayer is the foundation and older
 peers are not required. Focus further qualification on current-build combat,
 frag/respawn, map changes/late joins, loss and independent VR peers. Retain
 existing bounded protocol work without spending further milestones on legacy
-compatibility. Remaining weapon families include Devastator (real native
-twin-barrel/spread policy), thrown explosives, tripmine, melee and flames.
+compatibility. Tracked pipebombs and the native Devastator adapter now exist;
+Devastator graphics/headset qualification remains pending. Remaining weapon
+implementation families include tripmine, melee and World Tour flames.
 
 
 ## World-space crosshair follow-through
@@ -274,3 +275,10 @@ full-body/controller/native-model integration remains pending, as do complete
 SPS coverage, remaining weapons, unrestricted view/collision behavior, physical
 headsets and independent VR peers/WAN. No model or packet scaffold qualifies
 those user-observable milestones by itself.
+
+The next CPU-native slice qualifies Devastator's existing RPG actor and burst
+policy, including demonstrated final-barrel clearance and lost-source ammo
+corrections. No new pose protocol, actor simulation or weapon state machine.
+Details, baseline comparison and explicit transient-snapshot limits are in
+DEVASTATOR.md. Continue with native melee/tripmine paths and model integration;
+GPU/headset acceptance is still required before declaring the full port done.

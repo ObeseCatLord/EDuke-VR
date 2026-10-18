@@ -1556,8 +1556,24 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
 
             if (tracked) P_HandProjectileVelocity(playerNum,j,644,shootAng,vel,Zvel);
             Zvel=A_GetShootZvel(Zvel);
-            vec3_t const spawn=tracked ? startPos : vec3_t{startPos.x+(sintable[(348+shootAng+512)&2047]/448),
-                                                          startPos.y+(sintable[(shootAng+348)&2047]/448),startPos.z-(1<<8)};
+            bool const trackedDevastator=tracked && playerNum>=0 && PWEAPON(playerNum,pPlayer->curr_weapon,WorksLike)==DEVISTATOR_WEAPON;
+            vec3_t spawn=tracked ? startPos : vec3_t{startPos.x+(sintable[(348+shootAng+512)&2047]/448),
+                                                    startPos.y+(sintable[(shootAng+348)&2047]/448),startPos.z-(1<<8)};
+            if (trackedDevastator)
+            {
+                // Preserve native alternating barrels, but include the final
+                // offset in collision resolution instead of moving a safe
+                // projectile centre back into a wall after insertion.
+                vec2_t const muzzle=pPlayer->hbomb_hold_delay
+                    ? vec2_t{-sintable[shootAng&2047]/644,-sintable[(shootAng+1536)&2047]/644}
+                    : vec2_t{sintable[shootAng&2047]>>8,sintable[(shootAng+1536)&2047]>>8};
+                int64_t const muzzleX=int64_t(startPos.x)+muzzle.x, muzzleY=int64_t(startPos.y)+muzzle.y;
+                if (muzzleX<INT32_MIN || muzzleX>INT32_MAX || muzzleY<INT32_MIN || muzzleY>INT32_MAX) return -1;
+                vec3_t const requestedMuzzle={int32_t(muzzleX),int32_t(muzzleY),startPos.z};
+                bool muzzleClamped=false;
+                if (!G_VRResolveShot(playerNum,spawn,originSector,muzzleClamped,&requestedMuzzle)) return -1;
+                clamped=clamped || muzzleClamped;
+            }
             if (tracked && projecTile==RPG && std::getenv("EDUKE32_XR_TEST_SHOTS"))
                 LOG_F(INFO,"VR authoritative RPG: player=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d.",
                       playerNum,spawn.x,spawn.y,spawn.z,originSector,clamped,shootAng,vel,Zvel);
@@ -1616,15 +1632,18 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
                 pReturn->ang += 16 - (krand() & 31);
                 pReturn->zvel += 256 - (krand() & 511);
 
-                if (g_player[playerNum].ps->hbomb_hold_delay)
+                if (!tracked)
                 {
-                    pReturn->x -= sintable[shootAng & 2047] / 644;
-                    pReturn->y -= sintable[(shootAng + 1024 + 512) & 2047] / 644;
-                }
-                else
-                {
-                    pReturn->x += sintable[shootAng & 2047] >> 8;
-                    pReturn->y += sintable[(shootAng + 1024 + 512) & 2047] >> 8;
+                    if (pPlayer->hbomb_hold_delay)
+                    {
+                        pReturn->x -= sintable[shootAng & 2047] / 644;
+                        pReturn->y -= sintable[(shootAng + 1024 + 512) & 2047] / 644;
+                    }
+                    else
+                    {
+                        pReturn->x += sintable[shootAng & 2047] >> 8;
+                        pReturn->y += sintable[(shootAng + 1024 + 512) & 2047] >> 8;
+                    }
                 }
                 pReturn->xrepeat >>= 1;
                 pReturn->yrepeat >>= 1;
@@ -2221,8 +2240,19 @@ void P_SetWeaponGamevars(int playerNum, const DukePlayer_t * const pPlayer)
               pPlayer->i, playerNum);
 }
 
+static bool P_HandWeaponBlocked(int playerNum)
+{
+    uint8_t const feature=G_VRHandShotFeature(playerNum);
+    return feature && G_VRShotEnabled(playerNum)
+        && (!Net_VRShotAvailable(playerNum,feature) || !G_VRShotCanFire(playerNum));
+}
+
 static void P_FireWeapon(int playerNum)
 {
+    // Animation/delayed fire can outlive the input that started it. An invalid
+    // tracked source cannot consume ammo or queue another native burst.
+    if (P_HandWeaponBlocked(playerNum)) return;
+
     auto const pPlayer = g_player[playerNum].ps;
 
     if (VM_OnEvent(EVENT_DOFIRE, pPlayer->i, playerNum) || pPlayer->weapon_pos != 0)
@@ -4465,6 +4495,10 @@ static void P_ProcessWeapon(int playerNum)
 #endif
     }
 
+    // Cancel only the existing native delayed burst on lost hand readiness.
+    // Otherwise it consumes ammo before A_Shoot rejects each stale projectile.
+    if (actor[pPlayer->i].t_data[7] && P_HandWeaponBlocked(playerNum))
+        actor[pPlayer->i].t_data[7]=0;
     // this is a hack for WEAPON_FIREEVERYOTHER
     if (actor[pPlayer->i].t_data[7])
     {

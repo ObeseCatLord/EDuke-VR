@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// CPU/native hand weapon observations. Real GAME.CON, fire, actors and damage.
+include controller_test.con
+
+gamevar vrw_weapon 7 0
+gamevar vrw_given 0 1
+gamevar vrw_player 0 1
+gamevar vrw_pre 0 1
+gamevar vrw_post 0 1
+gamevar vrw_tick 0 1
+gamevar vrw_ammo 0 1
+gamevar vrw_frame 0 1
+gamevar vrw_hold 0 1
+gamevar vrw_pending 0 1
+gamevar vrw_bits 0 1
+gamevar vrw_health 0 1
+gamevar vrw_gm 0 1
+gamevar vrw_psindex 0 1
+gamevar vrw_x 0 1
+gamevar vrw_y 0 1
+gamevar vrw_z 0 1
+onevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrw_player
+    setplayer[THISACTOR].auto_aim 0
+    ifvare vrw_given 0
+    {
+        setplayer[THISACTOR].gotweapon vrw_weapon 1
+        setplayer[THISACTOR].ammo_amount vrw_weapon 40
+        setplayer[THISACTOR].curr_weapon vrw_weapon
+        setplayer[THISACTOR].last_weapon -1
+        setplayer[THISACTOR].weapon_pos 0
+        setplayer[THISACTOR].knuckle_incs 0
+        setplayer[THISACTOR].kickback_pic 0
+        setplayer[THISACTOR].hbomb_hold_delay 0
+        setactor[THISACTOR].extra 240
+        setplayer[THISACTOR].last_extra 240
+        setplayer[THISACTOR].posx 1024
+        setplayer[THISACTOR].oposx 1024
+        setactor[THISACTOR].x 1024
+        setplayer[THISACTOR].posy 4096
+        setplayer[THISACTOR].oposy 4096
+        setactor[THISACTOR].y 4096
+        ifvare vrw_player 0
+        {
+            setplayer[THISACTOR].posx 7600
+            setplayer[THISACTOR].oposx 7600
+            setactor[THISACTOR].x 7600
+            setplayer[THISACTOR].posy 5500
+            setplayer[THISACTOR].oposy 5500
+            setactor[THISACTOR].y 5500
+            setplayer[THISACTOR].cursectnum 1
+            changespritesect THISACTOR 1
+        }
+        setplayer[THISACTOR].q16ang 0
+        setplayer[THISACTOR].oq16ang 0
+        setplayer[THISACTOR].q16horiz 6553600
+        setplayer[THISACTOR].oq16horiz 6553600
+        setvar vrw_given 1
+    }
+    setvarvar vrw_tick totalclock
+    getplayer[THISACTOR].ammo_amount vrw_weapon vrw_ammo
+    getplayer[THISACTOR].kickback_pic vrw_frame
+    getplayer[THISACTOR].hbomb_hold_delay vrw_hold
+    getactor[THISACTOR].htg_t 7 vrw_pending
+    getinput[THISACTOR].bits vrw_bits
+    getactor[THISACTOR].extra vrw_health
+    getplayer[THISACTOR].gm vrw_gm
+    getplayer[THISACTOR].i vrw_psindex
+    getplayer[THISACTOR].posx vrw_x
+    getplayer[THISACTOR].posy vrw_y
+    getplayer[THISACTOR].posz vrw_z
+    addlog vrw_tick
+    addlog vrw_player
+    addlog vrw_ammo
+    addlog vrw_frame
+    addlog vrw_hold
+    addlog vrw_pending
+    addlog vrw_bits
+    addlog vrw_health
+    addlog vrw_gm
+    addlog vrw_psindex
+    addlog vrw_x
+    addlog vrw_y
+    addlog vrw_z
+endevent
+onevent EVENT_PREWEAPONSHOOT
+    addvar vrw_pre 1
+    // Controlled script seed on both reference/current: observe native random
+    // policy and final seed without comparing startup-time-dependent draws.
+    setvar randomseed 24681357
+    addlog vrw_pre
+endevent
+
+gamevar vrw_index 0 0
+gamevar vrw_tile 0 0
+gamevar vrw_owner 0 0
+gamevar vrw_shooter 0 0
+gamevar vrw_sector 0 0
+gamevar vrw_stat 0 0
+gamevar vrw_px 0 0
+gamevar vrw_py 0 0
+gamevar vrw_pz 0 0
+gamevar vrw_angle 0 0
+gamevar vrw_speed 0 0
+gamevar vrw_zvel 0 0
+gamevar vrw_size 0 0
+gamevar vrw_damage 0 0
+gamevar vrw_clock 0 0
+gamevar vrw_phase 0 0
+gamevar vrw_seed 0 0
+defstate vrw_observe
+    getactor[vrw_index].picnum vrw_tile
+    ifvare vrw_tile RPG
+    {
+        getactor[vrw_index].sectnum vrw_sector
+        getactor[vrw_index].statnum vrw_stat
+        ifvarl vrw_sector 2
+        ifvare vrw_stat 4
+        {
+            getactor[vrw_index].owner vrw_owner
+            getactor[vrw_owner].yvel vrw_shooter
+            getactor[vrw_index].x vrw_px
+            getactor[vrw_index].y vrw_py
+            getactor[vrw_index].z vrw_pz
+            getactor[vrw_index].ang vrw_angle
+            getactor[vrw_index].xvel vrw_speed
+            getactor[vrw_index].zvel vrw_zvel
+            getactor[vrw_index].xrepeat vrw_size
+            getactor[vrw_index].extra vrw_damage
+            setvarvar vrw_clock totalclock
+            setvarvar vrw_seed randomseed
+            addlog vrw_index
+            addlog vrw_tile
+            addlog vrw_owner
+            addlog vrw_shooter
+            addlog vrw_sector
+            addlog vrw_px
+            addlog vrw_py
+            addlog vrw_pz
+            addlog vrw_angle
+            addlog vrw_speed
+            addlog vrw_zvel
+            addlog vrw_size
+            addlog vrw_damage
+            addlog vrw_clock
+            addlog vrw_seed
+            addlog vrw_phase
+        }
+    }
+ends
+onevent EVENT_POSTWEAPONSHOOT
+    addvar vrw_post 1
+    addlog vrw_post
+    setvarvar vrw_index RETURN
+    ifvarg vrw_index -1
+    ifvarl vrw_index 16384
+    {
+        setvar vrw_phase 1
+        state vrw_observe
+    }
+endevent
+onevent EVENT_GAME
+    ifactor RPG
+    {
+        setvarvar vrw_index THISACTOR
+        setvar vrw_phase 2
+        state vrw_observe
+    }
+endevent
+
+gamevar vrw_expl 0 0
+gamevar vrw_expowner 0 0
+gamevar vrw_exptile 0 0
+onevent EVENT_EGS
+    ifactor EXPLOSION2
+    {
+        getactor[THISACTOR].owner vrw_expowner
+        getactor[vrw_expowner].picnum vrw_exptile
+        ifvare vrw_exptile RPG
+        {
+            addvar vrw_expl 1
+            addlog vrw_expl
+        }
+    }
+endevent

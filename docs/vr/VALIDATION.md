@@ -901,3 +901,22 @@ CPU final SHA256:15f89b10d99d521b845db6d02ca7d4928dcae997d278a89d51ba3459b4b9f00
 The CPU25check map matrix and XR-shooter24check run precede only this final
 respawn-mode preservation; flat reset remains identical. Reference/fallback/
 minimize tests precede it too; their rendering/calibration source is unchanged.
+
+
+## CPU-native Devastator continuation
+
+[DEVASTATOR.md](DEVASTATOR.md) records the incremental adapter, actual native
+negative cases (unsafe post-insert barrel offset and lost-burst ammo), the five
+passing final scenarios, unchanged flat projectile/random-state comparison,
+CPU pipebomb regression, and limits for very short-lived native actors. All
+activity in this slice uses a GPU-denied CPU process namespace. Native/XR/CPU
+builds compile; current Devastator graphics/model/headset behavior is unverified.
+The earlier GPU hold remains in force; no Monado/GPU application was started.
+
+Final native revision3 builds pass, with final-source CPU cases
+`work/devastator-{flat,tracked,wall,vertical,loss}-net3.json`:77checks total,
+including native F12 frames before/after firing in the tracked case.
+`work/devastator-protocol3-rejection.json` additionally proves that the existing
+authentication version guard rejects a real prior revision2 executable before
+gameplay. Revision3 changes the feature1 promise to include Devastator; it adds
+no packet fields. Older-peer compatibility is not required.

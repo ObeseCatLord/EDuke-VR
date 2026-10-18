@@ -36,7 +36,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 bool Net_VRShotAvailable(int player=-1, uint8_t feature=0);
 
 // net packet specification/compatibility version
-#define NETVERSION    2
+#define NETVERSION    3
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;

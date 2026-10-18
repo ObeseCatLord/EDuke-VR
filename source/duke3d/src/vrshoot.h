@@ -31,4 +31,5 @@ bool G_VRShotCanFire(int player);
 void G_VRBlockShot(int player);
 void G_VRFilterShotInput(int player, input_t &input);
 // Revalidated on both client and authoritative server. Never move player state.
-bool G_VRResolveShot(int player, vec3_t &position, int16_t &sector, bool &clamped);
+// An optional native muzzle point is constrained from the same body anchor.
+bool G_VRResolveShot(int player, vec3_t &position, int16_t &sector, bool &clamped, vec3_t const *muzzlePosition=nullptr);
