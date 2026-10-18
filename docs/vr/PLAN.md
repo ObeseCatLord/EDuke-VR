@@ -1,9 +1,10 @@
 # EDuke32 VR port plan
 
-Status: experimental Linux OpenXR port with bounded ART multiview, native controller input and bounded native weapon/HUD/menu presentation; **not a completed VR port**. Updated 2026-10-17. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
+Status: experimental Linux OpenXR port with bounded ART multiview, native controller input and bounded native weapon/HUD/menu presentation; **not a completed VR port**. Updated 2026-10-18. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
 
 ## Current implementation checkpoint
 
+- Submitted-frame mounted pistol/holding-hand collision and recovery now pass for both aim hands, including same-root world reticle, native/SPS color/depth and actual paired replay. See PISTOL_MOUNT.md. AA's first production world blocker is now identified as its truecolor fogged tile89 skybox; the reviewed minimal packet/fog extension and required proof are in AA_SKYBOX_SPS.md. That extension is planned, not yet implemented.
 - Runtime foundation and actual EDuke-context single-pass diagnostic pass.
 - First ordinary Polymost room renders to two exact XR eye layers using a two-pass reference transaction; 60-frame E1L1 captures pass.
 - The native world snapshot payload bug is corrected. A native dedicated server plus XR client passes join and replacement/reconnect, with 60 stereo frames/readbacks per join and visible gameplay input changes.

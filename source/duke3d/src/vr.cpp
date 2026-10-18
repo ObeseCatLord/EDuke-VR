@@ -145,6 +145,7 @@ static struct
     float matrix[2][16]; vec3_t eye[2]; bool valid=false;
     Camera body{};
     PistolVisual pistol{};
+    std::string diagnosticCrosshairPrefix;
 } crosshairViews;
 static eduke_xr::ActionInput rawInput;
 static std::array<uint32_t,2> activeInputButtons{}, blockedInputButtons{};
@@ -1144,12 +1145,14 @@ void G_XREndWeapon(bool captured)
     { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
 }
 
-static bool crosshairCaptureFrame()
+static char const *crosshairCapturePrefix()
 {
     // Explicit diagnostic frame selection lets native mod entry finish before
     // readback. It never changes simulation or crosshair presentation timing.
     auto const requested=std::getenv("EDUKE32_XR_CROSSHAIR_FRAME");
-    return worldFrames+1==(requested ? std::strtoull(requested,nullptr,10) : 60);
+    if (!crosshairViews.diagnosticCrosshairPrefix.empty()) return crosshairViews.diagnosticCrosshairPrefix.c_str();
+    return worldFrames+1==(requested ? std::strtoull(requested,nullptr,10) : 60)
+        ? std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT") : nullptr;
 }
 
 bool G_XRBeginCrosshair()
@@ -1164,8 +1167,7 @@ bool G_XRBeginCrosshair()
     if (!menuRuntime->flushMenuOverlay(panel,eduke_xr::PanelHalfWidth,eduke_xr::PanelHalfWidth*float(ydim)/xdim,
                                        rawInput.headValid && validPose(rawInput.headPose),error))
     { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
-    if (crosshairCaptureFrame())
-        if (auto prefix=std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT"))
+    if (auto prefix=crosshairCapturePrefix())
         {
             std::string before=std::string(prefix)+"-before";
             if (!menuRuntime->captureFrame(before.c_str(),false,error,true))
@@ -1286,7 +1288,7 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
                 for (int row=0;row<4;++row)
                     for (int k=0;k<4;++k) matrices[eye][column*4+row]+=m[k*4+row]*columns[column][k];
         }
-        if (crosshairCaptureFrame() && std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT"))
+        if (crosshairCapturePrefix())
         {
             LOG_F(INFO,"OpenXR world crosshair: start=%d,%d,%d hit=%d,%d,%d sector=%d wall=%d sprite=%d point=%.6f,%.6f,%.6f.",
                   start.x,start.y,start.z,hit.x,hit.y,hit.z,hit.sect,hit.wall,hit.sprite,point.x,point.y,point.z);
@@ -1297,7 +1299,7 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
                       matrices[eye][8],matrices[eye][9],matrices[eye][10],matrices[eye][11],matrices[eye][12],matrices[eye][13],matrices[eye][14],matrices[eye][15]);
         }
     }
-    char const *prefix=crosshairCaptureFrame() ? std::getenv("EDUKE32_XR_CROSSHAIR_OUTPUT") : nullptr;
+    char const *prefix=crosshairCapturePrefix();
     std::string error;
     if (!menuRuntime->flushMenuOverlay(unused,1,1,visible,error,prefix,&matrices[0][0]))
     { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
@@ -1923,6 +1925,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 : worldFrames==59 ? std::getenv("EDUKE32_XR_MODEL_OUTPUT") : nullptr;
             bool const modelCapture=modelPrefix!=nullptr;
             bool const gripCapture=!gripPrefix.empty();
+            if (gripCapture && std::getenv("EDUKE32_XR_TEST_MOUNT_WALL"))
+                crosshairViews.diagnosticCrosshairPrefix=gripPrefix+"-crosshair";
             static unsigned mountStreamSamples;
             bool const mountStream=worldFrames>=60 && mountStreamSamples<240 && weaponModel
                 && crosshairViews.pistol.valid && (gripMask & (1u<<crosshairViews.pistol.hand))
@@ -2099,9 +2103,20 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                             LOG_F(INFO,"OpenXR pistol mount pose: eye=%u hand=%d grip=%.9g,%.9g,%.9g aim=%.9g,%.9g,%.9g,%.9g.",
                                   i,visual.hand,p.x,p.y,p.z,q.x,q.y,q.z,q.w);
                             if (i==0)
+                            {
                                 LOG_F(INFO,"OpenXR pistol mount render: serial=%llu hand=%d body=%d,%d,%d,%d,%d,%d clamped=%d.",
                                       (unsigned long long)frame.serial,visual.hand,body.pos.x,body.pos.y,body.pos.z,
                                       body.angle,body.horizon,body.sector,visual.clamped);
+                                if (std::getenv("EDUKE32_XR_TEST_MOUNT_WALL"))
+                                {
+                                    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+                                    LOG_F(INFO,"OpenXR mount collision: serial=%llu root=%d,%d,%d correction=%d,%d,%d origin=%.9g,%.9g,%.9g tracking=%.9g,%.9g,%.9g,%.9g yaw=%.9g local=%.9g,%.9g,%.9g.",
+                                          (unsigned long long)frame.serial,visual.root.x,visual.root.y,visual.root.z,
+                                          visual.correction.x,visual.correction.y,visual.correction.z,origin.x,origin.y,origin.z,
+                                          tracking.x,tracking.y,tracking.z,tracking.w,fix16_to_float(body.angle)*Pi/1024.f,
+                                          visual.pose.position.x,visual.pose.position.y,visual.pose.position.z);
+                                }
+                            }
                         }
                         float const *a=modelMatrices[i][0];
                         LOG_F(INFO,"OpenXR hand model matrix: eye=%u values=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",i,

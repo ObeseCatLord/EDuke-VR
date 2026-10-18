@@ -206,7 +206,7 @@ projection within one channel value, preserve world depth exactly, and match the
 real native server origin/impact.
 
 Remaining gates: within-tick moving-frame cadence, moving-trigger authority and
-visual divergence, mounted wall-contact/recovery geometry, isolated grip-only
+visual divergence, isolated grip-only
 loss, reset/generation/family transitions, AA ART-to-mesh moving continuity,
 reload/anatomical/controller fit, broader arsenal, hardware performance/headset.
 These are completion gates, not claims inferred from passing static tests.
@@ -223,10 +223,55 @@ no remaining concrete implementation defect in scope. Main dispositions:
 | Mount option alone could hide ART/reticle when hand shots were disabled | Fixed: select this spatial policy only with hand shots enabled and actual hand aim. Added real-runtime disabled-hand-shots regression with floating hands. |
 | Tiny same-tic movements could pass while a prior pose was stale | Strengthened: qualification requires both gun and hand prior-pose projections to fail on that same-tic pair. Cadence remains unqualified in the 20 Hz lab. |
 | Render stream rows preceded final mask/HUD submission | Fixed: only rows whose serial matches existing next-frame `lastSubmittedSerial`/`worldReceipt` accounting enter the submitted-transform oracle. No second owner or lifecycle. |
-| Native wall tests do not prove clamped visual hand/gun contact | Retained as an explicit next gate; no claim that native wall damage tests qualify the visual correction. |
+| Native wall tests do not prove clamped visual hand/gun contact | Subsequently addressed by the dedicated submitted-frame wall proof below; native wall damage tests remain a separate oracle. |
 
 The final stream checks require actual submission receipts. Removing all receipt
 lines must make the submitted current-pose check fail; this is separately recorded
 as a parser negative control. A first motion fixture incorrectly accepted tiny
 angle rounding as body motion; it was repaired to require more than 20 horizontal
 Build units during captured movement, with an above-dead-zone stick input.
+
+### Submitted wall contact and recovery
+
+`smoke_hand_model.py --mount-wall --palm-mount --floating-hands <assets>` adds
+a real blocking wall at x1550 to the private native multiplayer map. The player
+and native gameplay remain stationary while Monado moves the selected physical
+controller through the wall and back. Initial, clamped and recovered captures
+each include the actual gun, selected holding hand and reticle. Both aim hands
+have passed separate private runtime suites, 44 checks each.
+
+The bounded diagnostic reuses existing per-button-state captures and the
+frame-owned `crosshairViews` reset. It changes no input, collision, timing or
+presentation policy. `mount_wall_check.py` independently reconstructs the raw
+muzzle and palm from the actual MD3 tags, raw poses and frozen body transform;
+compares the applied correction; checks relative gun/palm contact, physical eye
+projections, native/SPS color/depth and zero collection writes; and requires
+each serial's actual paired/shared replay and final submission receipts.
+
+Right maximum palm separation: **1.455 mm**; left: **1.802 mm**. Both return to
+zero collision correction on withdrawal. Each gun and holding hand contributes
+pixels in both eyes. The reticle uses that same resolved muzzle, hits wall1 in
+sector0, matches the independent depth-tested raster within one channel value,
+and leaves world depth unchanged. Native hitscan reports x1549 at the x1550
+plane; the oracle allows one integer Build unit and requires the exact wall
+identity. This is static-orientation contact/recovery, not anatomical grip fit,
+reload fitting, moving-trigger authority or proof of corrected-palm rejection.
+
+Negative controls reject missing submission, missing model replay, and a holding
+palm with its collision translation removed. Removing correction from either
+the gun's palm or the holding palm fails absolute projection in both eyes;
+the muzzle itself can move nearly along the eye ray and is therefore checked
+against its corrected projection without requiring that negative control.
+
+Astra/xhigh review turn `01a14ecc-ccd2-7573-a70f-50f7abdd58a1` was independently
+verified. No production defect found in scope. Main dispositions:
+
+| Finding | Disposition |
+| --- | --- |
+| Color equality alone could pass after native two-pass fallback | Added per-serial paired/shared model replay requirement. |
+| NumPy boolean prevented JSON result serialization | Convert result fields/checks to ordinary bool; reran both runtime suites. |
+| Wall mode accepted same-model/fault combinations that bypass or break its checks | Reject incompatible same-model, fault and last-shot modes before launch; negative CLI checks pass. |
+
+Exact binaries, source hashes, result paths and checks are in sibling
+`evidence/wall-contact-validation.json`. Initial failed serialization run is
+retained as superseded evidence, not counted as a passing runtime suite.

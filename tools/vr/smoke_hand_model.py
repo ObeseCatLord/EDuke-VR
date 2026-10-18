@@ -88,6 +88,7 @@ def main():
     p.add_argument('--aim-hand',choices=('left','right'),default='right')
     p.add_argument('--require-subtick',action='store_true',help='Additionally require multiple moving XR frames within one native tic; default Monado null pacing cannot provide this')
     p.add_argument('--mount-motion',action='store_true',help='Measure changing grip/roll/body against the sampled mounted weapon')
+    p.add_argument('--mount-wall',action='store_true',help='Capture shared gun/palm collision correction, reticle and recovery at a real blocking wall')
     p.add_argument('--fault',choices=('collect-right','surface-1','skin-last','replay-before','replay-after','mask-retry'))
     p.add_argument('--case',choices=('base','roll','fog','asymmetric','translucent','missing-skin','custom','second-eye-failure'),default='base')
     p.add_argument('--animation',action='store_true',help='Actual native MP shot/clip reload and per-counter stereo model oracles')
@@ -105,6 +106,8 @@ def main():
     if a.require_subtick and not a.mount_motion:p.error('--require-subtick requires --mount-motion')
     if a.mount_motion and not (a.palm_mount and a.floating_hands):
         p.error('--mount-motion requires a palm mount with floating hands')
+    if a.mount_wall and (not (a.palm_mount and a.floating_hands) or a.mount_motion or a.hand_shots_off or a.hands_same_model or a.fault or a.last_shot or a.case not in ('base','roll')):
+        p.error('--mount-wall requires a base/roll palm mount with distinct floating hands, without motion, disabled hand shots, faults or last-shot mode')
     if a.animation_fallback and not a.animation:p.error('--animation-fallback requires --animation')
     if a.receipt_fault and (a.animation or a.fault):p.error('--receipt-fault is a separate cancellation case')
     if a.late_field and not a.animation:p.error('--late-field requires --animation')
@@ -143,7 +146,11 @@ def main():
                 with (lab/'autoexec.cfg').open('a') as f:f.write('r_maxfps 120\n')
             if a.mount_motion:
                 with (lab/'autoexec.cfg').open('a') as f:f.write('r_maxfps 120\n')
-            data=bytearray(room())
+            data=bytearray(room(closed=a.mount_wall))
+            if a.mount_wall:
+                # Start with a visible, unconstrained pistol. A real remote
+                # controller move later reaches through this blocking wall.
+                for index in (1,2,4,7):struct.pack_into('<i',data,104+index*32,1550)
             if a.case=='fog':
                 # The constrained hand crosses into sector1 while the player
                 # remains in sector0. Exercise the native model-sector fog
@@ -183,6 +190,7 @@ def main():
         if a.palm_mount:ce['EDUKE32_XR_PISTOL_MOUNT']='1'
         if a.hand_shots_off:ce['EDUKE32_XR_HAND_SHOTS']='0'
         if a.mount_motion:ce['EDUKE32_XR_TEST_MOUNT_STREAM']='1'
+        if a.mount_wall:ce.update(EDUKE32_XR_TEST_MOUNT_STREAM='1',EDUKE32_XR_TEST_MOUNT_WALL='1')
         if a.floating_hands:
             from floating_hands_check import configure
             configure(cl,cl/'hand-model.def',a.floating_hands,ce,a.hands_same_model)
@@ -442,8 +450,13 @@ def main():
             if a.floating_hands and a.case!='second-eye-failure' and a.fault!='replay-after':
                 from floating_hands_check import exercise
                 phase='actual floating grip models'
-                details['floating_hands']=exercise(co,remote,cl,a.mount_motion,a.aim_hand)
-                checks.update(details['floating_hands']['checks'])
+                if a.mount_wall:
+                    from mount_wall_check import exercise as exercise_wall
+                    details['mount_wall']=exercise_wall(co,remote,cl,model_file,a.aim_hand)
+                    checks.update(details['mount_wall']['checks'])
+                else:
+                    details['floating_hands']=exercise(co,remote,cl,a.mount_motion,a.aim_hand)
+                    checks.update(details['floating_hands']['checks'])
                 if a.mount_motion:
                     from pistol_mount_check import contacts
                     details['mount_motion']=contacts(co.text(),model_file)

@@ -4086,32 +4086,135 @@ static bool polymost_xrPrepareOpaquePacket(pthtyp const * const pth, int32_t con
         default: return false;
         }
     };
-    if (videoGetRenderMode() != REND_POLYMOST || !buildgl_samplerObjectsEnabled() ||
-        !(pth->flags & PTH_INDEXED) || (pth->flags & PTH_HIGHTILE) || pth->hicr ||
-        polymost_usetileshades() != TS_SHADETABLE || !polymost_useindexedtextures() ||
-        (opaque && (!skyDepth && (method & DAMETH_MASKPROPS))) || program != (GLint)polymost1CurrentShaderProgramID ||
-        !glIsEnabled(GL_DEPTH_TEST) ||
-        (opaque && (glIsEnabled(GL_BLEND) || glIsEnabled(GL_ALPHA_TEST) || depthFunc != GL_ALWAYS || !depthWrite ||
-                    (skyDepth ? (colorMask[0] || colorMask[1] || colorMask[2] || colorMask[3]) : !maskColorWrite))) ||
-        (!opaque && (!glIsEnabled(GL_BLEND) || !glIsEnabled(GL_ALPHA_TEST) || depthFunc != GL_LEQUAL ||
-                     alphaFunc != GL_GREATER || !std::isfinite(alphaRef) || alphaRef < 0.f || alphaRef > 1.f ||
-                     blendEquationRgb != GL_FUNC_ADD || blendEquationAlpha != GL_FUNC_ADD ||
-                     blendSrcRgb != blendSrcAlpha || blendDstRgb != blendDstAlpha ||
-                     !nativeBlendFactor(blendSrcRgb) || !nativeBlendFactor(blendDstRgb) ||
-                     (!maskColorWrite && !maskDepthOnly))) ||
-        !polymost_xrIdentityMatrix(modelview) || !polymost_xrIdentityMatrix(textureMatrix) ||
-        polymost1FogEnabled != 0.f || polymost1UseColorOnly != 0.f || polymost1UsePalette != 1.f ||
-        polymost1UseDetailMapping != 0.f || polymost1UseGlowMapping != 0.f ||
-        !std::isfinite(polymost1NPOTEmulation.x) || !std::isfinite(polymost1NPOTEmulation.y) ||
-        !std::isfinite(polymost1NPOTEmulation.z) || !std::isfinite(polymost1NPOTEmulation.w) ||
-        polymost1NPOTEmulation.y <= 0.f || polymost1NPOTEmulation.w <= 0.f ||
-        (polymost1NPOTEmulation.z != 0.f && polymost1NPOTEmulation.z != 1.f) ||
-        sampler < SAMPLER_NONE || sampler >= NUM_SAMPLERS || !xrOpaque.projectionValid[xrOpaque.eye] ||
-        !palswapTextureID || !paletteTextureIDs[curbasepal])
+    auto const rejectUnsupported = [&](char const * const predicate)
     {
-        polymost_xrRejectOpaque(opaque ? "unsupported opaque material or state" : "unsupported mask material or state");
+        // This is deliberately opt-in and process-bounded: the regular
+        // collection rejection remains the native fallback path.
+        static unsigned int reports;
+        char const * const diagnostics = Bgetenv("EDUKE32_XR_TEST_OPAQUE_REJECTIONS");
+        if (diagnostics && diagnostics[0] == '1' && diagnostics[1] == '\0' && reports < 16)
+        {
+            ++reports;
+            LOG_F(INFO, "OpenXR opaque collection reject %u/16: %s; phase=%u eye=%u method=0x%x pic=%d pth=%d pthFlags=0x%x hightile=%d hicr=%d skyDepth=%d render=%d samplerObjects=%d indexed=%d tileShades=%d indexedTextures=%d program=%d/%u depth=%d/%d/%d colorMask=%d%d%d%d blend=%d alpha=%d/%d/%.9g blendRgb=%d,%d blendAlpha=%d,%d blendEquation=%d,%d sampler=%d projection=%d palswap=%u palette=%u fog=%.9g colorOnly=%.9g paletteEnabled=%.9g detail=%.9g glow=%.9g npot=%.9g,%.9g,%.9g,%.9g.",
+                  reports, predicate, unsigned(xrOpaque.phase), xrOpaque.eye, unsigned(method), globalpicnum,
+                  int(pth != nullptr), unsigned(pth ? pth->flags : 0), int(pth && (pth->flags & PTH_HIGHTILE)),
+                  int(pth && pth->hicr), int(skyDepth), videoGetRenderMode(), int(buildgl_samplerObjectsEnabled()),
+                  int(pth && (pth->flags & PTH_INDEXED)),
+                  polymost_usetileshades(), int(polymost_useindexedtextures()), program, polymost1CurrentShaderProgramID,
+                  int(glIsEnabled(GL_DEPTH_TEST)), depthFunc, int(depthWrite), int(colorMask[0]), int(colorMask[1]),
+                  int(colorMask[2]), int(colorMask[3]), int(glIsEnabled(GL_BLEND)), int(glIsEnabled(GL_ALPHA_TEST)), alphaFunc,
+                  alphaRef, blendSrcRgb, blendDstRgb, blendSrcAlpha, blendDstAlpha, blendEquationRgb, blendEquationAlpha,
+                  sampler, int(xrOpaque.eye < 2 && xrOpaque.projectionValid[xrOpaque.eye]), palswapTextureID, paletteTextureIDs[curbasepal],
+                  polymost1FogEnabled, polymost1UseColorOnly, polymost1UsePalette, polymost1UseDetailMapping,
+                  polymost1UseGlowMapping, polymost1NPOTEmulation.x, polymost1NPOTEmulation.y,
+                  polymost1NPOTEmulation.z, polymost1NPOTEmulation.w);
+        }
+        polymost_xrRejectOpaque(predicate);
         return false;
+    };
+
+    if (videoGetRenderMode() != REND_POLYMOST)
+        return rejectUnsupported("unsupported render mode");
+    if (!buildgl_samplerObjectsEnabled())
+        return rejectUnsupported("sampler objects disabled");
+    if (!(pth->flags & PTH_INDEXED))
+        return rejectUnsupported("non-indexed texture");
+    if (pth->flags & PTH_HIGHTILE)
+        return rejectUnsupported("high-resolution texture");
+    if (pth->hicr)
+        return rejectUnsupported("high-resolution texture replacement");
+    if (polymost_usetileshades() != TS_SHADETABLE)
+        return rejectUnsupported("non-shadetable tile shading");
+    if (!polymost_useindexedtextures())
+        return rejectUnsupported("indexed textures disabled");
+    if (opaque && (!skyDepth && (method & DAMETH_MASKPROPS)))
+        return rejectUnsupported("masked method in opaque phase");
+    if (program != (GLint)polymost1CurrentShaderProgramID)
+        return rejectUnsupported("unexpected shader program");
+    if (!glIsEnabled(GL_DEPTH_TEST))
+        return rejectUnsupported("depth test disabled");
+    if (opaque)
+    {
+        if (glIsEnabled(GL_BLEND))
+            return rejectUnsupported("blending enabled in opaque phase");
+        if (glIsEnabled(GL_ALPHA_TEST))
+            return rejectUnsupported("alpha test enabled in opaque phase");
+        if (depthFunc != GL_ALWAYS)
+            return rejectUnsupported("opaque depth function is not GL_ALWAYS");
+        if (!depthWrite)
+            return rejectUnsupported("opaque depth writes disabled");
+        if (skyDepth ? (colorMask[0] || colorMask[1] || colorMask[2] || colorMask[3]) : !maskColorWrite)
+            return rejectUnsupported(skyDepth ? "sky-depth color writes enabled" : "opaque color mask is incomplete");
     }
+    else
+    {
+        if (!glIsEnabled(GL_BLEND))
+            return rejectUnsupported("blending disabled in mask phase");
+        if (!glIsEnabled(GL_ALPHA_TEST))
+            return rejectUnsupported("alpha test disabled in mask phase");
+        if (depthFunc != GL_LEQUAL)
+            return rejectUnsupported("mask depth function is not GL_LEQUAL");
+        if (alphaFunc != GL_GREATER)
+            return rejectUnsupported("mask alpha function is not GL_GREATER");
+        if (!std::isfinite(alphaRef))
+            return rejectUnsupported("mask alpha reference is non-finite");
+        if (alphaRef < 0.f)
+            return rejectUnsupported("mask alpha reference is negative");
+        if (alphaRef > 1.f)
+            return rejectUnsupported("mask alpha reference exceeds one");
+        if (blendEquationRgb != GL_FUNC_ADD)
+            return rejectUnsupported("mask RGB blend equation is not GL_FUNC_ADD");
+        if (blendEquationAlpha != GL_FUNC_ADD)
+            return rejectUnsupported("mask alpha blend equation is not GL_FUNC_ADD");
+        if (blendSrcRgb != blendSrcAlpha)
+            return rejectUnsupported("mask RGB and alpha source blend factors differ");
+        if (blendDstRgb != blendDstAlpha)
+            return rejectUnsupported("mask RGB and alpha destination blend factors differ");
+        if (!nativeBlendFactor(blendSrcRgb))
+            return rejectUnsupported("unsupported mask source blend factor");
+        if (!nativeBlendFactor(blendDstRgb))
+            return rejectUnsupported("unsupported mask destination blend factor");
+        if (!maskColorWrite && !maskDepthOnly)
+            return rejectUnsupported("mask color write mask is neither full nor depth-only");
+    }
+    if (!polymost_xrIdentityMatrix(modelview))
+        return rejectUnsupported("non-identity modelview matrix");
+    if (!polymost_xrIdentityMatrix(textureMatrix))
+        return rejectUnsupported("non-identity texture matrix");
+    if (polymost1FogEnabled != 0.f)
+        return rejectUnsupported("fog enabled");
+    if (polymost1UseColorOnly != 0.f)
+        return rejectUnsupported("color-only material");
+    if (polymost1UsePalette != 1.f)
+        return rejectUnsupported("palette material disabled");
+    if (polymost1UseDetailMapping != 0.f)
+        return rejectUnsupported("detail mapping enabled");
+    if (polymost1UseGlowMapping != 0.f)
+        return rejectUnsupported("glow mapping enabled");
+    if (!std::isfinite(polymost1NPOTEmulation.x))
+        return rejectUnsupported("NPOT emulation X is non-finite");
+    if (!std::isfinite(polymost1NPOTEmulation.y))
+        return rejectUnsupported("NPOT emulation Y is non-finite");
+    if (!std::isfinite(polymost1NPOTEmulation.z))
+        return rejectUnsupported("NPOT emulation Z is non-finite");
+    if (!std::isfinite(polymost1NPOTEmulation.w))
+        return rejectUnsupported("NPOT emulation W is non-finite");
+    if (polymost1NPOTEmulation.y <= 0.f)
+        return rejectUnsupported("NPOT emulation Y is non-positive");
+    if (polymost1NPOTEmulation.w <= 0.f)
+        return rejectUnsupported("NPOT emulation W is non-positive");
+    if (polymost1NPOTEmulation.z != 0.f && polymost1NPOTEmulation.z != 1.f)
+        return rejectUnsupported("NPOT emulation Z is not zero or one");
+    if (sampler < SAMPLER_NONE)
+        return rejectUnsupported("sampler index is below range");
+    if (sampler >= NUM_SAMPLERS)
+        return rejectUnsupported("sampler index is above range");
+    if (!xrOpaque.projectionValid[xrOpaque.eye])
+        return rejectUnsupported("missing eye projection");
+    if (!palswapTextureID)
+        return rejectUnsupported("missing palswap texture");
+    if (!paletteTextureIDs[curbasepal])
+        return rejectUnsupported("missing palette texture");
 
     if (xrOpaque.packets[xrOpaque.eye].size() == XR_OPAQUE_MAX_PACKETS)
     {

@@ -421,6 +421,7 @@ def main() -> int:
     parser.add_argument('--case', choices=('model', 'missing', 'missing-frame', 'duplicate-body'), default='model')
     parser.add_argument('--model-mode', choices=('native', 'sps'))
     parser.add_argument('--palm-mount', action='store_true', help='Enable the tagged standard-pistol muzzle calibration')
+    parser.add_argument('--opaque-rejection-diagnostics', action='store_true', help='Record bounded production world collection rejection predicates')
     parser.add_argument('--animation', action='store_true',
                         help='qualify native AA firing ART and reload model frames from an explicit private MD3')
     parser.add_argument('--floating-hands', type=Path, help='Private calibrated hand MD3/PNG directory')
@@ -505,6 +506,8 @@ def main() -> int:
                    EDUKE32_XR_WORLD_OUTPUT=str(root / 'world'), EDUKE32_XR_HUD_OUTPUT=str(root / 'hud'))
         if args.model_mode == 'native':
             env['EDUKE32_XR_TEST_MODELS_TWO_PASS'] = '1'
+        if args.opaque_rejection_diagnostics:
+            env['EDUKE32_XR_TEST_OPAQUE_REJECTIONS'] = '1'
         if args.palm_mount:
             env['EDUKE32_XR_PISTOL_MOUNT'] = '1'
             env['EDUKE32_XR_TEST_PISTOL_MOUNT'] = '1'
