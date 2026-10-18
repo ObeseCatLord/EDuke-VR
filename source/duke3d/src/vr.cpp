@@ -1418,7 +1418,8 @@ void G_XRBeginFrame()
     if (worldReceipt.runtime && worldReceipt.runtime->generation()==worldReceipt.generation
         && worldReceipt.runtime->lastSubmittedSerial()==worldReceipt.serial)
     {
-        if (worldFrames>=60 && worldFrames<512 && std::getenv("EDUKE32_XR_TEST_MOUNT_STREAM"))
+        if (worldFrames<512 && (std::getenv("EDUKE32_XR_TEST_MODEL_SWITCH")
+            || (worldFrames>=60 && std::getenv("EDUKE32_XR_TEST_MOUNT_STREAM"))))
             LOG_F(INFO,"OpenXR mount submitted: serial=%llu.",(unsigned long long)worldReceipt.serial);
         accountWorldFrame(worldReceipt.opaque,worldReceipt.masks,false,worldReceipt.models,worldReceipt.handModels);
     }
@@ -1933,15 +1934,31 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             // AA enters gameplay after its own controller selector, so the
             // ordinary frame60 diagnostic can precede the first eligible model.
             // Capture the first actual accepted AA model, without advancing it.
+            // An explicit switch diagnostic also captures at most eight
+            // accepted family changes; it never advances native weapon state.
             static bool capturedAAModel;
-            if (weaponModel && aaWeaponFamily(handModel.presentation.family) && !capturedAAModel
+            static XRWeaponFamily capturedAAFamily=XRWeaponFamily::Unsupported;
+            static unsigned familyCaptures;
+            bool const captureFamily=std::getenv("EDUKE32_XR_TEST_MODEL_SWITCH")!=nullptr;
+            bool const familyChanged=captureFamily && familyCaptures<8
+                && handModel.presentation.family!=capturedAAFamily;
+            if (weaponModel && aaWeaponFamily(handModel.presentation.family) && (!capturedAAModel || familyChanged)
                 && std::getenv("EDUKE32_XR_TEST_MODELS"))
                 if (auto prefix=std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
                 {
-                    modelAnimationCapture=prefix;
+                    char suffix[32]={};
+                    if (captureFamily)
+                    {
+                        Bsnprintf(suffix,sizeof(suffix),"-family-%02u",familyCaptures);
+                        LOG_F(INFO,"OpenXR hand model family capture: serial=%llu family=%u index=%u.",
+                              (unsigned long long)frame.serial,unsigned(handModel.presentation.family),familyCaptures);
+                        ++familyCaptures;
+                    }
+                    modelAnimationCapture=std::string(prefix)+suffix;
                     if (auto weaponPrefix=std::getenv("EDUKE32_XR_WEAPON_OUTPUT"))
-                        weaponAnimationCapture=weaponPrefix;
+                        weaponAnimationCapture=std::string(weaponPrefix)+suffix;
                     capturedAAModel=true;
+                    capturedAAFamily=handModel.presentation.family;
                 }
             // Preserve the existing per-weapon diagnostic when both select
             // the same frame. Observe this grip state again on a later frame.

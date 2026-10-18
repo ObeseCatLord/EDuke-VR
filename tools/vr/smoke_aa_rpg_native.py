@@ -202,14 +202,15 @@ def md3_frames(model: Path) -> dict:
             'surfaces': surfaces, 'names': names}
 
 
-def write_rpg_def(root: Path, model: Path, skin: Path) -> dict:
+def write_rpg_def(root: Path, model: Path, skin: Path, missing_skin: bool = False) -> dict:
     """Create a private all-surface RPGSPRITE mapping; installed DEFs stay untouched."""
     metadata = md3_frames(model)
     if 'rest' not in metadata['names']:
         raise RuntimeError('RPG MD3 has no rest frame')
     local_model, local_skin = root / 'duke_rpg.md3', root / 'duke_rpg.png'
     local_model.symlink_to(model)
-    local_skin.symlink_to(skin)
+    if not missing_skin:
+        local_skin.symlink_to(skin)
     body = ['include "duke3d.def"', '', 'model "duke_rpg.md3" {', ' scale 1.0']
     body.extend(f' skin {{ pal 0 surface {index} file "duke_rpg.png" }}' for index in range(metadata['surfaces']))
     body.extend((' frame { name "rest" tile 23 smoothduration 0 }', '}', ''))
@@ -292,7 +293,7 @@ def model_animation_evidence(root: Path, text: str, names: list[str]) -> dict:
             'counter_entries': entries, 'native_art_4_to_7': native_art}
 
 
-def select_rpg(process, observer, display, key, timeout):
+def select_native_weapon(process, observer, display, key, timeout, weapon=4):
     """Hold the owned key until native selection observes it, then release."""
     observer.wait(lambda text: rpg_rows(text) and rpg_rows(text)[-1]['weaponpos'] == 0,
                   timeout=timeout)
@@ -303,11 +304,11 @@ def select_rpg(process, observer, display, key, timeout):
     start = len(observer.text())
     x11.send_event_key(window, key, True)
     try:
-        observer.wait(lambda text: any(row['currentweapon'] == 4
+        observer.wait(lambda text: any(row['currentweapon'] == weapon
                                       for row in rpg_rows(text[start:])), timeout=timeout)
     finally:
         x11.send_event_key(window, key, False)
-    return observer.wait(lambda text: any(row['currentweapon'] == 4 and row['weaponpos'] == 0
+    return observer.wait(lambda text: any(row['currentweapon'] == weapon and row['weaponpos'] == 0
                                            for row in rpg_rows(text[start:])), timeout=timeout)
 
 
@@ -339,6 +340,98 @@ def fire_rpg(observer, remote, timeout, aim_hand="right"):
             'input': aa_samples(returned[start:]), 'log_offset': start}
 
 
+FAMILY_CAPTURE = re.compile(r'OpenXR hand model family capture: serial=(\d+) family=(\d+) index=(\d+)\.')
+
+
+def wait_idle_model(observer, root, family=3, switching=False, after=0):
+    """Wait for the actual family draw receipt and, for switches, completed submission."""
+    tile = {2: 2524, 3: 10228}[family]
+    accepted = {}
+    def ready(text):
+        receipts = [tuple(map(int, row)) for row in AA_RECEIPT.findall(text[after:])
+                    if int(row[1]) == tile and int(row[4]) == 1 and int(row[5]) == 1]
+        completed = {int(row[0]) for row in MODEL_RECEIPT.findall(text) if int(row[1]) == 0 and int(row[4]) == 1}
+        captures = {int(serial): int(index) for serial, candidate, index in FAMILY_CAPTURE.findall(text[after:])
+                    if int(candidate) == family}
+        for receipt in receipts:
+            serial = receipt[0]
+            if switching and (serial not in captures or serial not in completed or
+                               f'OpenXR mount submitted: serial={serial}.' not in text):
+                continue
+            suffix = f'-family-{captures[serial]:02d}' if switching else ''
+            prefix = 'model' + suffix
+            files = [root / f'{prefix}-{stage}-{eye}{ext}'
+                     for stage in ('before', 'collected', 'reference', 'after')
+                     for eye in ('left', 'right') for ext in ('.ppm', '-depth.bin')]
+            if all(path.is_file() for path in files):
+                accepted.update(receipt=receipt, prefix=prefix, suffix=suffix)
+                return True
+        return False
+    text = observer.wait(ready, timeout=25)
+    row = accepted['receipt']
+    sample = None
+    if switching:
+        block = text.split(f'OpenXR hand model family capture: serial={row[0]} ', 1)[1]
+        sample = re.search(r'OpenXR hand model: eye=0 model=(\d+) ', block)
+    return {'receipt': dict(zip(('serial', 'tile', 'shade', 'palette', 'roles', 'valid'), row)),
+            'oracle': capture_oracle(root, accepted['prefix']),
+            'native_weapon_card': native_weapon_card(root, 'weapon' + accepted['suffix']),
+            'model_id': int(sample[1]) if sample else None}
+
+
+def append_pistol_binding(root, model, skin):
+    metadata = md3_frames(model)
+    (root / 'switch_pistol.md3').symlink_to(model)
+    (root / 'switch_pistol.png').symlink_to(skin)
+    body = ['model "switch_pistol.md3" {', ' scale 1.0']
+    body.extend(f' skin {{ pal 0 surface {surface} file "switch_pistol.png" }}' for surface in range(metadata['surfaces']))
+    body.extend((' frame { name "rest" tile 21 smoothduration 0 }', '}', ''))
+    with (root / 'aa-rpg-model.def').open('a') as output:
+        output.write('\n'.join(body))
+
+
+def exercise_family_switches(observer, process, display, remote, root, pistol_model, rpg_model, initial):
+    """Select each native weapon normally and prove real draws and native shots."""
+    from smoke_aa_hand_model import fire_actual_aa_pistol
+    from pistol_mount_check import firing as pistol_firing
+    from aa_rpg_origin_check import firing as rpg_firing
+    stages = []
+    for weapon, key, family in ((1, '2', 2), (4, '5', 3)):
+        start = len(observer.text())
+        selected = select_native_weapon(process, observer, display, key, 12, weapon)
+        transitions = rpg_rows(selected[start:])
+        idle = wait_idle_model(observer, root, family, True, start)
+        firing_start = len(observer.text())
+        if weapon == 1:
+            shot = fire_actual_aa_pistol(observer, remote)
+            native = observer.text()[firing_start:]
+            origin = pistol_firing(native.replace('OpenXR weapon mount input:', 'OpenXR pistol mount input:'), pistol_model)
+            shot_checks = shot['checks']
+        else:
+            shot = fire_rpg(observer, remote, 12)
+            native = observer.text()[firing_start:]
+            origin = rpg_firing(native, rpg_model, True, 1)
+            shot_checks = {'one_RPG_ammo_spent_after_return': shot['after']['ammo'] == shot['before']['ammo'] - 1,
+                           'one_native_RPG_after_return': len(spawn_rows(native)) == 1 and
+                               shot['after']['shots'] == shot['before']['shots'] + 1}
+        stages.append({'weapon': weapon, 'transition_rows': transitions, 'idle_model': idle,
+                       'fire': shot, 'origin': origin, 'shot_checks': shot_checks})
+    ids = [initial['model_id']] + [stage['idle_model']['model_id'] for stage in stages]
+    return {'stages': stages, 'model_ids': ids, 'checks': {
+        'switches_preserve_distinct_native_model_bindings': None not in ids and ids[0] == ids[2] and ids[0] != ids[1],
+        'switches_observe_native_raise_lower_and_ready': all(stage['transition_rows'] and
+            any(row['weaponpos'] != 0 for row in stage['transition_rows']) and
+            stage['transition_rows'][-1]['currentweapon'] == stage['weapon'] and
+            stage['transition_rows'][-1]['weaponpos'] == 0 for stage in stages),
+        'switches_have_submitted_native_stereo_models': all(stage['idle_model']['oracle']['passed'] for stage in stages),
+        'switches_suppress_only_accepted_native_body': all(stage['idle_model']['native_weapon_card']['available'] and
+            not stage['idle_model']['native_weapon_card']['coverage'] for stage in stages),
+        'switches_native_firing_and_calibrated_origins': all(all(stage['shot_checks'].values()) and
+            all(stage['origin']['checks'].values()) for stage in stages),
+        'switches_keep_XR_active_without_receipt_mismatch': 'hand model draw mismatch:' not in observer.text(),
+    }}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('binary', 'grp', 'mod-root', 'compat-con', 'work-dir'):
@@ -355,6 +448,10 @@ def main() -> int:
     mounts.add_argument('--mount', action='store_true', help='enable the engine\'s optional held-weapon mount')
     mounts.add_argument('--legacy-mount', action='store_true', help='legacy pistol flag must leave RPG at its aim point')
     parser.add_argument('--aim-hand', choices=('left', 'right'), default='right')
+    parser.add_argument('--switch-pistol-model', type=Path)
+    parser.add_argument('--switch-pistol-skin', type=Path)
+    parser.add_argument('--asset-fault', choices=('missing-skin', 'missing-palm'))
+    parser.add_argument('--draw-fault', choices=('duplicate-body', 'wrong-tile'))
     parser.add_argument('--missing-frame', type=int,
                         help='private model fixture: remove one fire_NN MD3 frame and require native ART recovery')
     args = parser.parse_args()
@@ -368,6 +465,17 @@ def main() -> int:
         parser.error('--missing-frame requires --model and --skin')
     if args.missing_frame is not None and args.missing_frame not in MODEL_COUNTERS[:-1]:
         parser.error('--missing-frame must name one available fire counter with a later recovery frame')
+    if (args.asset_fault or args.draw_fault) and not args.mount:
+        parser.error('--asset-fault and --draw-fault require --mount with model/skin')
+    if sum((bool(args.asset_fault), bool(args.draw_fault), args.missing_frame is not None)) > 1:
+        parser.error('asset/draw/missing-frame controls are separate cases')
+    if bool(args.switch_pistol_model) != bool(args.switch_pistol_skin):
+        parser.error('switch pistol model and skin are required together')
+    if args.switch_pistol_model and (not args.mount or args.aim_hand != 'right' or args.asset_fault or args.draw_fault or args.missing_frame is not None):
+        parser.error('switch proof requires a normal right-hand mounted RPG case')
+    if args.switch_pistol_model:
+        args.switch_pistol_model = args.switch_pistol_model.resolve()
+        args.switch_pistol_skin = args.switch_pistol_skin.resolve()
     args.binary, args.grp, args.mod_root, args.compat_con, args.work_dir = (
         args.binary.resolve(), args.grp.resolve(), args.mod_root.resolve(), args.compat_con.resolve(), args.work_dir.resolve())
     if args.model:
@@ -376,6 +484,10 @@ def main() -> int:
             parser.error('--model and --skin must name existing private files')
     inputs = (args.binary, args.grp, args.compat_con, args.mod_root / 'AA.grp', args.mod_root / 'duke3d.def',
               args.mod_root / 'scripts/AAGAME.CON')
+    if args.model:
+        inputs += (args.model, args.skin)
+    if args.switch_pistol_model:
+        inputs += (args.switch_pistol_model, args.switch_pistol_skin)
     for path in inputs:
         if not path.is_file():
             parser.error('missing required read-only input: ' + str(path))
@@ -390,20 +502,32 @@ def main() -> int:
                                    'upgrades': 0, 'nuke': 0, 'fire_delay': 4, 'total_time': 20,
                                    'native_body_flags_before_later_engine_processing': 4098}}
     model_case = args.model is not None
+    model_expected = model_case and not args.asset_fault
+    blocked = args.asset_fault == 'missing-palm'
+    fault_text = None
+    result.update(asset_fault=args.asset_fault, draw_fault=args.draw_fault)
     try:
         (root / 'eduke32.cfg').write_text(CONFIG + '\n[Screen Setup]\nPolymer = 0\n')
         (root / 'settings.cfg').write_text('// Private AA standard-Duke RPG runner.\n')
-        (root / 'autoexec.cfg').write_text('r_maxfps 60\n')
+        (root / 'autoexec.cfg').write_text('r_maxfps 60\n' +
+            ('bind F4 norepeat "setvar aarpg_fault 1"\n' if args.draw_fault else ''))
         from pistol_mount_check import observer as mount_observer
-        (root / 'aa_rpg_observer.con').write_text(rpg_observer() + (mount_observer() if model_case else ''))
+        from aa_rpg_faults import remove_palm_tag, draw_fault_con, exercise_draw_fault, blocked_fire
+        (root / 'aa_rpg_observer.con').write_text(rpg_observer() + (mount_observer() if model_case else '')
+            + (draw_fault_con(args.draw_fault) if args.draw_fault else ''))
         definition = 'duke3d.def'
         if model_case:
             mapped_model = args.model
             if args.missing_frame is not None:
                 result['missing_frame_fixture'] = missing_frame_fixture(root, args.model, args.missing_frame)
                 mapped_model = Path(result['missing_frame_fixture']['path'])
-            result['model_mapping'] = write_rpg_def(root, mapped_model, args.skin)
+            if blocked:
+                result['missing_palm_fixture'] = remove_palm_tag(root, args.model, args.aim_hand)
+                mapped_model = Path(result['missing_palm_fixture']['path'])
+            result['model_mapping'] = write_rpg_def(root, mapped_model, args.skin, args.asset_fault == 'missing-skin')
             result['model_mapping'].update(mount_requested=args.mount, legacy_mount_requested=args.legacy_mount, aim_hand=args.aim_hand)
+            if args.switch_pistol_model:
+                append_pistol_binding(root, args.switch_pistol_model, args.switch_pistol_skin)
             definition = 'aa-rpg-model.def'
         env = {key: value for key, value in os.environ.items() if not key.startswith('EDUKE32_XR')}
         env.update(DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
@@ -417,6 +541,8 @@ def main() -> int:
             env.update(EDUKE32_XR_AA_MODELS='1', EDUKE32_XR_TEST_MODELS='1',
                        EDUKE32_XR_MODEL_OUTPUT=str(root / 'model'),
                        EDUKE32_XR_TEST_WEAPON_MOUNT='1', EDUKE32_XR_TEST_SHOTS='1')
+            if args.switch_pistol_model:
+                env['EDUKE32_XR_TEST_MODEL_SWITCH'] = '1'
             if args.mount:
                 env['EDUKE32_XR_WEAPON_MOUNT'] = '1'
             elif args.legacy_mount:
@@ -436,53 +562,56 @@ def main() -> int:
             observer.wait(lambda text: any(row['startmode'] == 1 and row['pchar'] == 0 and row['ammo'] >= 3
                                             for row in rpg_rows(text)), timeout=12)
             phase = 'owned native RPG key selection'
-            selected_text = select_rpg(process, observer, args.display, args.weapon_key, min(12, args.timeout))
+            selected_text = select_native_weapon(process, observer, args.display, args.weapon_key, min(12, args.timeout))
             selected = [row for row in rpg_rows(selected_text) if row['currentweapon'] == 4 and row['weaponpos'] == 0][-1]
             result['selected'] = selected
-            if model_case:
+            if model_expected:
                 phase = 'accepted native RPG idle model receipt'
-                idle_files = [root / f'model-{stage}-{eye}{suffix}'
-                              for stage in ('before', 'collected', 'reference', 'after')
-                              for eye in ('left', 'right') for suffix in ('.ppm', '-depth.bin')]
-                idle_text = observer.wait(lambda text: any(int(row[1]) == 10228 and int(row[4]) == 1 and int(row[5]) == 1
-                                                            for row in AA_RECEIPT.findall(text)) and
-                                          all(path.is_file() for path in idle_files), timeout=25)
-                idle_receipts = [tuple(map(int, row)) for row in AA_RECEIPT.findall(idle_text)
-                                 if int(row[1]) == 10228 and int(row[4]) == 1 and int(row[5]) == 1]
-                result['idle_model'] = {'receipt': {'serial': idle_receipts[-1][0], 'tile': idle_receipts[-1][1],
-                                                    'shade': idle_receipts[-1][2], 'palette': idle_receipts[-1][3],
-                                                    'roles': idle_receipts[-1][4], 'valid': idle_receipts[-1][5]},
-                                        'oracle': capture_oracle(root, 'model'),
-                                        'native_weapon_card': native_weapon_card(root)}
+                result['idle_model'] = wait_idle_model(observer, root, switching=bool(args.switch_pistol_model))
             prior_capture = max(map(int, PVP_CAPTURE.findall(observer.text())), default=0)
             result['gameplay_capture'] = post_gameplay_capture(observer, root, prior_capture, timeout=25)
-            phase = 'native RPG trigger and projectile'
-            result['fire'] = fire_rpg(observer, remote, min(12, args.timeout), args.aim_hand)
-            observer.wait(lambda text: bool(spawn_rows(text[result['fire']['log_offset']:])), timeout=8)
-            observer.wait(lambda text: any((root / f'weapon-counter-{counter:02d}-coverage.pgm').is_file()
-                                            for counter in range(4, 8)), timeout=8)
-            if model_case:
-                expected = set(QUALIFIED_MODEL_COUNTERS)
-                if args.missing_frame is not None:
-                    expected.discard(args.missing_frame)
-                    expected.add(next(counter for counter in MODEL_COUNTERS if counter > args.missing_frame))
-                observer.wait(lambda text: all((root / f'model-counter-{counter:02d}-after-left.ppm').is_file()
-                                                for counter in expected), timeout=20)
-            # A normal map may put the impact beyond this bounded observation.
-            # Keep it as evidence when it occurs without converting it into a made-up fixture requirement.
-            try:
-                observer.wait(lambda text: bool(impact_rows(text[result['fire']['log_offset']:])), timeout=4)
-            except RuntimeError:
-                pass
-        text = observer.text()
+            if blocked:
+                phase = 'native RPG firing suppressed by missing calibration'
+                result['blocked_fire'] = blocked_fire(observer, remote, rpg_rows, args.aim_hand)
+            else:
+                phase = 'native RPG trigger and projectile'
+                result['fire'] = fire_rpg(observer, remote, min(12, args.timeout), args.aim_hand)
+                observer.wait(lambda text: bool(spawn_rows(text[result['fire']['log_offset']:])), timeout=8)
+                observer.wait(lambda text: any((root / f'weapon-counter-{counter:02d}-coverage.pgm').is_file()
+                                                for counter in range(4, 8)), timeout=8)
+                if model_expected:
+                    expected = set(QUALIFIED_MODEL_COUNTERS)
+                    if args.missing_frame is not None:
+                        expected.discard(args.missing_frame)
+                        expected.add(next(counter for counter in MODEL_COUNTERS if counter > args.missing_frame))
+                    observer.wait(lambda text: all((root / f'model-counter-{counter:02d}-after-left.ppm').is_file()
+                                                    for counter in expected), timeout=20)
+                # A normal map may put the impact beyond this bounded observation.
+                # Keep it as evidence when it occurs without converting it into a made-up fixture requirement.
+                try:
+                    observer.wait(lambda text: bool(impact_rows(text[result['fire']['log_offset']:])), timeout=4)
+                except RuntimeError:
+                    pass
+            if not blocked:
+                result['fire']['log_end'] = len(observer.text())
+            if args.switch_pistol_model:
+                phase = 'ordinary native pistol and RPG switches'
+                result['switches'] = exercise_family_switches(observer, process, args.display, remote, root,
+                    args.switch_pistol_model, args.model, result['idle_model'])
+            if args.draw_fault:
+                phase = 'actual native RPG draw mismatch cancellation'
+                result['draw_fault_result'] = exercise_draw_fault(observer, process, args.display, args.draw_fault)
+                fault_text = result['draw_fault_result'].pop('text')
+        text = fault_text if fault_text is not None else observer.text()
         native = rpg_rows(text)
-        fire = result['fire']
-        spawns = spawn_rows(text[fire['log_offset']:])
-        impacts = impact_rows(text[fire['log_offset']:])
-        result['counter_timeline'] = fire['timeline']
-        result['projectiles'] = spawns
-        result['optional_native_impacts'] = impacts
-        result['native_art_card'] = native_art_cards(root, any(row['counter'] > 0 for row in fire['timeline']))
+        if not blocked:
+            fire = result['fire']
+            spawns = spawn_rows(text[fire['log_offset']:fire['log_end']])
+            impacts = impact_rows(text[fire['log_offset']:fire['log_end']])
+            result['counter_timeline'] = fire['timeline']
+            result['projectiles'] = spawns
+            result['optional_native_impacts'] = impacts
+            result['native_art_card'] = native_art_cards(root, any(row['counter'] > 0 for row in fire['timeline']))
         checks = result['checks']
         checks.update(
             actual_AA_compat_main_compiled=('Compiling: ' + args.compat_con.name in text or
@@ -492,23 +621,34 @@ def main() -> int:
             native_standard_Duke_RPG_selected=(selected['currentweapon'] == 4 and selected['pchar'] == 0 and
                                                 selected['upgrades'] == 0 and selected['nuke'] == 0),
             native_standard_RPG_timing=(selected['firedelay'], selected['totaltime']) == (4, 20),
-            simulated_trigger_reaches_native_input=any(row['bits'] & 4 for row in fire['input']),
-            native_RPG_counter_timeline=any(row['counter'] > 0 for row in fire['timeline']) and
-                                        fire['after']['counter'] == 0,
-            native_RPG_flash_counter_observed=any(4 <= row['counter'] <= 7 for row in fire['timeline']),
-            native_RPG_flash_ART_card_nonempty=result['native_art_card']['nonempty_flash_card'],
-            native_RPG_ammo_decrement=fire['after']['ammo'] == fire['before']['ammo'] - 1,
-            native_RPG_postweaponshoot=fire['after']['shots'] > fire['before']['shots'],
-            native_RPG_single_trigger_shot=fire['after']['shots'] == fire['before']['shots'] + 1,
-            native_RPG_projectile_inserted=len(spawns) == 1 and spawns[0]['player'] == selected['player'] and
-                spawns[0]['sector'] >= 0 and spawns[0]['speed'] > 0,
             stereo_gameplay=result['gameplay_capture']['eyes_distinct'] and result['gameplay_capture']['eyes_nonconstant'],
             core_validation_clean=not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)', text),
             game_remains_running=process.poll() is None)
-        if model_case:
+        if blocked:
+            checks.update(result['blocked_fire']['checks'])
+            checks['private_fixture_only_renames_selected_palm'] = result['missing_palm_fixture']['only_selected_tag_names_changed']
+        else:
+            checks.update(
+                simulated_trigger_reaches_native_input=any(row['bits'] & 4 for row in fire['input']),
+                native_RPG_counter_timeline=any(row['counter'] > 0 for row in fire['timeline']) and
+                                            fire['after']['counter'] == 0,
+                native_RPG_flash_counter_observed=any(4 <= row['counter'] <= 7 for row in fire['timeline']),
+                native_RPG_flash_ART_card_nonempty=result['native_art_card']['nonempty_flash_card'],
+                native_RPG_ammo_decrement=fire['after']['ammo'] == fire['before']['ammo'] - 1,
+                native_RPG_postweaponshoot=fire['after']['shots'] > fire['before']['shots'],
+                native_RPG_single_trigger_shot=fire['after']['shots'] == fire['before']['shots'] + 1,
+                native_RPG_projectile_inserted=len(spawns) == 1 and spawns[0]['player'] == selected['player'] and
+                    spawns[0]['sector'] >= 0 and spawns[0]['speed'] > 0
+            )
+        if args.switch_pistol_model:
+            checks.update(result['switches']['checks'])
+        if args.draw_fault:
+            checks.update(result['draw_fault_result']['checks'])
+        if model_case and not blocked:
             from aa_rpg_origin_check import firing as origin_firing
             result['native_origin'] = origin_firing(text, args.model, args.mount, int(args.aim_hand == 'right'))
             checks.update(result['native_origin']['checks'])
+        if model_expected:
             animation = model_animation_evidence(root, text, result['model_mapping']['frame_names'])
             result['model_animation'] = animation
             expected = set(QUALIFIED_MODEL_COUNTERS)
@@ -555,6 +695,14 @@ def main() -> int:
                     later_native_model_recovery=bool(later) and all(entry['oracle']['passed'] and
                         entry['valid_model_receipt'] and entry['valid_native_RPG_body_receipt'] for entry in later),
                 )
+        elif args.asset_fault:
+            checks.update(asset_fault_has_no_mesh_sample=not MODEL_SAMPLE.search(text),
+                          asset_fault_has_no_consumed_body_receipt=not AA_RECEIPT.search(text))
+            if not blocked:
+                cards = {counter: (root / f'weapon-counter-{counter:02d}-coverage.pgm') for counter in range(1,20)}
+                checks['missing_skin_keeps_native_ART_all_observed_counters'] = all(
+                    path.is_file() and Image.open(path).getbbox() is not None for path in cards.values())
+                checks['missing_skin_DEF_target_is_absent'] = not (root / 'duke_rpg.png').exists()
         else:
             checks['held_weapon_models_disabled'] = 'OpenXR hand model:' not in text
         if os.environ.get('EDUKE32_TEST_PRIVATE_WINDOW') == '1':

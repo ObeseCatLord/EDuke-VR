@@ -265,10 +265,10 @@ def mask_oracle_evidence(root: Path, prefix: str, text: str) -> dict:
     }
 
 
-def native_weapon_card(root: Path) -> dict:
+def native_weapon_card(root: Path, prefix: str = 'weapon') -> dict:
     """Inspect native weapon-card output without inferring it from a log line."""
-    coverage = root / 'weapon-coverage.pgm'
-    eyes = [root / f'weapon-{eye}.ppm' for eye in ('left', 'right')]
+    coverage = root / f'{prefix}-coverage.pgm'
+    eyes = [root / f'{prefix}-{eye}.ppm' for eye in ('left', 'right')]
     if not coverage.is_file() or not all(path.is_file() for path in eyes):
         return {'available': False, 'coverage': False, 'eyes_distinct': False}
     images = [np.asarray(Image.open(path)) for path in eyes]

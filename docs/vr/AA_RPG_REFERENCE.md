@@ -109,9 +109,21 @@ independently verified. Brief: `work/aa-rpg-design-brief.md`.
 | Preserve cancellation and avoid a late post-HUD resample | Adopted; existing ownership/cancellation path retained. |
 | Prove actual spawn, supported frame pixels, native flash, family switches and failure recovery | Required acceptance; only completed evidence may be claimed below. |
 
-A subsequent fresh Astra/xhigh **implementation** review spawn hit the session
-agent-thread limit. No substitute reviewer was used; that focused code review
-remains pending. The earlier checkpoint's reviews do not cover this code.
+A fresh explicit Astra/xhigh **implementation** review subsequently completed
+for `973cfd5` versus `30e5e7c`: thread `01a14f4d-5957-75f3-afd2-4004f704e216`,
+turn `01a14f4d-5a41-7971-a2ca-60592b684c48`; actual current-turn settings were
+independently verified. It found no confirmed production defect or unnecessary
+new architecture in scope. The main verified its load-bearing findings:
+
+| Acceptance recommendation | Disposition |
+| --- | --- |
+| Wall trace agreement is insufficient geometric proof | Adopted; require an independently reconstructed request crossing a known wall and a correct resolved intersection. Still pending. |
+| The stock fault injector cannot reach the AA RPG consumer | Adopted; new controls issue actual private native CON draws with ID24 after the valid body. |
+| Missing skin and missing calibration require different outcomes | Adopted; separate private texture and tag-name controls. Recovery must still be tested separately. |
+| Both native families must switch and fire within one session | Adopted; test both native bindings, completed draws and independently reconstructed origins. |
+
+Subsequent engine edits add only bounded test captures at accepted family changes
+and their exact submitted serials; no production selection or firing code changed.
 
 ## Current runtime qualification
 
@@ -155,15 +167,53 @@ failed result remains unchanged. The first AA pistol regression failed in privat
 Xvfb setup with an owned `/proc` fd permission error before game/Monado launch;
 a fresh-directory retry passed. All failed attempts cleaned up successfully.
 
+## Failure and family-switch acceptance
+
+The subsequent acceptance increment is recorded in sibling
+`../evidence/aa-rpg-failure-switch-validation.json`. Each suite again uses the
+GPU-denied private software lab, clean observed core validation, an unmapped
+unfocused drawable, and child/Monado/Xvfb exit 0 with owned cleanup.
+
+| Actual case | Checks | Result |
+| --- | ---: | --- |
+| Missing RPG texture | 33 | All observed counters 1..19 retain nonempty native ART, with no consumed mesh receipt/sample; the actual rocket still uses the independent calibrated muzzle. |
+| Missing selected right-palm tag | 18 | Real trigger reaches XR with valid aim, but eight observed native ticks spend no ammo and produce no counter advance, POSTWEAPONSHOOT or RPG insertion. |
+| Extra native RPG body | 44 | A private CON draw of 10228 / ID24 follows the accepted body; the receipt rejects duplication and cancels its serial before submission. Native game stays alive. |
+| Wrong tile claiming RPG ID | 44 | A private CON draw of 2524 / ID24 follows the accepted body; ID-based claim catches it and cancels its written frame before submission. |
+| Ordinary pistol→RPG switches | 46 | Both native transitions include weapon positions -9..10 and return to 0. Native models 35→36→35 have submitted valid body receipts, exact native/SPS RGB/depth, empty accepted body cards, and real calibrated shots after selection. |
+
+The tag fault changes only the selected name in all 17 private MD3 tag records;
+vertices, frame names, all other tags, source assets and installed AA data remain
+unchanged. Pure checks also validate the corresponding left-tag fixture, without
+claiming a left missing-tag runtime test. A missing-tag launch establishes
+suppression, **not recovery**. Native draw faults use actual `EVENT_DRAWWEAPON`
+`rotatesprite16` calls; the stock suppressor test hook is deliberately not used.
+The expected cancellation disables XR for that private run, not the live user's
+runtime or GPU. No game or driver crash was observed.
+
+The first four acceptance cases used reviewed production binary
+`293058de2077293344187cfd23aac92daee245806f66f9472cf70ada443fa1d6`.
+The switching case used
+`884aef4681f7ea1608d38aa442703f7c590bc60e8a1bf5a8e31b8059c886d855`, adding only bounded
+`EDUKE32_XR_TEST_MODEL_SWITCH` diagnostics: at most 8 accepted-family image captures
+and exact completed submission serials. Native callbacks/clocks, renderer order,
+model selection, firing and protocol are unchanged. XR build and Python syntax
+checks pass; build log `work/aa-rpg-switch-build.log` retains existing warnings.
+No additional non-XR rebuild is needed for this XR-only diagnostic increment.
+
 ## Remaining acceptance
 
-The fresh implementation review remains pending. RPG-specific wall-clamp,
-missing-skin, calibration-loss/recovery and wrong/duplicate-draw cancellation
-controls are not yet qualified. Neither is switching between both mapped pistol
-and RPG models in one continuous session. Existing pistol proofs do not replace
-these RPG checks. No RPG multiplayer/damage qualification follows from the stock
-pistol regression. Controller-specific fitting, moving-trigger alignment, full
-3D muzzle effects and complete AA arsenal runtime bindings remain unfinished.
+RPG wall clamp still needs an independent geometric fixture and submitted
+weapon/holding-hand shared correction. Calibration returning while the trigger
+remains held must prove no shot until release, then one shot after repress;
+whole-controller loss must not be relabeled isolated grip-only coverage. The
+completed appearance-failure, static missing-tag and family-switch tests do not
+replace these requirements.
+
+No RPG multiplayer/damage qualification follows from the earlier stock pistol
+regression. Controller-specific fitting, moving-trigger alignment, full 3D muzzle
+effects and complete AA arsenal runtime bindings remain unfinished. Counter 20
+remains source/asset-covered only.
 
 Preserve the prior [AA renderer ordering decision](AA_MODEL_DESIGN.md) and
 [shared mount authority](PISTOL_MOUNT.md). This experimental opt-in increment
