@@ -37,7 +37,7 @@ def main():
     p.add_argument('--display',default=':105')
     p.add_argument('--remote-port',type=int,default=49777)
     p.add_argument('--port',type=int,default=24610)
-    p.add_argument('--case',choices=('base','roll','translucent','missing-skin','custom','second-eye-failure'),default='base')
+    p.add_argument('--case',choices=('base','roll','fog','translucent','missing-skin','custom','second-eye-failure'),default='base')
     a=p.parse_args()
     a.work_dir.mkdir(parents=True,exist_ok=True)
     root=Path(tempfile.mkdtemp(prefix='hand-model-',dir=a.work_dir.resolve()))
@@ -52,6 +52,12 @@ def main():
                 with (lab/'hitscan_test.con').open('a') as f:
                     f.write('\nonevent EVENT_DISPLAYWEAPON\n setvar RETURN 0\nendevent\n')
             data=bytearray(room())
+            if a.case=='fog':
+                # The constrained hand crosses into sector1 while the player
+                # remains in sector0. Exercise the native model-sector fog
+                # boundary instead of inheriting an opaque room's final wall.
+                data[64+32]=128
+                data[64+29]=1
             if a.case=='translucent':
                 # An actual native translucent portal wall in front of the
                 # entire held model, without a native hitscan-block flag.

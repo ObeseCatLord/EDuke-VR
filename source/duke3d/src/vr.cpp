@@ -360,6 +360,7 @@ struct HandModelSample
 {
     md3drawcontext_t context{};
     vec3_t root{};
+    int16_t sector=-1;
     vec3f_t muzzle{}, grip{};
     XrVector3f basis[3]{}; // Canonical model unit to physical Build X/Y/Z-down.
     VRShotInput shot{};
@@ -374,9 +375,9 @@ bool prepareHandModel(HandModelSample &sample)
         || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)
         || !P_XRIdlePistolAppearance(sample.context.palette,sample.context.shade)) return false;
 
-    int16_t sector; bool clamped;
+    bool clamped;
     sample.shot=G_VRGetShotInput(myconnectindex);
-    if (!G_VRResolveShot(myconnectindex,sample.root,sector,clamped)) return false;
+    if (!G_VRResolveShot(myconnectindex,sample.root,sample.sector,clamped)) return false;
     // Reuse the current native pickup DEF routing, loader and skin cache.
     // This opt-in contract uses the supplied 64-model-units/metre MD3 assets.
     int const tile=Ptile2tile(FIRSTGUNSPRITE,sample.context.palette);
@@ -1408,7 +1409,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 handModelMatrix(handModel,eyes[i]);
                 if (i==1 && testFailure("model-eye-1"))
                 { good=false; error="injected held-model failure before second eye"; break; }
-                good=polymost_xrBeginModelDraw();
+                good=polymost_xrBeginModelDraw(handModel.context.shade,handModel.context.palette,handModel.sector);
                 if (good)
                 {
                     good=polymost_md3drawcontext(&handModel.context)!=0;

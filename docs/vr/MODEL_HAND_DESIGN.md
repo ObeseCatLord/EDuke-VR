@@ -50,6 +50,14 @@ frame pair. Existing loader, skin cache, buffers and surface triangle emission
 remain authoritative. Ordinary native model callers keep their owner state,
 frame sampling, scale and material behavior.
 
+Like the native sprite caller, the explicit model boundary establishes fog from
+the sampled shade/palette and the constrained muzzle's sector visibility/fog
+palette. Camera preparation alone does not establish a model's fog; inheriting
+the last opaque wall's settings is incorrect. The base, translucent and a
+nonuniform-sector-fog smoke case pass after this correction using the v3 pistol
+(byte-identical to v2). The fog smoke establishes functioning native rendering
+in that scene, not a separate exact-color fog oracle.
+
 The hand root is the already-constrained native gameplay shot origin. Static
 muzzle-first placement proves aiming alignment; it does **not** finish grip
 calibration. The authored grip is roughly 27 cm behind that muzzle. Headset

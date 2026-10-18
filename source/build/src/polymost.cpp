@@ -8017,13 +8017,18 @@ void polymost_xrRelativeWorldToClip(float *matrix)
         }
 }
 
-bool polymost_xrBeginModelDraw()
+bool polymost_xrBeginModelDraw(int32_t shade, int32_t palette, int32_t sectorNum)
 {
     // This is native emission between world phases, never a collector callback
     // or a UI-to-world state handoff. The supplied model-to-eye matrix already
     // includes this camera's rotation; do not rotate the source vertices twice.
-    if (xrOpaque.active || videoGetRenderMode()!=REND_POLYMOST
+    if (xrOpaque.active || (unsigned)sectorNum>=(unsigned)numsectors || (unsigned)palette>=MAXPALOOKUPS
+        || videoGetRenderMode()!=REND_POLYMOST
         || gl.currentShaderProgramID!=polymost1CurrentShaderProgramID) return false;
+    auto const sec=(usectorptr_t)&sector[sectorNum];
+    // Native sprite callers establish model fog before polymost_mddraw. An
+    // explicit instance must not inherit the last opaque wall's appearance.
+    calc_and_apply_fog(fogshade(shade,palette),sec->visibility,get_floor_fogpal(sec));
     polymost_identityrotmat();
     return true;
 }

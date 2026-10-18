@@ -24,6 +24,37 @@ gameplay or headset behavior.
 
 ## Runtime contract and remaining work
 
+### Completed v3 action package
+
+The latest private art deliverable is sibling `duke-vr-assets/v3`. The Astra
+asset agent completed nine authored cosmetic actions across the eight formerly
+rest-only reconstructions, including independent Devastator left/right clips.
+All fourteen textures and six inherited model/master sets remain byte-identical;
+all eight updated MD3s retain exact frame-zero geometry, normals, topology, UVs
+and tags. There are 55 named action/pose clips in the full package.
+
+The main agent independently verified all 430 final manifest hashes and
+inspected the three new action/sprite comparison sheets. Offline evidence has
+142 GLB position comparisons and 115 integer-frame MD3 comparisons; 27
+fractional samples are GLB-only, so MD3 interpolation is not qualified. Maximum
+measured errors are 0 mm GLB and 0.2022 mm MD3. Structural checks cover all 28
+exported models. Detailed production/ownership evidence is the private
+`v3/COMPLETION_REPORT.md`; previews include `action_overview.gif` and
+`action_comparison_1.png` through `_3.png`.
+
+All new clips follow explicit native counter-to-frame metadata; 30 fps is the
+interchange preview cadence. Existing native weapon counters, effects, ammo,
+projectiles and damage retain gameplay ownership. Pipebomb remains a rigid pose
+whose throw/release motion belongs to the controller/native game. The source
+install is DNF2001 October 26; sprite-guided reconstructions and authored action
+approximations are documented rather than described as recovered original 3D.
+
+Use v3 for further integration, preserving v1/v2. Pistol is byte-identical to
+the qualified v2 model; current native tracked-idle proof is recorded in
+[MODEL_HAND_DESIGN.md](MODEL_HAND_DESIGN.md). The following rest-only counts
+describe v2 history; v3 supersedes them. Engine animation/body/SPS acceptance
+remains separate from the completed art scope.
+
 GLB uses metres, +Y up, +Z forward and retains Duke's skeleton. MD3 uses 64 model
 units/metre, +Z up, +X forward and bakes animation into vertex frames. Each model
 provides grip/muzzle/support tags; Duke additionally provides body attachments.

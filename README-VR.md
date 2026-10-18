@@ -521,9 +521,10 @@ are in [HAND_SHOTS.md](docs/vr/HAND_SHOTS.md).
 
 The private sibling Duke/weapon asset package has a completed chunky `v2` set:
 Duke plus all thirteen equipment entries, including World Tour's flame weapon,
-with original sprite silhouettes/proportions and small diffuse atlases. Further
-art completion remains with Astra in a separate `v3`; v2 stays stable for engine
-qualification. See [MODEL_ASSETS.md](docs/vr/MODEL_ASSETS.md).
+with original sprite silhouettes/proportions and small diffuse atlases. Astra
+completed the latest `v3` package with action clips for all eight formerly static
+reconstructions, preserving v1/v2. All 430 manifest hashes were independently
+verified. See [MODEL_ASSETS.md](docs/vr/MODEL_ASSETS.md).
 
 An opt-in native MD3 adapter now renders a qualified **idle pistol** from the
 constrained aiming ray, with stereo depth and correct ordering behind nearer

@@ -52,7 +52,7 @@ void polymost_prepareMasksView();
 // Call immediately after camera preparation, before drawing masks/UI.
 void polymost_xrRelativeWorldToClip(float *matrix);
 void polymost_xrRelativeWorldToEye(float *matrix);
-bool polymost_xrBeginModelDraw();
+bool polymost_xrBeginModelDraw(int32_t shade, int32_t palette, int32_t sectorNum);
 void polymost_xrEndModelDraw();
 vec2f_t polymost_xrRotateSpriteAnchor(vec2_t position, int32_t scale, int32_t flags);
 

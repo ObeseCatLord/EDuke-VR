@@ -296,7 +296,8 @@ original 2D sprites. Astra owns the entire separate private asset `v2` set,
 including World Tour flamethrower. The original exported set is preserved.
 The v2 export set is complete and verified; a separate Astra-owned v3 completes
 cosmetic action clips for reconstructed weapons while keeping v2 stable.
-Neither asset production pass establishes IK or complete runtime presentation.
+The v3 art package is now complete, with 430 independently verified manifest
+hashes. Neither asset production pass establishes IK or complete runtime presentation.
 
 The first native tracked-model boundary is now implemented and qualified for
 vanilla idle pistol frame zero. A focused Astra/xhigh design review moved its
