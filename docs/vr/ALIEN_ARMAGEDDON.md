@@ -72,6 +72,16 @@ authoritative impact/damage. Matching NETVERSION6 peers are required. See
 focused Astra review, native-coordinate conventions and complete test scope.
 Actual AA campaign multiplayer and the remaining arsenal are still unqualified.
 
+## Native multiplayer startup
+
+Actual AA early and late native joins now reach the real Hollywood character
+selector and remote-player input on both simulations. Startup admission and
+client dispatch wait for existing native initialization boundaries, and generic
+CON game events exclude the native reserve-sprite pool. Read
+[AA_MULTIPLAYER.md](AA_MULTIPLAYER.md) for the demonstrated failures, focused
+Astra disposition and tests. Both peers still have default unselected AA state;
+this does not establish cross-peer character choice or campaign combat.
+
 ## Assets and remaining acceptance
 
 The Astra asset subagent completed 69 AA handheld dispatch entries (68 physical
@@ -86,7 +96,7 @@ Unbound semantic clips must not acquire invented engine animation clocks.
 
 Still required: remaining controller-operated menus and AA weapon-family
 combat/aim/crosshair checks, custom weapon origins and animation bindings,
-scripted cameras/bikes/cutscenes, real native AA multiplayer join/combat/map
-transitions, broader single-pass material/model/voxel coverage, and physical
+scripted cameras/bikes/cutscenes, selected-character native AA multiplayer
+combat/late join/map transitions, broader single-pass material/model/voxel coverage, and physical
 headset testing. Native multiplayer is reused; old-peer compatibility is not a
 requirement.

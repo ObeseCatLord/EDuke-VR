@@ -225,6 +225,14 @@ endevent
                         angle_pitch=list(map(float,re.findall(r'leftYaw=('+NUMBER+') leftPitch=('+NUMBER+') rightYaw=('+NUMBER+') rightPitch=('+NUMBER+r')\.',text)[-1]))
                         yaw,pitch=angle_pitch[eye*2:eye*2+2];rel=(point-eyes[eye])/np.array([384,384,6144]);front=rel[0]*math.cos(yaw)+rel[1]*math.sin(yaw);right=-rel[0]*math.sin(yaw)+rel[1]*math.cos(yaw);up=-rel[2]
                         forward=front*math.cos(pitch)+up*math.sin(pitch);vertical=up*math.cos(pitch)-front*math.sin(pitch)
+                        # Composing native body pitch with tracked head yaw can
+                        # produce eye roll even when neither input explicitly
+                        # rolls. Project in the full eye basis, independently
+                        # of the uploaded crosshair matrix.
+                        eye_roll=list(map(float,re.findall(r'OpenXR aim eye roll: left=('+NUMBER+') right=('+NUMBER+r')\.',text)[-1]))
+                        roll=eye_roll[eye]
+                        right,vertical=right*math.cos(roll)+vertical*math.sin(roll),vertical*math.cos(roll)-right*math.sin(roll)
+                        extra['eye_roll_radians']=eye_roll
                         fov=np.tan(np.fromstring(re.findall(r'OpenXR weapon view: eye='+str(eye)+r'.*? fov=([^\n]+)\.',text)[-1],sep=','));left,right_t,top,bottom=fov
                         physical=np.array([(2*right/forward-right_t-left)/(right_t-left),(2*vertical/forward-top-bottom)/(top-bottom)])
                         projection_errors.append(float(np.abs(physical-centre).max()))

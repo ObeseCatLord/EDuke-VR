@@ -9330,6 +9330,13 @@ static void G_DoEventGame(int const nEventID, bool const allowDrawing = true)
     int statNum = 0;
     do
     {
+        // Network reserve slots are not live actors. CON killit returns them
+        // to the same pool, so dispatching game events here repeats forever.
+        if (statNum == STAT_NETALLOC && (g_netServer || g_netClient))
+        {
+            ++statNum;
+            continue;
+        }
         for (int nextSprite, SPRITES_OF_STAT_SAFE(statNum++, spriteNum, nextSprite))
         {
             if (A_CheckSpriteFlags(spriteNum, SFLAG_NOEVENTCODE))

@@ -86,7 +86,17 @@ static void Net_Disconnect(void);
 static void Net_HandleClientPackets(void);
 static void Net_HandleServerPackets(void);
 static void Net_AllocatePacketBuffer(void);
+static void Net_AcknowledgePendingClients(void);
+static bool netStartupComplete = false;
 #endif
+
+void Net_CompleteStartup(void)
+{
+#ifndef NETCODE_DISABLE
+    netStartupComplete = true;
+    Net_AcknowledgePendingClients();
+#endif
+}
 
 void Net_GetPackets(void)
 {
@@ -111,7 +121,7 @@ void Net_GetPackets(void)
 
     if (g_netServer)
         Net_HandleClientPackets();
-    else if (g_netClient)
+    else if (g_netClient && netStartupComplete)
         Net_HandleServerPackets();
 #endif
 }
@@ -1743,6 +1753,41 @@ static void Net_SendAcknowledge(ENetPeer *client)
     Dbg_PacketSent(PACKET_ACK);
 }
 
+static bool Net_ServerReadyForClients(void)
+{
+    // A transport connection can precede CON, input, and the first map load.
+    // The existing snapshot is populated only after that map has spawn points.
+    return netStartupComplete && g_mapStartState && g_mapStartState->maxActorIndex != 0;
+}
+
+static void Net_AdmitClient(ENetPeer *peer)
+{
+    if (!Net_ServerReadyForClients())
+        return;
+
+    if (g_playerSpawnCnt <= ud.multimode)
+    {
+        OSD_Printf("Connection dropped: No player spawn point available for this new player.\n");
+        enet_peer_disconnect_later(peer, DISC_SERVER_FULL);
+        return;
+    }
+
+    Net_SendAcknowledge(peer);
+}
+
+static void Net_AcknowledgePendingClients(void)
+{
+    if (!g_netServer || !Net_ServerReadyForClients())
+        return;
+
+    for (size_t i = 0; i < g_netServer->peerCount; ++i)
+    {
+        auto const peer = &g_netServer->peers[i];
+        if (peer->state == ENET_PEER_STATE_CONNECTED && peer->data == nullptr)
+            Net_AdmitClient(peer);
+    }
+}
+
 static void Net_ExtractPlayerUpdate(playerupdate_t *update, int32_t type)
 {
     const int32_t playerindex = update->playerindex;
@@ -2242,18 +2287,21 @@ static void Net_HandleClientPackets(void)
 
             OSD_Printf("A new client connected from %s:%u.\n", ipaddr, event.peer->address.port);
 
-            //[75] Temporary: For now the netcode can't handle more players connecting than there are player starts.
-            if (g_playerSpawnCnt <= ud.multimode)
-            {
-                OSD_Printf("Connection dropped: No player spawn point available for this new player.");
-                break;
-            }
-
-            Net_SendAcknowledge(event.peer);
+            // Dispatch transport CONNECT even during startup so ENet can keep
+            // the peer alive. Native ACK/AUTH waits for the initialized game.
+            Net_AdmitClient(event.peer);
             break;
         }
 
         case ENET_EVENT_TYPE_RECEIVE:
+            if (!Net_ServerReadyForClients() || event.packet->dataLength == 0 ||
+                (event.peer->data == nullptr && event.packet->data[0] != PACKET_AUTH) ||
+                (event.packet->data[0] == PACKET_AUTH &&
+                 (event.peer->data != nullptr || event.packet->dataLength != 10)))
+            {
+                enet_packet_destroy(event.packet);
+                break;
+            }
             Net_ParseClientPacket(&event);
             // broadcast takes care of enet_packet_destroy itself
             // we set the state to disconnected so enet_host_broadcast
@@ -2274,6 +2322,10 @@ static void Net_HandleClientPackets(void)
             break;
 
         case ENET_EVENT_TYPE_DISCONNECT:
+        case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
+            // A peer may leave before native admission assigned any player.
+            if (event.peer->data == nullptr)
+                break;
             numplayers--;
             ud.multimode--;
 
@@ -2599,7 +2651,7 @@ static void Net_HandleServerPackets(void)
 
     while (enet_host_check_events(g_netClient, &event) > 0)
     {
-        if (event.type == ENET_EVENT_TYPE_DISCONNECT)
+        if (event.type == ENET_EVENT_TYPE_DISCONNECT || event.type == ENET_EVENT_TYPE_DISCONNECT_TIMEOUT)
         {
             Net_ReceiveDisconnect(&event);
         }
@@ -4517,8 +4569,10 @@ static uint32_t Net_GetNextRevisionNumber(uint32_t currentNumber)
 
 void Net_WaitForInitialSnapshot()
 {
-    while (g_netMapRevisionNumber < cStartingRevisionIndex)
+    while (g_netClient && g_netMapRevisionNumber < cStartingRevisionIndex)
     {
+        if (quitevent)
+            G_GameExit();
         gameHandleEvents();
     }
 }
@@ -4916,7 +4970,10 @@ void Net_Connect(const char *srvaddr)
 ///</summary>
 void Net_AddWorldToInitialSnapshot()
 {
+    bool const wasEmpty = g_mapStartState->maxActorIndex == 0;
     Net_AddWorldToSnapshot(g_mapStartState);
+    if (wasEmpty)
+        Net_AcknowledgePendingClients();
 }
 
 void Net_SendClientInfo(void)

@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Hold the first map inside Screen_Play while its normal event pump runs.
+// This is a test fixture: it draws no gameplay and changes no packets/state.
+include GAME.CON
+
+gamevar vrsu_delay_started 0 1
+gamevar vrsu_delay_complete 0 1
+gamevar vrsu_until 0 1
+gamevar vrsu_tick 0 1
+gamevar vrsu_player 0 1
+gamevar vrsu_menu_event 0 1
+
+onevent EVENT_PRELEVEL
+    // The test server owns player 0. A client runs this wrapper too, but its
+    // received map must not add a second local presentation delay.
+    ifvare myconnectindex 0 ifvare vrsu_delay_started 0
+    {
+        setvar vrsu_delay_started 1
+        addlog vrsu_delay_started
+        startscreen
+    }
+endevent
+
+onevent EVENT_SCREEN
+    addvar vrsu_tick 1
+    // r_maxfps 30 in the owned lab makes 1080 Screen_Play frames >=36s.
+    ifvarl vrsu_tick 1080 set RETURN 0 else
+    {
+        setvar vrsu_delay_complete 1
+        set RETURN 1
+        addlog vrsu_delay_complete
+    }
+endevent
+
+onevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrsu_player
+    addlog vrsu_player
+    addlog myconnectindex
+endevent
+
+// The loss case accepts this only after its native disconnect record.
+onevent EVENT_DISPLAYMENUREST
+    addvar vrsu_menu_event 1
+    addlog vrsu_menu_event
+endevent

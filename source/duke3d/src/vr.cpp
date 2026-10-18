@@ -1373,6 +1373,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
               fix16_to_float(eyes[1].camera.angle)*Pi/1024.f,nativePitch(eyes[1].camera.horizon));
         auto const &left=eyes[0].camera.pos, &right=eyes[1].camera.pos;
         LOG_F(INFO,"OpenXR aim eye positions: left=%d,%d,%d right=%d,%d,%d.",left.x,left.y,left.z,right.x,right.y,right.z);
+        LOG_F(INFO,"OpenXR aim eye roll: left=%.9f right=%.9f.",eyes[0].camera.roll,eyes[1].camera.roll);
     }
     vec2_t const oldStart=windowxy1, oldEnd=windowxy2;
     int const oldRange=viewingrange, oldAspect=yxaspect;

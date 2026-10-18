@@ -249,6 +249,7 @@ void    Net_Connect(const char *srvaddr);
 // Packet Handlers
 #endif
 void    Net_GetPackets(void);
+void    Net_CompleteStartup(void);
 #ifndef NETCODE_DISABLE
 
 void    Net_SendClientInfo(void);

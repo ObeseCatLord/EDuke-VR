@@ -2,6 +2,18 @@
 
 ## Current checkpoint — 2026-10-18
 
+Actual AA native multiplayer early and late joins now pass eight checks each:
+the remote player reaches input processing on both peers and the client renders
+AA's real character selector. Startup admission retains ENet keepalives while
+waiting for native initialization/map state; reserve sprites no longer receive
+CON game events. Stock authoritative movement/fire, map changes and reconnect
+pass 25 checks, and the software-XR multiplayer custom crosshair passes 16.
+Four CPU lifecycle cases pass: prolonged first-map loading, unassigned-peer
+disconnect, server-loss recovery to native menu drawing, and quit during wait.
+Read [AA_MULTIPLAYER.md](AA_MULTIPLAYER.md) and sibling
+`evidence/aa-multiplayer-startup-validation.json`. AA selected-character combat
+and script-state replication remain incomplete. NETVERSION6 is unchanged.
+
 AA's actual Duke pistol now uses the native hand-hitscan adapter and AA's own
 event-drawn crosshair is projected/depth-tested in both eyes. Real controller
 fire/release/tracking-loss recovery, native multiplayer impact/damage for the
@@ -24,7 +36,8 @@ and controller-operated Duke/START selection with inspected post-selection
 stereo gameplay images. Native cache recovery restores replacement-VBO state;
 CON startscreen reuses the existing XR UI lifetime. The observed AA scene uses
 native two-pass fallback, not accepted full multiview. Apart from the Duke pistol
-increment above, AA weapon integration and AA multiplayer remain unqualified. Read
+and native startup increments above, AA weapon integration and multiplayer
+campaign behavior remain unqualified. Read
 [ALIEN_ARMAGEDDON.md](ALIEN_ARMAGEDDON.md). Private art delivers 69 AA handheld
 entries plus both hands; main verified 1,614 manifest files and 71 indexed MD3s.
 

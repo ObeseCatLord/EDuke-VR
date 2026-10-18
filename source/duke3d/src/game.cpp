@@ -6887,9 +6887,7 @@ int app_main(int argc, char const* const* argv)
 
     g_player[0].playerquitflag = 1;
 
-    auto &myplayer = *g_player[myconnectindex].ps;
-
-    myplayer.palette = BASEPAL;
+    g_player[myconnectindex].ps->palette = BASEPAL;
 
     for (int i=1, j=numplayers; j<ud.multimode; j++)
     {
@@ -7039,7 +7037,7 @@ int app_main(int argc, char const* const* argv)
             ud.setup.bpp  = bpp;
         }
 
-        videoSetPalette(ud.brightness>>2, myplayer.palette, 0);
+        videoSetPalette(ud.brightness>>2, g_player[myconnectindex].ps->palette, 0);
         S_SoundStartup();
         S_MusicStartup();
     }
@@ -7078,13 +7076,14 @@ int app_main(int argc, char const* const* argv)
     //dukeCreateFrameRoutine();
 
     VM_OnEvent(EVENT_INITCOMPLETE);
+    Net_CompleteStartup();
 
 MAIN_LOOP_RESTART:
     totalclock = 0;
     ototalclock = 0;
     lockclock = 0;
 
-    myplayer.fta = 0;
+    g_player[myconnectindex].ps->fta = 0;
     for (int32_t & q : user_quote_time)
         q = 0;
 
@@ -7102,13 +7101,15 @@ MAIN_LOOP_RESTART:
         G_SetCrosshairColor(CrosshairColors.r, CrosshairColors.g, CrosshairColors.b);
     }
 
-    if (myplayer.gm & MODE_NEWGAME)
+    if (g_player[myconnectindex].ps->gm & MODE_NEWGAME)
     {
         G_NewGame(ud.m_volume_number, ud.m_level_number, ud.m_player_skill);
-        myplayer.gm = MODE_RESTART;
+        g_player[myconnectindex].ps->gm = MODE_RESTART;
     }
-    else
+    else if (!g_netClient)
     {
+        // A connected client already entered its server's map while waiting
+        // for the initial snapshot. Do not replace it with local logo/demo flow.
         if (ud.warp_on == 1)
         {
             G_NewGame_EnterLevel();
@@ -7155,11 +7156,11 @@ MAIN_LOOP_RESTART:
     g_player[myconnectindex].pteam = ud.team;
 
     if (g_gametypeFlags[ud.coop] & GAMETYPE_TDM)
-        myplayer.palookup = g_player[myconnectindex].pcolor = G_GetTeamPalette(g_player[myconnectindex].pteam);
+        g_player[myconnectindex].ps->palookup = g_player[myconnectindex].pcolor = G_GetTeamPalette(g_player[myconnectindex].pteam);
     else
     {
-        if (ud.color) myplayer.palookup = g_player[myconnectindex].pcolor = ud.color;
-        else myplayer.palookup = g_player[myconnectindex].pcolor;
+        if (ud.color) g_player[myconnectindex].ps->palookup = g_player[myconnectindex].pcolor = ud.color;
+        else g_player[myconnectindex].ps->palookup = g_player[myconnectindex].pcolor;
     }
 
     ud.warp_on = 0;
@@ -7187,13 +7188,13 @@ MAIN_LOOP_RESTART:
         double gameUpdateStartTime = timerGetFractionalTicks();
         auto framecnt = g_frameCounter;
 
-        if (((g_netClient || g_netServer) || (myplayer.gm & (MODE_MENU|MODE_DEMO)) == 0) && (int32_t)(totalclock - ototalclock) >= TICSPERFRAME)
+        if (((g_netClient || g_netServer) || (g_player[myconnectindex].ps->gm & (MODE_MENU|MODE_DEMO)) == 0) && (int32_t)(totalclock - ototalclock) >= TICSPERFRAME)
         {
             do
             {
                 do
                 {
-                    if (g_frameJustDrawn && g_networkMode != NET_DEDICATED_SERVER && (myplayer.gm & (MODE_MENU | MODE_DEMO)) == 0)
+                    if (g_frameJustDrawn && g_networkMode != NET_DEDICATED_SERVER && (g_player[myconnectindex].ps->gm & (MODE_MENU | MODE_DEMO)) == 0)
                         dukeFillInputForTic();
 
                     if (ready2send == 0)
@@ -7201,8 +7202,8 @@ MAIN_LOOP_RESTART:
 
                     ototalclock += TICSPERFRAME;
 
-                    if (((ud.show_help == 0 && (myplayer.gm & MODE_MENU) != MODE_MENU) || ud.recstat == 2 || (g_netServer || ud.multimode > 1))
-                        && (myplayer.gm & MODE_GAME))
+                    if (((ud.show_help == 0 && (g_player[myconnectindex].ps->gm & MODE_MENU) != MODE_MENU) || ud.recstat == 2 || (g_netServer || ud.multimode > 1))
+                        && (g_player[myconnectindex].ps->gm & MODE_GAME))
                     {
                         g_frameJustDrawn = false;
                         Net_GetPackets();
@@ -7210,7 +7211,7 @@ MAIN_LOOP_RESTART:
                     }
 
                 }
-                while (((g_netClient || g_netServer) || (myplayer.gm & (MODE_MENU | MODE_DEMO)) == 0) && (int32_t)(totalclock - ototalclock) >= TICSPERFRAME && !g_saveRequested);
+                while (((g_netClient || g_netServer) || (g_player[myconnectindex].ps->gm & (MODE_MENU | MODE_DEMO)) == 0) && (int32_t)(totalclock - ototalclock) >= TICSPERFRAME && !g_saveRequested);
 
                 g_gameUpdateTime = timerGetFractionalTicks() - gameUpdateStartTime;
 
@@ -7230,10 +7231,10 @@ MAIN_LOOP_RESTART:
 
         G_DoCheats();
 
-        if (myplayer.gm & MODE_NEWGAME)
+        if (g_player[myconnectindex].ps->gm & MODE_NEWGAME)
             goto MAIN_LOOP_RESTART;
 
-        if (myplayer.gm & (MODE_EOL|MODE_RESTART))
+        if (g_player[myconnectindex].ps->gm & (MODE_EOL|MODE_RESTART))
         {
             switch (G_EndOfLevel())
             {
@@ -7249,12 +7250,12 @@ MAIN_LOOP_RESTART:
 #endif
             idle();
         }
-        else if (engineFPSLimit((myplayer.gm & MODE_MENU) == MODE_MENU) || g_saveRequested)
+        else if (engineFPSLimit((g_player[myconnectindex].ps->gm & MODE_MENU) == MODE_MENU) || g_saveRequested)
         {
             if (!g_saveRequested)
             {
                 // only allow binds to function if the player is actually in a game (not in a menu, typing, et cetera) or demo
-                CONTROL_BindsEnabled = !!(myplayer.gm & (MODE_GAME|MODE_DEMO));
+                CONTROL_BindsEnabled = !!(g_player[myconnectindex].ps->gm & (MODE_GAME|MODE_DEMO));
             }
 
             //g_switchRoutine(co_drawframe);
@@ -7276,7 +7277,7 @@ MAIN_LOOP_RESTART:
             walock[TILE_SAVESHOT] = CACHE1D_UNLOCKED;
         }
 
-        if (myplayer.gm & MODE_DEMO)
+        if (g_player[myconnectindex].ps->gm & MODE_DEMO)
             goto MAIN_LOOP_RESTART;
     }
     while (1);

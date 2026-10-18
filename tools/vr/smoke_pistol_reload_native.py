@@ -119,8 +119,9 @@ def write_lab(root, role, grp):
 
 
 class Run:
-    def __init__(self, args, root, binary):
+    def __init__(self, args, root, binary, con_file="pistol_reload_test.con"):
         self.args, self.root, self.binary = args, root, binary
+        self.con_file = con_file
         self.env = sanitised_env()
         self.labs = {}
         self.processes, self.observers, self.writers, self.logs = {}, {}, {}, []
@@ -154,7 +155,7 @@ class Run:
         log = (lab / "game.log").open("w")
         self.logs.append(log)
         process = subprocess.Popen([str(self.binary), "-usecwd", "-nosetup", "-noautoload", "-nologo",
-                                    "-ns", "-nm", *command, "-x", "pistol_reload_test.con"],
+                                    "-ns", "-nm", *command, "-x", self.con_file],
                                    cwd=lab, env=env, stdin=subprocess.DEVNULL,
                                    stdout=log, stderr=subprocess.STDOUT)
         self.processes[role] = process
