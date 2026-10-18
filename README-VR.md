@@ -10,8 +10,11 @@ idle pistol now has native MD3 stereo and shared-geometry multiview transport.
 A [GPU-denied software OpenXR lab](docs/vr/SOFTWARE_XR.md) now qualifies bounded
 actual world multiview rendering without using the hardware GPU.
 The private AA arsenal includes 69 handheld entries and both floating hands.
-Its [runtime model design](docs/vr/AA_MODEL_DESIGN.md) preserves native world
-rendering order; bindings remain in progress. [Actual AA enemy damage tests](docs/vr/AA_ENEMY_DAMAGE.md)
+Its [first runtime binding](docs/vr/AA_MODELS.md) draws the idle standard Duke
+pistol through native stereo or exact-reference model multiview, with ART
+fallback during fire/reload. The [model design](docs/vr/AA_MODEL_DESIGN.md)
+preserves native world rendering order; broader bindings remain in progress.
+[Actual AA enemy damage tests](docs/vr/AA_ENEMY_DAMAGE.md)
 exercise the tracked pistol against native AI across multiplayer peers.
 
 ## Build

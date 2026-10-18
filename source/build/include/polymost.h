@@ -41,6 +41,10 @@ void polymost_drawrooms(void);
 void polymost_prepareMirror(int32_t dax, int32_t day, int32_t daz, fix16_t daang, fix16_t dahoriz, int16_t mirrorWall);
 void polymost_completeMirror();
 #ifdef USE_OPENXR
+// Optional game-owned consumer of an actual native HUD draw. No rendering or
+// callback replay is performed by this hook; false preserves ordinary ART/DEF.
+extern bool (*polymost_xrWeaponTileConsumer)(int32_t tile, int32_t uniqueID, int32_t shade,
+    int32_t palette, int32_t flags, int32_t angle, int32_t alpha, int32_t blend);
 bool polymost_xrBeginTint(uint8_t r, uint8_t g, uint8_t b, uint8_t f);
 void polymost_xrEndTint();
 // Installs an asymmetric OpenXR tangent frustum for the next Polymost camera setup.

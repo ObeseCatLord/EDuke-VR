@@ -96,6 +96,7 @@ static struct
     XRPistolPresentation presentation{};
     uint8_t seen=0; // native body=1, optional magazine=2, optional hand=4
     bool mismatch=false;
+    bool weaponSegment=false;
 } handModelReceipt;
 
 static void accountWorldFrame(bool opaque, bool masks, bool fixture, bool models=true, bool handModels=false)
@@ -422,7 +423,7 @@ bool prepareHandModel(HandModelSample &sample)
     if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
         || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
         || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)
-        || !P_XRPistolPresentation(sample.presentation)) return false;
+        || !(P_XRPistolPresentation(sample.presentation) || P_XRAAPistolPresentation(sample.presentation))) return false;
 
     sample.context.palette=sample.presentation.palette;
     sample.context.shade=sample.presentation.shade;
@@ -440,7 +441,7 @@ bool prepareHandModel(HandModelSample &sample)
     if (counter) Bsprintf(name,counter<5 ? "fire_%02d" : "reload_%02d",counter);
     else Bstrcpy(name,"rest");
     int frame=md3_getframeindex(sample.context.modelid,name);
-    if (frame<0 && counter==0) frame=0; // Preserve the legacy frame-zero idle proof.
+    if (frame<0 && counter==0 && !sample.presentation.alienArmageddon) frame=0; // Legacy stock idle only.
     if (frame<0) return false; // Positive counters never silently substitute rest.
     sample.context.cframe=sample.context.nframe=frame;
     if (!md3_gettagposition(sample.context.modelid,"tag_muzzle",&sample.muzzle)
@@ -516,6 +517,7 @@ static bool pistolReceiptMatches()
 
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
 {
+    if (handModelReceipt.presentation.alienArmageddon) return false;
     int const role=uniqueID==W_PISTOL ? 1 : uniqueID==W_PISTOL_CLIP ? 2 : uniqueID==W_PISTOL_HAND ? 4 : 0;
     if (!handModelReceipt.runtime || !role) return false;
     // Classify claimed roles first: a wrong auxiliary tile must latch failure,
@@ -526,6 +528,40 @@ bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
     if (!validTile || (handModelReceipt.seen&role) || !pistolReceiptMatches())
     { handModelReceipt.mismatch=true; return false; }
     handModelReceipt.seen|=role;
+    return true;
+}
+
+static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int32_t palette,
+                                int32_t flags,int32_t angle,int32_t alpha,int32_t blend)
+{
+    auto &receipt=handModelReceipt;
+    if (!receipt.runtime || !receipt.presentation.alienArmageddon) return false;
+    // Body-family calls are validated even with a changed ID or after the
+    // expected body. Unclaimed effects, magazine and hand artwork remain native.
+    if (tile!=FIRSTGUN && tile!=FIRSTGUN+1 && tile!=FIRSTGUN+2 && tile!=FIRSTGUN+4
+        && tile!=FIRSTGUN+5 && tile!=FIRSTGUNRELOADWIDE) return false;
+    XRPistolPresentation fresh;
+    auto const &saved=receipt.presentation;
+    bool const valid=receipt.weaponSegment && pistolReceiptOwned() && !(receipt.seen&1)
+        && tile==FIRSTGUN && uniqueID==PISTOL_WEAPON && palette==saved.palette && shade==saved.shade
+        && flags==(2|2048|4096) && !angle && !alpha && !blend
+        && P_XRAAPistolPresentation(fresh) && fresh.palette==saved.palette && fresh.shade==saved.shade;
+    if (!valid)
+    {
+        receipt.mismatch=true;
+        if (std::getenv("EDUKE32_XR_TEST_MODELS"))
+            LOG_F(INFO,"OpenXR AA hand model draw mismatch: tile=%d id=%d shade=%d palette=%d flags=%d angle=%d alpha=%d blend=%d segment=%d roles=%u.",
+                  tile,uniqueID,shade,palette,flags,angle,alpha,blend,receipt.weaponSegment,unsigned(receipt.seen));
+        return false;
+    }
+    receipt.seen|=1;
+    if (std::getenv("EDUKE32_XR_TEST_MODELS"))
+    {
+        static unsigned reported;
+        if (reported++<3 || !modelAnimationCapture.empty())
+            LOG_F(INFO,"OpenXR AA hand model receipt: serial=%llu tile=%d shade=%d palette=%d roles=%u valid=1.",
+                  (unsigned long long)receipt.serial,tile,shade,palette,unsigned(receipt.seen));
+    }
     return true;
 }
 
@@ -685,6 +721,7 @@ bool G_XRConsumeWorldDraw()
 
 void G_XRCancelMenuPresentation()
 {
+    polymost_xrWeaponTileConsumer=nullptr;
     handModelReceipt={};
     // A world may have finished before its outer display-end callback. Nested
     // room draws must cancel that retained image too, before native callbacks.
@@ -765,11 +802,13 @@ bool G_XRBeginWeapon()
             if (!menuRuntime->captureFrame(before.c_str(),false,error,true))
             { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
         }
+    handModelReceipt.weaponSegment=true;
     return true;
 }
 
 void G_XREndWeapon(bool captured)
 {
+    handModelReceipt.weaponSegment=false;
     if (captured)
         if (auto test=std::getenv("EDUKE32_XR_TEST_WEAPON_NESTED"))
         {
@@ -1006,8 +1045,8 @@ void G_XRArmMenuPresentation()
         if (std::getenv("EDUKE32_XR_TEST_MODEL_ANIMATION"))
         {
             XRPistolPresentation fresh;
-            bool const qualified=P_XRPistolPresentation(fresh);
             auto const &saved=handModelReceipt.presentation;
+            bool const qualified=saved.alienArmageddon ? P_XRAAPistolPresentation(fresh) : P_XRPistolPresentation(fresh);
             LOG_F(INFO,"OpenXR hand model rejected: qualified=%d saved=%d,%d,%d,%d fresh=%d,%d,%d,%d bound=%d roles=%u mismatch=%d serial=%llu,%llu.",
                   qualified,saved.palette,saved.shade,saved.counter,saved.reloading,
                   fresh.palette,fresh.shade,fresh.counter,fresh.reloading,
@@ -1539,6 +1578,19 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         if (good && !fixtureTest && prepareHandModel(handModel))
         {
             attemptedHandModel=true;
+            // AA enters gameplay after its own controller selector, so the
+            // ordinary frame60 diagnostic can precede the first eligible model.
+            // Capture the first actual accepted AA model, without advancing it.
+            static bool capturedAAModel;
+            if (handModel.presentation.alienArmageddon && !capturedAAModel
+                && std::getenv("EDUKE32_XR_TEST_MODELS"))
+                if (auto prefix=std::getenv("EDUKE32_XR_MODEL_OUTPUT"))
+                {
+                    modelAnimationCapture=prefix;
+                    if (auto weaponPrefix=std::getenv("EDUKE32_XR_WEAPON_OUTPUT"))
+                        weaponAnimationCapture=weaponPrefix;
+                    capturedAAModel=true;
+                }
             char const *modelPrefix=!modelAnimationCapture.empty() ? modelAnimationCapture.c_str()
                 : worldFrames==59 ? std::getenv("EDUKE32_XR_MODEL_OUTPUT") : nullptr;
             bool const modelCapture=modelPrefix!=nullptr;
@@ -1659,6 +1711,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             {
                 usedHandModel=true;
                 handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,handModel.presentation,0,false};
+                if (handModel.presentation.alienArmageddon) polymost_xrWeaponTileConsumer=consumeAAWeaponTile;
                 if (oracleCompared[0] && oracleCompared[1]) LOG_F(INFO,"OpenXR hand model oracle inputs: identical=1.");
                 if (modelCapture && std::getenv("EDUKE32_XR_TEST_MODELS"))
                     for (unsigned i=0;i<2;++i)
@@ -1808,6 +1861,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
     if (!good)
     {
+        polymost_xrWeaponTileConsumer=nullptr;
         handModelReceipt={};
         if (attemptedHandModel && std::getenv("EDUKE32_XR_TEST_MODELS"))
             LOG_F(INFO,"OpenXR hand model frame canceled: serial=%llu submitted=%llu.",

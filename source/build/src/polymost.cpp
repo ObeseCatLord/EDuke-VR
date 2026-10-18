@@ -10520,10 +10520,18 @@ void polymost_dorotatespritemodel(int32_t sx, int32_t sy, int32_t z, int16_t a, 
     gstang = ogstang;
 }
 
+#ifdef USE_OPENXR
+bool (*polymost_xrWeaponTileConsumer)(int32_t,int32_t,int32_t,int32_t,int32_t,int32_t,int32_t,int32_t)=nullptr;
+#endif
+
 void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
                              int8_t dashade, char dapalnum, int32_t dastat, uint8_t daalpha, uint8_t dablend,
                              int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2, int32_t uniqid)
 {
+#ifdef USE_OPENXR
+    if (polymost_xrWeaponTileConsumer
+        && polymost_xrWeaponTileConsumer(picnum,uniqid,dashade,uint8_t(dapalnum),dastat,a,daalpha,dablend)) return;
+#endif
     if (usemodels && tile2model[picnum].hudmem[(dastat&4)>>2])
     {
 #ifdef USE_OPENXR

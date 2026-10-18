@@ -2,6 +2,13 @@
 
 ## Current checkpoint — 2026-10-18
 
+The opt-in [AA idle pistol model binding](AA_MODELS.md) now passes actual native
+Duke/START, exact body-draw suppression, two-eye color/depth, real trigger/ammo,
+native firing ART and missing-model fallback. Model multiview matches its
+same-frame native reference byte-for-byte and submits shared geometry once.
+See sibling `evidence/aa-model-validation.json`. This is one idle weapon model;
+AA animation, hands, broader arsenal and complete world SPS remain open.
+
 An owned Hollywood fixture now exercises a real AA NEWTROOPGUARD with native
 AI, tracked pistol sprite hits, health loss, corpse state and ammo convergence.
 See [AA_ENEMY_DAMAGE.md](AA_ENEMY_DAMAGE.md) and sibling
@@ -9,7 +16,7 @@ See [AA_ENEMY_DAMAGE.md](AA_ENEMY_DAMAGE.md) and sibling
 attempts and remaining native AA diagnostics. This changes tests, not gameplay
 or the protocol. [AA_MODEL_DESIGN.md](AA_MODEL_DESIGN.md) records the focused
 Astra decision to preserve the existing world model pass: late opaque HUD
-emission would overwrite foreground translucency. Runtime AA model bindings
+emission would overwrite foreground translucency. Broader runtime AA bindings
 remain pending; the private chunky weapon/hand assets are complete.
 
 An explicit native [AA 5.66 compatibility entry](AA_COMPAT_ENTRY.md) now makes

@@ -1,7 +1,8 @@
 # AA model integration: native world pass and actual-draw validation
 
-Design checkpoint, 2026-10-18. Asset production is complete; runtime binding is
-not. Private `../duke-vr-assets/aa-v1` contains 69 handheld dispatch entries
+Design checkpoint, 2026-10-18. Asset production is complete; the narrow idle
+pistol [runtime binding](AA_MODELS.md) is implemented, with broader integration
+still incomplete. Private `../duke-vr-assets/aa-v1` contains 69 handheld dispatch entries
 (68 physical designs) and two floating hands, without additional character
 bodies. Models have 36–620 triangles; each hand has 208. Weapons use 128×128
 textures and hands 64×64. See that package's `NATIVE_BINDING.md` for the exact
@@ -67,7 +68,7 @@ AA reload choreography. Four other asset families have documented literal
 native-counter mappings; the remaining mappings and hand fitting still require
 implementation and runtime evidence.
 
-## Verified inputs for the first sampler (not implemented)
+## Verified inputs for the first sampler
 
 Terra's follow-up was source investigation only, not a review. The standard
 single Duke pistol uses native `kickback_pic==0`, slot 1/WorksLike pistol,
@@ -85,7 +86,8 @@ draw state early to obtain this value.
 
 The qualifier must first exclude native ownership/camera/death/weapon-lowering
 conditions and AA's suppressed HUD, selector, brutal attack, camera, bike,
-turret, slim-push and juicer presentations. The last two branches and callback
+turret, slim-push and juicer presentations. The implemented sampler excludes
+nonzero slim-push and juicer state; those transitions and callback
 stability still need bounded qualification. Reject ordinary unsupported states
 before model emission. Do not generalize these initial pistol conditions into
 an engine-owned copy of AA's complete arsenal dispatcher.

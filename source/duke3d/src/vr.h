@@ -14,9 +14,11 @@ void G_XREndWeapon(bool captured);
 struct XRPistolPresentation
 {
     int32_t palette=0, shade=0, counter=0, reloading=0;
+    bool alienArmageddon=false;
 };
 // Read-only native presentation sample; never advances weapon/animation state.
 bool P_XRPistolPresentation(XRPistolPresentation &sample);
+bool P_XRAAPistolPresentation(XRPistolPresentation &sample);
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID);
 void G_XRUpdateShotInput();
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
