@@ -1170,3 +1170,35 @@ durable run results, original failed attempts, source/binary hashes and oracle
 recheck are sibling `evidence/flamethrower-validation.json`. No physical headset,
 3D flame-weapon animation, general SPS/materials, WAN or full-port completion
 is established by these bounded checks.
+
+## AA standard pistol model and native reload — 2026-10-18
+
+The bounded AA adapter now qualifies idle and native reload model frames using
+the existing world emitter and model multiview collector. The private actual
+AA run passes 38 checks: controller Duke/START selection, trigger/ammo, native
+Reload/Aim_Down, partial-to-full clip and unchanged total ammo during reload.
+Observed counters 8–26 use the expected MD3 names, exact body/magazine receipt
+roles, byte-exact same-frame native color/depth in both eyes and zero writes
+during collection. Native flash ART at 1/2, recovery ART at 3/4 and hand ART
+at 20–24 are observed; hand evidence has same-serial accepted model/body receipts.
+The stock native multiplayer animated-pistol regression passes all 27 checks
+with the current XR binary. Read AA_MODELS.md and sibling
+`evidence/aa-pistol-reload-validation.json` for paths, hashes and review details.
+The private missing-frame19 case passes43 checks: only its MD3 name bytes change,
+the native counter draws ART without a model, and later reload models recover.
+
+The earlier stock axis failure was an independent-oracle error: horizontal
+world right omitted the native tracking-space pitch. Correct rigid composition
+using native eye angles, actual XR view orientation and prescribed hand rotation
+passes base, roll25 and asymmetric-FOV cases without engine math changes or
+tolerance relaxation. A real appended AA CON duplicate-body draw is rejected
+and canceled before submission (serial142 versus lastSubmitted141); all 24
+fault checks pass. Historical failed results remain in
+`evidence/aa-model-validation.json`.
+
+Both native/XR builds pass. Tests use private GPU-denied llvmpipe/LVP Monado/Xvfb
+labs with active clean core validation and complete process teardown. Firing
+still uses ART because native flashes and changing shade history are not yet
+replaced. Full AA arsenal/floating hands, continuous 3D firing, AA model
+multiplayer/transitions/occlusion, general world SPS and headset acceptance
+remain incomplete. Existing AA invalid-sector and CPU audio diagnostics remain.

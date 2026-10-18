@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Qualify AA's one supported idle Duke-pistol MD3 in a private software-XR lab.
+"""Qualify AA's optional native Duke-pistol MD3 presentation in software XR.
 
 Run this child under ``software_xr_lab.py``.  It only writes below
 ``--work-dir``: the installed AA directory, compatibility CON, and exported
-MD3/skin remain read-only.  ``model`` proves the idle standard pistol only;
-firing and reload frames deliberately retain AA's native ART.  ``missing``
+MD3/skin remain read-only.  ``model`` proves the idle standard pistol only.
+With ``--animation`` and an explicitly supplied private MD3, natural AA
+reload counter 6..26 may qualify model frames; firing counter 1..5 and AA's
+reload hand remain native ART.  ``missing``
 does not install a DEF mapping, while ``missing-frame`` uses a private MD3
 copy whose named rest frame cannot resolve; both retain native weapon-card ART.
 ``duplicate-body`` issues an extra native CON body draw after a valid model
@@ -19,6 +21,7 @@ from pathlib import Path
 import re
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -37,6 +40,32 @@ DEFAULT_COMPAT = Path(__file__).resolve().parents[2] / 'package/vr/aa566/eduke32
 AA_RECEIPT = re.compile(
     r'OpenXR AA hand model receipt: serial=(\d+) tile=(-?\d+) shade=(-?\d+) '
     r'palette=(-?\d+) roles=(\d+) valid=(\d+)\.')
+MODEL_RECEIPT = re.compile(
+    r'OpenXR hand model receipt: serial=(\d+) counter=(\d+) reloading=(\d+) roles=(\d+) valid=(\d+)\.')
+MODEL_SAMPLE = re.compile(
+    r'OpenXR hand model sample: serial=(\d+) counter=(\d+) reloading=(\d+) frame=(\d+)\.')
+AA_RELOAD_FIELDS = ('tick', 'counter', 'reloading', 'ammo', 'thisclip', 'hudshade', 'playershade', 'pistolclip')
+AA_RELOAD_SAMPLE = re.compile(r'addlog aareload_(\w+)(?: \(player \d+\))? = (-?\d+)')
+AA_BODY_TILES = {2524, 2525, 2526, 2528, 2529, 5122}
+AA_AIM_DOWN_BIT = 1 << 4
+
+
+def aa_reload_samples(text: str) -> list[dict]:
+    """Read complete observer-only AA pistol clip rows."""
+    rows, current = [], {}
+    for key, value in AA_RELOAD_SAMPLE.findall(text):
+        if key == 'tick':
+            current = {'tick': int(value)}
+        elif current:
+            current[key] = int(value)
+            if key == 'pistolclip' and all(name in current for name in AA_RELOAD_FIELDS):
+                rows.append(current)
+    return rows
+
+
+def aa_body_receipts(text: str) -> list[tuple[int, int, int, int, int, int]]:
+    """Keep validated AA body receipts, excluding unclaimed magazine draws."""
+    return [tuple(map(int, row)) for row in AA_RECEIPT.findall(text) if int(row[1]) in AA_BODY_TILES]
 
 
 def model_observer() -> str:
@@ -46,7 +75,8 @@ def model_observer() -> str:
               'idleanim slidekick sidekick jumpkick qk_proxy doubletop movecam '
               'thiscam onturret zombieonplayer startmode newhud hud_shadef '
               'hud_palf WEAPON1_TOTALTIME').split()
-    return (aa_wrapper(include_game=False) + '''
+    return (aa_wrapper(include_game=False) +
+            ''.join(f'gamevar aareload_{name} 0 1\n' for name in AA_RELOAD_FIELDS) + '''
 gamevar aamodel_reported 0 1
 gamevar aamodel_upgrades 0 1
 appendevent EVENT_PROCESSINPUT
@@ -55,7 +85,16 @@ ifvare aamodel_reported 0 ifvare startmode 1 ifvare aaobserve_weaponpos 0
  set aamodel_reported 1
  setvarvar aamodel_upgrades dukeupgrades[PISTOL_WEAPON]
  addlog aamodel_upgrades
-''' + ''.join(f' addlog {label}\n' for label in labels) + '}\nendevent\n')
+''' + ''.join(f' addlog {label}\n' for label in labels) + '''}
+addvar aareload_tick 1
+getplayer[THISACTOR].kickback_pic aareload_counter
+getplayer[THISACTOR].reloading aareload_reloading
+getplayer[THISACTOR].ammo_amount PISTOL_WEAPON aareload_ammo
+setvarvar aareload_thisclip THISCLIP
+setvarvar aareload_hudshade hud_shadef
+geta[player[].i].shade aareload_playershade
+setvarvar aareload_pistolclip PISTOLCLIP
+''' + ''.join(f'addlog aareload_{name}\n' for name in AA_RELOAD_FIELDS) + 'endevent\n')
 
 
 DUPLICATE_BODY = '''
@@ -167,6 +206,54 @@ def fire_actual_aa_pistol(observer: Observer, remote: Remote) -> dict:
                        'native_trigger_seen': any(row['bits'] & 4 for row in fired_rows)}}
 
 
+def reload_actual_aa_pistol(observer: Observer, process: subprocess.Popen, display: str) -> dict:
+    """Press AA's installed Reload/Aim_Down binding after a real partial clip."""
+    # Native shot lighting fades through AA's existing shade history. Wait for
+    # the supported steady presentation, without assigning either shade value.
+    observer.wait(lambda text: bool(aa_reload_samples(text)) and
+                  aa_reload_samples(text)[-1]['counter'] == 0 and
+                  aa_reload_samples(text)[-1]['hudshade'] == min(aa_reload_samples(text)[-1]['playershade'], 24),
+                  timeout=12)
+    before = aa_samples(observer.text())[-1]
+    before_clip_rows = aa_reload_samples(observer.text())
+    if not before_clip_rows:
+        raise RuntimeError('AA pistol clip observer did not produce a complete row before reload')
+    before_clip = before_clip_rows[-1]
+    if before['ammo'] <= 0 or not 0 < before_clip['thisclip'] < before_clip['pistolclip']:
+        raise RuntimeError('AA reload requested without a live partial pistol clip')
+    window, _ = X11(display).owned_window(process.pid)
+    if not window:
+        raise RuntimeError('owned AA drawable missing before native reload input')
+    start = len(observer.text())
+    # AA's settings bind End to gamefunc_RELOAD_WEAPON.  AAPLAYER names that
+    # input at index 18 and receives it through EVENT_AIMDOWN; no CON state is
+    # injected here.
+    # A short press can begin and end between two software-rendered frames.
+    # Hold through a native input poll; AA itself rejects repeats while reloading.
+    X11(display).press(window, 'End', .3, True)
+    entered_text = observer.wait(
+        lambda text: any(row['reloading'] == 1 and row['counter'] >= 6
+                         for row in aa_reload_samples(text[start:])), timeout=12)
+    returned_text = observer.wait(
+        lambda text: any(row['counter'] == 0 and row['reloading'] == 0
+                         and row['thisclip'] == row['pistolclip'] and row['ammo'] == before['ammo']
+                         for row in aa_reload_samples(text[start:])), timeout=15)
+    rows = aa_reload_samples(returned_text[start:])
+    input_rows = aa_samples(returned_text[start:])
+    return {'before': before, 'before_clip': before_clip, 'rows': rows,
+            'entered': aa_reload_samples(entered_text[start:]), 'after': rows[-1],
+            'checks': {
+                'native_Aim_Down_reload_bit_seen': any(row['bits'] & AA_AIM_DOWN_BIT for row in input_rows),
+                'native_partial_clip_before_reload': 0 < before_clip['thisclip'] < before_clip['pistolclip'],
+                'native_reload_enters': any(row['reloading'] == 1 and row['counter'] >= 6 for row in rows),
+                'native_clip_refills_at_counter_26': any(row['counter'] == 26 and
+                    row['thisclip'] == row['pistolclip'] for row in rows),
+                'native_reload_returns_to_rest_with_total_ammo_unchanged': rows[-1]['counter'] == 0 and
+                    rows[-1]['reloading'] == 0 and rows[-1]['thisclip'] == rows[-1]['pistolclip'] and
+                    rows[-1]['ammo'] == before['ammo'],
+            }}
+
+
 def wait_for_character_selection(observer: Observer, process: subprocess.Popen, display: str, timeout: float) -> None:
     """Dismiss only AA's own opening screens through the owned private window."""
     deadline, next_press = time.monotonic() + timeout, 0.0
@@ -221,6 +308,52 @@ def missing_rest_fixture(root: Path, source: Path) -> dict:
             'changed_offsets': changed, 'only_frame_name_bytes_changed': changed == expected}
 
 
+def animation_frames(model: Path) -> dict:
+    """Validate the external AA MD3's authored native-counter frame names."""
+    data = model.read_bytes()
+    if len(data) < 96:
+        raise RuntimeError('AA animation MD3 header is truncated')
+    count = struct.unpack_from('<i', data, 76)[0]
+    offset = struct.unpack_from('<i', data, 92)[0]
+    if count <= 0 or offset < 0 or offset + count * 56 > len(data):
+        raise RuntimeError('AA animation MD3 has invalid frame metadata')
+    names = [data[offset + index * 56 + 40:offset + index * 56 + 56]
+             .split(b'\0', 1)[0].decode('ascii', errors='strict') for index in range(count)]
+    required = ['rest'] + [f'reload_{counter:02d}' for counter in range(6, 27)]
+    missing = [name for name in required if name not in names]
+    if missing:
+        raise RuntimeError('AA animation MD3 is missing required frame names: ' + ', '.join(missing))
+    return {'frame_count': count, 'frame_offset': offset, 'names': names,
+            'required_names': required, 'all_required_names_present': not missing}
+
+
+def missing_reload_fixture(root: Path, source: Path, counter: int) -> dict:
+    """Rename only one private reload-frame name; preserve every MD3 payload byte."""
+    metadata = animation_frames(source)
+    original = source.read_bytes()
+    target = f'reload_{counter:02d}'.encode()
+    indices = [index for index, name in enumerate(metadata['names']) if name.encode() == target]
+    if len(indices) != 1:
+        raise RuntimeError(f'AA animation MD3 must contain exactly one {target.decode()} frame')
+    index = indices[0]
+    name_offset = metadata['frame_offset'] + index * 56 + 40
+    old_name = original[name_offset:name_offset + 16]
+    replacement = f'no_reload{counter:02d}'.encode() + b'\0' + old_name[12:]
+    copy = bytearray(original)
+    copy[name_offset:name_offset + 16] = replacement
+    changed = [offset for offset, (before, after) in enumerate(zip(original, copy)) if before != after]
+    destination = root / f'duke_pistol_missing_reload_{counter:02d}.md3'
+    destination.write_bytes(copy)
+    return {'path': str(destination), 'counter': counter, 'frame_index': index,
+            'frame_offset': metadata['frame_offset'], 'name_offset': name_offset,
+            'original_name': target.decode(), 'replacement_name': replacement.split(b'\0', 1)[0].decode(),
+            'changed_offsets': changed, 'source_sha256': hashlib.sha256(original).hexdigest(),
+            'sha256': hashlib.sha256(copy).hexdigest(),
+            'only_chosen_frame_name_bytes_changed': all(name_offset <= offset < name_offset + 16 for offset in changed),
+            'payload_unchanged': original[:name_offset] == copy[:name_offset] and
+                                 original[name_offset + 16:] == copy[name_offset + 16:]}
+
+
 def write_private_def(root: Path, model: Path, skin: Path, frame_name: str = 'rest') -> dict:
     """Route AA's existing pickup tile 21 through a disposable MD3 definition."""
     surfaces = struct.unpack_from('<i', model.read_bytes(), 84)[0]
@@ -236,10 +369,61 @@ def write_private_def(root: Path, model: Path, skin: Path, frame_name: str = 're
     return {'tile': 21, 'frame': frame_name, 'surfaces': surfaces, 'model': str(model), 'skin': str(skin)}
 
 
+def animation_oracles(root: Path, samples: list[tuple[int, int, int, int]], names: list[str],
+                      receipts: list[tuple[int, int, int, int, int]]) -> dict:
+    """Read only captures made for naturally observed accepted model frames."""
+    receipt_by_serial = {serial: (counter, reloading, roles, valid)
+                         for serial, counter, reloading, roles, valid in receipts}
+    counters, accepted = {}, []
+    for serial, counter, reloading, frame in samples:
+        if counter in counters:
+            continue
+        if frame < 0 or frame >= len(names):
+            counters[counter] = {'frame_index_in_model': False}
+            continue
+        prefix = root / f'model-counter-{counter:02d}'
+        model_files = [Path(str(prefix) + f'-{stage}-{eye}{suffix}')
+                       for stage in ('before', 'collected', 'reference', 'after')
+                       for eye in ('left', 'right') for suffix in ('.ppm', '-depth.bin')]
+        required_name = 'fire_%02d' % counter if 1 <= counter <= 5 else \
+            'reload_%02d' % counter if counter >= 6 else 'rest'
+        receipt = receipt_by_serial.get(serial)
+        expected_roles = 3 if 10 <= counter <= 19 else 1
+        if not all(path.is_file() for path in model_files):
+            counters[counter] = {'frame_index_in_model': True, 'captures_available': False}
+            continue
+        equal = all((root / f'model-counter-{counter:02d}-reference-{eye}{suffix}').read_bytes() ==
+                    (root / f'model-counter-{counter:02d}-after-{eye}{suffix}').read_bytes()
+                    for eye in ('left', 'right') for suffix in ('.ppm', '-depth.bin'))
+        clean = all((root / f'model-counter-{counter:02d}-before-{eye}{suffix}').read_bytes() ==
+                    (root / f'model-counter-{counter:02d}-collected-{eye}{suffix}').read_bytes()
+                    for eye in ('left', 'right') for suffix in ('.ppm', '-depth.bin'))
+        visible = all(not np.array_equal(np.asarray(Image.open(root / f'model-counter-{counter:02d}-before-{eye}.ppm')),
+                                         np.asarray(Image.open(root / f'model-counter-{counter:02d}-after-{eye}.ppm')))
+                      for eye in ('left', 'right'))
+        counters[counter] = {
+            'frame_index_in_model': True, 'captures_available': True,
+            'native_counter_frame_name': names[frame] == required_name,
+            'native_color_depth_reference_exact': equal,
+            'collection_color_depth_unchanged': clean,
+            'visible_both_eyes': visible,
+            'valid_native_receipt': receipt is not None and receipt[0] == counter and receipt[1] == reloading
+                and receipt[3] == 1,
+            'native_receipt_roles_match': receipt is not None and receipt[2] == expected_roles,
+            'receipt_roles': receipt[2] if receipt else None,
+        }
+        accepted.append((serial, counter, reloading, frame))
+    return {'counter_checks': counters, 'accepted_samples': accepted}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case', choices=('model', 'missing', 'missing-frame', 'duplicate-body'), default='model')
-    parser.add_argument('--model-mode', choices=('native', 'sps'), default='native')
+    parser.add_argument('--model-mode', choices=('native', 'sps'))
+    parser.add_argument('--animation', action='store_true',
+                        help='qualify native AA firing ART and reload model frames from an explicit private MD3')
+    parser.add_argument('--missing-reload-frame', type=int, choices=range(6, 26),
+                        help='remove one private reload frame (6..25), requiring model recovery at a later reload counter')
     for name in ('binary', 'mod-root', 'work-dir'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--model', type=Path, default=DEFAULT_ASSETS / 'duke_pistol.md3')
@@ -249,6 +433,16 @@ def main() -> int:
     parser.add_argument('--remote-port', type=int, required=True)
     parser.add_argument('--timeout', type=int, default=65)
     args = parser.parse_args()
+    explicit_model = any(value == '--model' or value.startswith('--model=') for value in sys.argv[1:])
+    if args.animation and args.case != 'model':
+        parser.error('--animation requires --case model')
+    if args.animation and not explicit_model:
+        parser.error('--animation requires an explicit external --model')
+    if args.animation and args.model_mode == 'native':
+        parser.error('--animation requires SPS model qualification')
+    if args.missing_reload_frame is not None and not args.animation:
+        parser.error('--missing-reload-frame requires --animation')
+    args.model_mode = args.model_mode or ('sps' if args.animation else 'native')
     model_case = args.case in ('model', 'duplicate-body')
     args.binary, args.mod_root, args.work_dir = (args.binary.resolve(), args.mod_root.resolve(), args.work_dir.resolve())
     args.compat_con = args.compat_con.resolve()
@@ -268,17 +462,29 @@ def main() -> int:
     phase = 'setup'
     result = {'passed': False, 'case': args.case, 'model_mode': args.model_mode,
               'evidence_directory': str(root), 'checks': {},
-              'qualification': 'One idle standard Duke pistol only. Positive fire/reload counters retain native AA ART; the rest of AA arsenal and campaign remain unqualified.'}
+              'qualification': ('Native standard Duke pistol rest/reload model frames; firing remains native ART.'
+                                if args.animation else
+                                'One idle standard Duke pistol only. Positive fire/reload counters retain native AA ART; the rest of AA arsenal and campaign remain unqualified.')}
     try:
         (root / 'eduke32.cfg').write_text(CONFIG + '\n[Screen Setup]\nPolymer = 0\n')
         (root / 'settings.cfg').write_text('// Private AA hand-model smoke preferences.\n')
         fault = args.case == 'duplicate-body'
-        (root / 'autoexec.cfg').write_text('r_maxfps 5\n' + ('bind F4 norepeat "setvar aamodelfault 1"\n' if fault else ''))
+        (root / 'autoexec.cfg').write_text(
+            f'r_maxfps {60 if args.animation else 5}\n' +
+            ('bind End "gamefunc_RELOAD_WEAPON"\n' if args.animation else '') +
+            ('bind F4 norepeat "setvar aamodelfault 1"\n' if fault else ''))
         (root / 'aa_hand_model_observer.con').write_text(model_observer() + (DUPLICATE_BODY if fault else ''))
         if args.case == 'missing-frame':
             result['missing_frame_fixture'] = missing_rest_fixture(root, args.model)
             result['model_mapping'] = write_private_def(
                 root, Path(result['missing_frame_fixture']['path']), args.skin, 'no_rest')
+        elif args.animation:
+            result['animation_model'] = animation_frames(args.model)
+            mapped_model = args.model
+            if args.missing_reload_frame is not None:
+                result['missing_reload_fixture'] = missing_reload_fixture(root, args.model, args.missing_reload_frame)
+                mapped_model = Path(result['missing_reload_fixture']['path'])
+            result['model_mapping'] = write_private_def(root, mapped_model, args.skin)
         else:
             result['model_mapping'] = write_private_def(root, args.model, args.skin) if model_case else None
         env = {key: value for key, value in os.environ.items() if not key.startswith('EDUKE32_XR')}
@@ -322,12 +528,12 @@ def main() -> int:
                 # still AA's real body draw, so do not discard that evidence
                 # merely because controller selection returned a few lines
                 # later.
-                text = observer.wait(lambda value: AA_RECEIPT.search(value) and
+                text = observer.wait(lambda value: aa_body_receipts(value) and
                                      all(path.is_file() for path in required), timeout=25)
-                receipt = [tuple(map(int, row)) for row in AA_RECEIPT.findall(text)][-1]
+                receipt = aa_body_receipts(text)[-1]
                 result['receipt_evidence'] = {
                     'scope': 'whole log; first native START frame is accepted',
-                    'observed_before_selection_return': bool(AA_RECEIPT.search(text[:selection_log_end])),
+                    'observed_before_selection_return': bool(aa_body_receipts(text[:selection_log_end])),
                     'capture_prefix': str(root / 'model'),
                 }
                 result['receipt'] = {'serial': receipt[0], 'tile': receipt[1], 'shade': receipt[2],
@@ -343,6 +549,9 @@ def main() -> int:
             else:
                 phase = 'actual AA pistol fire'
                 result['fire'] = fire_actual_aa_pistol(observer, remote)
+                if args.animation:
+                    phase = 'actual native AA Reload/Aim_Down'
+                    result['reload'] = reload_actual_aa_pistol(observer, process, args.display)
         text = observer.path.read_text(errors='replace') if fault else observer.text()
         rows = aa_samples(text)
         idle = [row for row in rows if row['startmode'] == 1 and row['pchar'] == 0 and row['currentweapon'] == 1]
@@ -364,11 +573,14 @@ def main() -> int:
             checks.update(result['fault']['checks'])
         else:
             checks.update(result['fire']['checks'])
-            positive_cards = [path for path in root.glob('weapon-counter-*-coverage.pgm')
-                              if Image.open(path).getbbox() is not None]
-            checks['positive_AA_counter_retains_native_ART'] = bool(positive_cards)
+            if args.animation:
+                checks.update(result['reload']['checks'])
+            else:
+                positive_cards = [path for path in root.glob('weapon-counter-*-coverage.pgm')
+                                  if Image.open(path).getbbox() is not None]
+                checks['positive_AA_counter_retains_native_ART'] = bool(positive_cards)
         if model_case:
-            receipts = [tuple(map(int, row)) for row in AA_RECEIPT.findall(text)]
+            receipts = aa_body_receipts(text)
             receipt = result['receipt']
             contribution = result['model_images']
             matrices = re.findall(r'OpenXR hand model matrix: eye=(\d) values=([^\n]+)\.', text)
@@ -380,7 +592,7 @@ def main() -> int:
                                                                     receipt['roles'] == 1 and receipt['valid'] == 1),
                           native_body_callback_once_per_model_receipt=bool(receipts) and
                               len({row[0] for row in receipts}) == len(receipts) and
-                              all(row[4:] == (1, 1) for row in receipts),
+                              all(row[5] == 1 for row in receipts),
                           real_MD3_color_and_depth_contribution_both_eyes=contribution['both_eyes_visible'],
                           real_MD3_stereo_parallax=contribution['stereo_parallax'],
                           native_model_matrices_and_projections_for_both_eyes=
@@ -419,6 +631,65 @@ def main() -> int:
                               SPS_collection_did_not_write_color_or_depth=collection_clean,
                               SPS_shared_model_geometry_submitted_once=bool(shared) and shared[0] > 0 and
                                   shared[1] == 0 and shared[0] == shared[2] and shared[3] > 0)
+            if args.animation:
+                samples = [tuple(map(int, row)) for row in MODEL_SAMPLE.findall(text) if int(row[1]) > 0]
+                receipts = [tuple(map(int, row)) for row in MODEL_RECEIPT.findall(text)]
+                animation = animation_oracles(root, samples, result['animation_model']['names'], receipts)
+                result['animation'] = animation
+                counter_checks = animation['counter_checks']
+                body_receipt_serials = {row[0] for row in aa_body_receipts(text) if row[5] == 1}
+                reloading = [row for row in animation['accepted_samples']
+                             if 6 <= row[1] <= 26 and row[2] == 1]
+                magazine = [row for row in reloading if 10 <= row[1] <= 19 and
+                            counter_checks[row[1]].get('receipt_roles') == 3]
+                # These files are emitted only when the engine naturally sees
+                # the native counter. A passing animation run must capture the
+                # flash and the later reload hand; neither is inferred from an
+                # absent capture or an all-ART fallback.
+                native_art = {}
+                for path in root.glob('weapon-counter-*-coverage.pgm'):
+                    counter = int(path.name.split('-')[2])
+                    if 1 <= counter <= 5 or 20 <= counter <= 24 or counter == args.missing_reload_frame:
+                        native_art[counter] = Image.open(path).getbbox() is not None
+                result['native_ART_captures'] = native_art
+                flash_art = [counter for counter in (1, 2) if native_art.get(counter)]
+                recovery_art = [counter for counter in range(3, 6) if native_art.get(counter)]
+                hand_art = [counter for serial, counter, _, _ in animation['accepted_samples']
+                            if 20 <= counter <= 24 and native_art.get(counter) and serial in body_receipt_serials
+                            and counter_checks[counter].get('valid_native_receipt')]
+                result['native_ART_qualification'] = {
+                    'flash_counters': flash_art,
+                    'fire_recovery_counters': recovery_art,
+                    'reload_hand_counters_with_model_and_body_receipt': hand_art,
+                    'valid_body_receipt_serials': sorted(body_receipt_serials),
+                }
+                checks.update(
+                    animation_MD3_declares_all_native_frame_names=result['animation_model']['all_required_names_present'],
+                    native_firing_retains_ART_and_has_no_model=bool(recovery_art) and
+                        not any(1 <= row[1] <= 5 for row in samples),
+                    observed_native_reloading_model_counter_6_to_26=bool(reloading),
+                    observed_native_early_reload_body_2528=any(7 <= row[1] <= 9 for row in reloading),
+                    observed_native_final_reload_body_2529=any(25 <= row[1] <= 26 for row in reloading),
+                    observed_native_reload_magazine_roles_1_and_2=bool(magazine),
+                    naturally_observed_model_frames_pass_SPS_color_depth_oracles=bool(counter_checks) and
+                        all(all(value for key, value in check.items() if key not in ('receipt_roles',))
+                            for check in counter_checks.values()),
+                    observed_native_flash_ART_counter_1_or_2=bool(flash_art),
+                    observed_native_reload_hand_ART_counter_20_to_24_with_model_body_receipt=bool(hand_art),
+                )
+                if args.missing_reload_frame is not None:
+                    missing = args.missing_reload_frame
+                    later = [row for row in reloading if row[1] > missing and
+                             counter_checks[row[1]].get('valid_native_receipt')]
+                    checks.update(
+                        missing_reload_fixture_mutates_only_name=result['missing_reload_fixture']['only_chosen_frame_name_bytes_changed'] and
+                            result['missing_reload_fixture']['payload_unchanged'],
+                        native_missing_reload_counter_observed=any(row['counter'] == missing and row['reloading'] == 1
+                            for row in result['reload']['rows']),
+                        missing_reload_counter_retains_native_ART=bool(native_art.get(missing)),
+                        missing_reload_counter_emits_no_model_sample=not any(row[1] == missing for row in samples),
+                        later_reload_model_frames_and_receipts_survive=bool(later),
+                    )
         else:
             checks.update(no_MD3_receipt=not AA_RECEIPT.search(text),
                           no_MD3_capture=not (root / 'model-after-left.ppm').exists(),

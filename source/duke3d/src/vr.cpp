@@ -438,7 +438,7 @@ bool prepareHandModel(HandModelSample &sample)
     sample.context.skinnum=tile2model[tile].skinnum;
     char name[16];
     int const counter=sample.presentation.counter;
-    if (counter) Bsprintf(name,counter<5 ? "fire_%02d" : "reload_%02d",counter);
+    if (counter) Bsprintf(name,counter<(sample.presentation.alienArmageddon ? 6 : 5) ? "fire_%02d" : "reload_%02d",counter);
     else Bstrcpy(name,"rest");
     int frame=md3_getframeindex(sample.context.modelid,name);
     if (frame<0 && counter==0 && !sample.presentation.alienArmageddon) frame=0; // Legacy stock idle only.
@@ -536,16 +536,23 @@ static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int3
 {
     auto &receipt=handModelReceipt;
     if (!receipt.runtime || !receipt.presentation.alienArmageddon) return false;
-    // Body-family calls are validated even with a changed ID or after the
-    // expected body. Unclaimed effects, magazine and hand artwork remain native.
-    if (tile!=FIRSTGUN && tile!=FIRSTGUN+1 && tile!=FIRSTGUN+2 && tile!=FIRSTGUN+4
-        && tile!=FIRSTGUN+5 && tile!=FIRSTGUNRELOADWIDE) return false;
+    // Classify claimed body/magazine roles before validating their counter,
+    // attributes or multiplicity. Native hand artwork remains unclaimed.
+    int const role=tile==FIRSTGUN+6 ? 2 :
+        (tile==FIRSTGUN || tile==FIRSTGUN+1 || tile==FIRSTGUN+2 || tile==FIRSTGUN+4
+         || tile==FIRSTGUN+5 || tile==FIRSTGUNRELOADWIDE) ? 1 : 0;
+    if (!role) return false;
     XRPistolPresentation fresh;
     auto const &saved=receipt.presentation;
-    bool const valid=receipt.weaponSegment && pistolReceiptOwned() && !(receipt.seen&1)
-        && tile==FIRSTGUN && uniqueID==PISTOL_WEAPON && palette==saved.palette && shade==saved.shade
-        && flags==(2|2048|4096) && !angle && !alpha && !blend
-        && P_XRAAPistolPresentation(fresh) && fresh.palette==saved.palette && fresh.shade==saved.shade;
+    int const counter=saved.counter;
+    int const bodyTile=FIRSTGUN+(counter<6 ? 0 : counter<10 ? 4 : 5);
+    bool const validRole=role==1 ? tile==bodyTile && uniqueID==PISTOL_WEAPON
+        : counter>=10 && counter<20 && uniqueID==0;
+    bool const valid=receipt.weaponSegment && pistolReceiptOwned() && !(receipt.seen&role)
+        && validRole && palette==saved.palette && shade==saved.shade
+        && flags==(2|2048|4096|(counter>=6 ? 512 : 0)) && !angle && !alpha && !blend
+        && P_XRAAPistolPresentation(fresh) && fresh.palette==saved.palette && fresh.shade==saved.shade
+        && fresh.counter==saved.counter && fresh.reloading==saved.reloading;
     if (!valid)
     {
         receipt.mismatch=true;
@@ -554,7 +561,7 @@ static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int3
                   tile,uniqueID,shade,palette,flags,angle,alpha,blend,receipt.weaponSegment,unsigned(receipt.seen));
         return false;
     }
-    receipt.seen|=1;
+    receipt.seen|=role;
     if (std::getenv("EDUKE32_XR_TEST_MODELS"))
     {
         static unsigned reported;
@@ -563,6 +570,13 @@ static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int3
                   (unsigned long long)receipt.serial,tile,shade,palette,unsigned(receipt.seen));
     }
     return true;
+}
+
+static bool pistolReceiptComplete()
+{
+    auto const &saved=handModelReceipt.presentation;
+    unsigned const required=saved.alienArmageddon && saved.counter>=10 && saved.counter<20 ? 3 : 1;
+    return (handModelReceipt.seen&required)==required;
 }
 
 void G_XRResetAim(int playerNum)
@@ -1032,11 +1046,11 @@ void G_XRArmMenuPresentation()
         LOG_F(INFO,"OpenXR hand model receipt: serial=%llu counter=%d reloading=%d roles=%u valid=%d.",
               (unsigned long long)handModelReceipt.serial,handModelReceipt.presentation.counter,
               handModelReceipt.presentation.reloading,unsigned(handModelReceipt.seen),
-              (handModelReceipt.seen&1) && !handModelReceipt.mismatch && pistolReceiptOwned());
+              pistolReceiptComplete() && !handModelReceipt.mismatch && pistolReceiptOwned());
     // Native menus poll authoritative packets after the weapon pixels, even
     // when no menu is open. Late field changes belong to subsequent draws;
     // the completed image requires its receipt and target ownership to survive.
-    if (handModelReceipt.runtime && (!(handModelReceipt.seen&1) || handModelReceipt.mismatch || !pistolReceiptOwned()))
+    if (handModelReceipt.runtime && (!pistolReceiptComplete() || handModelReceipt.mismatch || !pistolReceiptOwned()))
     {
         if (std::getenv("EDUKE32_XR_TEST_MODELS"))
             LOG_F(INFO,"OpenXR hand model frame canceled: serial=%llu submitted=%llu.",

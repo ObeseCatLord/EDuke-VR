@@ -2589,13 +2589,19 @@ bool P_XRAAPistolPresentation(XRPistolPresentation &sample)
     if (!enabled || Bstrcmp(enabled,"1") || (!DUKE && g_gameType!=GAMEFLAG_NOPOLYMER)
         || !P_XRPistolBaseReady()) return false;
     auto const p=g_player[myconnectindex].ps;
-    // First AA binding is the idle standard single Duke pistol. Fire/reload,
-    // variant weapons and special presentations retain their actual native ART.
+    // Standard single Duke pistol, idle/reload only. Fire includes baked flashes
+    // and a changing native shade history; preserve that entire native sequence.
     // HUD aliases (weaponcount/currentweapon/gs) are initialized later by
     // P_DisplayWeapon, so this read-only sampler must not use their old values.
-    if (p->kickback_pic || p->reloading || P_GetHudPal(p)!=0 || g_rotatespriteNoWidescreen
+    int const counter=p->kickback_pic;
+    if ((counter>0 && counter<6) || p->reloading!=(counter>=6) || P_GetHudPal(p)!=0 || g_rotatespriteNoWidescreen
         || !VM_HaveEvent(EVENT_DISPLAYWEAPON) || !VM_HaveEvent(EVENT_DRAWWEAPON)
         || PWEAPON(myconnectindex,PISTOL_WEAPON,TotalTime)!=5) return false;
+    if (counter && (PWEAPON(myconnectindex,PISTOL_WEAPON,Clip)!=999
+        || PWEAPON(myconnectindex,PISTOL_WEAPON,Reload)!=27
+        || PWEAPON(myconnectindex,PISTOL_WEAPON,FireDelay)!=2
+        || PWEAPON(myconnectindex,PISTOL_WEAPON,HoldDelay)!=0
+        || PWEAPON(myconnectindex,PISTOL_WEAPON,Flags)!=WEAPON_RELOAD_TIMING)) return false;
     auto const value=[&](char const *label) { return Gv_GetVarByLabel(label,INT32_MIN,p->i,myconnectindex); };
     static char const *const zero[] = {"pchar","LASERMODE","brutalcount","PLAYERONTHEBIKE",
         "slimpush","juice_pos","idleanim","slidekick","sidekick","jumpkick","qk_proxy","doubletop"};
@@ -2616,7 +2622,7 @@ bool P_XRAAPistolPresentation(XRPistolPresentation &sample)
     // AA advances shade history inside G_DrawWeaponTile and adds two for
     // FIRSTGUN. Until the history converges, let that native state draw ART.
     if (value("hud_shadef")!=baseShade) return false;
-    sample={0,baseShade+2,0,0,true};
+    sample={0,baseShade+(counter<6 ? 2 : 0),counter,p->reloading,true};
     return true;
 #else
     return false;
