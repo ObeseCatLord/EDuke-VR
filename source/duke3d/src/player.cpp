@@ -496,6 +496,36 @@ static void P_HandProjectileVelocity(int player, int target, int speed, int &ang
     if (g_overrideShootZvel) horizontalVelocity=speed;
 }
 
+// HEAVYHBOMB advances Z in A_Fall and again by zvel/2 in A_MoveSprite,
+// while XY advances by xvel/2. Its directional Z scale is 16/3, not RPG's16.
+// Native lob bias/gravity remain separate from the physical hand direction.
+static void P_HandBombVelocity(int player, int sectorNum, int speed, bool rolling,
+                               int &angle, int &horizontalVelocity, int &zVelocity)
+{
+    auto const shot=G_VRGetShotInput(player);
+    double const horizontal=std::hypot(double(shot.direction[0]),double(shot.direction[1]));
+    double const length=std::hypot(horizontal,double(shot.direction[2]));
+    if (horizontal>1.) angle=getangle(shot.direction[0],shot.direction[1]);
+    int const bias=rolling ? 0 : -512;
+    double const vertical=speed*(16./3.)*shot.direction[2]/length;
+    int gravity=g_spriteGravity;
+    bool const underwater=sector[sectorNum].lotag==ST_2_UNDERWATER;
+    if (G_CheckForSpaceFloor(sectorNum)) gravity=0;
+    else if (underwater || G_CheckForSpaceCeiling(sectorNum)) gravity/=6;
+    // Limit the coupled directional vector before the native signed16 store
+    // and A_Fall's immediate downward cap (including its underwater rule).
+    // Exotic CON gravity can make an uncapped subtraction overflow or leave
+    // no downward launch interval. Keep this conversion finite; native A_Fall
+    // still owns the subsequent gravity/collision policy in that case.
+    int const upper=underwater ? 3122 : int(std::max<int64_t>(0,
+        std::min<int64_t>(32767,int64_t(ACTOR_MAXFALLINGZVEL)-gravity)));
+    double factor=1.;
+    if (vertical<(-32768-bias)) factor=double(-32768-bias)/vertical;
+    else if (vertical>upper-bias) factor=double(upper-bias)/vertical;
+    horizontalVelocity=int(std::lround(speed*horizontal/length*factor));
+    zVelocity=std::max(-32768,std::min(32767,bias+int(std::lround(vertical*factor))));
+}
+
 // One optional resolved sector/effective Build ray, private to native hitscan.
 // No extra per-player state or alternative weapon simulation.
 struct HandHitscan { int16_t sector; vec3_t ray; };
@@ -4465,6 +4495,20 @@ static void P_ProcessWeapon(int playerNum)
         }
     }
 
+    auto const cancelHandBomb=[&]() {
+        G_VRBlockShot(playerNum);
+        *weaponFrame=0;
+        pPlayer->rapid_fire_hold=pPlayer->hbomb_hold_delay=0;
+        // hbomb_on belongs to already-thrown bombs; cancellation cannot detonate them.
+    };
+    if (G_VRHandShotFeature(playerNum)==VRShotFeatureHandBomb && G_VRShotEnabled(playerNum)
+        && Net_VRShotAvailable(playerNum,VRShotFeatureHandBomb) && *weaponFrame
+        && *weaponFrame<PWEAPON(playerNum,pPlayer->curr_weapon,HoldDelay) && !G_VRShotCanFire(playerNum))
+    {
+        cancelHandBomb();
+        return;
+    }
+
     if (pPlayer->rapid_fire_hold == 1)
     {
         if (TEST_SYNC_KEY(playerBits, SK_FIRE))
@@ -4638,6 +4682,16 @@ static void P_ProcessWeapon(int playerNum)
 
             if (++(*weaponFrame) == PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay))
             {
+                bool const tracked=G_VRHandShotFeature(playerNum)==VRShotFeatureHandBomb && G_VRShotEnabled(playerNum)
+                    && Net_VRShotAvailable(playerNum,VRShotFeatureHandBomb);
+                vec3_t handPosition{}; int16_t handSector=pPlayer->cursectnum; bool clamped=false;
+                // Validate before ammo/state changes on both predicting client
+                // and host. Never release a stale in-progress throw from the body.
+                if (tracked && (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,handPosition,handSector,clamped)))
+                {
+                    cancelHandBomb();
+                    return;
+                }
                 pPlayer->ammo_amount[pPlayer->curr_weapon]--;
 
                 if (numplayers < 2 || g_netServer)
@@ -4656,12 +4710,20 @@ static void P_ProcessWeapon(int playerNum)
                         pipeBombFwdVel = 140;
                         pipeBombZvel   = -512 - (fix16_to_int(pPlayer->q16horiz + pPlayer->q16horizoff - F16(100)) * 20);
                     }
-                    int const pq16ang = fix16_to_int(pPlayer->q16ang);
-                    int pipeSpriteNum = A_InsertSprite(pPlayer->cursectnum,
-                                       pPlayer->pos.x+(sintable[(pq16ang +512)&2047]>>6),
-                                       pPlayer->pos.y+(sintable[pq16ang &2047]>>6),
-                                       pPlayer->pos.z,PWEAPON(playerNum, pPlayer->curr_weapon, Shoots),-16,9,9,
-                                       pq16ang,(pipeBombFwdVel+(pPlayer->hbomb_hold_delay<<5)),pipeBombZvel,pPlayer->i,1);
+                    int pq16ang = fix16_to_int(pPlayer->q16ang);
+                    int velocity=pipeBombFwdVel+(pPlayer->hbomb_hold_delay<<5);
+                    bool const rolling=pipeBombFwdVel==15;
+                    vec3_t position={pPlayer->pos.x+(sintable[(pq16ang+512)&2047]>>6),
+                                     pPlayer->pos.y+(sintable[pq16ang&2047]>>6),pPlayer->pos.z};
+                    int16_t spawnSector=pPlayer->cursectnum;
+                    if (tracked)
+                    {
+                        position=handPosition; spawnSector=handSector;
+                        P_HandBombVelocity(playerNum,spawnSector,velocity,rolling,pq16ang,velocity,pipeBombZvel);
+                    }
+                    int pipeSpriteNum = A_InsertSprite(spawnSector,position.x,position.y,position.z,
+                                       PWEAPON(playerNum,pPlayer->curr_weapon,Shoots),-16,9,9,
+                                       pq16ang,velocity,pipeBombZvel,pPlayer->i,1);
 
                     pipeBombType = PIPEBOMB_CONTROL(playerNum);
 
@@ -4680,15 +4742,20 @@ static void P_ProcessWeapon(int playerNum)
                     if (pipeBombFwdVel == 15)
                     {
                         sprite[pipeSpriteNum].yvel = 3;
-                        sprite[pipeSpriteNum].z += ZOFFSET3;
+                        if (!tracked) sprite[pipeSpriteNum].z += ZOFFSET3;
                     }
 
-                    if (A_GetHitscanRange(pPlayer->i) < 512)
+                    if (!tracked && A_GetHitscanRange(pPlayer->i) < 512)
                     {
                         sprite[pipeSpriteNum].ang += 1024;
                         sprite[pipeSpriteNum].zvel /= 3;
                         sprite[pipeSpriteNum].xvel /= 3;
                     }
+                    if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                        LOG_F(INFO,"VR native pipebomb: player=%d index=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d rolling=%d mode=%d fuse=%d charge=%d.",
+                              playerNum,pipeSpriteNum,sprite[pipeSpriteNum].x,sprite[pipeSpriteNum].y,sprite[pipeSpriteNum].z,
+                              sprite[pipeSpriteNum].sectnum,clamped,sprite[pipeSpriteNum].ang,sprite[pipeSpriteNum].xvel,
+                              int16_t(sprite[pipeSpriteNum].zvel),rolling,actor[pipeSpriteNum].t_data[6],actor[pipeSpriteNum].t_data[7],pPlayer->hbomb_hold_delay);
                 }
 
                 pPlayer->hbomb_on = 1;

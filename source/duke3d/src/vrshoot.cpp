@@ -62,7 +62,19 @@ void G_VRSetShotInput(int player, VRShotInput const &input)
     state.input=input; state.at=uint32_t(totalclock);
 }
 VRShotInput G_VRGetShotInput(int player) { return unsigned(player)<MAXPLAYERS ? shots[player].input : VRShotInput{}; }
-void G_VRResetShot(int player) { if (unsigned(player)<MAXPLAYERS) shots[player]={}; }
+void G_VRResetShot(int player, bool preserveMode)
+{
+    if (unsigned(player)>=MAXPLAYERS) return;
+    bool const enabled=preserveMode && (shots[player].input.flags & VRShotEnabled);
+    shots[player]={};
+    if (enabled)
+    {
+        // Respawn invalidates the pose, not the held-trigger release gate.
+        // A native input already in flight must not escape through flat mode.
+        shots[player].input.flags=VRShotEnabled;
+        shots[player].blocked=true;
+    }
+}
 void G_VRResetShots() { for (auto &state:shots) state={}; }
 bool G_VRShotEnabled(int player) { return unsigned(player)<MAXPLAYERS && (shots[player].input.flags & VRShotEnabled); }
 uint8_t G_VRHandShotFeature(int player, int tile)
@@ -84,6 +96,7 @@ uint8_t G_VRHandShotFeature(int player, int tile)
         case RPG__: return works==RPG_WEAPON ? VRShotFeatureRPG : 0;
         case FREEZEBLAST__: return works==FREEZE_WEAPON ? VRShotFeatureFreezeShrink : 0;
         case SHRINKER__: return works==SHRINKER_WEAPON ? VRShotFeatureFreezeShrink : 0;
+        case HEAVYHBOMB__: return works==HANDBOMB_WEAPON ? VRShotFeatureHandBomb : 0;
     }
 #endif
     return false;
@@ -94,6 +107,7 @@ bool G_VRShotReady(int player)
         && uint32_t(uint32_t(totalclock)-shots[player].at)<=MaxAge;
 }
 bool G_VRShotCanFire(int player) { return G_VRShotReady(player) && !shots[player].blocked; }
+void G_VRBlockShot(int player) { if (unsigned(player)<MAXPLAYERS) shots[player].blocked=true; }
 void G_VRFilterShotInput(int player, input_t &input)
 {
     if (!G_VRShotEnabled(player)) return;

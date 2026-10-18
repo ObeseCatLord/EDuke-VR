@@ -105,12 +105,16 @@ def main():
                 before=set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'));window,_=x11.owned_window(process.pid)
                 if not window:raise RuntimeError('private screenshot window missing')
                 offset=len(observer.text())
-                x11.press(window,'F12',.06,True)
-                observer.wait(lambda t:bool(set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'))-before),timeout=4)
-                path=next(iter(set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'))-before))
-                # Native screenshot completion logs after fclose; existence can
-                # precede PNG encoding and is not a completed-frame receipt.
-                observer.wait(lambda t:f'Saved screenshot to {path.relative_to(lab)}' in t[offset:],timeout=4)
+                # Hold the owned-window native key until it is consumed.
+                # A fixed 60ms tap can begin/end between slow rendered frames.
+                x11.send_event_key(window,'F12',True)
+                try:
+                    observer.wait(lambda t:bool(set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'))-before),timeout=8)
+                    path=next(iter(set(lab.glob('screenshots/duke[0-9][0-9][0-9][0-9].*'))-before))
+                    # Receipt follows fclose, not just file creation.
+                    observer.wait(lambda t:f'Saved screenshot to {path.relative_to(lab)}' in t[offset:],timeout=8)
+                finally:
+                    x11.send_event_key(window,'F12',False)
                 im=Image.open(path);im.load();im.save(root/(name+'.png'))
                 screenshots[name]=bool(np.asarray(im).max()>np.asarray(im).min())
             phase='native player damage';offset=len(so.text());first_health=latest(so,victim)['health']
@@ -129,7 +133,7 @@ def main():
             def late_stereo(label):
                 previous=list(map(int,re.findall(r'OpenXR PvP frame: submitted=(\d+) captured=1',co.text())))
                 count=previous[-1] if previous else 60
-                co.wait(lambda t:any(int(v)>count for v in re.findall(r'OpenXR PvP frame: submitted=(\d+) captured=1',t)),timeout=8)
+                co.wait(lambda t:any(int(v)>count for v in re.findall(r'OpenXR PvP frame: submitted=(\d+) captured=1',t)),timeout=25)
                 serial=int(re.findall(r'OpenXR PvP frame: submitted=(\d+) captured=1',co.text())[-1])
                 paths=[labs['xr']/f'hud-{serial}-{eye}.ppm' for eye in ('left','right')]
                 images=[Image.open(p) for p in paths]

@@ -165,6 +165,8 @@ void sdlayer_xr_disableWorld(char const *reason)
     sdl_xr_worldActive = false;
 }
 
+bool sdlayer_xr_worldActive() { return sdl_xr_worldActive; }
+
 void sdlayer_xr_cancelMenuPresentation()
 {
     if (!sdl_xr_worldActive || !sdl_xr.menuPresentationActive()) return;
@@ -2258,8 +2260,13 @@ void videoShowFrame(int32_t w)
 {
     UNREFERENCED_PARAMETER(w);
 
-    // if we're minimized or about to resize, just throw away the frame
-    if (sdl_resize.x || sdl_minimized)
+    // Resize invalidates capture targets. Minimizing only suppresses the
+    // desktop swap: an active headset still owns its deferred projection.
+    bool headsetActive=false;
+#ifdef USE_OPENXR
+    headsetActive=sdl_xr_worldActive;
+#endif
+    if (sdl_resize.x || (sdl_minimized && !headsetActive))
     {
 #ifdef USE_OPENXR
         sdlayer_xr_cancelMenuPresentation();
@@ -2328,7 +2335,7 @@ void videoShowFrame(int32_t w)
             sdlayer_xr_presentMenu();
             sdlayer_xr_diagnostic();
 # endif
-            SDL_GL_SwapWindow(sdl_window);
+            if (!sdl_minimized) SDL_GL_SwapWindow(sdl_window);
 #else
             SDL_GL_SwapBuffers();
 #endif
@@ -2955,10 +2962,12 @@ int32_t handleevents_pollsdl(void)
                 {
                     case SDL_WINDOWEVENT_MINIMIZED:
                         sdl_minimized = true;
+                        if (privateTestWindow()) LOG_F(INFO,"Private SDL window: minimized.");
                         break;
                     case SDL_WINDOWEVENT_RESTORED:
                     case SDL_WINDOWEVENT_MAXIMIZED:
                         sdl_minimized = false;
+                        if (privateTestWindow()) LOG_F(INFO,"Private SDL window: restored.");
                         break;
                     case SDL_WINDOWEVENT_FOCUS_GAINED:
                     case SDL_WINDOWEVENT_FOCUS_LOST:

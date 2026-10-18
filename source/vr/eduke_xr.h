@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <openxr/openxr.h>
 #include <string>
+#include <vector>
 
 struct SDL_Window;
 
@@ -74,6 +75,8 @@ class Runtime
         uint64_t serial = 0;
         XrTime   predictedDisplayTime = 0;
         XrView   views[2] {};
+        // Changes effective for this frame's locate timestamp, in time order.
+        std::vector<XrEventDataReferenceSpaceChangePending> referenceChanges;
     };
 
     Runtime();

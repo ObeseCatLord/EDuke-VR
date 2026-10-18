@@ -823,3 +823,81 @@ Bounded records and actual image files are in the sibling
 VR hosting, two independent VR clients, loss/WAN behavior, unrestricted mods,
 all weapons/materials/cameras, other platforms or physical-headset comfort.
 The full VR/SPS/multiplayer goal remains active.
+
+## 2026-10-17 tracked pipebomb and single implementation review
+
+One requested broad read-only **Astra/xhigh** review inspected snapshot5c62400
+plus the pending pipebomb diff. Exact-turn model/effort was independently verified.
+Its four findings and narrow adopted fixes are recorded in
+[CODE_REVIEW_20261017.md](CODE_REVIEW_20261017.md). No additional broad review
+was run. This is a qualified checkpoint, not full-port acceptance.
+
+| Test | Actual evidence and limit |
+|---|---|
+| Holoduke native negative/positive | `work/holoduke-proof-s7iqvvqf/result.json` reproduces client binding to actual holo8192/owner-1. Corrected `work/holoduke-proof-3pvglrhh/result.json` passes13checks: real player3 stays bound through later snapshots, native movement/fire and actual F12 image. The first owner>=0 attempt was vacuous on unsigned wire data and failed; valid owner-index discrimination fixes it. |
+| Terminal XR fallback | `work/xr-fallback-init.json` and `work/xr-fallback-world.json` each pass8checks. Real initialization failure / post-start opaque-render failure, then native keyboard throw, replicated ammo, remote explosion and target damage. Temporary live tracking loss remains fail-closed. Pending charge at terminal shutdown is not separately qualified. |
+| Minimized mirror | `work/xr-minimized.json` passes6checks. Injected native SDL minimized/restored events into the owned hidden process; controller movement and actual distinct stereo submissions continue at frame180 and after restore. This is not an actual window-manager or physical-headset transition. |
+| Known LOCAL reference change | `work/xr-reference-known.json` passes12checks. A live API layer supplies delayed standard event and matching real locate-pose basis transform (.75,0,-.4m / .6rad). Applied at changeTime; native body/eye poses stay unchanged; two authoritative physical hand throws have exactly matching origin/angle/velocity; new distinct stereo frame180 and clean core validation. |
+| Unknown LOCAL reference change | `work/xr-reference-unknown.json` passes13checks. Same live coordinate change with poseValid0 during native charge: cancel frame/hold, ammo6, no bomb; held recovery stays blocked; release/new press yields exactly one hand throw/ammo5 and native client bomb. Eye/body continuity and actual later stereo pass. Physical runtime recentering remains unqualified. |
+| CPU-native pipebomb reference | `work/pipebomb-native-reference/pipebomb-native-aw2irjvl/result.json`, `work/pipebomb-current-cpu.json`, `work/pipebomb-snapshot-cpu.json`:14checks each. Observed12-row native server/client early trajectory matches preserved pre-adapter binary; real remote detonation/damage still run. |
+| Actual XR pipebomb matrix | `work/pipebomb-{open,timer,steep,wall,glancing,vertical,roll,lost,recover-release,reach,high-charge,down-charge}.json` pass. Real server insertion/one ammo, owner, client actor/trajectory, physical8° versus measured8.025° oblique flight, steep and storage bounds, elevated native roll-to-floor, timed/remote native kills/scores and late distinct stereo. |
+| Cross-channel ordering | `work/pipebomb-ordering.json` passes the original delayed-observer proof. Actual player packets suppressed while several native mode2 actor updates arrive; no premature client explosion/health/knockback, then real native explosion and scores after intentional remote command. |
+| Second throw coverage gap | `work/pipebomb-ordering-reuse.json` fails only the actual same-index assertion: native bomb8192 then8155. Both throws/ammo and actual client/observer explosions pass. Different indices are not reuse proof; do not call that extension green. Host-only geometry cancellation and arbitrary loss/WAN remain open. |
+
+The native pipebomb failure was independently reproduced before its repair:
+`work/pipebomb-xr/pipebomb-jrto93c5/result.json`. The client skipped commit frame11,
+kept hbomb_on0, exploded a live host mode2 bomb and applied knockback that later
+reached the host. Native server snapshots now carry hbomb_on/hold/rapid state
+beside kickback, requiring **NETVERSION2 on every peer**. Only the client's
+player-owned HEAVYHBOMB remote-command transition is gated; authoritative actor
+mode3 still invokes native explosion logic. Native damage/timer/pickup is retained.
+
+The reference test API layer is isolated under `tools/vr/`; it is not part of the
+production runtime or a new game protocol. Build its shared object with C++17
+and substitute the absolute library path in `reference_space_layer.json.in`.
+Set `XR_API_LAYER_PATH` to that manifest directory plus the installed explicit
+layer directory; the runner enables both test and core-validation layers. Its
+marker supplies one delayed transform. Actual Monado projections are restored
+to the underlying runtime coordinates at xrEndFrame. The initial runner parsing
+failure remains in its lab; it does not establish a production defect.
+
+Native/XR builds pass. Earlier private batches showed Recovery Action=None
+and no new observed faults at their checks. A later kernel check found new
+Xid69/32 at19:57:56, naming another game process; Recovery Action remained None.
+This does not establish the cause. Main stopped its private Monado and all GPU
+tests immediately on discovering them. No desktop focus/input or runtime
+configuration was changed. Asset conversion/rendering
+ran separately through software Blender and did not use this GPU queue.
+
+The fresh CPU map matrix (`work/cpu-levels-review.json`) passes25checks and
+XR-shooter PvP (`work/pvp-review-shooter.json`) passes24checks on the review-fix
+build. XR-victim attempts retained two harness failures: next-frame wait8s too
+short under a slow run, then a fixed60ms F12 tap missed between rendered frames.
+The harness now allows a bounded25s next-capture wait and holds F12 only in its
+owned hidden window until native completion, releasing it in finally.
+
+The next full XR-victim run (`work/pvp-review-victim-input.json`) reached all
+late stereo/respawn/control/score checks but failed held-fire input suppression:
+one first post-reset server sample retained Fire, without ammo consumption or
+a shot. The native reset previously cleared Enabled before filtering an
+in-flight Use+Fire input. It now preserves Enabled-invalid and the existing
+blocked latch only at P_ResetPlayer; broader join/disconnect/map reset semantics
+remain unchanged. Final-source runtime proof is pending.
+
+A separate bounded two-round CPU reuse probe observed8192 then8162 on both
+peers with two actual native explosions (`work/pipebomb-reuse-u3bply9n/result.json`).
+The worker initially labelled experiment completion as passed and overclaimed
+infeasibility. Main corrected the harness: same-slot reuse is a required passing
+condition and different slots are only an uncovered case, not impossibility
+proof. Historical result is retained; **it does not qualify same-slot reuse**.
+
+Final reset-source builds pass for native, XR and CPU.
+`work/pvp-review-victim-final.json` passes all24checks, including **every** live
+held interval input without Fire, no shots/ammo consumption, native Use respawn,
+recovered movement/fire/ammo/scores and distinct changing real eye frames180/300.
+The previous one-sample Fire negative is retained in the input result. This
+closes the observed reset race; all-device loss/WAN is still unqualified.
+CPU final SHA256:15f89b10d99d521b845db6d02ca7d4928dcae997d278a89d51ba3459b4b9f003.
+The CPU25check map matrix and XR-shooter24check run precede only this final
+respawn-mode preservation; flat reset remains identical. Reference/fallback/
+minimize tests precede it too; their rendering/calibration source is unchanged.

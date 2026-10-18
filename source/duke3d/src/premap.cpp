@@ -768,7 +768,7 @@ void P_ResetMultiPlayer(int playerNum)
 
 void P_ResetPlayer(int playerNum)
 {
-    G_VRResetShot(playerNum);
+    G_VRResetShot(playerNum,true);
 #ifdef USE_OPENXR
     G_XRResetAim(playerNum);
 #endif

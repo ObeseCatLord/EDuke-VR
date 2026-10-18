@@ -5385,7 +5385,16 @@ DETONATEB:
                     pData[6] = 3;
             }
 
-            if ((detonatePlayer >= 0 && g_player[detonatePlayer].ps->hbomb_on == 0 && pData[6] == 2) || pData[3] == 1)
+            // The owning player's command is authoritative on the host.
+            // Player and actor snapshots travel on independent channels: a
+            // client can otherwise see a new remote bomb with an old zero
+            // hbomb_on and explode it (including knockback) prematurely.
+            // Clients still execute native mode3 from the actor snapshot;
+            // timer, damage, movement, bounce and pickup paths remain native.
+            bool const remoteCommand = detonatePlayer >= 0 && pData[6] == 2
+                && g_player[detonatePlayer].ps->hbomb_on == 0
+                && !(g_netClient && pSprite->picnum == HEAVYHBOMB);
+            if (remoteCommand || pData[3] == 1)
                 pData[6] = 3;
 
             if (pData[6] == 3)

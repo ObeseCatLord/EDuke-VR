@@ -1,7 +1,7 @@
 # Experimental native hand-shot authority
 
-Updated 2026-10-16. Opt-in `EDUKE32_XR_HAND_SHOTS=1`, with right/left tracked aim.
-Ordinary hardcoded pistol, shotgun, chaingun, grow and RPG use this origin and
+Updated 2026-10-17. Opt-in `EDUKE32_XR_HAND_SHOTS=1`, with right/left tracked aim.
+Ordinary hardcoded pistol, shotgun, chaingun, grow, RPG, freezer, shrinker and pipebomb use this origin and
 full vector when the selected WorksLike family, configured Shoots tile and actual
 shot tile agree. Custom-projectile replacements are excluded by the same shared
 firing/card/crosshair predicate. Other weapons retain their native firing paths.
@@ -15,9 +15,13 @@ position in native Build X/Y/Z units and world direction in physical X/Y/Z-down
 axes. The native player position/angle remain authoritative; no absolute second
 body or temporary player-struct replacement is maintained.
 
-The native `NETVERSION=1`, `input_t=20`, `playerupdate_t=56`, and
-`clientupdate_t=81` are unchanged. Compile-time ABI assertions enforce those
-sizes. Upgraded clients begin with the original reliable nine-byte optional capability on
+The movement layouts `input_t=20`, `playerupdate_t=56`, and `clientupdate_t=81`
+retain their sizes, enforced by compile-time assertions. Native `NETVERSION=2`
+adds three existing weapon-state bytes to each server player record: `hbomb_on`,
+`hbomb_hold_delay`, and `rapid_fire_hold`, beside `kickback_pic`. All peers must
+use this version; older-peer compatibility is not required. This repairs an
+observed native skipped-commit snapshot failure, rather than creating a second
+weapon protocol. Upgraded clients begin with the original reliable nine-byte optional capability on
 existing CHAN_MISC after authentication/player-index assignment:
 
 | Byte | Value |
@@ -25,29 +29,25 @@ existing CHAN_MISC after authentication/player-index assignment:
 | 0 | Packet ID 200, appended explicitly without renumbering native IDs |
 | 1–4 | ASCII EDVR |
 | 5 | Version 1 |
-| 6 | Feature mask: RPG/tail 1, hitscan 2, freezer/shrinker 4; root bit 1 required |
+| 6 | Feature mask: RPG/tail 1, hitscan 2, freezer/shrinker 4, pipebomb 8; root bit 1 required |
 | 7 | Kind 0 request,1 acknowledgement |
 | 8 | Native assigned player ID |
 
 Only the authenticated peer's live slot may negotiate; the client accepts an
-acknowledgement only from its native server peer. Legacy peers ignore the
-unknown MISC packet and retain the base movement update. An upgraded client
+acknowledgement only from its native server peer. Within the current native
+protocol, flat peers retain the base movement update. An upgraded client
 waits for the acknowledgement before extending packets. Hand mode suppresses
 fire against an unsupported server; it never silently substitutes a body shot.
 Ordinary flat clients continue sending native packets even when upgraded.
 
-The original request/ack uses mask1. A new client then requests mask3 on the
-same reliable channel; a new server echoes that mask, while an RPG-only server
-ignores the unsupported upgrade and retains mask1. Old clients request only1
-and receive the original acknowledgement. Capabilities never downgrade within
-a connection. After mask3 acknowledgement, a current client requests mask7
-for freezer/shrinker. A mask3 server ignores that request and retains3;
-its supported RPG/hitscan still work. Bit4 promises only those two native
-families, not every projectile. Server firing gates each family by the authenticated peer's mask;
-client input/card availability uses the required selected-weapon feature.
-Against an RPG-only hand server, a new client can still fire hand-origin RPGs,
-but suppresses unsupported hand hitscan while movement continues. A valid tail
-alone does not grant a peer additional weapon capability.
+The existing progressive capability exchange is retained: mask1 then3 then7
+then15 on the same reliable channel. Capabilities never downgrade during a
+connection. Bit4 promises only freezer/shrinker; bit8 promises only native
+handbombs. All current peers use NETVERSION2; the earlier capability scheme
+is not a promise of connectivity to pre-version2 binaries. Server firing gates
+each family by the authenticated peer's mask. Client input/card availability
+uses the selected weapon's required feature; a valid pose alone grants no
+additional weapon capability.
 
 Once negotiated, an enabled hand-mode client appends exactly 14 bytes to its
 existing PACKET_SLAVE_TO_MASTER on CHAN_MOVE, producing95 bytes. Fire and pose
@@ -209,3 +209,53 @@ an actual pre-feature4 server; `--case older-client` requires an actual mask3
 client. Those pinned binaries establish capability boundaries with real peers.
 All test maps/scripts are generated wrappers around the caller's owned data;
 no game assets or proprietary CON files are included.
+
+
+## Native tracked pipebombs and snapshot coherence
+
+Pipebombs use their existing direct insertion in `P_ProcessWeapon`, retaining
+native charge/ammo, remote or timed fuse, owner, random draws, bounce, pickup,
+damage and attribution. They do not acquire weapon callbacks absent from that
+path. A pending tracked charge cancels immediately on lost readiness/rearm;
+commit resolves collision before ammo changes. Cancellation preserves earlier
+bombs' `hbomb_on`. Geometry failure sets the existing release latch.
+
+Native pipebomb movement advances horizontal position by approximately xvel/2,
+but vertical position by approximately 1.5*zvel through A_Fall and A_MoveSprite.
+The physical directional Z conversion is therefore **16/3**, with native throw
+bias -512 (or zero for rolling) retained separately. Coupled finite bounds
+respect signed storage and native fall limits. Elevated crouch-roll retains
+yvel3 and falls through the normal actor path without the body-only Z offset.
+
+A real pre-fix client skipped commit frame 11, received ammo5 while keeping
+hbomb_on0, exploded a live mode2 bomb early and propagated knockback back to
+the server. The native server player snapshot now carries the coherent tuple
+above. Independent actor/player channels still have no cross-channel ordering,
+so clients cannot initiate the player-owned HEAVYHBOMB remote-command transition
+from that player byte. They accept authoritative mode3 via existing actor
+snapshots and execute native effects; damage/timer/bounce/pickup logic remains.
+
+`smoke_pipebomb_native.py` compares real CPU-native multiplayer flight against
+the preserved unmodified firing reference. `smoke_pipebomb.py` drives real XR
+actions and native server simulation. Qualified cases include open/oblique,
+steep/vertical, wall/glancing, elevated crouch-roll, timed fuse/kill attribution,
+tracking loss/recovery, reach failure and high-charge bounds. Its ordering case
+delays actual observer player snapshots while live bomb actors arrive, then
+requires no early damage/knockback and actual later native explosions/scores.
+The second-throw extension currently observes a different allocator slot and
+**does not establish same-slot reuse**; host-only geometry rejection remains
+unqualified. See VALIDATION.md for exact evidence and limits.
+
+Terminal XR disable clears hand authority so native keyboard fire works. A live
+session with temporary tracking loss stays fail-closed. Effective LOCAL reference
+changes update existing tracking calibration at the predicted locate timestamp;
+unknown transforms reuse recovery and the release gate, including one invalid
+native pose sample to cancel an already charged throw. No extra body or protocol
+state machine is introduced.
+
+Native respawn now clears the tracked pose while retaining enabled-invalid
+mode and its existing blocked latch for a previously tracked player. Clearing
+mode entirely allowed an in-flight native Use+Fire input through the first
+post-respawn filter; the strengthened PvP harness caught that input even though
+weapon raising prevented a shot in the observed run. Join/disconnect/global
+map reset still clear the whole sample. No new replicated latch is added.

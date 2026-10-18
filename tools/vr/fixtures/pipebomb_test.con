@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// CPU-native pipebomb fixture.  It initializes equipment once and observes
+// native player/actor state; it never creates, moves, damages, or detonates
+// pipebombs itself.
+include controller_test.con
+
+gamevar vrpipe_given 0 1
+gamevar vrpipe_tick 0 1
+gamevar vrpipe_player 0 1
+gamevar vrpipe_index 0 1
+gamevar vrpipe_ammo 0 1
+gamevar vrpipe_weapon 0 1
+gamevar vrpipe_frame 0 1
+gamevar vrpipe_hold 0 1
+gamevar vrpipe_hbomb 0 1
+gamevar vrpipe_bits 0 1
+gamevar vrpipe_x 0 1
+gamevar vrpipe_y 0 1
+gamevar vrpipe_gm 0 1
+
+onevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrpipe_player
+    ifvare vrpipe_given 0
+    {
+        // A fixed, spacious start state makes the release boundary observable.
+        // This is the only fixture mutation of player equipment/pose/health.
+        setplayer[THISACTOR].gotweapon 5 1
+        setplayer[THISACTOR].gotweapon 10 1
+        setplayer[THISACTOR].ammo_amount 5 6
+        setplayer[THISACTOR].curr_weapon 5
+        setplayer[THISACTOR].last_weapon -1
+        setplayer[THISACTOR].weapon_pos 0
+        setplayer[THISACTOR].knuckle_incs 0
+        setplayer[THISACTOR].kickback_pic 0
+        setplayer[THISACTOR].hbomb_hold_delay 0
+        setplayer[THISACTOR].hbomb_on 0
+        setactor[THISACTOR].extra 240
+        setplayer[THISACTOR].last_extra 240
+        ifvare vrpipe_player 0
+        {
+            setplayer[THISACTOR].posx 1024
+            setplayer[THISACTOR].oposx 1024
+            setactor[THISACTOR].x 1024
+            setplayer[THISACTOR].posy 4096
+            setplayer[THISACTOR].oposy 4096
+            setactor[THISACTOR].y 4096
+        }
+        else
+        {
+            setplayer[THISACTOR].posx 1024
+            setplayer[THISACTOR].oposx 1024
+            setactor[THISACTOR].x 1024
+            setplayer[THISACTOR].posy 2048
+            setplayer[THISACTOR].oposy 2048
+            setactor[THISACTOR].y 2048
+        }
+        setplayer[THISACTOR].cursectnum 0
+        changespritesect THISACTOR 0
+        setplayer[THISACTOR].q16ang 0
+        setplayer[THISACTOR].oq16ang 0
+        setvar vrpipe_given 1
+    }
+    addvar vrpipe_tick 1
+    getplayer[THISACTOR].i vrpipe_index
+    getplayer[THISACTOR].ammo_amount 5 vrpipe_ammo
+    getplayer[THISACTOR].curr_weapon vrpipe_weapon
+    getplayer[THISACTOR].kickback_pic vrpipe_frame
+    getplayer[THISACTOR].hbomb_hold_delay vrpipe_hold
+    getplayer[THISACTOR].hbomb_on vrpipe_hbomb
+    getinput[THISACTOR].bits vrpipe_bits
+    getplayer[THISACTOR].posx vrpipe_x
+    getplayer[THISACTOR].posy vrpipe_y
+    getplayer[THISACTOR].gm vrpipe_gm
+    addlog vrpipe_tick
+    addlog vrpipe_player
+    addlog vrpipe_index
+    addlog vrpipe_ammo
+    addlog vrpipe_weapon
+    addlog vrpipe_frame
+    addlog vrpipe_hold
+    addlog vrpipe_bits
+    addlog vrpipe_x
+    addlog vrpipe_y
+    addlog vrpipe_gm
+    addlog vrpipe_hbomb
+endevent
+
+gamevar vrpipe_bomb_event 0 0
+gamevar vrpipe_bomb_index 0 0
+gamevar vrpipe_bomb_tile 0 0
+gamevar vrpipe_bomb_owner 0 0
+gamevar vrpipe_bomb_ownerplayer 0 0
+gamevar vrpipe_bomb_yvel 0 0
+gamevar vrpipe_bomb_sector 0 0
+gamevar vrpipe_bomb_x 0 0
+gamevar vrpipe_bomb_y 0 0
+gamevar vrpipe_bomb_z 0 0
+gamevar vrpipe_bomb_angle 0 0
+gamevar vrpipe_bomb_xvel 0 0
+gamevar vrpipe_bomb_zvel 0 0
+gamevar vrpipe_bomb_mode 0 0
+gamevar vrpipe_bomb_fuse 0 0
+gamevar vrpipe_explosions 0 0
+gamevar vrpipe_bomb_totalclock 0 0
+
+defstate vrpipe_observe_bomb
+    ifactor HEAVYHBOMB
+    {
+        setvarvar vrpipe_bomb_index THISACTOR
+        getactor[THISACTOR].picnum vrpipe_bomb_tile
+        getactor[THISACTOR].owner vrpipe_bomb_owner
+        getactor[vrpipe_bomb_owner].yvel vrpipe_bomb_ownerplayer
+        getactor[THISACTOR].yvel vrpipe_bomb_yvel
+        getactor[THISACTOR].sectnum vrpipe_bomb_sector
+        getactor[THISACTOR].x vrpipe_bomb_x
+        getactor[THISACTOR].y vrpipe_bomb_y
+        getactor[THISACTOR].z vrpipe_bomb_z
+        getactor[THISACTOR].ang vrpipe_bomb_angle
+        getactor[THISACTOR].xvel vrpipe_bomb_xvel
+        getactor[THISACTOR].zvel vrpipe_bomb_zvel
+        getactor[THISACTOR].htg_t 6 vrpipe_bomb_mode
+        getactor[THISACTOR].htg_t 7 vrpipe_bomb_fuse
+        setvarvar vrpipe_bomb_totalclock totalclock
+        addlog vrpipe_bomb_index
+        addlog vrpipe_bomb_tile
+        addlog vrpipe_bomb_owner
+        addlog vrpipe_bomb_ownerplayer
+        addlog vrpipe_bomb_yvel
+        addlog vrpipe_bomb_sector
+        addlog vrpipe_bomb_x
+        addlog vrpipe_bomb_y
+        addlog vrpipe_bomb_z
+        addlog vrpipe_bomb_angle
+        addlog vrpipe_bomb_xvel
+        addlog vrpipe_bomb_zvel
+        addlog vrpipe_bomb_mode
+        addlog vrpipe_bomb_fuse
+        addlog vrpipe_bomb_totalclock
+        addlog vrpipe_bomb_event
+    }
+ends
+
+onevent EVENT_EGS
+    setvar vrpipe_bomb_event 71
+    state vrpipe_observe_bomb
+    ifactor EXPLOSION2
+    {
+        getactor[THISACTOR].owner vrpipe_bomb_owner
+        getactor[vrpipe_bomb_owner].picnum vrpipe_bomb_tile
+        ifvare vrpipe_bomb_tile HEAVYHBOMB
+        {
+            addvar vrpipe_explosions 1
+            addlog vrpipe_explosions
+        }
+    }
+endevent
+
+onevent EVENT_GAME
+    setvar vrpipe_bomb_event 65
+    state vrpipe_observe_bomb
+endevent

@@ -382,6 +382,7 @@ struct Runtime::Impl
     XrSystemId                              system   = XR_NULL_SYSTEM_ID;
     XrSession                               session  = XR_NULL_HANDLE;
     XrSpace                                 space    = XR_NULL_HANDLE;
+    std::vector<XrEventDataReferenceSpaceChangePending> referenceChanges;
     XrSpace                                 viewSpace = XR_NULL_HANDLE;
     XrActionSet                             actionSet = XR_NULL_HANDLE;
     std::array<XrAction, 6>                 buttonActions {};
@@ -1162,6 +1163,18 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
             m_impl->exiting = true;
             m_impl->running = false;
         }
+        else if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING)
+        {
+            auto const &changed=*reinterpret_cast<XrEventDataReferenceSpaceChangePending const *>(&event);
+            if (changed.session==m_impl->session && changed.referenceSpaceType==XR_REFERENCE_SPACE_TYPE_LOCAL)
+            {
+                m_impl->referenceChanges.push_back(changed);
+                std::stable_sort(m_impl->referenceChanges.begin(),m_impl->referenceChanges.end(),
+                    [](XrEventDataReferenceSpaceChangePending const &a, XrEventDataReferenceSpaceChangePending const &b) {
+                        return a.changeTime<b.changeTime;
+                    });
+            }
+        }
         else if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
         {
             auto const *changed = reinterpret_cast<XrEventDataSessionStateChanged const *>(&event);
@@ -1215,6 +1228,12 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
     // Input uses this timestamp even when the frame will not render or view
     // tracking is temporarily unavailable.
     frame.predictedDisplayTime = frameState.predictedDisplayTime;
+    auto &changes=m_impl->referenceChanges;
+    auto const due=std::find_if(changes.begin(),changes.end(),[&](XrEventDataReferenceSpaceChangePending const &change) {
+        return change.changeTime>frame.predictedDisplayTime;
+    });
+    frame.referenceChanges.assign(changes.begin(),due);
+    changes.erase(changes.begin(),due);
     XrFrameBeginInfo beginInfo { XR_TYPE_FRAME_BEGIN_INFO };
     result = xrBeginFrame(m_impl->session, &beginInfo);
     if (XR_FAILED(result))

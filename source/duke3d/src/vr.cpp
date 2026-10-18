@@ -108,6 +108,7 @@ static eduke_xr::ActionInput rawInput;
 static std::array<uint32_t,2> activeInputButtons{}, blockedInputButtons{};
 static float aimYawOffset, aimPitchOffset;
 static bool aimPoseWasValid, shotLookAllowed=true;
+static bool shotReferenceInvalidated;
 static bool handShotsRequested()
 {
     auto mode=std::getenv("EDUKE32_XR_HAND_SHOTS");
@@ -395,11 +396,15 @@ void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
 void G_XRUpdateShotInput()
 {
     VRShotInput input;
-    if (handShotsRequested())
+    // A live session with temporarily lost tracking remains fail-closed.
+    // Terminal initialization/presentation failure returns to native flat
+    // controls, so an invalid hand pose must not suppress keyboard fire there.
+    if (handShotsRequested() && videoGetRenderMode()==REND_POLYMOST && sdlayer_xr_worldActive())
     {
         input.flags=VRShotEnabled;
         int const hand=aimHand();
-        if (hand>=0 && localAimCamera() && aimPoseUsable() && recentered && shotLookAllowed && Net_VRShotAvailable())
+        if (hand>=0 && localAimCamera() && aimPoseUsable() && recentered && shotLookAllowed
+            && !shotReferenceInvalidated && !(blockedInputButtons[1]&eduke_xr::ButtonSelect) && Net_VRShotAvailable())
         {
             auto const p=g_player[myconnectindex].ps;
             float const bodyYaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset;
@@ -427,6 +432,7 @@ void G_XRUpdateShotInput()
         }
     }
     G_VRSetShotInput(myconnectindex,input);
+    shotReferenceInvalidated=false; // One native sample conveys the unknown reference reset.
 }
 
 fix16_t G_XRMovementAngle(fix16_t nativeAngle)
@@ -859,8 +865,44 @@ void G_XRBeginFrame()
             aimPoseWasValid=false; recentered=false;
         }
     }
+    else for (auto const &change:pendingFrame.referenceChanges)
+    {
+        if (change.poseValid && validPose(change.poseInPreviousSpace))
+        {
+            // new->previous is supplied by OpenXR. Move the existing tracking
+            // reference into the new coordinates; native world pose is stable.
+            auto const &pose=change.poseInPreviousSpace;
+            XrQuaternionf const inverse={-pose.orientation.x,-pose.orientation.y,-pose.orientation.z,pose.orientation.w};
+            auto const point=[&](XrVector3f p) {
+                return rotate(inverse,{p.x-pose.position.x,p.y-pose.position.y,p.z-pose.position.z});
+            };
+            if (recentered)
+            {
+                origin=point(origin);
+                inverseYaw=multiply(inverseYaw,pose.orientation);
+            }
+            if (lastHeadValid)
+            {
+                lastHeadPose.position=point(lastHeadPose.position);
+                lastHeadPose.orientation=multiply(inverse,lastHeadPose.orientation);
+            }
+        }
+        else
+        {
+            // An unknown transform cannot carry old calibration into a new
+            // coordinate frame. Reuse recovery and the existing release gate.
+            trackingRebase=trackingRebase || (recentered && lastHeadValid);
+            recentered=false; aimPoseWasValid=false;
+            shotReferenceInvalidated=true;
+            blockedInputButtons[1]|=sample.hands[1].buttons&eduke_xr::ButtonSelect;
+            G_VRBlockShot(myconnectindex);
+        }
+        if (std::getenv("EDUKE32_XR_TEST_INPUT"))
+            LOG_F(INFO,"OpenXR LOCAL reference changed: at=%lld predicted=%lld known=%d.",
+                  (long long)change.changeTime,(long long)pendingFrame.predictedDisplayTime,int(change.poseValid));
+    }
     inputRuntime=runtime; inputGeneration=pendingGeneration; rawInput=sample;
-    if (aimHand()!=-2 && rawInput.headValid && validPose(rawInput.headPose))
+    if (rawInput.headValid && validPose(rawInput.headPose))
     {
         if (trackingRebase) setTrackingReference(rawInput.headPose);
         if (recentered) { lastHeadPose=rawInput.headPose; lastHeadValid=true; }
@@ -1063,7 +1105,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 runtime->finishFrame(false,error);
                 return false;
             }
-    if (!fixtureTest && worldFrames==59 && std::getenv("EDUKE32_XR_TEST_AIM"))
+    if (!fixtureTest && std::getenv("EDUKE32_XR_TEST_AIM")
+        && (worldFrames==59 || std::getenv("EDUKE32_TEST_REFERENCE_MARKER")))
     {
         LOG_F(INFO,"OpenXR aim camera: authorityYaw=%.6f bodyYaw=%.6f leftYaw=%.6f leftPitch=%.6f rightYaw=%.6f rightPitch=%.6f.",
               fix16_to_float(logical.angle)*Pi/1024.f,fix16_to_float(body.angle)*Pi/1024.f,

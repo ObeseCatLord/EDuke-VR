@@ -1,0 +1,11 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_EDUKE32_reference_space_test",
+    "library_path": "@REFERENCE_SPACE_LAYER_LIBRARY@",
+    "api_version": "1.1",
+    "implementation_version": "1",
+    "description": "EDuke32 test-only LOCAL reference-space change injector",
+    "disable_environment": "EDUKE32_REFERENCE_SPACE_LAYER_DISABLED"
+  }
+}

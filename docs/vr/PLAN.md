@@ -1,6 +1,6 @@
 # EDuke32 VR port plan
 
-Status: experimental Linux OpenXR port with bounded ART multiview, native controller input and bounded native weapon/HUD/menu presentation; **not a completed VR port**. Updated 2026-10-16. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
+Status: experimental Linux OpenXR port with bounded ART multiview, native controller input and bounded native weapon/HUD/menu presentation; **not a completed VR port**. Updated 2026-10-17. The requested endpoint remains full VR, single-pass stereo and working multiplayer. This implementation turn begins the work; it does not redefine completion as a diagnostic or flat screen in a headset.
 
 ## Current implementation checkpoint
 
@@ -264,3 +264,13 @@ this explicit test mode. Use owned-window XSendEvent and framebuffer captures;
 never map/raise/focus a game window or send global desktop input. Current
 crosshair fixtures verify real unmapped/focus state as well as gameplay.
 Older-peer compatibility remains outside the required scope.
+
+
+The 2026-10-17 implementation checkpoint adds tracked native pipebombs, coherent
+native weapon snapshots (network version2), and fixes the four findings from
+the user's single broad Astra code review. See CODE_REVIEW_20261017.md and
+VALIDATION.md. Private Duke/weapon assets are exported and structurally checked;
+full-body/controller/native-model integration remains pending, as do complete
+SPS coverage, remaining weapons, unrestricted view/collision behavior, physical
+headsets and independent VR peers/WAN. No model or packet scaffold qualifies
+those user-observable milestones by itself.

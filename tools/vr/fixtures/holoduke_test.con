@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Native Holoduke ownership fixture.  It grants the joining player inventory
+// once, then only records the game's ordinary player and APLAYER actor state.
+// In particular, it never creates/moves/deletes Holodukes or writes outcomes.
+include controller_test.con
+
+gamevar vrholo_given 0 1
+gamevar vrholo_sample 0 1
+gamevar vrholo_player 0 1
+gamevar vrholo_index 0 1
+gamevar vrholo_owner 0 1
+gamevar vrholo_yvel 0 1
+gamevar vrholo_tile 0 1
+gamevar vrholo_stat 0 1
+gamevar vrholo_sector 0 1
+gamevar vrholo_x 0 1
+gamevar vrholo_y 0 1
+gamevar vrholo_z 0 1
+gamevar vrholo_holoon 0 1
+gamevar vrholo_amount 0 1
+gamevar vrholo_gm 0 1
+
+onevent EVENT_PROCESSINPUT
+    getplayer[THISACTOR].index vrholo_player
+    getplayer[THISACTOR].gm vrholo_gm
+    // Player zero is the dedicated server's local player.  Equip only the
+    // remotely joined native player and leave gameplay to the stock code.
+    ifvarn vrholo_player 0
+    ifvarand vrholo_gm 4
+    ifvare vrholo_given 0
+    {
+        setplayer[THISACTOR].holoduke_amount 2400
+        setvar vrholo_given 1
+    }
+    addvar vrholo_sample 1
+    ifvare vrholo_sample 5
+    {
+        setvar vrholo_sample 0
+        getplayer[THISACTOR].i vrholo_index
+        getactor[vrholo_index].owner vrholo_owner
+        getactor[vrholo_index].yvel vrholo_yvel
+        getactor[vrholo_index].picnum vrholo_tile
+        getactor[vrholo_index].statnum vrholo_stat
+        getactor[vrholo_index].sectnum vrholo_sector
+        getplayer[THISACTOR].posx vrholo_x
+        getplayer[THISACTOR].posy vrholo_y
+        getplayer[THISACTOR].posz vrholo_z
+        getplayer[THISACTOR].holoduke_on vrholo_holoon
+        getplayer[THISACTOR].holoduke_amount vrholo_amount
+        getplayer[THISACTOR].gm vrholo_gm
+        addlog vrholo_player
+        addlog vrholo_index
+        addlog vrholo_owner
+        addlog vrholo_yvel
+        addlog vrholo_tile
+        addlog vrholo_stat
+        addlog vrholo_sector
+        addlog vrholo_x
+        addlog vrholo_y
+        addlog vrholo_z
+        addlog vrholo_holoon
+        addlog vrholo_amount
+        addlog vrholo_gm
+    }
+endevent
+
+gamevar vrholo_actor_index 0 0
+gamevar vrholo_actor_owner 0 0
+gamevar vrholo_actor_yvel 0 0
+gamevar vrholo_actor_tile 0 0
+gamevar vrholo_actor_stat 0 0
+gamevar vrholo_actor_sector 0 0
+gamevar vrholo_actor_x 0 0
+gamevar vrholo_actor_y 0 0
+gamevar vrholo_actor_z 0 0
+gamevar vrholo_actor_event 0 0
+
+defstate vrholo_observe_actor
+    ifactor APLAYER
+    {
+        getactor[THISACTOR].owner vrholo_actor_owner
+        // The real player has owner >= 0; stock Holoduke is APLAYER/10 with
+        // owner -1 and yvel set to its native player number.
+        ifvarl vrholo_actor_owner 0
+        {
+            setvarvar vrholo_actor_index THISACTOR
+            getactor[THISACTOR].yvel vrholo_actor_yvel
+            getactor[THISACTOR].picnum vrholo_actor_tile
+            getactor[THISACTOR].statnum vrholo_actor_stat
+            getactor[THISACTOR].sectnum vrholo_actor_sector
+            getactor[THISACTOR].x vrholo_actor_x
+            getactor[THISACTOR].y vrholo_actor_y
+            getactor[THISACTOR].z vrholo_actor_z
+            addlog vrholo_actor_index
+            addlog vrholo_actor_owner
+            addlog vrholo_actor_yvel
+            addlog vrholo_actor_tile
+            addlog vrholo_actor_stat
+            addlog vrholo_actor_sector
+            addlog vrholo_actor_x
+            addlog vrholo_actor_y
+            addlog vrholo_actor_z
+            addlog vrholo_actor_event
+        }
+    }
+ends
+
+onevent EVENT_EGS
+    setvar vrholo_actor_event 71
+    state vrholo_observe_actor
+endevent
+
+onevent EVENT_GAME
+    setvar vrholo_actor_event 65
+    state vrholo_observe_actor
+endevent

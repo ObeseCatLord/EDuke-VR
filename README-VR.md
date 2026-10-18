@@ -116,7 +116,7 @@ DISPLAY=:94 python tools/vr/smoke_dedicated.py \
     --work-dir /path/to/test/evidence --seconds 8
 ```
 
-Use a display you own for testing (`:94` was an isolated Xvfb here). This checks dedicated startup/level load/survival only. Multiplayer gameplay is **not** established by that test. A second native fix corrects the world-update packet payload pointer. Listen/dedicated joins and dedicated reconnect now pass startup checks, and a native client reaches rendered gameplay. A native dedicated server with an XR client also passes join/reconnect and 60-frame stereo readbacks per join. Fire/damage/map transitions, authoritative convergence and other mixed-client configurations remain qualification gates; see VALIDATION.md. The base network version/layout remains unchanged; the optional hand-shot capability below negotiates a movement-update tail between upgraded peers.
+Use a display you own for testing (`:94` was an isolated Xvfb here). This checks dedicated startup/level load/survival only. Multiplayer gameplay is **not** established by that test. A second native fix corrects the world-update packet payload pointer. Listen/dedicated joins and dedicated reconnect now pass startup checks, and a native client reaches rendered gameplay. A native dedicated server with an XR client also passes join/reconnect and 60-frame stereo readbacks per join. Fire/damage/map transitions, authoritative convergence and other mixed-client configurations remain qualification gates; see VALIDATION.md. Native network version2 synchronizes the existing pipebomb hold/remote tuple; all peers must use the current build. The optional hand-shot capability below negotiates a movement-update tail between upgraded peers.
 
 The mixed-client regression uses an already-running runtime and a supported GPU display. It waits for level synchronization, skips the native intro with `-nologo`, dismisses the startup menu after synchronization/fade, then requires eye readbacks and visible input changes on both the initial join and reconnect:
 
@@ -496,3 +496,24 @@ Use `duke3d_game=eduke32-xr` to name the executable. Changing `APPBASENAME`
 also changes the native configuration filename and can bypass the fixture's
 bounded video settings. See [validation](docs/vr/VALIDATION.md) for evidence and
 remaining limits.
+
+
+## Implementation review and pipebomb checkpoint (2026-10-17)
+
+The requested single Astra/xhigh code review found four defects. All four have
+narrow fixes and bounded regressions; see [the disposition table](docs/vr/CODE_REVIEW_20261017.md).
+Holoduke no longer wins player binding; terminal XR fallback restores native
+firing; effective LOCAL-space changes preserve calibration or safely rearm;
+minimizing the mirror permits active headset projections. Physical runtime
+recenter/minimize behavior remains unqualified.
+
+Tracked pipebombs now retain native charge, remote/timer physics, damage and
+multiplayer ownership. A demonstrated skipped-commit/early-client-explosion
+bug required three native weapon-state bytes in server snapshots and network
+version2. Rebuild every peer together. Details and remaining coverage limits
+are in [HAND_SHOTS.md](docs/vr/HAND_SHOTS.md).
+
+The private sibling Duke/weapon asset package is complete as an art deliverable;
+native loading, controller binding, animated grip/muzzle and full-body integration
+remain separate work. Native MD3 rendering currently uses the reference fallback,
+so this does not establish model single-pass coverage or a complete VR port.

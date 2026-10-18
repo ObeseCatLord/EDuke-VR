@@ -153,6 +153,7 @@ typedef struct serverplayerupdate_s
     uint16_t picnum;
     uint16_t gotweapon;
     uint8_t  kickback_pic;
+    uint8_t  hbomb_on, hbomb_hold_delay, rapid_fire_hold;
     uint8_t  frags[MAXPLAYERS];
     int16_t  inv_amount[GET_MAX];
     int16_t  ammo_amount[MAX_WEAPONS];
@@ -1121,6 +1122,9 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
 
         int const player=srvActor->spr_yvel;
         bool const isPlayerSprite=srvActor->spr_picnum==APLAYER && srvActor->spr_statnum==STAT_PLAYER
+            // Native Holoduke shares tile/status/yvel, but owner=-1 is the
+            // unsigned16 sentinel65535 in the snapshot, never a sprite index.
+            && unsigned(srvActor->spr_owner)<MAXSPRITES
             && unsigned(player)<MAXPLAYERS && g_player[player].ps;
         // Local bootstrap/scratch sprites need not have the server's indices.
         // Bind from authoritative role/identity even when fields compare equal;
@@ -1794,7 +1798,7 @@ static void Net_ReceiveVRCapability(ENetEvent *event, bool server)
 {
     if (event->channelID!=CHAN_MISC || event->packet->dataLength!=9 || (!server && event->peer!=g_netClientPeer)) return;
     auto const bytes=event->packet->data;
-    if (Bmemcmp(bytes+1,"EDVR",4) || bytes[5]!=1 || !(bytes[6]&VRShotFeatureRPG) || (bytes[6]&~(VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink)) || bytes[7]!=(server ? 0 : 1)) return;
+    if (Bmemcmp(bytes+1,"EDVR",4) || bytes[5]!=1 || !(bytes[6]&VRShotFeatureRPG) || (bytes[6]&~(VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink|VRShotFeatureHandBomb)) || bytes[7]!=(server ? 0 : 1)) return;
     int const player=server ? int(intptr_t(event->peer->data)) : myconnectindex;
     if (player<=0 || player>=MAXPLAYERS || bytes[8]!=player || !g_player[player].playerquitflag) return;
     if (server)
@@ -1814,6 +1818,8 @@ static void Net_ReceiveVRCapability(ENetEvent *event, bool server)
                 Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan);
             else if (!(vrServerCapability&VRShotFeatureFreezeShrink))
                 Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink);
+            else if (!(vrServerCapability&VRShotFeatureHandBomb))
+                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink|VRShotFeatureHandBomb);
         }
     }
     LOG_F(INFO,"VR native hand-shot capability: %s player=%d version=1 features=%u.",server ? "accepted" : "acknowledged",player,unsigned(bytes[6]));
@@ -2298,6 +2304,20 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
     if (length<sizeof(serverupdate_t) || (length-sizeof(serverupdate_t))%sizeof(serverplayerupdate_t)) return;
     size_t const records=(length-sizeof(serverupdate_t))/sizeof(serverplayerupdate_t);
 
+    // Owned integration tests can delay player snapshots independently of
+    // native world snapshots to exercise the two channels' real ordering.
+    if (auto marker=std::getenv("EDUKE32_TEST_DROP_SERVER_PLAYERS"))
+    {
+        static bool dropping=false;
+        if (buildvfs_exists(marker))
+        {
+            if (!dropping) LOG_F(INFO,"Native test: delaying server player snapshots.");
+            dropping=true;
+            return;
+        }
+        dropping=false;
+    }
+
     uint8_t *updatebuf = (uint8_t *)event->packet->data;
     Bmemcpy(&serverupdate, updatebuf, sizeof(serverupdate_t));
     if (records>MAXPLAYERS || serverupdate.numplayers!=records) return;
@@ -2319,6 +2339,9 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
         g_player[player].ps->gotweapon = playerupdate.gotweapon;
 
         g_player[player].ps->kickback_pic = playerupdate.kickback_pic;
+        g_player[player].ps->hbomb_on = playerupdate.hbomb_on;
+        g_player[player].ps->hbomb_hold_delay = playerupdate.hbomb_hold_delay;
+        g_player[player].ps->rapid_fire_hold = playerupdate.rapid_fire_hold;
 
         Bmemcpy(g_player[player].frags, playerupdate.frags, sizeof(playerupdate.frags));
         Bmemcpy(g_player[player].ps->inv_amount, playerupdate.inv_amount, sizeof(playerupdate.inv_amount));
@@ -5051,6 +5074,9 @@ void Net_SendServerUpdates(void)
 
         playerupdate.gotweapon    = g_player[i].ps->gotweapon;
         playerupdate.kickback_pic = g_player[i].ps->kickback_pic;
+        playerupdate.hbomb_on = g_player[i].ps->hbomb_on;
+        playerupdate.hbomb_hold_delay = g_player[i].ps->hbomb_hold_delay;
+        playerupdate.rapid_fire_hold = g_player[i].ps->rapid_fire_hold;
         Bmemcpy(playerupdate.frags, g_player[i].frags, sizeof(playerupdate.frags));
         Bmemcpy(playerupdate.inv_amount, g_player[i].ps->inv_amount, sizeof(playerupdate.inv_amount));
         Bmemcpy(playerupdate.ammo_amount, g_player[i].ps->ammo_amount, sizeof(playerupdate.ammo_amount));
