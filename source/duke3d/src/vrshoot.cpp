@@ -162,7 +162,9 @@ void G_VRFilterShotInput(int player, input_t &input)
 bool G_VRResolveShot(int player, vec3_t &position, int16_t &sect, bool &clamped, vec3_t const *muzzlePosition)
 {
     clamped=false;
-    if (!G_VRShotReady(player)) return false;
+    // Firing callers gate on G_VRShotCanFire (fresh sample); the held-weapon
+    // presentation resolves its muzzle every frame and only needs validity.
+    if (!G_VRShotValid(player)) return false;
     auto const p=g_player[player].ps;
     if (unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || p->newowner>=0 || p->over_shoulder_on || ud.recstat) return false;
     auto const input=shots[player].input;

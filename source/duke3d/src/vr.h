@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 #include <cstdint>
+// Stock weapons other than the calibrated pistol use one generic held MD3 per
+// weapon on reserved tile XRHeldModelTileBase+weapon (no world ART exists).
+// Flat builds use them too, for weapons held by 3D player models.
+constexpr int32_t XRHeldModelTileBase=30020;
 #ifdef USE_OPENXR
 #include "player.h"
 // Called once by each ordinary native display loop, before controls and after
@@ -12,9 +16,6 @@ void G_XRResetAim(int playerNum);
 bool G_XRBeginWeapon();
 void G_XREndWeapon(bool captured);
 enum class XRWeaponFamily { Unsupported, StockPistol, AAPistol, AARpg, StockHeld, HudMapped };
-// Stock weapons other than the calibrated pistol use one generic held MD3 per
-// weapon on reserved tile XRHeldModelTileBase+weapon (no world ART exists).
-constexpr int32_t XRHeldModelTileBase=30020;
 struct XRWeaponPresentation
 {
     int32_t palette=0, shade=0, counter=0, reloading=0;

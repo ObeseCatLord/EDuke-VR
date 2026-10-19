@@ -50,6 +50,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "vfs.h"
 #include "vr.h"
+#ifdef USE_OPENGL
+# include "mdsprite.h"
+#endif
 
 // Uncomment to prevent anything except mirrors from drawing. It is sensible to
 // also uncomment ENGINE_CLEAR_SCREEN in build/src/engine_priv.h.
@@ -3743,6 +3746,55 @@ static inline void G_DoEventAnimSprites(int tspriteNum)
     spriteext[tsprOwner].tspr = NULL;
 }
 
+#ifdef USE_OPENGL
+// Held weapons on 3D player models: the weapon's own held model (the VR
+// tiles) is placed with its grip on the player model's animated
+// tag_weapon_right instead of the classic pickup icon over the head.
+static struct { int16_t weapon, owner; } g_heldAttach[MAXPLAYERS*2];
+static int g_heldAttachCount;
+
+static int32_t G_HeldWeaponModelTile(int const weapon)
+{
+    if (videoGetRenderMode() < REND_POLYMOST || !usemodels || !mdinited || (unsigned)weapon >= MAX_WEAPONS || weapon == KNEE_WEAPON)
+        return -1;
+    int32_t const tile = weapon == PISTOL_WEAPON ? FIRSTGUNSPRITE : XRHeldModelTileBase + weapon;
+    return md_tilehasmodel(tile, 0) >= 0 ? tile : -1;
+}
+
+static void G_PlaceHeldWeapons(void)
+{
+    for (int k = 0; k < g_heldAttachCount; ++k)
+    {
+        auto const w = &tsprite[g_heldAttach[k].weapon];
+        auto const o = &tsprite[g_heldAttach[k].owner];
+        int32_t const duke = md_tilehasmodel(o->picnum, o->pal), held = md_tilehasmodel(w->picnum, 0);
+        md3tag_t hand, grip;
+        if (duke < 0 || held < 0 || !o->xrepeat || (o->cstat & 32768)
+            || !md3_gettag(duke, "tag_weapon_right", tile2model[Ptile2tile(o->picnum, o->pal)].framenum, &hand))
+        {
+            w->xrepeat = w->yrepeat = 0;
+            continue;
+        }
+        if (!md3_gettag(held, "tag_grip", 0, &grip))
+            grip.p = { 0.f, 0.f, 0.f };
+        // Model +X forward, +Y to the right (Build angles turn clockwise).
+        float const turn = atan2f(hand.x.y, hand.x.x);
+        float const ct = cosf(turn), st = sinf(turn);
+        float const px = hand.p.x - (grip.p.x*ct - grip.p.y*st), py = hand.p.y - (grip.p.x*st + grip.p.y*ct);
+        float const a = o->ang*(fPI/1024.f), ca = cosf(a), sa = sinf(a);
+        float const xy = .16f*o->xrepeat, z = 2.56f*o->yrepeat; // Build units per model unit (DEF scale 1)
+        w->x = o->x + Blrintf((px*ca - py*sa)*xy);
+        w->y = o->y + Blrintf((px*sa + py*ca)*xy);
+        w->z = o->z - o->yoffset*o->yrepeat*4 - Blrintf((hand.p.z - grip.p.z)*z);
+        w->ang = (o->ang + Blrintf(turn*(1024.f/fPI))) & 2047;
+        w->xrepeat = o->xrepeat; w->yrepeat = o->yrepeat;
+        w->xoffset = w->yoffset = 0;
+        w->shade = o->shade; w->pal = o->pal;
+    }
+    g_heldAttachCount = 0;
+}
+#endif
+
 void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura, int32_t smoothratio)
 {
 #ifdef USE_OPENXR
@@ -3753,11 +3805,15 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
     UNREFERENCED_PARAMETER(ourz);
     int32_t j, frameOffset, playerNum;
     intptr_t l;
+    bool heldShown;
 
 #ifdef LEGACY_ROR
     ror_sprite = -1;
 #endif
 
+#ifdef USE_OPENGL
+    g_heldAttachCount = 0;
+#endif
     if (spritesortcnt == 0)
     {
 #if 1//def DEBUGGINGAIDS
@@ -4119,9 +4175,37 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                     t->cstat |= 2;
             }
 
+            heldShown = false;
+#ifdef USE_OPENGL
+            if ((display_mirror || ((g_netServer || ud.multimode > 1) && (screenpeek != playerNum || pSprite->owner == -1)))
+                && sprite[g_player[playerNum].ps->i].extra > 0 && g_heldAttachCount < ARRAY_SSIZE(g_heldAttach)
+                && md_tilehasmodel(t->picnum, t->pal) >= 0 && !(spriteext[i].flags & SPREXT_NOTMD)
+# ifdef USE_OPENXR
+                && G_XRCanAppendSprite(maxspritesonscreen))
+# else
+                && spritesortcnt < maxspritesonscreen)
+# endif
+            {
+                int32_t const heldTile = G_HeldWeaponModelTile(g_player[playerNum].ps->curr_weapon);
+                if (heldTile >= 0)
+                {
+                    auto const newTspr = &tsprite[spritesortcnt];
+                    *newTspr          = *t;
+                    newTspr->statnum  = TSPR_TEMP;
+                    newTspr->cstat    = 0;
+                    newTspr->picnum   = heldTile;
+                    g_heldAttach[g_heldAttachCount++] = { (int16_t)spritesortcnt, (int16_t)j };
+# ifdef USE_OPENXR
+                    G_XRInheritSprite(spritesortcnt,j);
+# endif
+                    spritesortcnt++;
+                    heldShown = true;
+                }
+            }
+#endif
             if ((g_netServer || ud.multimode > 1) && (display_mirror || screenpeek != playerNum || pSprite->owner == -1))
             {
-                if (ud.showweapons && sprite[g_player[playerNum].ps->i].extra > 0 && g_player[playerNum].ps->curr_weapon > 0
+                if (ud.showweapons && !heldShown && sprite[g_player[playerNum].ps->i].extra > 0 && g_player[playerNum].ps->curr_weapon > 0
 #ifdef USE_OPENXR
                         && G_XRCanAppendSprite(maxspritesonscreen))
 #else
@@ -4612,6 +4696,9 @@ skip:
             G_DoEventAnimSprites(j);
     }
 
+#ifdef USE_OPENGL
+    G_PlaceHeldWeapons();
+#endif
 #if 1//def DEBUGGINGAIDS
     g_spriteStat.numonscreen = spritesortcnt;
 #endif

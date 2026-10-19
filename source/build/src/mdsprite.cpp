@@ -449,6 +449,11 @@ int32_t md_thinoutmodel(int32_t modelid, uint8_t *usedframebitmap)
                 Bmemcpy(&s->xyzn[otonframe[i]*s->numverts], &s->xyzn[i*s->numverts], s->numverts*sizeof(md3xyzn_t));
     }
 
+    if (m->head.tags)
+        for (i=0; i<m->numframes; i++)
+            if (otonframe[i]>=0 && otonframe[i] != i)
+                Bmemcpy(&m->head.tags[otonframe[i]*m->head.numtags], &m->head.tags[i*m->head.numtags], m->head.numtags*sizeof(md3tag_t));
+
     ////// tweak frame indices in various places
 
     for (anm=m->animations; anm; anm=anm->next)
@@ -1362,7 +1367,8 @@ static md3model_t *md3load(buildvfs_kfd fil)
     if (m->head.numtags == 0) m->head.tags = NULL;
     else
     {
-        klseek(fil,m->head.ofstags,SEEK_SET); i = m->head.numtags*sizeof(md3tag_t);
+        // Tags are stored per frame (frame-major); keep them all.
+        klseek(fil,m->head.ofstags,SEEK_SET); i = m->head.numframes*m->head.numtags*sizeof(md3tag_t);
         m->head.tags = (md3tag_t *)Xmalloc(i);
         if (kread_and_test(fil,m->head.tags,i)) { md3free(m); return nullptr; }
     }
@@ -1384,7 +1390,7 @@ static md3model_t *md3load(buildvfs_kfd fil)
             for (j=3+3+3+1-1; j>=0; j--) l[j] = B_LITTLE32(l[j]);
         }
 
-        for (i = m->head.numtags-1; i>=0; i--)
+        for (i = m->head.numframes*m->head.numtags-1; i>=0; i--)
         {
             l = (int32_t *)&m->head.tags[i].p;
             for (j=3+3+3+3-1; j>=0; j--) l[j] = B_LITTLE32(l[j]);
@@ -2074,13 +2080,41 @@ int32_t md3_gettagposition(int32_t modelid, char const *name, vec3f_t *position)
     if (!m->head.tags)
         return 0;
 
-    // md3load retains only one tag set, so this is deliberately frame zero.
+    // Deliberately frame zero (the rest pose); see md3_gettag for others.
     for (int32_t i = 0; i < m->head.numtags; ++i)
         if (!Bstrncasecmp(m->head.tags[i].nam, name, sizeof(m->head.tags[i].nam)))
         {
             *position = m->head.tags[i].p;
             return std::isfinite(position->x) && std::isfinite(position->y) && std::isfinite(position->z);
         }
+
+    return 0;
+}
+
+int32_t md3_gettag(int32_t modelid, char const *name, int32_t frame, md3tag_t *tag)
+{
+    if (!name || !name[0] || !tag || (unsigned)modelid >= (unsigned)nextmodelid || !models)
+        return 0;
+
+    mdmodel_t *const model = models[modelid];
+    if (!model || model->mdnum != 3)
+        return 0;
+
+    md3model_t *const m = (md3model_t *)model;
+    if (!m->head.tags || (unsigned)frame >= (unsigned)m->head.numframes)
+        return 0;
+
+    for (int32_t i = 0; i < m->head.numtags; ++i)
+    {
+        md3tag_t const &t = m->head.tags[frame*m->head.numtags+i];
+        if (Bstrncasecmp(t.nam, name, sizeof(t.nam)))
+            continue;
+        float const *const v = &t.p.x;
+        for (int j = 0; j < 12; ++j)
+            if (!std::isfinite(v[j])) return 0;
+        *tag = t;
+        return 1;
+    }
 
     return 0;
 }

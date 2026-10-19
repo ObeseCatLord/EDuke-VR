@@ -14,7 +14,8 @@ Sources in priority order:
                     game data (Duke Nukem Forever); local use only, never with
                     --release
 Tiles: 21 stock pistol, 30020+weapon held weapons, 30010/30011 single-mesh
-hands, 30040 first-person body, 30100+family AA held weapons,
+hands, APLAYER (1405+) Duke for both third and first person (torso/legs),
+30100+family AA held weapons,
 30200+side*32+segment finger-tracking hand segments.
 """
 import json
@@ -80,11 +81,6 @@ def main():
         if chosen:
             model(*chosen, tile, f'vr_hand_{side}')
 
-    chosen = pick('body', [(v6 / 'vr_body.md3', v6 / 'vr_body.png', False),
-                           (assets / 'v5-vanilla/exports/eduke32/vr_body.md3', assets / 'v5-vanilla/exports/eduke32/vr_body.png', True)])
-    if chosen:
-        model(*chosen, 30040, 'vr_body')
-
     # Third-person Duke for other players: native APLAYER (1405) action tiles,
     # from the stock GAME.CON actions (start, frames, 5 view angles each).
     duke_md3, duke_png = v6 / 'vr_duke.md3', v6 / 'vr_duke.png'
@@ -110,8 +106,11 @@ def main():
         for index in range(count):
             frames.add(data_md3[offset + index * 56 + 40:offset + index * 56 + 56].split(b'\0')[0].decode())
         surfaces = struct.unpack_from('<i', data_md3, 84)[0]
-        # Native world sprites draw models with the DEF scale; 1.0 is calibrated
-        # against Duke's 42x36 sprite repeat in-engine (see PLAYING.md).
+        # Polymost draws a model unit as 0.16*xrepeat xy and 2.56*yrepeat z
+        # Build units times the DEF scale. With Duke's 42x36 repeat and scale
+        # 1.0 the 117-unit (64/m) model stands 1.76 m with its eyes ~5 cm
+        # above the native eye height (PHEIGHT); xy is ~12% wider, matching
+        # the original sprite's aspect.
         out.append('model "vr_duke.md3" {\n scale 1.0')
         for surface in range(surfaces):
             out.append(f' skin {{ pal 0 surface {surface} file "vr_duke.png" }}')
