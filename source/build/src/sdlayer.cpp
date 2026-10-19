@@ -125,6 +125,40 @@ static void sdlayer_xr_shutdown()
     sdl_xr_worldWidth=sdl_xr_worldHeight=0;
 }
 
+// EDUKE32_XR=1 enables the session with every feature opt-in left to its own
+// variable (test harnesses rely on that). EDUKE32_XR=play additionally gives
+// the qualified gameplay features defaults; any explicit variable still wins.
+bool sdlayer_xr_requested()
+{
+    char const *mode = std::getenv("EDUKE32_XR");
+    return mode && (!std::strcmp(mode, "1") || !std::strcmp(mode, "play"));
+}
+
+char const *sdlayer_xr_option(char const *name)
+{
+    if (char const *value = std::getenv(name))
+        return value;
+    char const *mode = std::getenv("EDUKE32_XR");
+    if (!mode || std::strcmp(mode, "play"))
+        return nullptr;
+    static struct { char const *name, *value; } const preset[] = {
+        { "EDUKE32_XR_UI", "2" },              // HUD/menus over the stereo world
+        { "EDUKE32_XR_SINGLE_PASS", "1" },     // multiview world rendering
+        { "EDUKE32_XR_AIM", "right" },         // weapon hand
+        { "EDUKE32_XR_HAND_SHOTS", "1" },      // shots leave the tracked hand
+        { "EDUKE32_XR_WEAPON", "1" },          // weapon ART follows the controller
+        { "EDUKE32_XR_MODELS", "1" },          // held MD3 weapons when defined
+        { "EDUKE32_XR_AA_MODELS", "1" },
+        { "EDUKE32_XR_WEAPON_MOUNT", "1" },    // palm-calibrated muzzles when tagged
+        { "EDUKE32_XR_HAND_LEFT_TILE", "30010" },  // floating hands when defined
+        { "EDUKE32_XR_HAND_RIGHT_TILE", "30011" },
+    };
+    for (auto const &option : preset)
+        if (!std::strcmp(option.name, name))
+            return option.value;
+    return nullptr;
+}
+
 // The game owns room rendering; SDL owns the session/context lifetime.
 eduke_xr::Runtime *sdlayer_xr_worldRuntime()
 {
@@ -141,8 +175,7 @@ eduke_xr::Runtime *sdlayer_xr_worldRuntime()
     if (!sdl_xr_worldAttempted)
     {
         sdl_xr_worldAttempted = true;
-        char const *enabled = std::getenv("EDUKE32_XR");
-        if (!enabled || std::strcmp(enabled, "1"))
+        if (!sdlayer_xr_requested())
             return nullptr;
         std::string error;
 
@@ -214,6 +247,25 @@ static void sdlayer_xr_presentMenu()
     if (overlay && armed && submitted>=119 && submitted%60==59 && std::getenv("EDUKE32_XR_TEST_PVP"))
         if (auto prefix=std::getenv("EDUKE32_XR_HUD_OUTPUT"))
         { periodicCapture=std::string(prefix)+"-"+std::to_string(submitted+1); capture=periodicCapture.c_str(); }
+    // Test hook shared with the world path: capture the final composited
+    // frame to the prefix named in the request file, then remove the file.
+    std::string requested;
+    if (overlay && armed && !capture)
+        if (char const *request = std::getenv("EDUKE32_XR_CAPTURE_REQUEST"))
+            if (FILE *file = std::fopen(request, "r"))
+            {
+                char prefix[1024] = {};
+                if (std::fgets(prefix, sizeof(prefix), file))
+                    requested = prefix;
+                std::fclose(file);
+                std::remove(request);
+                requested.erase(requested.find_last_not_of("\r\n") + 1);
+                if (!requested.empty())
+                {
+                    capture = requested.c_str();
+                    LOG_F(INFO, "OpenXR capture request: final presentation prefix=%s.", capture);
+                }
+            }
     uint64_t const before=sdl_xr.submittedFrames();
     std::string error;
     if (!sdl_xr.completeMenuPresentation(error,capture))
@@ -239,8 +291,7 @@ static void sdlayer_xr_presentMenu()
 
 static void sdlayer_xr_diagnostic()
 {
-    char const *world = std::getenv("EDUKE32_XR");
-    if (world && !std::strcmp(world, "1"))
+    if (sdlayer_xr_requested())
         return;
     std::string error;
     if (!sdl_xr_attempted)

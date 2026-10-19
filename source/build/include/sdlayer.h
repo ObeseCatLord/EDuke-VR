@@ -14,6 +14,9 @@
 #ifdef USE_OPENXR
 namespace eduke_xr { class Runtime; }
 eduke_xr::Runtime *sdlayer_xr_worldRuntime();
+bool sdlayer_xr_requested();
+// Environment option, or its EDUKE32_XR=play preset default, else nullptr.
+char const *sdlayer_xr_option(char const *name);
 void sdlayer_xr_disableWorld(char const *reason);
 bool sdlayer_xr_worldActive();
 void sdlayer_xr_cancelMenuPresentation();

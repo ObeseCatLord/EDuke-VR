@@ -107,10 +107,15 @@ static int weaponModelTile(XRWeaponFamily family)
 static XRWeaponFamily mountedWeaponFamily()
 {
     auto const family=P_XRWeaponFamily();
-    auto value=std::getenv("EDUKE32_XR_WEAPON_MOUNT");
+    // Without any held model for this family there is nothing to calibrate
+    // from; aim from the controller instead of suppressing fire. A present
+    // model with a missing tag still fails closed below in weaponMuzzle.
+    if (family==XRWeaponFamily::Unsupported || md_tilehasmodel(weaponModelTile(family),0)<0)
+        return XRWeaponFamily::Unsupported;
+    auto value=sdlayer_xr_option("EDUKE32_XR_WEAPON_MOUNT");
     if (value && !Bstrcmp(value,"1")) return family;
     // Preserve the legacy opt-in: it must not move an RPG's gameplay muzzle.
-    value=std::getenv("EDUKE32_XR_PISTOL_MOUNT");
+    value=sdlayer_xr_option("EDUKE32_XR_PISTOL_MOUNT");
     return value && !Bstrcmp(value,"1") && family!=XRWeaponFamily::AARpg ? family : XRWeaponFamily::Unsupported;
 }
 static bool worldDrawArmed;
@@ -157,7 +162,7 @@ static void accountWorldFrame(bool opaque, bool masks, bool fixture, bool models
 
 static bool overlayEnabled()
 {
-    auto enabled=std::getenv("EDUKE32_XR_UI");
+    auto enabled=sdlayer_xr_option("EDUKE32_XR_UI");
     return enabled && !Bstrcmp(enabled,"2");
 }
 static eduke_xr::Runtime *menuRuntime;
@@ -188,14 +193,14 @@ static bool aimPoseWasValid, shotLookAllowed=true;
 static bool shotReferenceInvalidated;
 static bool handShotsRequested()
 {
-    auto mode=std::getenv("EDUKE32_XR_HAND_SHOTS");
+    auto mode=sdlayer_xr_option("EDUKE32_XR_HAND_SHOTS");
     return mode && !Bstrcmp(mode,"1");
 }
 
 // Opt-in while tracked weapon presentation and the full authority matrix develop.
 static int aimHand()
 {
-    auto mode=std::getenv("EDUKE32_XR_AIM");
+    auto mode=sdlayer_xr_option("EDUKE32_XR_AIM");
     if (!mode) return -2;
     if (!Bstrcmp(mode,"head")) return -1;
     if (!Bstrcmp(mode,"left")) return 0;
@@ -609,7 +614,7 @@ bool weaponVisualOwned()
 
 int gripModelTile(unsigned hand)
 {
-    auto value=std::getenv(hand ? "EDUKE32_XR_HAND_RIGHT_TILE" : "EDUKE32_XR_HAND_LEFT_TILE");
+    auto value=sdlayer_xr_option(hand ? "EDUKE32_XR_HAND_RIGHT_TILE" : "EDUKE32_XR_HAND_LEFT_TILE");
     if (!value || !*value) return -1;
     unsigned tile=0;
     for (;*value;++value)
@@ -747,8 +752,8 @@ struct NativeOracleTarget
 
 bool prepareHandModel(HandModelSample &sample)
 {
-    auto enabled=std::getenv("EDUKE32_XR_MODELS");
-    auto weapon=std::getenv("EDUKE32_XR_WEAPON");
+    auto enabled=sdlayer_xr_option("EDUKE32_XR_MODELS");
+    auto weapon=sdlayer_xr_option("EDUKE32_XR_WEAPON");
     if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
         || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
         || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)
@@ -1136,7 +1141,7 @@ void G_XRCancelMenuPresentation()
 
 static void beginMenuPresentation(bool nativeScreen)
 {
-    char const *enabled=std::getenv("EDUKE32_XR_UI");
+    char const *enabled=sdlayer_xr_option("EDUKE32_XR_UI");
     bool const overlay=!nativeScreen && overlayEnabled() && presentationRuntime;
     if (!enabled || (Bstrcmp(enabled,"1") && Bstrcmp(enabled,"2"))
         || (!nativeScreen && !overlay && (g_player[myconnectindex].ps->gm & MODE_GAME))
@@ -1174,7 +1179,7 @@ void G_XRBeginScreenPresentation() { beginMenuPresentation(true); }
 
 bool G_XRBeginWeapon()
 {
-    auto const enabled=std::getenv("EDUKE32_XR_WEAPON");
+    auto const enabled=sdlayer_xr_option("EDUKE32_XR_WEAPON");
     if (!enabled || Bstrcmp(enabled,"1") || aimHand()<0 || !localAimCamera()
         || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return false;
     XrPosef panel=rawInput.headPose;
@@ -1879,7 +1884,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         }
         return good;
     };
-    char const *singleValue=std::getenv("EDUKE32_XR_SINGLE_PASS");
+    char const *singleValue=sdlayer_xr_option("EDUKE32_XR_SINGLE_PASS");
     // Split full-pitch eyes carry two camera rotations per eye; their replay
     // uses the per-eye reference path until multiview can pair split passes.
     bool const singlePass=singleValue && !Bstrcmp(singleValue,"1") && !eyes[0].split && !eyes[1].split && !numyaxbunches;
@@ -2463,7 +2468,9 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         }
         // Test hook: a harness writes an output prefix into the request file;
         // the next world frame captures both eyes there and removes the file.
-        if (good && !fixtureTest)
+        // With UI overlays the final composited frame is captured at
+        // presentation instead (sdlayer_xr_presentMenu).
+        if (good && !fixtureTest && !overlayEnabled())
             if (auto request=std::getenv("EDUKE32_XR_CAPTURE_REQUEST"))
                 if (FILE *file=std::fopen(request,"r"))
                 {

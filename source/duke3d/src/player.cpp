@@ -26,6 +26,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "input.h"
 #include "vr.h"
 #include "vrshoot.h"
+#ifdef USE_OPENXR
+#include "sdlayer.h"
+#endif
 #include <cmath>
 #include <cstdlib>
 #include "savegame.h"
@@ -2570,7 +2573,7 @@ XRWeaponFamily P_XRWeaponFamily()
         return XRWeaponFamily::Unsupported;
     if (weapon==PISTOL_WEAPON && DUKE && !VM_HaveEvent(EVENT_DISPLAYROOMSEND) && !VM_HaveEvent(EVENT_DISPLAYREST)
         && !VM_HaveEvent(EVENT_DISPLAYWEAPON) && !VM_HaveEvent(EVENT_DRAWWEAPON)) return XRWeaponFamily::StockPistol;
-    auto const enabled=Bgetenv("EDUKE32_XR_AA_MODELS");
+    auto const enabled=sdlayer_xr_option("EDUKE32_XR_AA_MODELS");
     if (!enabled || Bstrcmp(enabled,"1") || (!DUKE && g_gameType!=GAMEFLAG_NOPOLYMER)
         || !VM_HaveEvent(EVENT_DISPLAYWEAPON) || !VM_HaveEvent(EVENT_DRAWWEAPON)
         || Gv_GetVarByLabel("pchar",INT32_MIN,p->i,myconnectindex)!=0

@@ -63,6 +63,7 @@ def main():
     parser.add_argument('--aa-root', type=Path, help='Alien Armageddon install; uses its GRP/CON/DEF')
     parser.add_argument('--map', help='user map to load instead of an episode level')
     parser.add_argument('--poses', help='comma-separated subset of pose names')
+    parser.add_argument('--play', action='store_true', help='launch through package/vr/eduke32-vr-play')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='pitch-', dir=args.work_dir.resolve()))
@@ -78,7 +79,15 @@ def main():
             env.pop(key)
     log_path = lab / 'game.log'
     command = [str(args.binary.resolve()), '-usecwd', '-nosetup', '-noautoload']
-    if args.aa_root:
+    if args.play:
+        env['EDUKE32_XR'] = 'play'
+        env['XDG_DATA_HOME'] = str(lab / 'data')
+        launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
+        command = [str(launcher), '--binary', str(args.binary.resolve())]
+        if args.aa_root:
+            command += ['--aa', str(args.aa_root.resolve())]
+        command += ['--', '-usecwd', '-nosetup', '-noautoload', '-nologo']
+    elif args.aa_root:
         aa = args.aa_root.resolve()
         command += ['-nologo', '-j', str(aa), '-g', str(aa / 'AA.grp'), '-x', 'scripts/AAGAME.CON', '-h', 'duke3d.def']
     command += ['-map', args.map] if args.map else ['-v1', '-l' + args.level]
@@ -118,8 +127,9 @@ def main():
                 tail = text()[before:]
                 match = re.search(r'OpenXR capture request: serial=(\d+) prefix=\S+ passes=(\d),(\d) .* ok=(\d)', tail)
                 left, right = lab / (name + '-left.ppm'), lab / (name + '-right.ppm')
+                final = f'final presentation prefix={lab / name}.' in tail
                 result['poses'][name] = {
-                    'captured': bool(match) and match.group(4) == '1' and left.is_file() and right.is_file(),
+                    'captured': (final or (bool(match) and match.group(4) == '1')) and left.is_file() and right.is_file(),
                     'passes': [int(match.group(2)), int(match.group(3))] if match else None,
                     'distinct_eyes': left.is_file() and right.is_file() and left.read_bytes() != right.read_bytes(),
                 }
@@ -129,8 +139,10 @@ def main():
             poses = result['poses']
             result['checks'] = {
                 'all_poses_captured': all(p['captured'] for p in poses.values()),
-                'level_unsplit': poses['level']['passes'] == [1, 1] if 'level' in poses else True,
-                'steep_poses_split': all(poses[n]['passes'] == [2, 2] for n in ('down60', 'down89', 'down90', 'up60', 'up90') if n in poses),
+                # Final-presentation captures (UI overlay) do not report passes.
+                'level_unsplit': poses['level']['passes'] in ([1, 1], None) if 'level' in poses else True,
+                'steep_poses_split': all(poses[n]['passes'] in ([2, 2], None)
+                                         for n in ('down60', 'down89', 'down90', 'up60', 'up90') if n in poses),
                 'no_world_stop': not result['world_stopped'],
                 'no_rejected_frames': not result['rejected_frames_warning'],
                 'game_alive': process.poll() is None,

@@ -1,0 +1,70 @@
+# Playing EDuke32 VR
+
+Experimental Linux/OpenXR build. Single-player and native multiplayer use the
+same binary; a dedicated server needs no XR runtime.
+
+## Build
+
+```sh
+make -j8 NETCODE=1 USE_OPENXR=1 obj=obj-xr duke3d_game=eduke32-xr eduke32-xr
+```
+
+## Launch
+
+Start your OpenXR runtime (Monado/WiVRn/SteamVR), then:
+
+```sh
+package/vr/eduke32-vr-play --grp /path/to/DUKE3D.GRP
+package/vr/eduke32-vr-play --aa /path/to/alien_armageddon_566
+```
+
+The launcher sets `EDUKE32_XR=play`, links the held-weapon/hand models from the
+sibling `duke-vr-assets` checkout into `~/.local/share/eduke32-vr/` and passes a
+generated DEF. Installed game files are never modified. Options:
+`--left` (left-handed weapon), `--no-models`, `--assets DIR`, `--binary FILE`;
+anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
+
+### What `EDUKE32_XR=play` enables
+
+| Variable | Preset | Meaning |
+| --- | --- | --- |
+| `EDUKE32_XR_UI` | `2` | HUD, menus and console composited over the stereo world |
+| `EDUKE32_XR_SINGLE_PASS` | `1` | multiview world rendering (falls back per frame when needed) |
+| `EDUKE32_XR_AIM` | `right` | weapon hand (`left`, `right` or `head`) |
+| `EDUKE32_XR_HAND_SHOTS` | `1` | shots leave the tracked hand, replicated in multiplayer |
+| `EDUKE32_XR_WEAPON` | `1` | 2D weapon ART follows the controller |
+| `EDUKE32_XR_MODELS`, `EDUKE32_XR_AA_MODELS` | `1` | held MD3 pistol/RPG when a model is defined |
+| `EDUKE32_XR_WEAPON_MOUNT` | `1` | palm-calibrated muzzle from model tags |
+| `EDUKE32_XR_HAND_LEFT_TILE` / `_RIGHT_TILE` | `30010` / `30011` | floating hand models |
+
+Any variable you export explicitly overrides the preset. `EDUKE32_XR=1` keeps
+the old behaviour (everything off unless set), which the test harnesses use.
+If a weapon has no held model defined, its shots come straight from the
+controller aim pose instead of being suppressed.
+
+## Controls (default)
+
+| Control | Action |
+| --- | --- |
+| Left stick | move/strafe |
+| Right stick | turn (x), look (y) |
+| Right trigger | fire |
+| Left trigger | open/use |
+| Right A / B | jump / crouch |
+| Right stick click | quick kick |
+| Left X / Y | previous / next weapon |
+| Either grip | run |
+| Menu button | menu |
+
+In menus: triggers/A advance, B back, sticks navigate.
+
+## Known limits
+
+- Eye render size equals the game window size; set the game resolution close
+  to your headset's per-eye recommendation for sharpness.
+- Mirrors are not yet rendered per eye.
+- Steep head pitch and room-over-room maps render through the per-eye path
+  instead of multiview (see FULL_PITCH.md).
+- Only the pistol and AA RPG have held 3D models; other weapons use the
+  controller-attached 2D ART card.
+- No headset comfort/performance qualification yet.
