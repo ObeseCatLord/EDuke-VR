@@ -249,6 +249,8 @@ int32_t polymost_md3drawcontext(md3drawcontext_t const *ctx);
 int32_t md3_gettagposition(int32_t modelid, char const *name, vec3f_t *position);
 // Tag of one model frame (position and axes, model units).
 int32_t md3_gettag(int32_t modelid, char const *name, int32_t frame, md3tag_t *tag);
+// Bounding box of one model frame, in raw MD3 vertex units (64 per model unit).
+int32_t md3_getframebounds(int32_t modelid, int32_t frame, vec3f_t *mins, vec3f_t *maxs);
 // Pure loaded-MD3 frame lookup; -1 for invalid/missing names, no tile mutation.
 int32_t md3_getframeindex(int32_t modelid, char const *name);
 // Index of the named surface, or -1.

@@ -2091,6 +2091,21 @@ int32_t md3_gettagposition(int32_t modelid, char const *name, vec3f_t *position)
     return 0;
 }
 
+int32_t md3_getframebounds(int32_t modelid, int32_t frame, vec3f_t *mins, vec3f_t *maxs)
+{
+    if (!mins || !maxs || (unsigned)modelid >= (unsigned)nextmodelid || !models)
+        return 0;
+    mdmodel_t *const model = models[modelid];
+    if (!model || model->mdnum != 3)
+        return 0;
+    md3model_t *const m = (md3model_t *)model;
+    if (!m->head.frames || (unsigned)frame >= (unsigned)m->head.numframes)
+        return 0;
+    *mins = m->head.frames[frame].min;
+    *maxs = m->head.frames[frame].max;
+    return 1;
+}
+
 int32_t md3_gettag(int32_t modelid, char const *name, int32_t frame, md3tag_t *tag)
 {
     if (!name || !name[0] || !tag || (unsigned)modelid >= (unsigned)nextmodelid || !models)

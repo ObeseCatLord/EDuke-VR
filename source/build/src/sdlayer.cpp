@@ -175,6 +175,7 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_FINGER_TRACKING", "1" }, // XR_EXT_hand_tracking drives segmented hands
         { "EDUKE32_XR_PIXELATED", "1" },       // unfiltered (nearest) textures, Quake-style
         { "EDUKE32_XR_PHYSICAL_THROW", "1" },  // swing-and-release pipebombs, off-hand detonates
+        { "EDUKE32_XR_WEAPON_WHEEL", "1" },    // hold the turn stick up: point to pick a weapon
     };
     for (auto const &option : preset)
         if (!std::strcmp(option.name, name))
