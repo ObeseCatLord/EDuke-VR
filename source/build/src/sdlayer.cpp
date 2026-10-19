@@ -170,6 +170,7 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_STICK_PITCH", "0" },     // head tracking owns pitch
         { "EDUKE32_XR_HAPTICS", "1" },         // controller pulses on fire/damage
         { "EDUKE32_XR_RESOLUTION", "auto" },   // game mode = OpenXR recommended eye size
+        { "EDUKE32_XR_BODY_TILE", "30040" },   // first-person body when defined
     };
     for (auto const &option : preset)
         if (!std::strcmp(option.name, name))

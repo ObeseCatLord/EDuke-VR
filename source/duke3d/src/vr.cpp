@@ -557,6 +557,8 @@ struct GripModelSample : WorldModelSample
     int state=0; // rest, index-ready, trigger-pressed (not MD3 frame indices).
 };
 
+struct BodyModelSample : WorldModelSample {};
+
 // Stable palette-zero metadata is shared by native input and local visuals.
 // Texture availability, HUD counters and material state never choose a muzzle.
 bool weaponMuzzle(XRWeaponFamily family, int hand, int &model, vec3f_t &muzzle, vec3f_t &palm, XrVector3f &position)
@@ -739,6 +741,99 @@ bool prepareGripModel(GripModelSample &sample, unsigned hand, Camera const &body
         auto const v=toBuild(rotate(orientation,axes[axis]));
         sample.basis[axis]={v.x/64.f,v.y/64.f,v.z/64.f};
     }
+    return true;
+}
+
+// Local first-person body (torso/legs, no head or arms) under the tracked
+// head. Presentation only: the native player sprite and collision are unchanged.
+static int bodyModelTile()
+{
+    auto value=sdlayer_xr_option("EDUKE32_XR_BODY_TILE");
+    int const tile=value ? std::atoi(value) : -1;
+    return tile>0 && tile<MAXTILES ? tile : -1;
+}
+
+bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Runtime *runtime)
+{
+    static float bodyYaw, stride;
+    static vec3_t lastPos;
+    static bool yawValid;
+    int const tile=bodyModelTile();
+    auto const p=g_player[myconnectindex].ps;
+    if (tile<0 || !usemodels || !overlayEnabled() || !recentered || !inputValid()
+        || inputRuntime!=runtime || inputGeneration!=runtime->generation()
+        || !rawInput.headValid || !validPose(rawInput.headPose)
+        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
+        || p->dead_flag || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0
+        || unsigned(body.sector)>=unsigned(numsectors) || md_tilehasmodel(tile,0)<0)
+    { yawValid=false; return false; }
+    sample.context.instance=3;
+    sample.context.modelid=md_tilehasmodel(tile,0);
+    sample.context.skinnum=tile2model[Ptile2tile(tile,0)].skinnum;
+    sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+    vec3f_t neck{};
+    if (!md3_gettagposition(sample.context.modelid,"tag_neck",&neck)) return false;
+
+    // Head yaw relative to the body camera; the torso follows with a 45 degree
+    // deadzone, and lines up with the head while moving.
+    auto const headForward=rotate(multiply(inverseYaw,rawInput.headPose.orientation),{0,0,-1});
+    if (std::hypot(headForward.x,headForward.z)<1e-3f) return false;
+    float const headYaw=std::atan2(headForward.x,-headForward.z);
+    float const moved=std::hypot(float(p->pos.x-lastPos.x),float(p->pos.y-lastPos.y));
+    lastPos=p->pos;
+    if (!yawValid) { bodyYaw=headYaw; stride=0.f; yawValid=true; }
+    float const lag=wrapRadians(headYaw-bodyYaw), limit=Pi/4.f;
+    if (lag>limit) bodyYaw=headYaw-limit; else if (lag<-limit) bodyYaw=headYaw+limit;
+    if (moved>1.f) bodyYaw+=wrapRadians(headYaw-bodyYaw)*.2f;
+
+    // Feet on the player's floor, neck kept below the eyes.
+    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+    auto const toBuild=[&](XrVector3f v) {
+        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+    };
+    auto const head=toBuild(rotate(tracking,{rawInput.headPose.position.x-origin.x,
+                                           rawInput.headPose.position.y-origin.y,rawInput.headPose.position.z-origin.z}));
+    float const facing=yaw+bodyYaw;
+    float const fx=std::cos(facing), fy=std::sin(facing);
+    float const eyeX=body.pos.x+head.x, eyeY=body.pos.y+head.y, eyeZ=body.pos.z+head.z;
+    float const feetZ=float(sprite[p->i].z);
+    float const eyeHeight=(feetZ-eyeZ)/ZUnitsPerMetre;
+    bool const airborne=!p->on_ground && p->jumping_counter;
+    bool const crouched=!airborne && eyeHeight<1.15f;
+    float const speed=moved/UnitsPerMetre; // metres this frame
+    stride+=moved/(1.4f*UnitsPerMetre);
+    stride-=std::floor(stride);
+    char name[16];
+    if (airborne) Bstrcpy(name,"jump");
+    else if (crouched) Bstrcpy(name,"crouch");
+    else if (moved>1.f) Bsprintf(name,"%s_%02d",speed>.08f ? "run" : "walk",1+int(stride*8.f)%8);
+    else Bstrcpy(name,"rest");
+    int frame=md3_getframeindex(sample.context.modelid,name);
+    if (frame<0 && !Bstrncmp(name,"run",3))
+    {
+        Bsprintf(name,"walk_%02d",1+int(stride*8.f)%8);
+        frame=md3_getframeindex(sample.context.modelid,name);
+    }
+    if (frame<0) frame=std::max(0,md3_getframeindex(sample.context.modelid,"rest"));
+    sample.context.cframe=sample.context.nframe=frame;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    if (!md3_preflightcontext(&sample.context)) return false;
+
+    // The neck sits 0.12 m behind and at least 0.18 m below the eyes.
+    float const neckMetres=neck.z/64.f;
+    float const sink=std::max(0.f,neckMetres-(eyeHeight-.18f));
+    sample.root={int32_t(std::lround(eyeX-fx*.12f*UnitsPerMetre)),int32_t(std::lround(eyeY-fy*.12f*UnitsPerMetre)),
+                 int32_t(std::lround(feetZ+sink*ZUnitsPerMetre))};
+    sample.pivot={0,0,0};
+    sample.sector=body.sector;
+    updatesector(sample.root.x,sample.root.y,&sample.sector);
+    if (sample.sector<0) sample.sector=body.sector;
+    float const scale=UnitsPerMetre/64.f;
+    sample.basis[0]={fx*scale,fy*scale,0};
+    sample.basis[1]={-fy*scale,fx*scale,0};
+    sample.basis[2]={0,0,-ZUnitsPerMetre/64.f};
     return true;
 }
 
@@ -2240,13 +2335,15 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         }
         HandModelSample handModel;
         GripModelSample grips[2];
-        WorldModelSample *models[3]{};
+        BodyModelSample bodyModel;
+        WorldModelSample *models[4]{};
         unsigned modelCount=0, gripMask=0;
         bool const weaponModel=good && !fixtureTest && prepareHandModel(handModel);
         if (weaponModel) models[modelCount++]=&handModel;
         for (unsigned hand=0;hand<2 && good && !fixtureTest;++hand)
             if (prepareGripModel(grips[hand],hand,body,runtime))
             { models[modelCount++]=&grips[hand]; gripMask|=1u<<hand; }
+        if (good && !fixtureTest && prepareBodyModel(bodyModel,body,runtime)) models[modelCount++]=&bodyModel;
         int const gripState=((gripMask&1) ? grips[0].state+1 : 0)+4*((gripMask&2) ? grips[1].state+1 : 0);
         std::string gripPrefix;
         bool gripLog=false;
@@ -2327,8 +2424,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 return !prefix
                     || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
             };
-            float modelMatrices[2][3][16]{}, modelProjections[2][16]{};
-            float oracleMatrices[2][3][16]{}, oracleProjections[2][16]{};
+            float modelMatrices[2][4][16]{}, modelProjections[2][16]{};
+            float oracleMatrices[2][4][16]{}, oracleProjections[2][16]{};
             bool oracleSamples[2]{}, oracleCompared[2]{};
             auto const drawHandModel = [&](bool collect,NativeOracleTarget *oracle=nullptr) {
                 bool accepted=true;
@@ -2524,7 +2621,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     for (unsigned index=0;index<modelCount;++index)
                     {
                         int const hand=models[index]->context.instance-1;
-                        if (hand<0) continue;
+                        if (hand<0 || hand>1) continue;
                         auto const &g=grips[hand]; auto const &p=g.pose;
                         LOG_F(INFO,"OpenXR floating hand: serial=%llu hand=%d model=%d frame=%d root=%d,%d,%d pivot=%.9g,%.9g,%.9g pose=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g.",
                               (unsigned long long)frame.serial,hand,g.context.modelid,g.context.cframe,g.root.x,g.root.y,g.root.z,g.pivot.x,g.pivot.y,g.pivot.z,

@@ -66,6 +66,11 @@ if ((models)) && [[ -d $assets ]]; then
     done
     model vr_hand_left.md3 vr_hand_left.png 30010 1.0
     model vr_hand_right.md3 vr_hand_right.png 30011 1.0
+    body="$assets/v5-vanilla/exports/eduke32/vr_body"
+    if [[ -f $body.md3 && -f $body.png ]]; then
+        link "$body.md3" vr_body.md3; link "$body.png" vr_body.png
+        model vr_body.md3 vr_body.png 30040 1.0
+    fi
     if [[ -n $aa ]]; then
         pistol="$assets/pistol-palm-mount/aa/exports/eduke32/aa_assets"
         rpg="$assets/aa-rpg-native/exports/eduke32/aa_assets"
