@@ -135,7 +135,7 @@ bool G_VRShotCanFire(int player) { return G_VRShotReady(player) && !shots[player
 void G_VRBlockShot(int player) { if (unsigned(player)<MAXPLAYERS) shots[player].blocked=true; }
 bool G_VRQuickKickBlocked(int player)
 {
-    return G_VRShotEnabled(player) && (!Net_VRShotAvailable(player,VRShotFeatureMelee) || !G_VRShotCanFire(player));
+    return G_VRShotEnabled(player) && (!G_VRShotCanFire(player));
 }
 void G_VRFilterShotInput(int player, input_t &input)
 {

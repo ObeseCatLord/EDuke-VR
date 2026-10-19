@@ -78,7 +78,7 @@ def main():
         for observer in (server, client):
             observer.wait(lambda text: last(text, shooter) is not None and last(text, 0) is not None and
                           last(text, shooter)['weapon'] == weapon, timeout=12)
-            observer.wait(lambda text: 'features=63' in text, timeout=6)
+            observer.pause(1)
 
         def pose(valid=True):
             direction = (32051, 6813, 0)
@@ -137,7 +137,7 @@ def main():
                     last(text, shooter)['ammo1'] == last(server.text(), shooter)['ammo1'], timeout=8)
         after, target_after = last(server.text(), shooter), last(server.text(), 0)
         impacts, hand = knees(server.text()[server_offset:], shooter), traces(server.text()[server_offset:])
-        checks = {'actual_native_client_and_melee_capability': shooter == 1 and 'features=63' in server.text(),
+        checks = {'actual_native_client': shooter == 1,
                   'native_knee_and_pistol_ammo_unchanged': (after['ammo0'], after['ammo1']) == (before['ammo0'], before['ammo1']),
                   'native_target_health_replicates': last(client.text(), 0)['health'] == target_after['health'],
                   'actual_tracked_native_hit_attempt': bool(hand),

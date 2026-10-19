@@ -95,7 +95,7 @@ def main():
         player = join(run)
         co = run.observers['client']
         so.wait(lambda t: last(t, player) is not None and last(t, player)['ammo'] == 40 and last(t, player)['frame'] == 0, timeout=12)
-        co.wait(lambda t: 'features=63' in t, timeout=6)
+        co.pause(1)
         tracked = args.case != 'flat'
         direction = (32051, 6813, 0) if args.case != 'vertical' else (0, 0, -32767)
         def pose(flags=3):
@@ -169,7 +169,7 @@ def main():
                     received = [tuple(map(int, values)) for values in re.findall(r'VR snapshot fireball applied: index=(\d+) sector=(-?\d+) stat=(\d+) owner=(\d+)', co.text())]
                     checks['authoritative_primary_snapshot_applied'] = any(index == shot['index'] and owner == shot['owner'] and stat == 4 for index, sector, stat, owner in received for shot in authoritative)
             if tracked:
-                checks['negotiated_stock_flame_hand_path'] = 'features=127' in so.text() and 'features=127' in co.text() and 'VR native fireball:' in so.text()
+                checks['stock_flame_hand_path'] = 'VR native fireball:' in so.text()
                 if args.case == 'wall':
                     checks['closed_wall_constrains_hand_origin'] = all(s['sector'] == 0 and s['px'] <= 1136 for s in authoritative)
                 else:

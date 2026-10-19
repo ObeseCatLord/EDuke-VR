@@ -33,7 +33,7 @@ def main():
  for n in ('binary','client-binary','grp','work-dir'):p.add_argument('--'+n,type=Path,required=True)
  p.add_argument('--display',default=':1');p.add_argument('--remote-port',type=int,required=True);p.add_argument('--port',type=int,default=24598)
  p.add_argument('--weapon',choices=('freeze','shrink','flame'),default='freeze')
- p.add_argument('--case',choices=('open','wall','glancing','steep','vertical','effect','unsupported-server','older-client'),default='open')
+ p.add_argument('--case',choices=('open','wall','glancing','steep','vertical','effect'),default='open')
  a=p.parse_args()
  if a.weapon=='flame' and a.case not in ('open','wall','glancing','steep','vertical'):p.error('flame supports open/wall/glancing/steep/vertical cases')
  a.work_dir.mkdir(parents=True,exist_ok=True);root=Path(tempfile.mkdtemp(prefix='projectile-',dir=a.work_dir.resolve()));server=client=None;logs=[];phase='setup';result={'passed':False}
@@ -77,56 +77,45 @@ def main():
     if wait:so.wait(lambda t:bool(shots(t[start:],player)),timeout=4)
     else:so.pause(.35)
     remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.send();so.pause(.12)
-   if a.case=='unsupported-server':
-    before=players(so.text(),player)[-1];remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.packet.left.thumbstick.y=.7;remote.send();so.pause(1.)
-    remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.packet.left.thumbstick.y=0;remote.send();so.pause(.2)
-    checks.update(older_hitscan_server_does_not_advertise_freeze_shrink='features=3' in co.text() and 'features=7' not in co.text(),unsupported_hand_projectile_does_not_silently_body_fire=not observations(so.text()[offset:],player) and samples(so.text(),'ammo',player)[-1]==ammo,native_movement_continues=players(so.text(),player)[-1]['x']>before['x']+100)
-    result={'passed':all(checks.values()),'case':a.case,'weapon':a.weapon,'checks':checks}
-   elif a.case=='older-client':
-    fire(False);so.wait(lambda t:bool(observations(t[offset:],player)),timeout=4);first=observations(so.text()[offset:],player)[0]
-    checks.update(older_client_advertises_only_hitscan='features=3' in so.text() and 'features=7' not in so.text(),unadvertised_feature_does_not_enable_hand_origin=not shots(so.text()[offset:],player) and first['sector']==0 and first['x']<1152,native_body_projectile_consumes_ammo=samples(so.text(),'ammo',player)[-1]<ammo)
-    result={'passed':all(checks.values()),'case':a.case,'weapon':a.weapon,'checks':checks,'native_spawn_observation':first}
-   else:
-    feature='features=127' if a.weapon=='flame' else 'features=7'
-    checks['feature_explicitly_negotiated']=feature in co.text() and feature in so.text();fire();first=shots(so.text()[offset:],player)[0]
-    speed={'freeze':644,'shrink':768,'flame':840}[a.weapon];bias=-32 if a.weapon=='freeze' else 0
-    checks.update(physical_horizontal_speed=abs(first['speed']-round(speed*math.cos(math.radians(pitch))))<=1,physical_vertical_speed_and_native_bias=abs(first['zvel']-(round(-speed*16*math.sin(math.radians(pitch)))+bias))<=1,native_ammo_consumed=samples(so.text(),'ammo',player)[-1]<ammo)
-    if a.case in ('wall','glancing'):checks['constrained_before_wall']=first['clamped']==1 and first['x']<=1136 and first['sector']==0
-    else:checks['origin_crosses_portal_without_body_offset']=[first[k] for k in ('x','y','z')]==[1216,4173,-8109] and first['sector']==1
-    if a.case=='open':
-     phase='actual client projectile';co.wait(lambda t:any(r['index']==first['index'] for r in observations(t,player)),timeout=4)
-     client_rows=[r for r in observations(co.text(),player) if r['index']==first['index']]
-     if a.weapon=='flame':
-      co.wait(lambda t:'VR snapshot fireball applied: index='+str(first['index'])+' ' in t,timeout=4)
-      checks['client_applies_authoritative_fireball_snapshot']=True
-      checks['client_preserves_initial_heading_speed_with_native_gravity']=any(all(r[k]==first[k] for k in ('tile','speed','angle')) and r['zvel']>=first['zvel'] for r in client_rows)
-     else:checks['client_receives_real_projectile']=any(all(r[k]==first[k] for k in ('tile','speed','zvel','angle')) for r in client_rows)
-    if a.weapon=='freeze' and a.case in ('open','steep','vertical'):
-     phase='native bounce';so.wait(lambda t:any(r['index']==first['index'] and r['policy']<first['policy'] and (r['hit']&49152) in (16384,32768) for r in observations(t[offset:],player)),timeout=5)
-     bounce=next(r for r in observations(so.text()[offset:],player) if r['index']==first['index'] and r['policy']<first['policy'] and (r['hit']&49152) in (16384,32768))
-     checks['native_bounce_decrements_budget']=bounce['policy']==first['policy']-1
-     if a.case in ('steep','vertical'):checks['native_ceiling_bounce_reverses_Z']=bounce['zvel']>0 and (bounce['hit']&49152)==16384
-     if a.case=='vertical':checks['vertical_bounce_keeps_axis']=(bounce['x'],bounce['y'])==(first['x'],first['y']) and bounce['speed']==0
-    if a.case=='effect':
-     phase='native target effect'
-     def affected(text):return target(text,'pal')==1 if a.weapon=='freeze' else 0<target(text,'size')<40
-     for _ in range(6):
-      if affected(so.text()):break
-      so.pause(.5)
-      if affected(so.text()):break
-      fire()
-     so.wait(affected,timeout=4);co.wait(affected,timeout=5)
-     checks['native_target_effect_server_and_client']=affected(so.text()) and affected(co.text())
-     # Allow the received native target state to reach an actual rendered frame.
-     co.pause(.25)
-     checks['target_effect_persists_through_render']=affected(so.text()) and affected(co.text())
-     window,_=X11(a.display).owned_window(client.pid)
-     if not window:raise RuntimeError('owned effect window missing')
-     subprocess.run(['import','-display',a.display,'-window',str(window),str(root/'effect.png')],check=True,timeout=8)
-    card_errors=None
-    if a.case not in ('steep','vertical'):
-     meta={'x':players(so.text(),player)[-1]['x'],'y':4096,'z':-9952,'pyoff':0};cc,card_errors=card_evidence(cl,meta,[player,first['x'],first['y'],first['z']],hand);checks.update(cc)
-    result={'passed':all(checks.values()),'case':a.case,'weapon':a.weapon,'checks':checks,'projectile':first,'native_bounce':bounce if a.weapon=='freeze' and a.case in ('open','steep','vertical') else None,'target_effect':{'server_pal':target(so.text(),'pal'),'client_pal':target(co.text(),'pal'),'server_size':target(so.text(),'size'),'client_size':target(co.text(),'size')} if a.case=='effect' else None,'card_projection_max_channel_error':card_errors}
+   fire();first=shots(so.text()[offset:],player)[0]
+   speed={'freeze':644,'shrink':768,'flame':840}[a.weapon];bias=-32 if a.weapon=='freeze' else 0
+   checks.update(physical_horizontal_speed=abs(first['speed']-round(speed*math.cos(math.radians(pitch))))<=1,physical_vertical_speed_and_native_bias=abs(first['zvel']-(round(-speed*16*math.sin(math.radians(pitch)))+bias))<=1,native_ammo_consumed=samples(so.text(),'ammo',player)[-1]<ammo)
+   if a.case in ('wall','glancing'):checks['constrained_before_wall']=first['clamped']==1 and first['x']<=1136 and first['sector']==0
+   else:checks['origin_crosses_portal_without_body_offset']=[first[k] for k in ('x','y','z')]==[1216,4173,-8109] and first['sector']==1
+   if a.case=='open':
+    phase='actual client projectile';co.wait(lambda t:any(r['index']==first['index'] for r in observations(t,player)),timeout=4)
+    client_rows=[r for r in observations(co.text(),player) if r['index']==first['index']]
+    if a.weapon=='flame':
+     co.wait(lambda t:'VR snapshot fireball applied: index='+str(first['index'])+' ' in t,timeout=4)
+     checks['client_applies_authoritative_fireball_snapshot']=True
+     checks['client_preserves_initial_heading_speed_with_native_gravity']=any(all(r[k]==first[k] for k in ('tile','speed','angle')) and r['zvel']>=first['zvel'] for r in client_rows)
+    else:checks['client_receives_real_projectile']=any(all(r[k]==first[k] for k in ('tile','speed','zvel','angle')) for r in client_rows)
+   if a.weapon=='freeze' and a.case in ('open','steep','vertical'):
+    phase='native bounce';so.wait(lambda t:any(r['index']==first['index'] and r['policy']<first['policy'] and (r['hit']&49152) in (16384,32768) for r in observations(t[offset:],player)),timeout=5)
+    bounce=next(r for r in observations(so.text()[offset:],player) if r['index']==first['index'] and r['policy']<first['policy'] and (r['hit']&49152) in (16384,32768))
+    checks['native_bounce_decrements_budget']=bounce['policy']==first['policy']-1
+    if a.case in ('steep','vertical'):checks['native_ceiling_bounce_reverses_Z']=bounce['zvel']>0 and (bounce['hit']&49152)==16384
+    if a.case=='vertical':checks['vertical_bounce_keeps_axis']=(bounce['x'],bounce['y'])==(first['x'],first['y']) and bounce['speed']==0
+   if a.case=='effect':
+    phase='native target effect'
+    def affected(text):return target(text,'pal')==1 if a.weapon=='freeze' else 0<target(text,'size')<40
+    for _ in range(6):
+     if affected(so.text()):break
+     so.pause(.5)
+     if affected(so.text()):break
+     fire()
+    so.wait(affected,timeout=4);co.wait(affected,timeout=5)
+    checks['native_target_effect_server_and_client']=affected(so.text()) and affected(co.text())
+    # Allow the received native target state to reach an actual rendered frame.
+    co.pause(.25)
+    checks['target_effect_persists_through_render']=affected(so.text()) and affected(co.text())
+    window,_=X11(a.display).owned_window(client.pid)
+    if not window:raise RuntimeError('owned effect window missing')
+    subprocess.run(['import','-display',a.display,'-window',str(window),str(root/'effect.png')],check=True,timeout=8)
+   card_errors=None
+   if a.case not in ('steep','vertical'):
+    meta={'x':players(so.text(),player)[-1]['x'],'y':4096,'z':-9952,'pyoff':0};cc,card_errors=card_evidence(cl,meta,[player,first['x'],first['y'],first['z']],hand);checks.update(cc)
+   result={'passed':all(checks.values()),'case':a.case,'weapon':a.weapon,'checks':checks,'projectile':first,'native_bounce':bounce if a.weapon=='freeze' and a.case in ('open','steep','vertical') else None,'target_effect':{'server_pal':target(so.text(),'pal'),'client_pal':target(co.text(),'pal'),'server_size':target(so.text(),'size'),'client_size':target(co.text(),'size')} if a.case=='effect' else None,'card_projection_max_channel_error':card_errors}
  except Exception as e:result={'passed':False,'case':a.case,'weapon':a.weapon,'phase':phase,'error':str(e)}
  finally:
   stop(client);stop(server)

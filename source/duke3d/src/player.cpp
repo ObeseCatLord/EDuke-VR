@@ -1296,8 +1296,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
     bool clamped=false;
     auto const mapping=tileGetMapping(projecTile);
     if ((mapping==SHOTSPARK1__ || mapping==SHOTGUN__ || mapping==CHAINGUN__ || mapping==GROWSPARK__)
-        && playerNum>=0 && G_VRShotEnabled(playerNum) && G_VRHandShotFeature(playerNum,projecTile)
-        && Net_VRShotAvailable(playerNum,VRShotFeatureHitscan))
+        && playerNum>=0 && G_VRShotEnabled(playerNum) && G_VRHandShotFeature(playerNum,projecTile))
     {
         if (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,resolved.sector,clamped)) return -1;
         hand=&resolved;
@@ -1322,8 +1321,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
                 && (G_VRHandShotFeature(playerNum,projecTile)==VRShotFeatureMelee || pPlayer->quick_kick==8);
             if (tracked)
             {
-                if (!Net_VRShotAvailable(playerNum,VRShotFeatureMelee)
-                    || !P_HandWeaponHitscan(playerNum,startPos,shootAng,hitData,true,clamped)) return -1;
+                if (!P_HandWeaponHitscan(playerNum,startPos,shootAng,hitData,true,clamped)) return -1;
             }
             else
             {
@@ -1483,7 +1481,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             // World Tour's stock weapon12 fires FIREBALL. Keep its native
             // actor/tracer/damage policy; adapt only the initial player ray.
             uint8_t const feature=playerNum>=0 ? G_VRHandShotFeature(playerNum,projecTile) : 0;
-            bool const tracked=feature && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,feature);
+            bool const tracked=feature && G_VRShotEnabled(playerNum);
             int16_t originSector=spriteSectnum;
             bool clamped=false;
             if (pSprite->extra >= 0)
@@ -1600,7 +1598,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
 
             int j = -1;
             uint8_t const feature=playerNum>=0 ? G_VRHandShotFeature(playerNum,projecTile) : 0;
-            bool const tracked=feature && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,feature);
+            bool const tracked=feature && G_VRShotEnabled(playerNum);
             int16_t originSector=spriteSectnum;
             bool clamped=false;
             if (tracked && (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,originSector,clamped))) return -1;
@@ -1746,7 +1744,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
         case HANDHOLDINGLASER__:
         {
             bool const tracked=playerNum>=0 && G_VRHandShotFeature(playerNum,projecTile)==VRShotFeatureTripmine
-                && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,VRShotFeatureTripmine);
+                && G_VRShotEnabled(playerNum);
             int placeMine=0;
             if (tracked)
             {
@@ -1844,7 +1842,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
                 pSprite->shade = -96;
 
             uint8_t const feature=playerNum>=0 ? G_VRHandShotFeature(playerNum,projecTile) : 0;
-            bool const tracked=feature && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,feature);
+            bool const tracked=feature && G_VRShotEnabled(playerNum);
             int16_t originSector=spriteSectnum; bool clamped=false;
             if (tracked && (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum,startPos,originSector,clamped))) return -1;
             int target=-1;
@@ -2334,7 +2332,7 @@ static bool P_HandWeaponBlocked(int playerNum)
 {
     uint8_t const feature=G_VRHandShotFeature(playerNum);
     return feature && G_VRShotEnabled(playerNum)
-        && (!Net_VRShotAvailable(playerNum,feature) || !G_VRShotCanFire(playerNum));
+        && (!G_VRShotCanFire(playerNum));
 }
 
 static void P_FireWeapon(int playerNum)
@@ -4735,7 +4733,7 @@ static void P_ProcessWeapon(int playerNum)
     // Off-hand detonation of live remote pipebombs (immersive throwing). The
     // owner's hbomb_on is authoritative on the host, as for the detonator.
     if (pPlayer->hbomb_on && G_VRShotEnabled(playerNum) && G_VRShotDetonate(playerNum)
-        && PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE && Net_VRShotAvailable(playerNum,VRShotFeatureHandBomb))
+        && PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE)
     {
         pPlayer->hbomb_on = 0;
         if (std::getenv("EDUKE32_XR_TEST_SHOTS"))
@@ -4865,8 +4863,7 @@ static void P_ProcessWeapon(int playerNum)
         pPlayer->rapid_fire_hold=pPlayer->hbomb_hold_delay=0;
         // hbomb_on belongs to already-thrown bombs; cancellation cannot detonate them.
     };
-    if (G_VRHandShotFeature(playerNum)==VRShotFeatureHandBomb && G_VRShotEnabled(playerNum)
-        && Net_VRShotAvailable(playerNum,VRShotFeatureHandBomb) && *weaponFrame
+    if (G_VRHandShotFeature(playerNum)==VRShotFeatureHandBomb && G_VRShotEnabled(playerNum) && *weaponFrame
         && *weaponFrame<PWEAPON(playerNum,pPlayer->curr_weapon,HoldDelay) && !G_VRShotCanFire(playerNum))
     {
         cancelHandBomb();
@@ -4955,7 +4952,7 @@ static void P_ProcessWeapon(int playerNum)
                             int angle=fix16_to_int(pPlayer->q16ang);
                             vec3_t origin=pPlayer->pos;
                             bool const tracked=G_VRHandShotFeature(playerNum)==VRShotFeatureTripmine
-                                && G_VRShotEnabled(playerNum) && Net_VRShotAvailable(playerNum,VRShotFeatureTripmine);
+                                && G_VRShotEnabled(playerNum);
                             bool clamped=false;
                             if (tracked)
                             {
@@ -5032,8 +5029,7 @@ static void P_ProcessWeapon(int playerNum)
         {
             // Immersive throw: the trigger release already happened in the
             // hand; the sample carries the measured speed. Release this tick.
-            int const physicalVelocity=G_VRShotEnabled(playerNum)
-                && Net_VRShotAvailable(playerNum,VRShotFeatureHandBomb) ? G_VRShotThrowVelocity(playerNum) : 0;
+            int const physicalVelocity=G_VRShotEnabled(playerNum) ? G_VRShotThrowVelocity(playerNum) : 0;
             if (physicalVelocity && (*weaponFrame) < PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay)-1)
                 (*weaponFrame) = PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay)-1;
             if (!physicalVelocity && PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay) && ((*weaponFrame) == PWEAPON(playerNum, pPlayer->curr_weapon, FireDelay)) && TEST_SYNC_KEY(playerBits, SK_FIRE))
@@ -5044,8 +5040,7 @@ static void P_ProcessWeapon(int playerNum)
 
             if (++(*weaponFrame) == PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay))
             {
-                bool const tracked=G_VRHandShotFeature(playerNum)==VRShotFeatureHandBomb && G_VRShotEnabled(playerNum)
-                    && Net_VRShotAvailable(playerNum,VRShotFeatureHandBomb);
+                bool const tracked=G_VRHandShotFeature(playerNum)==VRShotFeatureHandBomb && G_VRShotEnabled(playerNum);
                 vec3_t handPosition{}; int16_t handSector=pPlayer->cursectnum; bool clamped=false;
                 // Validate before ammo/state changes on both predicting client
                 // and host. Never release a stale in-progress throw from the body.

@@ -132,15 +132,13 @@ def run_case(args, case, port):
                         "client weapon setup was not observed locally")
         tracked = {"enabled": args.tracked}
         if args.tracked:
-            phase = "tracked capability and released pose"
-            server.wait(lambda text: "features=31" in text, timeout=8)
-            client.wait(lambda text: "features=31" in text, timeout=8)
+            phase = "tracked released pose"
             os.write(run.writers["client"], b"pose 3 192 77 1843 32051 6813 0\n")
             client.wait(lambda text: "pose published flags=3" in text, timeout=5)
             pose_tick = latest_player(server.text(), player)["tick"]
             released = wait_for_player(server, player, lambda row: row["tick"] >= pose_tick + 10 and row["frame"] == 0, 5,
                                        "tracked pose did not remain released for ten native ticks")
-            tracked.update(capability_features=31, pose=(192, 77, 1843, 32051, 6813, 0), pose_tick=pose_tick,
+            tracked.update(pose=(192, 77, 1843, 32051, 6813, 0), pose_tick=pose_tick,
                            released_tick=released["tick"])
         run.audit()
         before = latest_player(server.text(), player)
@@ -201,7 +199,7 @@ def run_case(args, case, port):
             }
             if args.tracked:
                 checks.update({
-                    "tracked_capability31_and_native_trace": "features=31" in server.text() and "VR native tripmine:" in tracked["server_trace"],
+                    "tracked_native_trace": "VR native tripmine:" in tracked["server_trace"],
                     "tracked_pose_released_for_ten_native_ticks": tracked["released_tick"] >= tracked["pose_tick"] + 10,
                     "tracked_mine_uses_physical_hand_placement": tracked["physical_placement"] != (1142, 4096, -8928),
                     "tracked_client_unchanged_while_beam_arms": health_armed_client == health_before,
@@ -237,7 +235,7 @@ def run_case(args, case, port):
             }
             if args.tracked:
                 checks.update({
-                    "tracked_capability31_and_native_trace": "features=31" in server.text() and "VR native tripmine:" in tracked["server_trace"],
+                    "tracked_native_trace": "VR native tripmine:" in tracked["server_trace"],
                     "tracked_pose_released_for_ten_native_ticks": tracked["released_tick"] >= tracked["pose_tick"] + 10,
                     "tracked_mine_uses_physical_hand_placement": tracked["physical_placement"] != (1142, 4096, -8928),
                     "tracked_client_unchanged_while_fuse_runs": health_fusing_client == health_before,

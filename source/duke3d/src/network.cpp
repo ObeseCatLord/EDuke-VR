@@ -53,22 +53,6 @@ enet_uint16 g_netPort       = 23513;
 int32_t     g_netDisconnect = 0;
 char        g_netPassword[32];
 int32_t     g_networkMode       = NET_CLIENT;
-static uint8_t vrServerCapability;
-static bool voiceClientCapability[MAXPLAYERS], voiceServerCapability; // voice chat handshake
-static uint8_t vrClientCapability[MAXPLAYERS];
-bool Net_VRShotAvailable(int player, uint8_t feature)
-{
-    if (player<0) player=myconnectindex;
-    if (unsigned(player)>=MAXPLAYERS) return false;
-    if (!feature)
-    {
-        feature=G_VRHandShotFeature(player);
-        if (!feature) feature=VRShotFeatureRPG;
-    }
-    if (g_netClient) return (vrServerCapability&feature)==feature;
-    return !g_netServer || player==0 || (vrClientCapability[player]&feature)==feature;
-}
-
 
 // to support (gcc only) -f-strict-aliasing, the netcode needs to specify that its 32 bit chunks to and from the
 // packet code should not be subject to strict aliasing optimizations
@@ -1511,7 +1495,6 @@ static void P_RemovePlayer(int32_t p)
     if (p <= 0) return;
 
     g_player[p].playerquitflag = 0;
-    vrClientCapability[p]=false;
     G_VRResetShot(p);
     Net_ClearPlayerInputDeltas(p);
 
@@ -1604,7 +1587,6 @@ static void Net_SyncPlayer(ENetEvent *event)
 
     NET_75_CHECK++; // is it necessary to se event->peer->data to the new player index in Net_SyncPlayer?
     event->peer->data = (void *)(intptr_t)newPlayerIndex;
-    vrClientCapability[newPlayerIndex]=false;
     G_VRResetShot(newPlayerIndex);
     Net_ClearPlayerInputDeltas(newPlayerIndex);
 
@@ -1647,8 +1629,6 @@ static void display_betascreen(void)
 
 static void Net_Disconnect(void)
 {
-    vrServerCapability=false;
-    Bmemset(vrClientCapability,0,sizeof(vrClientCapability));
     G_VRResetShots();
     if (g_netClient)
     {
@@ -1718,7 +1698,6 @@ static void Net_Disconnect(void)
 static void Net_ReceiveDisconnect(ENetEvent *event)
 {
     g_netDisconnect = 1;
-    voiceServerCapability = false;
     numplayers = g_mostConcurrentPlayers = ud.multimode = 1;
     myconnectindex = screenpeek = 0;
     G_BackToMenu();
@@ -1833,12 +1812,10 @@ static void Net_ReceiveClientUpdate(ENetEvent *event)
     };
     if (playeridx<=0 || playeridx>=MAXPLAYERS || !g_player[playeridx].playerquitflag) { reject("peer"); return; }
     if (event->channelID!=CHAN_MOVE) { reject("channel"); return; }
-    size_t const length=event->packet->dataLength;
-    bool const extended=length==sizeof(clientupdate_t)+VRShotWireSize;
-    if (length!=sizeof(clientupdate_t) && !extended) { reject("size"); return; }
+    // Every update carries the hand-shot sample (flat clients send it inactive).
+    if (event->packet->dataLength!=sizeof(clientupdate_t)+VRShotWireSize) { reject("size"); return; }
     VRShotInput shot;
-    if (extended && !vrClientCapability[playeridx]) { reject("capability"); return; }
-    if (extended && !G_VRDecodeShot(event->packet->data+sizeof(clientupdate_t),VRShotWireSize,shot)) { reject("payload"); return; }
+    if (!G_VRDecodeShot(event->packet->data+sizeof(clientupdate_t),VRShotWireSize,shot)) { reject("payload"); return; }
     clientupdate_t update;
     Bmemcpy(&update,event->packet->data,sizeof(update));
     // Never let a new pose/input extension name another player's authority.
@@ -1855,36 +1832,13 @@ static void Net_ReceiveClientUpdate(ENetEvent *event)
 bool Net_VoiceAvailable(void)
 {
     if (g_netClient)
-        return voiceServerCapability && g_netClientPeer && myconnectindex > 0 && (g_player[myconnectindex].ps->gm & MODE_GAME);
+        return g_netClientPeer && myconnectindex > 0 && (g_player[myconnectindex].ps->gm & MODE_GAME);
     if (g_netServer)
         return g_networkMode != NET_DEDICATED_SERVER && numplayers > 1;
     return false;
 }
 
 #ifdef USE_VOICECHAT
-static void Net_SendVoiceCapability(ENetPeer *peer, bool reply, int player)
-{
-    uint8_t bytes[8]={PACKET_VOICE_CAPABILITIES,'E','D','V','C',1,uint8_t(reply),uint8_t(player)};
-    enet_peer_send(peer,CHAN_MISC,enet_packet_create(bytes,sizeof(bytes),ENET_PACKET_FLAG_RELIABLE));
-}
-
-static void Net_ReceiveVoiceCapability(ENetEvent *event, bool server)
-{
-    if (event->channelID!=CHAN_MISC || event->packet->dataLength!=8 || (!server && event->peer!=g_netClientPeer)) return;
-    auto const bytes=event->packet->data;
-    if (Bmemcmp(bytes+1,"EDVC",4) || bytes[5]!=1 || bytes[6]!=(server ? 0 : 1)) return;
-    int const player=server ? int(intptr_t(event->peer->data)) : myconnectindex;
-    if (player<=0 || player>=MAXPLAYERS || bytes[7]!=player) return;
-    if (server)
-    {
-        if (event->peer->channelCount<=CHAN_VOICE) return;
-        voiceClientCapability[player]=true;
-        Net_SendVoiceCapability(event->peer,true,player);
-    }
-    else voiceServerCapability=event->peer->channelCount>CHAN_VOICE;
-    LOG_F(INFO,"Voice chat: %s player=%d.",server ? "client enabled" : "server supports voice",player);
-}
-
 // Server: forward one talker's frame to every other voice-capable client (and play it locally on a listen server).
 static void Net_RelayVoice(int source, uint8_t const *body, uint32_t length)
 {
@@ -1895,8 +1849,7 @@ static void Net_RelayVoice(int source, uint8_t const *body, uint32_t length)
     {
         ENetPeer *const peer=&g_netServer->peers[i];
         int const player=int(intptr_t(peer->data));
-        if (peer->state!=ENET_PEER_STATE_CONNECTED || player<=0 || player>=MAXPLAYERS || player==source
-            || !voiceClientCapability[player] || peer->channelCount<=CHAN_VOICE) continue;
+        if (peer->state!=ENET_PEER_STATE_CONNECTED || player<=0 || player>=MAXPLAYERS || player==source) continue;
         enet_peer_send(peer,CHAN_VOICE,enet_packet_create(buffer,length+2,ENET_PACKET_FLAG_UNSEQUENCED));
     }
     if (g_networkMode!=NET_DEDICATED_SERVER && source!=myconnectindex) Voice_ReceivePacket(source,body,length);
@@ -1910,7 +1863,7 @@ static void Net_ReceiveVoice(ENetEvent *event, bool server)
     if (server)
     {
         int const player=int(intptr_t(event->peer->data));
-        if (player<=0 || player>=MAXPLAYERS || !voiceClientCapability[player] || length<1 || !Voice_ValidBody(data+1,length-1)) return;
+        if (player<=0 || player>=MAXPLAYERS || !g_player[player].playerquitflag || length<1 || !Voice_ValidBody(data+1,length-1)) return;
         // Per-talker budget: 75 packets and 16 kB per second (Opus 24 kbps uses 50 and ~3 kB).
         static struct { uint32_t window; int packets, bytes; } budget[MAXPLAYERS];
         uint32_t const second=uint32_t(timerGetNanoTicks()/timerGetNanoTickRate());
@@ -1928,7 +1881,7 @@ void Net_SendVoice(uint8_t const *body, uint32_t length)
 {
 #ifdef USE_VOICECHAT
     if (!Voice_ValidBody(body,length)) return;
-    if (g_netClient && g_netClientPeer && voiceServerCapability)
+    if (g_netClient && g_netClientPeer)
     {
         uint8_t buffer[1+VoiceHeaderBytes+VoiceMaxPayload];
         buffer[0]=PACKET_VOICE;
@@ -1942,48 +1895,6 @@ void Net_SendVoice(uint8_t const *body, uint32_t length)
 #endif
 }
 
-// CHAN_MISC prevents native broadcast routing; no movement format changes until ACK.
-static void Net_SendVRCapability(ENetPeer *peer, bool reply, int player, uint8_t features=VRShotFeatureRPG)
-{
-    uint8_t bytes[9]={PACKET_VR_CAPABILITIES,'E','D','V','R',1,features,uint8_t(reply),uint8_t(player)};
-    enet_peer_send(peer,CHAN_MISC,enet_packet_create(bytes,sizeof(bytes),ENET_PACKET_FLAG_RELIABLE));
-}
-static void Net_ReceiveVRCapability(ENetEvent *event, bool server)
-{
-    if (event->channelID!=CHAN_MISC || event->packet->dataLength!=9 || (!server && event->peer!=g_netClientPeer)) return;
-    auto const bytes=event->packet->data;
-    if (Bmemcmp(bytes+1,"EDVR",4) || bytes[5]!=1 || !(bytes[6]&VRShotFeatureRPG) || (bytes[6]&~(VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink|VRShotFeatureHandBomb|VRShotFeatureTripmine|VRShotFeatureMelee|VRShotFeatureFireball)) || bytes[7]!=(server ? 0 : 1)) return;
-    int const player=server ? int(intptr_t(event->peer->data)) : myconnectindex;
-    if (player<=0 || player>=MAXPLAYERS || bytes[8]!=player || !g_player[player].playerquitflag) return;
-    if (server)
-    {
-        vrClientCapability[player]|=bytes[6];
-        Net_SendVRCapability(event->peer,true,player,bytes[6]);
-    }
-    else
-    {
-        uint8_t const previous=vrServerCapability;
-        vrServerCapability|=bytes[6];
-        // Preserve the original RPG-only request/ack for old peers. Upgrade
-        // only after that exchange; old servers safely ignore the new mask.
-        if (previous!=vrServerCapability)
-        {
-            if (!(vrServerCapability&VRShotFeatureHitscan))
-                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan);
-            else if (!(vrServerCapability&VRShotFeatureFreezeShrink))
-                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink);
-            else if (!(vrServerCapability&VRShotFeatureHandBomb))
-                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink|VRShotFeatureHandBomb);
-            else if (!(vrServerCapability&VRShotFeatureTripmine))
-                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink|VRShotFeatureHandBomb|VRShotFeatureTripmine);
-            else if (!(vrServerCapability&VRShotFeatureMelee))
-                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink|VRShotFeatureHandBomb|VRShotFeatureTripmine|VRShotFeatureMelee);
-            else if (!(vrServerCapability&VRShotFeatureFireball))
-                Net_SendVRCapability(event->peer,false,player,VRShotFeatureRPG|VRShotFeatureHitscan|VRShotFeatureFreezeShrink|VRShotFeatureHandBomb|VRShotFeatureTripmine|VRShotFeatureMelee|VRShotFeatureFireball);
-        }
-    }
-    LOG_F(INFO,"VR native hand-shot capability: %s player=%d version=1 features=%u.",server ? "accepted" : "acknowledged",player,unsigned(bytes[6]));
-}
 
 static void Net_Server_SetupPlayer(int playerindex)
 {
@@ -2327,13 +2238,7 @@ static void Net_ParseClientPacket(ENetEvent *event)
 #endif
     switch (pbuf[0])
     {
-        case PACKET_VR_CAPABILITIES:
-            Net_ReceiveVRCapability(event,true);
-            break;
 #ifdef USE_VOICECHAT
-        case PACKET_VOICE_CAPABILITIES:
-            Net_ReceiveVoiceCapability(event,true);
-            break;
         case PACKET_VOICE:
             Net_ReceiveVoice(event,true);
             break;
@@ -2457,7 +2362,6 @@ static void Net_HandleClientPackets(void)
             numplayers--;
             ud.multimode--;
 
-            voiceClientCapability[playeridx]=false;
             Voice_ResetPlayer(playeridx);
             P_RemovePlayer(playeridx);
 
@@ -2671,12 +2575,6 @@ static void Net_ReceivePlayerIndex(uint8_t *pbuf, int32_t packbufleng)
     myconnectindex                          = pbuf[1];
     g_player[myconnectindex].playerquitflag = 1;
     Net_SendClientInfo();
-    auto const negative=std::getenv("EDUKE32_XR_TEST_BAD_SHOT");
-    if (!negative || Bstrcmp(negative,"capability")) Net_SendVRCapability(g_netClientPeer,false,myconnectindex);
-#ifdef USE_VOICECHAT
-    voiceServerCapability=false;
-    if (g_netClientPeer->channelCount>CHAN_VOICE) Net_SendVoiceCapability(g_netClientPeer,false,myconnectindex);
-#endif
 }
 
 
@@ -2695,13 +2593,7 @@ static void Net_ParseServerPacket(ENetEvent *event)
 #endif
     switch (pbuf[0])
     {
-    case PACKET_VR_CAPABILITIES:
-        Net_ReceiveVRCapability(event,false);
-        break;
 #ifdef USE_VOICECHAT
-    case PACKET_VOICE_CAPABILITIES:
-        Net_ReceiveVoiceCapability(event,false);
-        break;
     case PACKET_VOICE:
         Net_ReceiveVoice(event,false);
         break;
@@ -5341,7 +5233,6 @@ void Net_SendClientUpdate(void)
     auto shot=G_VRGetShotInput(myconnectindex);
     if ((shot.flags & VRShotEnabled) && !G_VRShotReady(myconnectindex))
     { shot={}; shot.flags=VRShotEnabled; }
-    if (vrServerCapability && (shot.flags & VRShotEnabled))
     {
         uint8_t bytes[sizeof(clientupdate_t)+VRShotWireSize];
         Bmemcpy(bytes,&update,sizeof(update));
@@ -5370,25 +5261,6 @@ void Net_SendClientUpdate(void)
             }
         }
         enet_peer_send(g_netClientPeer,channel,enet_packet_create(bytes,length,0));
-    }
-    else
-    {
-        bool negative=false;
-        if (auto test=std::getenv("EDUKE32_XR_TEST_BAD_SHOT"))
-            if (!Bstrcmp(test,"capability"))
-            {
-                static unsigned samples;
-                if (++samples==20)
-                {
-                    auto bad=update; bad.player.pos.x=30000;
-                    uint8_t bytes[sizeof(update)+VRShotWireSize]; Bmemcpy(bytes,&bad,sizeof(bad));
-                    VRShotInput unavailable; unavailable.flags=VRShotEnabled;
-                    G_VREncodeShot(unavailable,bytes+sizeof(update));
-                    enet_peer_send(g_netClientPeer,CHAN_MOVE,enet_packet_create(bytes,sizeof(bytes),0));
-                    LOG_F(INFO,"VR negative update fixture: capability."); negative=true;
-                }
-            }
-        if (!negative) enet_peer_send(g_netClientPeer,CHAN_MOVE,enet_packet_create(&update,sizeof(update),0));
     }
 
     Dbg_PacketSent(PACKET_SLAVE_TO_MASTER);

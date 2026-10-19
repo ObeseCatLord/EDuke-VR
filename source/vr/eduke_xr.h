@@ -21,6 +21,7 @@ enum HandButton : uint32_t
     ButtonSecondary  = 1u << 3,
     ButtonMenu       = 1u << 4,
     ButtonStickClick = 1u << 5,
+    ButtonWheel      = 1u << 6,   // weapon wheel (right stick click; Index: right trackpad press)
 };
 
 struct HandInput

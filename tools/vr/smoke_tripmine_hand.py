@@ -79,7 +79,7 @@ def main():
         for observer in (server, client):
             observer.wait(lambda text: latest_player(text, player) is not None and
                           latest_player(text, player)['ammo'] == 6, timeout=12)
-            observer.wait(lambda text: 'features=31' in text, timeout=6)
+            observer.pause(1)
 
         def pose(valid=True, vertical=False):
             offset, direction = (192, 77, 1843), (32051, 6813, 0)
@@ -151,7 +151,7 @@ def main():
         after, client_after = latest_player(server.text(), player), latest_player(client.text(), player)
         placed = native_mines(server.text()[server_offset:], player, 170)
         hand = traces(server.text()[server_offset:])
-        checks = {'native_join_and_tripmine_capability': player == 1 and 'features=31' in server.text(),
+        checks = {'native_join': player == 1,
                   'native_client_ammo_matches_server': after['ammo'] == client_after['ammo'],
                   'native_server_simulated_input_after_fire': after['tick'] >= before['tick'] + 20,
                   'no_gpu_devices_or_libraries': True}

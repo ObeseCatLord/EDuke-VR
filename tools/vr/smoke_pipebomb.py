@@ -132,7 +132,7 @@ endevent
             client,co=launch('client',args.client_binary,['-connect',f'127.0.0.1:{args.port}'],xr_env)
             phase='XR join';player=wait_for_join_barrier(x11,client,labs['client']/'game.log',so)['server_player']
             so.wait(lambda t:latest_player(t,player) is not None and latest_player(t,player)['ammo']==6 and latest_player(t,player)['frame']==0,timeout=10)
-            co.wait(lambda t:'features=15' in t,timeout=8)
+            co.pause(1)
             observer=None;oo=None;observer_before=None;ordering_observation=None;marker=root/'delay-player-updates'
             if args.case=='ordering':
                 phase='flat observer join'
@@ -157,7 +157,7 @@ endevent
             so.pause(.5)
             target_before=last(so.text(),'health')
             co.wait(lambda t:'OpenXR HUD presentation: 60 frames' in t,timeout=20)
-            checks={'actual_native_player':player==1,'feature8_explicitly_negotiated':'features=15' in so.text(),'actual_initial_stereo':(labs['client']/'hud-left.ppm').read_bytes()!=(labs['client']/'hud-right.ppm').read_bytes()}
+            checks={'actual_native_player':player==1,'actual_initial_stereo':(labs['client']/'hud-left.ppm').read_bytes()!=(labs['client']/'hud-right.ppm').read_bytes()}
             def trigger(down):
                 hand.trigger_value=1 if down else 0;hand.trigger_click=down;remote.send()
             phase='native held charge';offset=len(so.text());trigger(True)

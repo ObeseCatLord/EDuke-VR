@@ -80,8 +80,8 @@ def main():
     for name in ('binary','client-binary','grp','work-dir'):p.add_argument('--'+name,type=Path,required=True)
     p.add_argument('--display',default=':1');p.add_argument('--remote-port',type=int,required=True)
     p.add_argument('--port',type=int,default=24595)
-    p.add_argument('--case',choices=('open','wall','glancing','steep','vertical','left','moved','invalid-reach','timeout','damage','autoaim','legacy-server','legacy-client','unnegotiated'),default='open')
-    p.add_argument('--bad-packet',choices=('version','flags','direction','reach','size','channel','identity','capability'))
+    p.add_argument('--case',choices=('open','wall','glancing','steep','vertical','left','moved','invalid-reach','timeout','damage','autoaim'),default='open')
+    p.add_argument('--bad-packet',choices=('version','flags','direction','reach','size','channel','identity'))
     a=p.parse_args();a.work_dir.mkdir(parents=True,exist_ok=True)
     root=Path(tempfile.mkdtemp(prefix='hand-shot-',dir=a.work_dir.resolve()))
     server=client=None;client_stopped=False;logs=[];result={'passed':False};phase='startup'
@@ -99,7 +99,6 @@ def main():
         ce=dict(env,EDUKE32_XR='1',EDUKE32_XR_SINGLE_PASS='1',EDUKE32_XR_UI='2',EDUKE32_XR_AIM='left' if a.case=='left' else 'right',
                 EDUKE32_XR_WEAPON='1',EDUKE32_XR_HAND_SHOTS='1',EDUKE32_XR_TEST_INPUT='1',EDUKE32_XR_TEST_SHOTS='1',
                 EDUKE32_XR_WEAPON_OUTPUT=str(cl/'weapon'),EDUKE32_XR_HUD_OUTPUT=str(cl/'hud'),EDUKE32_XR_WORLD_OUTPUT=str(cl/'world'))
-        if a.case=='unnegotiated':a.bad_packet='capability'
         if a.bad_packet:ce['EDUKE32_XR_TEST_BAD_SHOT']=a.bad_packet
         log=(sl/'server.log').open('w');logs.append(log)
         server=subprocess.Popen([str(a.binary.resolve()),'-usecwd','-nosetup','-noautoload','-dedicated','-port',str(a.port),'-map','hand.map','-x','hand_test.con'],cwd=sl,env=se,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT)
@@ -114,155 +113,120 @@ def main():
             client=subprocess.Popen([str(a.client_binary.resolve()),'-usecwd','-nosetup','-noautoload','-nologo','-ns','-nm','-connect',f'127.0.0.1:{a.port}','-x','hand_test.con'],cwd=cl,env=ce,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT)
             co=Observer(client,cl/'client.log')
             phase='native join'
-            if a.case=='legacy-client':
-                co.wait(lambda t:'Multiplayer client level synchronization complete.' in t,timeout=20);co.pause(1.6)
-                x=X11(a.display);window,_=x.owned_window(client.pid)
-                if client_player_index(co.text()) is None:
-                    if not window:raise RuntimeError('owned native window missing')
-                    x.press(window,'Escape',.06,True)
-                co.wait(lambda t:client_player_index(t) not in (None,0),timeout=10)
-                player=client_player_index(co.text())
-            else:
-                joined=wait_for_join_barrier(X11(a.display),client,cl/'client.log',so);player=joined['server_player']
+            joined=wait_for_join_barrier(X11(a.display),client,cl/'client.log',so);player=joined['server_player']
             so.wait(lambda t:len(players(t,player))>20)
-            if a.case not in ('legacy-server','legacy-client','unnegotiated'):co.wait(lambda t:'VR native hand-shot capability: acknowledged' in t)
-            if a.case=='legacy-client':
-                phase='legacy native client gameplay'
-                window,_=x.owned_window(client.pid);before=players(so.text(),player)[-1]
-                x.press(window,'w',.65,True);so.pause(.2)
-                moved=players(so.text(),player)[-1]
-                off=len(so.text());x.press(window,'Control_R',.3,True)
-                so.wait(lambda t:bool(shots(t[off:],player)),timeout=5)
-                fired=players(so.text(),player)[-1]
-                checks={'legacy_native_join':player>0,'legacy_native_updates_move_server_player':moved['x']>before['x']+100,
-                        'legacy_native_firing_and_ammo':fired['ammo']<before['ammo'],
-                        'legacy_client_has_no_VR_capability':'VR native hand-shot capability: accepted' not in so.text(),
-                        'legacy_native_shot_keeps_body_origin':'VR authoritative RPG:' not in so.text()}
-                result={'passed':all(checks.values()),'case':a.case,'checks':checks,'native_RPG':shots(so.text()[off:],player)[0]}
+            phase='pose and projection'
+            yaw,pitch=12,0 if a.case in ('damage','autoaim') else 8
+            if a.case=='steep':pitch=75
+            if a.case=='vertical':pitch=90
+            hand.pose.orientation=orientation(yaw,pitch)
+            remote.packet.head.center.orientation=orientation(-12,4)
+            remote.send();co.pause(.5)
+            co.wait(lambda t:'OpenXR world oracle: 60 frames' in t and 'OpenXR HUD presentation: 60 frames' in t,timeout=20)
+            expected_offset=[round(-hand.pose.position.z*384),round(hand.pose.position.x*384),round((1.6-hand.pose.position.y)*6144)]
+            checks={'native_join_assigned_actual_player':player>0,
+                    'actual_60_stereo_world_HUD_submissions':all((cl/f'hud-{eye}.ppm').is_file() for eye in ('left','right')) and (cl/'hud-left.ppm').read_bytes()!=(cl/'hud-right.ppm').read_bytes(),
+                    'core_validation_active':'Core Validation output type:' in co.text(),
+                    'core_validation_no_warning_or_error':not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',co.text())}
+            def fire():
+                off=len(so.text());remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.send()
+                text=so.wait(lambda t:bool(shots(t[off:],player)),timeout=4)
+                remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.send()
+                co.pause(.1);text=so.text()[off:]
+                shot=shots(text,player)[0];meta=metadata(text,player)[0]
+                authority=[list(map(int,v)) for v in AUTH.findall(text) if int(v[0])==player][0]
+                return off,shot,meta,authority
+            if a.bad_packet:
+                expected_reason={'size':'size','channel':'channel','identity':'identity'}.get(a.bad_packet,'payload')
+                checks['malformed_actual_ENet_update_rejected']=f'VR update rejected: player={player} reason={expected_reason}.' in so.text() and f'VR negative update fixture: {a.bad_packet}.' in co.text()
+                checks['malformed_update_did_not_move_native_authority']=all(row['x']!=30000 for row in players(so.text(),player))
+            target_before=None
+            if a.case in ('damage','autoaim'):target_before=int(re.findall(r'addlog vrtarget_health[^=\n]*= (-?\d+)',so.text())[-1])
+            phase='native RPG spawn'
+            off,shot,meta,authority=fire()
+            predicted=[meta['x']+expected_offset[0],meta['y']+expected_offset[1],meta['z']+meta['pyoff']+expected_offset[2]]
+            expected_speed=round(644*math.cos(math.radians(pitch)))
+            expected_zvel=round(-644*16*math.sin(math.radians(pitch)))
+            checks.update(actual_RPG_origin_matches_resolved_server_origin=[shot[k] for k in ('x','y','z')]==authority[1:4],
+                          actual_RPG_sector_matches_resolved_sector=meta['sector']==authority[4],
+                          actual_full_vector_horizontal_speed=abs(shot['speed']-expected_speed)<=1,
+                          actual_full_vector_vertical_speed=abs(shot['zvel']-expected_zvel)<=1,
+                          actual_full_vector_yaw=pitch==90 or abs(shot['angle']-round(yaw*1024/180))<=1)
+            if a.case=='autoaim':
+                del checks['actual_full_vector_vertical_speed']
+                checks['native_autoaim_applies_real_target_correction']=meta['autoaim']==1 and shot['zvel']!=0
+                checks['native_autoaim_velocity_is_normalized']=abs(math.hypot(shot['speed'],shot['zvel']/16)-644)<1
+            else:checks['free_aim_preference_held_at_shot_boundary']=meta['autoaim']==0
+            if a.case in ('wall','glancing'):
+                checks['blocked_hand_is_clamped_before_wall']=authority[5]==1 and authority[1]<=1136 and authority[4]==0
             else:
-                phase='pose and projection'
-                yaw,pitch=12,0 if a.case in ('damage','autoaim') else 8
-                if a.case=='steep':pitch=75
-                if a.case=='vertical':pitch=90
-                hand.pose.orientation=orientation(yaw,pitch)
-                remote.packet.head.center.orientation=orientation(-12,4)
-                remote.send();co.pause(.5)
-                co.wait(lambda t:'OpenXR world oracle: 60 frames' in t and 'OpenXR HUD presentation: 60 frames' in t,timeout=20)
-                expected_offset=[round(-hand.pose.position.z*384),round(hand.pose.position.x*384),round((1.6-hand.pose.position.y)*6144)]
-                checks={'native_join_assigned_actual_player':player>0,
-                        'actual_60_stereo_world_HUD_submissions':all((cl/f'hud-{eye}.ppm').is_file() for eye in ('left','right')) and (cl/'hud-left.ppm').read_bytes()!=(cl/'hud-right.ppm').read_bytes(),
-                        'core_validation_active':'Core Validation output type:' in co.text(),
-                        'core_validation_no_warning_or_error':not re.search(r'VALID_(?:ERROR|WARN)|Validation (?:Error|Warning)',co.text())}
-                if a.case in ('legacy-server','unnegotiated'):
-                    phase='legacy server suppression'
-                    offset=len(so.text());before=players(so.text(),player)[-1]
-                    remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.packet.left.thumbstick.y=.7;remote.send();so.pause(1.2)
-                    remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.packet.left.thumbstick.y=0;remote.send()
-                    after=players(so.text(),player)[-1]
-                    checks.update(legacy_peer_did_not_ack='capability: acknowledged' not in co.text(),unsupported_hand_mode_does_not_silently_body_fire=not shots(so.text()[offset:],player) and after['ammo']==before['ammo'],native_movement_continues_without_capability=after['x']>before['x']+100)
-                    if a.case=='unnegotiated':checks['unnegotiated_actual_extension_rejected']='reason=capability.' in so.text()
-                    result={'passed':all(checks.values()),'case':a.case,'checks':checks}
-                else:
-                    checks['native_server_negotiated_hand_extension']='VR native hand-shot capability: accepted' in so.text()
-                    def fire():
-                        off=len(so.text());remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.send()
-                        text=so.wait(lambda t:bool(shots(t[off:],player)),timeout=4)
-                        remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.send()
-                        co.pause(.1);text=so.text()[off:]
-                        shot=shots(text,player)[0];meta=metadata(text,player)[0]
-                        authority=[list(map(int,v)) for v in AUTH.findall(text) if int(v[0])==player][0]
-                        return off,shot,meta,authority
-                    if a.bad_packet:
-                        expected_reason={'size':'size','channel':'channel','identity':'identity'}.get(a.bad_packet,'payload')
-                        checks['malformed_actual_ENet_update_rejected']=f'VR update rejected: player={player} reason={expected_reason}.' in so.text() and f'VR negative update fixture: {a.bad_packet}.' in co.text()
-                        checks['malformed_update_did_not_move_native_authority']=all(row['x']!=30000 for row in players(so.text(),player))
-                    target_before=None
-                    if a.case in ('damage','autoaim'):target_before=int(re.findall(r'addlog vrtarget_health[^=\n]*= (-?\d+)',so.text())[-1])
-                    phase='native RPG spawn'
-                    off,shot,meta,authority=fire()
-                    predicted=[meta['x']+expected_offset[0],meta['y']+expected_offset[1],meta['z']+meta['pyoff']+expected_offset[2]]
-                    expected_speed=round(644*math.cos(math.radians(pitch)))
-                    expected_zvel=round(-644*16*math.sin(math.radians(pitch)))
-                    checks.update(actual_RPG_origin_matches_resolved_server_origin=[shot[k] for k in ('x','y','z')]==authority[1:4],
-                                  actual_RPG_sector_matches_resolved_sector=meta['sector']==authority[4],
-                                  actual_full_vector_horizontal_speed=abs(shot['speed']-expected_speed)<=1,
-                                  actual_full_vector_vertical_speed=abs(shot['zvel']-expected_zvel)<=1,
-                                  actual_full_vector_yaw=pitch==90 or abs(shot['angle']-round(yaw*1024/180))<=1)
-                    if a.case=='autoaim':
-                        del checks['actual_full_vector_vertical_speed']
-                        checks['native_autoaim_applies_real_target_correction']=meta['autoaim']==1 and shot['zvel']!=0
-                        checks['native_autoaim_velocity_is_normalized']=abs(math.hypot(shot['speed'],shot['zvel']/16)-644)<1
-                    else:checks['free_aim_preference_held_at_shot_boundary']=meta['autoaim']==0
-                    if a.case in ('wall','glancing'):
-                        checks['blocked_hand_is_clamped_before_wall']=authority[5]==1 and authority[1]<=1136 and authority[4]==0
-                    else:
-                        checks['actual_hand_origin_crosses_open_portal']=authority[4]==1 and authority[1]>1152
-                        checks['actual_native_spawn_matches_independent_hand_transform']=max(abs(predicted[i]-shot[k]) for i,k in enumerate(('x','y','z')))<=1
-                    phase='native RPG impact'
-                    so.wait(lambda t:bool(impacts(t[off:])),timeout=6)
-                    impact=impacts(so.text()[off:])[0]
-                    hitrow=None
-                    vertical_impact=None
-                    if a.case in ('wall','glancing'):checks['actual_RPG_hits_intervening_wall']=impact['x']<1152 and impact['x']>1080
-                    elif a.case in ('damage','autoaim'):
-                        hitrow={k:int(v) for k,v in re.findall(r'addlog vrhit_(player|kind|sector|ceiling|oldx|oldy|x|y|z)[^=\n]*= (-?\d+)',so.text()[off:])}
-                        checks['actual_RPG_collides_with_native_enemy']=(hitrow.get('kind',0)&49152)==49152 and (hitrow.get('kind',0)&16383)==4
-                        def killed(text):
-                            values=re.findall(r'addlog vrtarget_health[^=\n]*= (-?\d+)',text)
-                            return bool(values) and int(values[-1])<=0
-                        so.wait(killed,timeout=3);co.wait(killed,timeout=4)
-                        checks['native_server_enemy_damage_and_death']=target_before>0 and killed(so.text())
-                        checks['client_receives_enemy_damage_and_death']=killed(co.text())
-                    elif a.case in ('steep','vertical'):
-                        hitfields=re.findall(r'addlog vrhit_(player|kind|sector|ceiling|oldx|oldy|x|y|z)(?: \(player \d+\))? = (-?\d+)',so.text()[off:])
-                        hitrow={k:int(v) for k,v in hitfields}
-                        checks['native_collision_is_ceiling_not_a_wall']=(hitrow.get('kind',0)&49152)==16384 and shot['zvel']<0
-                        checks['actual_RPG_reaches_ceiling_from_hand']=abs(impact['z']+32768)<=abs(shot['zvel'])/2+512 and (a.case!='vertical' or (hitrow['oldx']==shot['x'] and hitrow['oldy']==shot['y']))
-                        if a.case=='vertical':
-                            so.wait(lambda t:'VR vertical RPG impact:' in t[off:])
-                            coords=list(map(int,re.findall(r'VR vertical RPG impact: projectile=(-?\d+),(-?\d+),(-?\d+) effect=(-?\d+),(-?\d+),(-?\d+)',so.text()[off:])[0]))
-                            vertical_impact={'projectile':coords[:3],'effect':coords[3:]}
-                            checks['vertical_impact_and_explosion_keep_axis']=coords[:2]==coords[3:5]==[shot['x'],shot['y']] and [hitrow['x'],hitrow['y']]==coords[:2]
-                    else:checks['actual_RPG_reaches_far_wall_from_neighbor_sector']=impact['x']>8000
-                    card_errors=None
-                    if a.case not in ('steep','vertical'):
-                        card_checks,card_errors=card_evidence(cl,meta,authority,hand);checks.update(card_checks)
-                    replicated=None
-                    if a.case in ('open','left','moved','invalid-reach','timeout'):
-                        co.wait(lambda t:'addlog vrnet_sector' in t,timeout=4)
-                        replicated={k:int(v) for k,v in re.findall(r'addlog vrnet_(angle|speed|zvel|sector)[^=\n]*= (-?\d+)',co.text())}
-                        checks['client_world_receives_authoritative_RPG']=all(replicated[k]==shot[{'angle':'angle','speed':'speed','zvel':'zvel'}[k]] for k in ('angle','speed','zvel')) and replicated['sector']==1
-                    second=None
-                    if a.case=='moved':
-                        phase='independent hand translation'
-                        so.pause(.65);hand.pose.position.x=-.2;hand.pose.position.y=1.1;hand.pose.position.z=-.8;remote.send();so.pause(.35)
-                        _,second,meta2,auth2=fire()
-                        predicted2=[meta2['x']+round(.8*384),meta2['y']+round(-.2*384),meta2['z']+meta2['pyoff']+round(.5*6144)]
-                        checks['second_actual_shot_follows_independent_hand_translation']=max(abs(predicted2[i]-second[k]) for i,k in enumerate(('x','y','z')))<=1 and second['y']<shot['y']-100 and second['x']>shot['x']+100
-                    if a.case=='timeout':
-                        phase='owned client packet timeout'
-                        so.pause(.65);_,_,_,_=fire();so.pause(.65)
-                        remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.send()
-                        so.wait(lambda t:len(shots(t,player))>=3,timeout=4)
-                        os.kill(client.pid,signal.SIGSTOP);client_stopped=True
-                        so.pause(.4);offset=len(so.text());ammo=players(so.text(),player)[-1]['ammo'];so.pause(.8)
-                        checks['pose_expiry_stops_repeated_native_fire']=not shots(so.text()[offset:],player) and players(so.text(),player)[-1]['ammo']==ammo
-                        os.kill(client.pid,signal.SIGCONT);client_stopped=False
-                        offset=len(so.text());so.pause(.8)
-                        checks['timeout_recovery_held_trigger_requires_release']=not shots(so.text()[offset:],player)
-                        remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.send();so.pause(.25)
-                        _,second,_,_=fire();checks['repress_after_timeout_fires']=True
-                    if a.case=='invalid-reach':
-                        phase='out of envelope recovery'
-                        so.pause(.65);hand.pose.position.z=-3;remote.send();so.pause(.3);offset=len(so.text())
-                        remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.send();so.pause(.5)
-                        hand.pose.position.z=-.5;remote.send();so.pause(.7)
-                        checks['invalid_reach_and_held_recovery_do_not_fire']=not shots(so.text()[offset:],player)
-                        remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.send();so.pause(.25)
-                        _,second,_,_=fire();checks['new_press_after_invalid_reach_fires']=True
-                    result={'passed':all(checks.values()),'case':a.case,'checks':checks,'actual_RPG':shot,'player_at_spawn':meta,
-                            'server_resolved_origin':authority[1:4],'server_resolved_sector':authority[4],'server_clamped':bool(authority[5]),
-                            'independent_unclamped_origin':predicted,'actual_impact':impact,'native_collision':hitrow,'vertical_impact':vertical_impact,'second_RPG':second,'replicated_RPG':replicated,'card_projection_max_channel_error':card_errors}
+                checks['actual_hand_origin_crosses_open_portal']=authority[4]==1 and authority[1]>1152
+                checks['actual_native_spawn_matches_independent_hand_transform']=max(abs(predicted[i]-shot[k]) for i,k in enumerate(('x','y','z')))<=1
+            phase='native RPG impact'
+            so.wait(lambda t:bool(impacts(t[off:])),timeout=6)
+            impact=impacts(so.text()[off:])[0]
+            hitrow=None
+            vertical_impact=None
+            if a.case in ('wall','glancing'):checks['actual_RPG_hits_intervening_wall']=impact['x']<1152 and impact['x']>1080
+            elif a.case in ('damage','autoaim'):
+                hitrow={k:int(v) for k,v in re.findall(r'addlog vrhit_(player|kind|sector|ceiling|oldx|oldy|x|y|z)[^=\n]*= (-?\d+)',so.text()[off:])}
+                checks['actual_RPG_collides_with_native_enemy']=(hitrow.get('kind',0)&49152)==49152 and (hitrow.get('kind',0)&16383)==4
+                def killed(text):
+                    values=re.findall(r'addlog vrtarget_health[^=\n]*= (-?\d+)',text)
+                    return bool(values) and int(values[-1])<=0
+                so.wait(killed,timeout=3);co.wait(killed,timeout=4)
+                checks['native_server_enemy_damage_and_death']=target_before>0 and killed(so.text())
+                checks['client_receives_enemy_damage_and_death']=killed(co.text())
+            elif a.case in ('steep','vertical'):
+                hitfields=re.findall(r'addlog vrhit_(player|kind|sector|ceiling|oldx|oldy|x|y|z)(?: \(player \d+\))? = (-?\d+)',so.text()[off:])
+                hitrow={k:int(v) for k,v in hitfields}
+                checks['native_collision_is_ceiling_not_a_wall']=(hitrow.get('kind',0)&49152)==16384 and shot['zvel']<0
+                checks['actual_RPG_reaches_ceiling_from_hand']=abs(impact['z']+32768)<=abs(shot['zvel'])/2+512 and (a.case!='vertical' or (hitrow['oldx']==shot['x'] and hitrow['oldy']==shot['y']))
+                if a.case=='vertical':
+                    so.wait(lambda t:'VR vertical RPG impact:' in t[off:])
+                    coords=list(map(int,re.findall(r'VR vertical RPG impact: projectile=(-?\d+),(-?\d+),(-?\d+) effect=(-?\d+),(-?\d+),(-?\d+)',so.text()[off:])[0]))
+                    vertical_impact={'projectile':coords[:3],'effect':coords[3:]}
+                    checks['vertical_impact_and_explosion_keep_axis']=coords[:2]==coords[3:5]==[shot['x'],shot['y']] and [hitrow['x'],hitrow['y']]==coords[:2]
+            else:checks['actual_RPG_reaches_far_wall_from_neighbor_sector']=impact['x']>8000
+            card_errors=None
+            if a.case not in ('steep','vertical'):
+                card_checks,card_errors=card_evidence(cl,meta,authority,hand);checks.update(card_checks)
+            replicated=None
+            if a.case in ('open','left','moved','invalid-reach','timeout'):
+                co.wait(lambda t:'addlog vrnet_sector' in t,timeout=4)
+                replicated={k:int(v) for k,v in re.findall(r'addlog vrnet_(angle|speed|zvel|sector)[^=\n]*= (-?\d+)',co.text())}
+                checks['client_world_receives_authoritative_RPG']=all(replicated[k]==shot[{'angle':'angle','speed':'speed','zvel':'zvel'}[k]] for k in ('angle','speed','zvel')) and replicated['sector']==1
+            second=None
+            if a.case=='moved':
+                phase='independent hand translation'
+                so.pause(.65);hand.pose.position.x=-.2;hand.pose.position.y=1.1;hand.pose.position.z=-.8;remote.send();so.pause(.35)
+                _,second,meta2,auth2=fire()
+                predicted2=[meta2['x']+round(.8*384),meta2['y']+round(-.2*384),meta2['z']+meta2['pyoff']+round(.5*6144)]
+                checks['second_actual_shot_follows_independent_hand_translation']=max(abs(predicted2[i]-second[k]) for i,k in enumerate(('x','y','z')))<=1 and second['y']<shot['y']-100 and second['x']>shot['x']+100
+            if a.case=='timeout':
+                phase='owned client packet timeout'
+                so.pause(.65);_,_,_,_=fire();so.pause(.65)
+                remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.send()
+                so.wait(lambda t:len(shots(t,player))>=3,timeout=4)
+                os.kill(client.pid,signal.SIGSTOP);client_stopped=True
+                so.pause(.4);offset=len(so.text());ammo=players(so.text(),player)[-1]['ammo'];so.pause(.8)
+                checks['pose_expiry_stops_repeated_native_fire']=not shots(so.text()[offset:],player) and players(so.text(),player)[-1]['ammo']==ammo
+                os.kill(client.pid,signal.SIGCONT);client_stopped=False
+                offset=len(so.text());so.pause(.8)
+                checks['timeout_recovery_held_trigger_requires_release']=not shots(so.text()[offset:],player)
+                remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.send();so.pause(.25)
+                _,second,_,_=fire();checks['repress_after_timeout_fires']=True
+            if a.case=='invalid-reach':
+                phase='out of envelope recovery'
+                so.pause(.65);hand.pose.position.z=-3;remote.send();so.pause(.3);offset=len(so.text())
+                remote.packet.right.trigger_value=1;remote.packet.right.trigger_click=True;remote.send();so.pause(.5)
+                hand.pose.position.z=-.5;remote.send();so.pause(.7)
+                checks['invalid_reach_and_held_recovery_do_not_fire']=not shots(so.text()[offset:],player)
+                remote.packet.right.trigger_value=0;remote.packet.right.trigger_click=False;remote.send();so.pause(.25)
+                _,second,_,_=fire();checks['new_press_after_invalid_reach_fires']=True
+            result={'passed':all(checks.values()),'case':a.case,'checks':checks,'actual_RPG':shot,'player_at_spawn':meta,
+                    'server_resolved_origin':authority[1:4],'server_resolved_sector':authority[4],'server_clamped':bool(authority[5]),
+                    'independent_unclamped_origin':predicted,'actual_impact':impact,'native_collision':hitrow,'vertical_impact':vertical_impact,'second_RPG':second,'replicated_RPG':replicated,'card_projection_max_channel_error':card_errors}
     except Exception as error:result={'passed':False,'phase':phase,'case':a.case,'error':str(error)}
     finally:
         if client_stopped and client and client.poll() is None:os.kill(client.pid,signal.SIGCONT)

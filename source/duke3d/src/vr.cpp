@@ -304,9 +304,10 @@ static bool aimPoseUsable()
         && (hand<0 || (rawInput.hands[hand].aimValid && validPose(rawInput.hands[hand].aimPose)));
 }
 
-// Weapon wheel (after Q3VR's controller mode): hold the turn stick up to open it in front of the
-// weapon hand, frozen to the hand's direction at that moment; turn the wrist ~22 degrees toward a
-// slot to hover it (sector by angle) and release the stick to switch. The switch is issued through
+// Weapon wheel (after Q3VR's controller mode): hold the weapon-wheel button (right stick click;
+// Index: right trackpad press; controllers without one: hold the turn stick up) to open it in front
+// of the weapon hand, frozen to the hand's direction at that moment; turn the wrist ~22 degrees
+// toward a slot to hover it (sector by angle) and release to switch. The switch is issued through
 // the native weapon keys (networked input), pressing again for Expander/Flamethrower toggles.
 static struct WeaponWheel
 {
@@ -367,7 +368,7 @@ static int wheelKey(int weapon)
 }
 
 // Per input sample: open/close, hover and commit; returns true while the wheel owns the turn stick.
-static bool updateWeaponWheel(uint64_t &buttons)
+static bool updateWeaponWheel(uint64_t &buttons, uint32_t rightDown)
 {
     auto const p=g_player[myconnectindex].ps;
     double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
@@ -389,12 +390,15 @@ static bool updateWeaponWheel(uint64_t &buttons)
     }
     auto const &stickHand=rawInput.hands[1];
     float const sx=stickHand.stickActive ? stickHand.stick.x : 0.f, sy=stickHand.stickActive ? stickHand.stick.y : 0.f;
+    // The dedicated button when this controller binds one, else the stick-up gesture.
+    bool const button=stickHand.activeButtons & eduke_xr::ButtonWheel;
+    bool const held=button ? bool(rightDown & eduke_xr::ButtonWheel) : wheel.open ? sy>=.35f : (sy>.7f && std::fabs(sx)<.6f);
     if (!usable) { wheel.open=false; wheel.hovered=-1; return false; }
     auto const &aim=rawInput.hands[hand].aimPose;
     auto const forward=rotate(aim.orientation,{0,0,-1});
     if (!wheel.open)
     {
-        if (!(sy>.7f && std::fabs(sx)<.6f)) return false;
+        if (!held) return false;
         wheelFillSlots();
         wheel.open=true; wheel.openedAt=now; wheel.hovered=-1;
         // Yaw/pitch frame of the hand at opening (no roll), like Q3VR.
@@ -421,7 +425,7 @@ static bool updateWeaponWheel(uint64_t &buttons)
         }
         return true;
     }
-    if (sy<.35f)
+    if (!held)
     {
         wheel.open=false;
         if (wheel.hovered>=0)
@@ -483,7 +487,7 @@ static void publishInput()
     }
     if (aimHand()!=-2)
     {
-        bool const valid=aimPoseUsable() && (!handShotsRequested() || Net_VRShotAvailable());
+        bool const valid=aimPoseUsable();
         // Pose recovery is not a new trigger press. Hold fire until release.
         if (!valid || !aimPoseWasValid)
         {
@@ -499,7 +503,7 @@ static void publishInput()
     analog.dyaw=std::lround(turn.x*16383.f); analog.dpitch=std::lround(-turn.y*16383.f);
     if (!stickPitchAllowed()) analog.dpitch=0;
     uint64_t wheelButtons=0;
-    bool const wheelOwnsStick=updateWeaponWheel(wheelButtons);
+    bool const wheelOwnsStick=updateWeaponWheel(wheelButtons,down[1]);
     if (wheelOwnsStick) analog.dyaw=analog.dpitch=0;
     if (float const snap=wheelOwnsStick ? 0.f : snapTurnDegrees())
     {
@@ -518,7 +522,10 @@ static void publishInput()
     auto const button=[&](bool pressed, unsigned gamefunc) { if (pressed) buttons |= uint64_t(1)<<gamefunc; };
     button(down[1]&ButtonSelect,gamefunc_Fire); button(down[0]&ButtonSelect,gamefunc_Open);
     button(down[1]&ButtonPrimary,gamefunc_Jump); button(down[1]&ButtonSecondary,gamefunc_Crouch);
-    button(down[1]&ButtonStickClick,gamefunc_Quick_Kick);
+    // Quick kick: right stick click where it isn't the wheel (Index), or a right-stick-down flick.
+    bool const kickFlick=!stickPitchAllowed() && !wheelOwnsStick && rawInput.hands[1].stickActive
+        && rawInput.hands[1].stick.y<-.7f && std::fabs(rawInput.hands[1].stick.x)<.6f;
+    button((down[1]&ButtonStickClick) || kickFlick,gamefunc_Quick_Kick);
     button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(down[0]&ButtonSecondary,gamefunc_Next_Weapon);
     button((down[0]|down[1])&ButtonGrip,gamefunc_Run);
     Voice_SetPushToTalk(down[0]&ButtonStickClick);   // left stick click: voice push-to-talk
@@ -865,7 +872,7 @@ void prepareWeaponVisual(Camera const &body, eduke_xr::Runtime *runtime)
     visual.player=myconnectindex; visual.hand=aimHand();
     if (!overlayEnabled() || !handShotsRequested() || !localAimCamera() || !aimPoseUsable() || !recentered
         || inputRuntime!=runtime || inputGeneration!=runtime->generation() || shotReferenceInvalidated || !shotLookAllowed
-        || !Net_VRShotAvailable() || !G_VRShotValid(myconnectindex)) { heldReject("prepareWeaponVisual#2"); return; }
+        || !G_VRShotValid(myconnectindex)) { heldReject("prepareWeaponVisual#2"); return; }
     vec3f_t muzzle{}, palm{}; XrVector3f position;
     if (!weaponMuzzle(visual.family,visual.hand,visual.model,muzzle,palm,position)) { heldReject("prepareWeaponVisual#3"); return; }
     visual.pose=rawInput.hands[visual.hand].aimPose;
@@ -921,7 +928,7 @@ bool weaponVisualOwned()
         && visual.family==P_XRWeaponFamily() && visual.model==md_tilehasmodel(weaponModelTile(visual.family),0)
         && inputRuntime==menuRuntime && inputGeneration==menuGeneration && inputValid()
         && aimPoseUsable() && rawInput.hands[visual.hand].gripValid
-        && G_VRShotValid(myconnectindex) && Net_VRShotAvailable();
+        && G_VRShotValid(myconnectindex);
 }
 
 int gripModelTile(unsigned hand)
@@ -1497,11 +1504,11 @@ bool prepareHandModel(HandModelSample &sample)
     auto weapon=sdlayer_xr_option("EDUKE32_XR_WEAPON");
     if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
         || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
-        || !Net_VRShotAvailable() || !G_VRShotValid(myconnectindex))
+        || !G_VRShotValid(myconnectindex))
     {
         char why[96];
-        Bsnprintf(why,sizeof(why),"prepareHandModel#1 local=%d pose=%d shots=%d net=%d ready=%d enabled=%d",
-                  localAimCamera(),aimPoseUsable(),handShotsRequested(),Net_VRShotAvailable(),G_VRShotValid(myconnectindex),
+        Bsnprintf(why,sizeof(why),"prepareHandModel#1 local=%d pose=%d shots=%d ready=%d enabled=%d",
+                  localAimCamera(),aimPoseUsable(),handShotsRequested(),G_VRShotValid(myconnectindex),
                   G_VRShotEnabled(myconnectindex));
         heldReject(why);
         return false;
@@ -1843,7 +1850,7 @@ void G_XRUpdateShotInput()
         input.flags=VRShotEnabled;
         int const hand=aimHand();
         if (hand>=0 && localAimCamera() && aimPoseUsable() && recentered && shotLookAllowed
-            && !shotReferenceInvalidated && !(blockedInputButtons[1]&(eduke_xr::ButtonSelect|eduke_xr::ButtonStickClick)) && Net_VRShotAvailable())
+            && !shotReferenceInvalidated && !(blockedInputButtons[1]&(eduke_xr::ButtonSelect|eduke_xr::ButtonStickClick)))
         {
             auto const p=g_player[myconnectindex].ps;
             float const bodyYaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset;
@@ -1914,15 +1921,10 @@ void G_XRUpdateShotInput()
         else if (std::getenv("EDUKE32_XR_TEST_HELD"))
         {
             char why[128];
-            Bsnprintf(why,sizeof(why),"shotInput hand=%d local=%d pose=%d recentered=%d look=%d invalidated=%d blocked=%u net=%d",
+            Bsnprintf(why,sizeof(why),"shotInput hand=%d local=%d pose=%d recentered=%d look=%d invalidated=%d blocked=%u",
                       hand,localAimCamera(),aimPoseUsable(),recentered,shotLookAllowed,shotReferenceInvalidated,
-                      blockedInputButtons[1],Net_VRShotAvailable());
+                      blockedInputButtons[1]);
             heldReject(why);
-        }
-        if (!(input.flags&VRShotValid) && !Net_VRShotAvailable())
-        {
-            static bool reported;
-            if (!reported) { reported=true; LOG_F(WARNING,"VR hand shots waiting for server capability; firing is suppressed until supported."); }
         }
     }
     if ((input.flags & VRShotEnabled) && physicalThrowEnabled())
@@ -2164,7 +2166,7 @@ void G_XREndWeapon(bool captured)
     else if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
     {
         vec3_t position; int16_t sector; bool clamped;
-        visible=visible && Net_VRShotAvailable() && G_VRResolveShot(myconnectindex,position,sector,clamped);
+        visible=visible && G_VRResolveShot(myconnectindex,position,sector,clamped);
         if (visible)
         {
             auto const body=aimBodyCamera(camera());
@@ -2256,7 +2258,7 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
     }
     else if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
     {
-        visible=visible && aimPoseUsable() && Net_VRShotAvailable() && G_VRResolveShot(myconnectindex,start,sector,clamped);
+        visible=visible && aimPoseUsable() && G_VRResolveShot(myconnectindex,start,sector,clamped);
         auto const shot=G_VRGetShotInput(myconnectindex);
         ray={shot.direction[0],shot.direction[1],shot.direction[2]*16};
     }

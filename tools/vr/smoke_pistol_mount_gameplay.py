@@ -195,7 +195,7 @@ def main():
             phase = "native join"
             player = wait_for_join_barrier(X11(args.display), client, cl / "client.log", so)["server_player"]
             so.wait(lambda text: len(players(text, player)) > 20)
-            co.wait(lambda text: "capability: acknowledged" in text)
+            co.pause(1)
             # Match the existing native hitscan fixture: establish the map's
             # body/reference first, then aim the controller at its target.
             pitch=8

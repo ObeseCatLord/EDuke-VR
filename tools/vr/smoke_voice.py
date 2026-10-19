@@ -5,7 +5,7 @@
 Run under software_xr_lab.py. The talker's microphone is replaced by a
 synthetic tone (EDUKE32_VOICE_TEST_TONE, voice activation gates it on and
 off); the VR listener dumps the PCM it decodes (EDUKE32_VOICE_TEST_DUMP) and
-logs its stereo gains. Checks the capability handshake, server relay, Opus
+logs its stereo gains. Checks the server relay, Opus
 decode (dominant frequency of the received audio) and that the gains follow
 the listener's tracked head: facing the talker is balanced, turning so the
 talker is on the left favours the left channel and vice versa.
@@ -88,10 +88,6 @@ def main():
             until(co, lambda t: 'Multiplayer client level synchronization complete.' in t, 120)
             until(co, lambda t: 'OpenXR world oracle: 60 frames' in t, 240)
             co.pause(2)
-            result['phase'] = 'handshake'
-            until(co, lambda t: 'Voice chat: server supports voice' in t, 30)
-            until(to, lambda t: 'Voice chat: server supports voice' in t, 30)
-            checks['handshake'] = so.text().count('Voice chat: client enabled') >= 2
             result['phase'] = 'positions'
             start = len(co.text())
             console.write_text('xr_where\n')

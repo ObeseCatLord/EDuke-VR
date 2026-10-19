@@ -67,7 +67,7 @@ def main():
   so=run.launch('server',['-dedicated','-c1','-m','-port',str(a.port),'-map','pipebomb.map']);so.wait(lambda t:'User Map: /pipebomb.map' in t,timeout=18)
   phase='native client join';player=join(run);co=run.observers['client']
   so.wait(lambda t:last(t,player) is not None and last(t,player)['ammo']==40 and last(t,player)['frame']==0,timeout=12)
-  co.wait(lambda t:'features=15' in t,timeout=5)
+  co.pause(1)
   def pose(flags=3):
    offset=(192,77,1843);direction=(32051,6813,0)
    if a.case=='wall':direction=(-4096,-32510,0) # Near-parallel, away from wall after spawn.
@@ -108,7 +108,7 @@ def main():
   co.wait(lambda t:last(t,player)['ammo']==last(so.text(),player)['ammo'],timeout=5)
   if a.case in ('tracked','flat'):
    phase='actual native wall impact/damage';so.wait(lambda t:count(t,'expl')>0,timeout=8);so.pause(.4)
-  checks={'actual_player_and_capability':player==1 and 'features=15' in so.text(),'native_configured_bursts':all(len(b['shots'])==burst_size for b in observations),'native_delayed_cadence':all(all(y['clock']-x['clock']==8 for x,y in zip(b['shots'],b['shots'][1:])) for b in observations),'native_one_ammo_per_projectile':last(so.text(),player)['ammo']==40-len(allshots),'native_half_size_and_quarter_damage':all(s['size']==7 and 20<=s['damage']<=35 for s in allshots),'native_owner_matches_actual_player':all(s['owner']==before['psindex'] for s in allshots),'native_projectile_indices_seen_on_client':all(any(r['index']==s['index'] for r in replicated) for s in allshots),'native_ammo_replicates':last(co.text(),player)['ammo']==last(so.text(),player)['ammo'],'native_body_stays_put':(before['x'],before['y'])==(last(so.text(),player)['x'],last(so.text(),player)['y']),'no_gpu_devices_or_libraries':True}
+  checks={'actual_player':player==1,'native_configured_bursts':all(len(b['shots'])==burst_size for b in observations),'native_delayed_cadence':all(all(y['clock']-x['clock']==8 for x,y in zip(b['shots'],b['shots'][1:])) for b in observations),'native_one_ammo_per_projectile':last(so.text(),player)['ammo']==40-len(allshots),'native_half_size_and_quarter_damage':all(s['size']==7 and 20<=s['damage']<=35 for s in allshots),'native_owner_matches_actual_player':all(s['owner']==before['psindex'] for s in allshots),'native_projectile_indices_seen_on_client':all(any(r['index']==s['index'] for r in replicated) for s in allshots),'native_ammo_replicates':last(co.text(),player)['ammo']==last(so.text(),player)['ammo'],'native_body_stays_put':(before['x'],before['y'])==(last(so.text(),player)['x'],last(so.text(),player)['y']),'no_gpu_devices_or_libraries':True}
   if a.case in ('flat','tracked'):
    checks['native_actual_explosion']=count(so.text(),'expl')>0
    checks['native_target_damage']=last(so.text(),0)['health']<target_before

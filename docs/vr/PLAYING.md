@@ -58,11 +58,12 @@ controller aim pose instead of being suppressed.
 | Control | Action |
 | --- | --- |
 | Left stick | move/strafe |
-| Right stick | turn (x; smooth or snap); hold up: weapon wheel |
+| Right stick | turn (x; smooth or snap); flick down: quick kick |
+| Right stick click (Index: right trackpad press) | hold: weapon wheel |
 | Right trigger | fire |
 | Left trigger | open/use |
 | Right A / B | jump / crouch |
-| Right stick click | quick kick |
+| Right stick click on Index | quick kick |
 | Left X / Y | previous / next weapon |
 | Either grip | run |
 | Menu button | menu |
@@ -71,15 +72,18 @@ controller aim pose instead of being suppressed.
 In menus: triggers/A advance, B back, sticks navigate.
 
 Bound profiles: Oculus Touch, Valve Index, HTC Vive (trackpad as stick, right
-menu = crouch, right pad click = jump), WMR, and the KHR simple controller.
+menu = crouch, right pad click = jump, hold the right pad up for the weapon
+wheel), WMR (right stick click = wheel, right pad click = jump, right menu =
+crouch), and the KHR simple controller.
 
 ## Weapon wheel
 
-Hold the right stick up: a ring of your weapons (their 3D models) opens in
+Hold the right stick click (Valve Index: press the right trackpad; HTC Vive
+wands: hold the right pad up): a ring of your weapons (their 3D models) opens in
 front of and above your weapon hand, facing you, and the held weapon hides.
 Turn your wrist about 20 degrees toward a weapon to highlight it (it grows,
 brightens and spins; the controller pulses), then let go of the stick to
-switch. Weapons you don't have or have no ammo for are dark and can't be
+switch (release the click/trackpad). Weapons you don't have or have no ammo for are dark and can't be
 picked. Shrinker/Expander and Freezer/Flamethrower each have their own slot;
 the switch goes through the normal weapon keys, so it works in multiplayer.
 Turning is paused while the wheel is open. `EDUKE32_XR_WEAPON_WHEEL=0`
@@ -106,10 +110,16 @@ are: louder and panned when near, fading to a centred "radio" level beyond
 | `voice_loopback` | 0 | hear yourself (mic test) |
 | `voice_mute <name\|slot>`, `voice_status`, `voice_restart` | | |
 
-Opus 24 kbps (~3 kB/s per talker) on its own unreliable channel; the server
-relays only between clients that announced voice support, so older clients
-are unaffected. Opus is BSD-licensed (system library). Verified with
+Opus 24 kbps (~3 kB/s per talker) on its own unreliable channel, relayed by
+the server to every other client. Opus is BSD-licensed (system library). Verified with
 `tools/vr/smoke_voice.py` (test tone, relay, 440 Hz decode, head-tracked pan).
+
+## Multiplayer compatibility
+
+Only identical, current builds play together: the network protocol (NETVERSION
+7) always carries the VR hand-shot sample in every input update (flat clients
+send it inactive) and has a voice channel, with no negotiation and no support
+for older clients or servers, which are refused at connect.
 
 ## Known limits
 

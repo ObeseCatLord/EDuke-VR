@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """VR weapon wheel (play preset, private software XR).
 
-Gives all weapons, then for each target: holds the right stick up to open the
+Gives all weapons, then for each target: presses the weapon-wheel button (the
+lab's remote is a Valve Index controller: right trackpad press) to open the
 wheel, turns the weapon hand toward the target slot (wrist rotation, slots
 clockwise from the top), captures both eyes, releases the stick and checks
 that the native weapon switched (including the Expander/Flamethrower toggles).
@@ -76,13 +77,13 @@ def main():
             for target in map(int, args.targets.split(',')):
                 start = len(text())
                 right.pose.orientation = orientation(0, 0)
-                right.thumbstick.x, right.thumbstick.y = 0.0, 1.0; remote.send()
+                right.trackpad_force, right.trackpad_touch = 1.0, True; remote.send()
                 opened = wait(lambda: 'OpenXR weapon wheel: open' in text()[start:], 20)
                 order = re.findall(r'OpenXR weapon wheel: open slots=\d+ order=([\d,]+)\.', text()[start:])
                 slots = list(map(int, order[-1].split(','))) if order else SLOTS
                 result.setdefault('slots', slots)
                 if target not in slots:
-                    right.thumbstick.y = 0.0; remote.send(); time.sleep(1)
+                    right.trackpad_force, right.trackpad_touch = 0.0, False; remote.send(); time.sleep(1)
                     result['targets'][target] = dict(skipped_not_in_game=True)
                     continue
                 angle = 2 * math.pi * slots.index(target) / len(slots)
@@ -91,7 +92,7 @@ def main():
                 hovered = wait(lambda: f'OpenXR weapon wheel: hover weapon={target}.' in text()[start:], 20)
                 time.sleep(.5)
                 capture.write_text(str(lab / f'wheel-{target}') + '\n'); wait(lambda: not capture.exists())
-                right.thumbstick.y = 0.0; remote.send()
+                right.trackpad_force, right.trackpad_touch = 0.0, False; remote.send()
                 right.pose.orientation = orientation(0, 0); remote.send()
                 committed = wait(lambda: 'OpenXR weapon wheel: commit' in text()[start:], 20)
                 switched = wait(lambda: any(int(w) == target for w in HELD.findall(text()[start:])), 20)

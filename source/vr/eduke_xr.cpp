@@ -385,7 +385,7 @@ struct Runtime::Impl
     std::vector<XrEventDataReferenceSpaceChangePending> referenceChanges;
     XrSpace                                 viewSpace = XR_NULL_HANDLE;
     XrActionSet                             actionSet = XR_NULL_HANDLE;
-    std::array<XrAction, 6>                 buttonActions {};
+    std::array<XrAction, 7>                 buttonActions {};
     XrAction                                stickAction = XR_NULL_HANDLE, gripPoseAction = XR_NULL_HANDLE, aimPoseAction = XR_NULL_HANDLE;
     XrAction                                hapticAction = XR_NULL_HANDLE;
     // Optional XR_EXT_hand_tracking.
@@ -663,8 +663,8 @@ struct Runtime::Impl
             result = xrCreateAction(actionSet, &info, &action);
             return XR_SUCCEEDED(result);
         };
-        char const * const names[] = { "select", "grip", "primary", "secondary", "menu", "stickclick" };
-        char const * const labels[] = { "Select", "Grip", "Primary", "Secondary", "Menu", "Stick click" };
+        char const * const names[] = { "select", "grip", "primary", "secondary", "menu", "stickclick", "weaponwheel" };
+        char const * const labels[] = { "Select", "Grip", "Primary", "Secondary", "Menu", "Stick click", "Weapon wheel" };
         for (size_t i = 0; i < buttonActions.size(); ++i)
             if (!create(buttonActions[i], XR_ACTION_TYPE_BOOLEAN_INPUT, names[i], labels[i])) return fail(result, "xrCreateAction button");
         if (!create(stickAction, XR_ACTION_TYPE_VECTOR2F_INPUT, "stick", "Stick")) return fail(result, "xrCreateAction stick");
@@ -694,7 +694,7 @@ struct Runtime::Impl
             result = xrSuggestInteractionProfileBindings(instance, &info);
             return XR_SUCCEEDED(result);
         };
-        auto const select = buttonActions[0], grip = buttonActions[1], primary = buttonActions[2], secondary = buttonActions[3], menu = buttonActions[4], click = buttonActions[5];
+        auto const select = buttonActions[0], grip = buttonActions[1], primary = buttonActions[2], secondary = buttonActions[3], menu = buttonActions[4], click = buttonActions[5], wheel = buttonActions[6];
         if (!suggest("/interaction_profiles/khr/simple_controller", {
                 { select, "/user/hand/left/input/select/click" }, { select, "/user/hand/right/input/select/click" },
                 { menu, "/user/hand/left/input/menu/click" }, { menu, "/user/hand/right/input/menu/click" },
@@ -708,7 +708,7 @@ struct Runtime::Impl
                 { primary, "/user/hand/right/input/a/click" }, { secondary, "/user/hand/right/input/b/click" },
                 { menu, "/user/hand/left/input/menu/click" },
                 { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
-                { click, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
+                { click, "/user/hand/left/input/thumbstick/click" }, { wheel, "/user/hand/right/input/thumbstick/click" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
                 { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
                 { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings touch");
@@ -718,6 +718,7 @@ struct Runtime::Impl
                 { primary, "/user/hand/left/input/a/click" }, { secondary, "/user/hand/left/input/b/click" },
                 { primary, "/user/hand/right/input/a/click" }, { secondary, "/user/hand/right/input/b/click" },
                 { menu, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
+                { wheel, "/user/hand/right/input/trackpad/force" },
                 { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
                 { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
@@ -725,11 +726,11 @@ struct Runtime::Impl
         if (!suggest("/interaction_profiles/microsoft/motion_controller", {
                 { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
                 { grip, "/user/hand/left/input/squeeze/click" }, { grip, "/user/hand/right/input/squeeze/click" },
-                { menu, "/user/hand/left/input/menu/click" }, { menu, "/user/hand/right/input/menu/click" },
+                { menu, "/user/hand/left/input/menu/click" }, { secondary, "/user/hand/right/input/menu/click" },
                 { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
-                { click, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
-                { primary, "/user/hand/right/input/thumbstick/click" }, { primary, "/user/hand/left/input/trackpad/click" },
-                { secondary, "/user/hand/right/input/trackpad/click" }, { secondary, "/user/hand/left/input/thumbstick/click" },
+                { click, "/user/hand/left/input/thumbstick/click" }, { wheel, "/user/hand/right/input/thumbstick/click" },
+                { primary, "/user/hand/right/input/trackpad/click" }, { primary, "/user/hand/left/input/trackpad/click" },
+                { secondary, "/user/hand/left/input/thumbstick/click" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
                 { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
                 { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings motion");

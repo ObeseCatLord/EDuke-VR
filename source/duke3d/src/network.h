@@ -33,10 +33,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "enet.h"
 
-bool Net_VRShotAvailable(int player=-1, uint8_t feature=0);
 
 // net packet specification/compatibility version
-#define NETVERSION    6
+#define NETVERSION    7  // VR hand-shot sample in every update, voice channel; no older peers
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;
@@ -56,7 +55,7 @@ enum netchan_t
     CHAN_GAMESTATE, // gamestate changes... frags, respawns, player names, etc
     CHAN_CHAT,      // chat and RTS
     CHAN_MISC,      // whatever else
-    CHAN_VOICE,     // unreliable voice chat (only to peers that announced voice support)
+    CHAN_VOICE,     // unreliable voice chat
     CHAN_MAX
 };
 
@@ -93,8 +92,6 @@ enum DukePacket_t
     PACKET_MAP_VOTE,
     PACKET_MAP_VOTE_INITIATE,
     PACKET_MAP_VOTE_CANCEL,
-    PACKET_VR_CAPABILITIES=200, // optional CHAN_MISC capability; legacy IDs unchanged
-    PACKET_VOICE_CAPABILITIES=201, // optional CHAN_MISC voice chat handshake
     PACKET_VOICE=202,              // CHAN_VOICE: client->server body, server->client [source][body]
 };
 
