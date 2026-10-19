@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Launch EDuke32 VR with the qualified gameplay features (EDUKE32_XR=play).
 #
-#   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release]
+#   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release] [--glow]
 #                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [-- eduke32 args]
 #
 # Stock Duke: pass --grp (or run where DUKE3D.GRP is found natively).
@@ -19,7 +19,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 binary="$repo/eduke32-xr"
 assets="$(cd "$repo/.." && pwd)/duke-vr-assets"
-aa="" grp="" models=1 release=""
+aa="" grp="" models=1 release="" glow=""
 args=()
 while (($#)); do
     case "$1" in
@@ -28,6 +28,7 @@ while (($#)); do
         --left) export EDUKE32_XR_AIM="${EDUKE32_XR_AIM:-left}"; shift ;;
         --no-models) models=0; shift ;;
         --release) release=1; shift ;;
+        --glow) glow=1; shift ;;
         --assets) assets=$(cd "$2" && pwd); shift 2 ;;
         --binary) binary=$(realpath "$2"); shift 2 ;;
         --) shift; args+=("$@"); break ;;
@@ -46,7 +47,7 @@ def="$data/eduke32-vr-models.def"
 } > "$def"
 
 if ((models)) && [[ -d $assets ]]; then
-    python3 "$here/build_vr_def.py" "$assets" "$data" ${aa:+--aa} ${release:+--release} >> "$def"
+    python3 "$here/build_vr_def.py" "$assets" "$data" ${aa:+--aa} ${release:+--release} ${glow:+--glow} >> "$def"
     export EDUKE32_XR_HAND_RIG="${EDUKE32_XR_HAND_RIG:-$data/hand-rig.txt}"
     [[ -n $aa ]] && export EDUKE32_XR_HUD_MODEL_MAP="${EDUKE32_XR_HUD_MODEL_MAP:-$data/hud-model-map.txt}"
 fi
@@ -56,6 +57,12 @@ cmd=("$binary" -j "$data")
 if [[ -n $aa ]]; then
     cmd+=(-j "$aa" -j "$here/aa566" -g "$aa/AA.grp" -x eduke32_vr_aa566.con)
 fi
-[[ -n $grp ]] && cmd+=(-gamegrp "$grp")
-cmd+=(-h eduke32-vr-models.def "${args[@]}")
+# EDuke32 matches -gamegrp against the scanned GRP names, so pass the GRP's
+# directory as a search path and its bare name (a full path never matches and
+# silently falls back to the first GRP found, e.g. an add-on like vacation.grp).
+[[ -n $grp ]] && cmd+=(-j "$(dirname "$grp")" -gamegrp "$(basename "$grp")")
+# The headset needs an X11 (XWayland) GL window, and the setup dialog would
+# wait on the desktop; -setup in the EDuke32 arguments still shows it.
+export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
+cmd+=(-nosetup -h eduke32-vr-models.def "${args[@]}")
 exec "${cmd[@]}"

@@ -1582,6 +1582,8 @@ extern int32_t benchmarkScreenshot;
 extern int32_t glanisotropy;
 extern int32_t glusetexcompr;
 extern int32_t gltexfiltermode;
+// Filter for hightile/model textures when >= 0 (index into glfiltermodes), independent of gltexfiltermode.
+extern int32_t glhightilefiltermode;
 
 enum {
     TEXFILTER_OFF = 0, // GL_NEAREST

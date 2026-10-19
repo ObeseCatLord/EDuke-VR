@@ -20,9 +20,14 @@ package/vr/eduke32-vr-play --aa /path/to/alien_armageddon_566
 
 The launcher sets `EDUKE32_XR=play`, links the held-weapon/hand models from the
 sibling `duke-vr-assets` checkout into `~/.local/share/eduke32-vr/` and passes a
-generated DEF. Installed game files are never modified. Options:
-`--left` (left-handed weapon), `--no-models`, `--assets DIR`, `--binary FILE`;
-anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
+generated DEF. Installed game files are never modified. It always plays the GRP
+you pass (an add-on selected in EDuke32's own setup, e.g. Life's a Beach, is not
+picked up), skips the setup window (`-- -setup` brings it back) and uses an X11
+(XWayland) window, which OpenXR's GL binding needs. Options:
+`--left` (left-handed weapon), `--no-models`, `--assets DIR`, `--binary FILE`,
+`--glow` (model glow maps: brighter emissive bits, but every VR model is then
+drawn once per eye instead of once for both); anything after `--` goes to
+EDuke32 (e.g. `-- -map E2L1.MAP`).
 
 ### What `EDUKE32_XR=play` enables
 
@@ -32,7 +37,7 @@ anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
 | `EDUKE32_XR_SINGLE_PASS` | `1` | multiview world rendering (falls back per frame when needed) |
 | `EDUKE32_XR_AIM` | `right` | weapon hand (`left`, `right` or `head`) |
 | `EDUKE32_XR_HAND_SHOTS` | `1` | shots leave the tracked hand, replicated in multiplayer |
-| `EDUKE32_XR_WEAPON` | `1` | 2D weapon ART follows the controller |
+| `EDUKE32_XR_WEAPON` | `1` | a weapon without a 3D model shows its 2D ART on the hand (never on the HUD) |
 | `EDUKE32_XR_MODELS`, `EDUKE32_XR_AA_MODELS` | `1` | held MD3 pistol/RPG when a model is defined |
 | `EDUKE32_XR_WEAPON_MOUNT` | `1` | palm-calibrated muzzle from model tags |
 | `EDUKE32_XR_HAND_LEFT_TILE` / `_RIGHT_TILE` | `30010` / `30011` | floating hand models |
@@ -43,9 +48,11 @@ anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
 | `EDUKE32_XR_RESOLUTION` | `auto` | game/eye render size from OpenXR's recommended per-eye size (`WxH` to force, `window` to keep the config) |
 | `EDUKE32_XR_RENDER_SCALE` | unset (1.0) | multiplies the OpenXR size, 0.25–2.0 (e.g. `0.8` for speed, `1.4` to supersample) |
 | `EDUKE32_XR_PHYSICAL_THROW` | `1` | pipebombs: hold trigger, swing, release to throw with your hand's real speed/direction; off-hand trigger detonates live remote bombs |
-| `EDUKE32_XR_FINGER_TRACKING` | `1` | OpenXR hand tracking drives the segmented hands when available |
-| `EDUKE32_XR_PIXELATED` | `1` | force nearest (unfiltered) textures |
-| `EDUKE32_XR_BODY_TILE` | `1405` | first-person body = the third-person Duke model (head/arms hidden) |
+| `EDUKE32_XR_FINGER_TRACKING` | `1` | OpenXR hand tracking drives the hands when available |
+| `EDUKE32_XR_PIXELATED` | `1` | unfiltered world ART; model skins nearest up close, mipmapped at a distance |
+| `EDUKE32_XR_WEAPON_WHEEL` | `1` | weapon wheel and gadget wheel |
+| `EDUKE32_XR_WRIST_HUD` | `1` | status bar as two watches: health/armour on the left wrist, ammo/items on the right |
+| `EDUKE32_XR_BODY_TILE` | unset | `1405` shows the third-person Duke model as your first-person body (head/arms hidden) |
 | `EDUKE32_XR_RETRY` | `1` | restart a stopped XR session (1, 2, 4, 8, 16 s backoff, 8 attempts); a held-model receipt mismatch drops one frame instead of stopping |
 
 Any variable you export explicitly overrides the preset. `EDUKE32_XR=1` keeps
@@ -59,53 +66,89 @@ controller aim pose instead of being suppressed.
 | --- | --- |
 | Left stick | move/strafe |
 | Right stick | turn (x; smooth or snap); flick down: quick kick |
-| Right stick click (Index: right trackpad press) | hold: weapon wheel |
+| Right stick click (Index: rest your thumb on the right trackpad) | hold: weapon wheel |
+| Left stick click (Index: rest your thumb on the left trackpad) | hold: gadget wheel |
 | Right trigger | fire |
-| Left trigger | open/use |
+| Left trigger | open/use; with remote pipebombs out: detonate |
 | Right A / B | jump / crouch |
 | Right stick click on Index | quick kick |
-| Left X / Y | previous / next weapon |
+| Left X / Y (Index: left A / B) | previous / next weapon; Y is voice push-to-talk when `voice_mode 1` |
 | Either grip | run |
 | Menu button | menu |
-| Left stick click | voice push-to-talk (when `voice_mode 1`) |
 
 In menus: triggers/A advance, B back, sticks navigate.
 
 Bound profiles: Oculus Touch, Valve Index, HTC Vive (trackpad as stick, right
 menu = crouch, right pad click = jump, hold the right pad up for the weapon
-wheel), WMR (right stick click = wheel, right pad click = jump, right menu =
-crouch), and the KHR simple controller.
+wheel, left pad click = gadget wheel), WMR (right stick click = weapon wheel,
+left stick click = gadget wheel, right pad click = jump, right menu = crouch),
+and the KHR simple controller.
+
+## Body, hands, kicks and pipebombs
+
+- **Hands**: one continuous skinned mesh per hand (Duke's gloved, muscular
+  hands), deformed on the CPU from the tracked joints or the weapon's hold
+  pose; the older 16-part segmented hands are only a fallback.
+- **First-person body**: off by default (`EDUKE32_XR_BODY_TILE=1405` shows the
+  third-person Duke model under you).
+- **Mighty Foot**: kicks (selected foot or quick kick) leave your body and go
+  where you **look**, not where your hand points, and Duke's 3D boot (with a
+  jeans cuff) swings out in front of you. No 2D foot or hand ever appears on
+  the HUD: while a weapon has a 3D model, the native 2D weapon display
+  (including Duke's 2D hands, the kick knee and the lower/raise animation when
+  switching) stays hidden.
+- **Pipebombs**: hold the trigger, swing and let go; the bomb flies with your
+  swing (a firm 4 m/s throw reaches about 8 m, a hard one 20+ m). In remote
+  mode your off hand holds Duke's detonator; its trigger sets the bombs off.
+
+## Wrist HUD
+
+The status bar is drawn as two watches (`EDUKE32_XR_WRIST_HUD`, on in the
+preset): turn your **left** wrist toward you to read health and armour, your
+**right** wrist for ammo and the selected item. They hide while a wheel is open.
+Game messages, voice status and menus stay on the panel in front of you.
 
 ## Aiming, 3D models and the 2D fallback
 
 - **Projected crosshair**: Duke's own crosshair is placed on whatever surface
   the weapon hand's aim ray hits (`crosshair`, `crosshairscale` as usual).
-- **Laser pointer** (`vr_laser 1`, default on): a thin glowing beam from the
+- **Laser pointer** (`vr_laser 1`, default off): a thin glowing beam from the
   weapon's muzzle (or the hand when the weapon has no 3D model) to the aim
   point.
 - **`vr_models`** (default 1): `vr_models 0` turns every VR model off at
   runtime: held weapons, hands, first-person body, other players' 3D Duke and
   the 3D pistol pickup. Everything falls back to the native 2D art like
-  RazeXR: the weapon's HUD sprite (with Duke's 2D hand) rides on the
-  controller and the weapon wheel becomes a 2D ring of pickup sprites on the
-  HUD. `eduke32-vr-play --no-models` starts without loading any VR models.
+  RazeXR: the weapon's HUD sprite (with Duke's 2D hand), cropped to the sprite
+  itself, is held in your hand and the weapon wheel becomes a ring of pickup
+  sprites in front of you. `eduke32-vr-play --no-models` starts without
+  loading any VR models.
 - A weapon that has no 3D model in the asset pack (e.g. a mod's custom gun)
   gets the same 2D sprite on the controller on its own, and that hand's 3D
   model hides so there are never two hands. Verified with
   `tools/vr/smoke_xr_models_toggle.py` (also with `--assets` lacking a model).
 
-## Weapon wheel
+## Weapon wheel and gadget wheel
 
-Hold the right stick click (Valve Index: press the right trackpad; HTC Vive
-wands: hold the right pad up): a ring of your weapons (their 3D models) opens in
-front of and above your weapon hand, facing you, and the held weapon hides.
-Turn your wrist about 20 degrees toward a weapon to highlight it (it grows,
-brightens and spins; the controller pulses), then let go of the stick to
-switch (release the click/trackpad). Weapons you don't have or have no ammo for are dark and can't be
-picked. Shrinker/Expander and Freezer/Flamethrower each have their own slot;
-the switch goes through the normal weapon keys, so it works in multiplayer.
-Turning is paused while the wheel is open. `EDUKE32_XR_WEAPON_WHEEL=0`
-disables it. Verified with `tools/vr/smoke_xr_wheel.py`.
+Like Q3VR's controller selector. Hold the right stick click (Valve Index: just
+rest your thumb on the right trackpad; HTC Vive wands: hold the right pad up): a
+ring of your weapons (their 3D models, each in its own bubble) opens in front of
+and above your weapon hand, facing you, and the held weapon hides. A blue beam
+runs from your hand to a pointer bead on the ring; turn your wrist about 20
+degrees toward a weapon to move the bead onto it: its bubble lights up yellow
+and grows, the weapon spins and the controller pulses. Let go to switch.
+Weapons you don't have or have no ammo for sit in dark bubbles and can't be
+picked. Shrinker/Expander and Freezer/Flamethrower each have their own slot; the
+switch goes through the normal weapon keys, so it works in multiplayer. Turning
+is paused while the weapon wheel is open.
+
+The **gadget wheel** works the same on the off hand (left stick click; Index:
+rest your thumb on the left trackpad): portable medkit, steroids, HoloDuke,
+jetpack and night vision goggles with their charge; picking one uses or toggles
+it through the normal inventory keys. Scuba gear and boots work by themselves.
+
+`EDUKE32_XR_WEAPON_WHEEL=0` disables both. Without VR models the weapon wheel
+shows the pickup sprites, on the ring in front of you rather than on the HUD.
+Verified with `tools/vr/smoke_xr_wheel.py` and `tools/vr/scenes/wheels.json`.
 
 ## Voice chat (multiplayer)
 
@@ -119,7 +162,7 @@ are: louder and panned when near, fading to a centred "radio" level beyond
 | Command / cvar | Default | |
 | --- | --- | --- |
 | `voice_transmit` | 2 | 0 off, 1 on, 2 auto (VR on, desktop off) |
-| `voice_mode` | 0 | 0 voice activation, 1 push-to-talk (VR: left stick click; desktop: `voice_ptt_key` scancode) |
+| `voice_mode` | 0 | 0 voice activation, 1 push-to-talk (VR: hold left Y / Index left B; desktop: `voice_ptt_key` scancode) |
 | `voice_vad_sensitivity` | 55 | 0-100 |
 | `voice_input_gain` / `voice_volume` | 1 / 1 | |
 | `voice_radio_volume` | 0.45 | distant talkers |
@@ -135,8 +178,8 @@ the server to every other client. Opus is BSD-licensed (system library). Verifie
 ## Multiplayer compatibility
 
 Only identical, current builds play together: the network protocol (NETVERSION
-7) always carries the VR hand-shot sample in every input update (flat clients
-send it inactive) and has a voice channel, with no negotiation and no support
+8) always carries the VR shot sample (hand ray and head direction) in every
+input update (flat clients send it inactive) and has a voice channel, with no negotiation and no support
 for older clients or servers, which are refused at connect.
 
 ## Known limits

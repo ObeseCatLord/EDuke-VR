@@ -11,6 +11,14 @@
 #include "mdsprite.h"
 #include "../../vr/eduke_xr.h"
 #include <algorithm>
+#include <cfloat>
+#include <atomic>
+#include <csignal>
+#include <ctime>
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -127,7 +135,7 @@ static bool loadHudModelMap()
 // Runtime switches (console/settings.cfg): vr_models turns every VR model off (held weapons,
 // hands, body, third-person players, 3D weapon wheel) and falls back to native 2D art, like
 // RazeXR; vr_laser draws an aiming beam from the muzzle to the aim point.
-static int32_t vr_models=1, vr_laser=1;
+static int32_t vr_models=1, vr_laser=0;
 constexpr int32_t VRLaserTile=30060;
 } // namespace
 
@@ -188,6 +196,22 @@ static int weaponModelTile(XRWeaponFamily family)
     return family==XRWeaponFamily::AARpg ? RPGSPRITE
         : family==XRWeaponFamily::StockPistol || family==XRWeaponFamily::AAPistol ? FIRSTGUNSPRITE : -1;
 }
+// The mighty foot (KNEE_WEAPON and quick kicks) as a 3D boot on the VR tile reserved for weapon 0.
+constexpr int XRBootModelTile=XRHeldModelTileBase+KNEE_WEAPON;
+static bool bootModelAvailable() { return G_XRModelsEnabled() && md_tilehasmodel(XRBootModelTile,0)>=0; }
+// While the current weapon is shown in 3D (or is the mighty foot with the 3D boot) the native
+// 2D weapon display stays hidden as a whole: Duke's 2D hands, the kick knee, weapon lower/raise
+// animations, fist/tip/access-card hands. Only a weapon without any model falls back to its 2D
+// sprite (RazeXR style).
+static bool nativeWeaponHidden()
+{
+    if (!G_XRModelsEnabled()) return false;
+    auto const p=g_player[myconnectindex].ps;
+    if (!p) return false;
+    if (p->curr_weapon==KNEE_WEAPON) return bootModelAvailable();
+    auto const family=effectiveWeaponFamily();
+    return family!=XRWeaponFamily::Unsupported && md_tilehasmodel(weaponModelTile(family),0)>=0;
+}
 static XRWeaponFamily mountedWeaponFamily()
 {
     auto const family=effectiveWeaponFamily();
@@ -228,6 +252,7 @@ static struct
     uint8_t seen=0; // native body=1, optional magazine=2, optional hand=4
     bool mismatch=false;
     bool weaponSegment=false;
+    bool hideNative=false; // whole native weapon segment hidden (see nativeWeaponHidden)
 } handModelReceipt;
 
 static void accountWorldFrame(bool opaque, bool masks, bool fixture, bool models=true, bool handModels=false)
@@ -343,23 +368,29 @@ static bool aimPoseUsable()
         && (hand<0 || (rawInput.hands[hand].aimValid && validPose(rawInput.hands[hand].aimPose)));
 }
 
-// Weapon wheel (after Q3VR's controller mode): hold the weapon-wheel button (right stick click;
-// Index: right trackpad press; controllers without one: hold the turn stick up) to open it in front
-// of the weapon hand, frozen to the hand's direction at that moment; turn the wrist ~22 degrees
-// toward a slot to hover it (sector by angle) and release to switch. The switch is issued through
-// the native weapon keys (networked input), pressing again for Expander/Flamethrower toggles.
-static struct WeaponWheel
+// Weapon and gadget wheels (after Q3VR's controller mode). Hold a wheel's button to open it in
+// front of that hand (weapon wheel: weapon hand, right stick click / Index right trackpad touch,
+// else hold the turn stick up; gadget wheel: off hand, left stick click / Index left trackpad
+// touch), frozen to the hand's direction at that moment. Turning the wrist ~22 degrees moves a
+// pointer bead (with a beam from the hand) across the ring; the slot under it lights up; release
+// to pick. Weapons switch through the native weapon keys (networked input; pressing again for the
+// Expander/Flamethrower toggles), gadgets through the native inventory keys.
+struct Wheel
 {
+    bool gadgets=false;
     bool open=false, hapticPending=false;
     double openedAt=0;
+    int hand=1;
     XrVector3f centre{}, forward{}, right{}, up{};
     XrVector3f faceRight{}, faceUp{}, faceBack{}; // display frame: upright, facing the head at opening
+    float pointerX=0.f, pointerY=0.f;              // pointer on the ring, radius 1 = slot circle
     int hovered=-1;
     int slots[12]{};
     unsigned count=0;
     int target=-1, lastCurrent=-1;
     double deadline=0, pressUntil=0, waitUntil=0;
-} wheel;
+};
+static Wheel wheel, gadgetWheel{true};
 
 static bool weaponWheelEnabled()
 {
@@ -386,21 +417,56 @@ static int wheelModelTile(DukePlayer_t const *p, int weapon)
     return weapon==PISTOL_WEAPON ? 21 : XRHeldModelTileBase+weapon;
 }
 
-static void wheelFillSlots()
+// Usable inventory items (scuba gear and boots work by themselves): item, native key, pickup tile.
+static constexpr unsigned GadgetCount=5;
+static int gadgetItem(int gadget)
 {
+    static int const items[GadgetCount]={GET_FIRSTAID,GET_STEROIDS,GET_HOLODUKE,GET_JETPACK,GET_HEATS};
+    return items[gadget];
+}
+static int gadgetKey(int gadget)
+{
+    static int const keys[GadgetCount]={gamefunc_MedKit,gamefunc_Steroids,gamefunc_Holo_Duke,gamefunc_Jetpack,gamefunc_NightVision};
+    return keys[gadget];
+}
+static int gadgetTile(int gadget)
+{
+    switch (gadget)
+    {
+        case 0: return FIRSTAID;
+        case 1: return STEROIDS;
+        case 2: return HOLODUKE;
+        case 3: return JETPACK;
+        default: return HEATSENSOR;
+    }
+}
+static bool gadgetSelectable(DukePlayer_t const *p, int gadget) { return p->inv_amount[gadgetItem(gadget)]>0; }
+
+static bool slotSelectable(Wheel const &w, DukePlayer_t const *p, int slot)
+{
+    return w.gadgets ? gadgetSelectable(p,w.slots[slot]) : wheelSelectable(p,w.slots[slot]);
+}
+
+static void wheelFillSlots(Wheel &w)
+{
+    w.count=0;
+    if (w.gadgets)
+    {
+        for (unsigned gadget=0;gadget<GadgetCount;++gadget) w.slots[w.count++]=int(gadget);
+        return;
+    }
     static int const order[]={PISTOL_WEAPON,SHOTGUN_WEAPON,CHAINGUN_WEAPON,RPG_WEAPON,HANDBOMB_WEAPON,SHRINKER_WEAPON,
                               GROW_WEAPON,DEVISTATOR_WEAPON,TRIPBOMB_WEAPON,FREEZE_WEAPON,FLAMETHROWER_WEAPON};
-    wheel.count=0;
     for (int weapon:order)
     {
         if (weapon==GROW_WEAPON && !PLUTOPAK) continue;
         if (weapon==FLAMETHROWER_WEAPON && !WORLDTOUR) continue;
-        wheel.slots[wheel.count++]=weapon;
+        w.slots[w.count++]=weapon;
     }
 }
 
-// The 3D ring needs every slot's model; otherwise the wheel is drawn in 2D on the HUD
-// (G_XRDrawWeaponWheel2D) with the native pickup sprites.
+// The 3D ring needs every slot's model; otherwise the weapons are drawn as 2D pickup sprites on a
+// panel at the ring (G_XRDrawWheelPanels). Gadgets always use the panel.
 static bool wheelUses3D()
 {
     if (!G_XRModelsEnabled()) return false;
@@ -417,47 +483,65 @@ static int wheelKey(int weapon)
     return gamefunc_Weapon_1+weapon;
 }
 
+static bool wheelLog() { return std::getenv("EDUKE32_XR_TEST_WHEEL")!=nullptr; }
+
 // Per input sample: open/close, hover and commit; returns true while the wheel owns the turn stick.
-static bool updateWeaponWheel(uint64_t &buttons, uint32_t rightDown)
+static bool updateWheel(Wheel &w, uint64_t &buttons, uint32_t handDown)
 {
     auto const p=g_player[myconnectindex].ps;
     double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
-    int const hand=aimHand();
-    bool const usable=weaponWheelEnabled() && hand>=0 && inputValid() && p && (p->gm & MODE_GAME) && !(p->gm & MODE_MENU)
+    char const *const name=w.gadgets ? "gadget" : "weapon";
+    int const weaponHand=aimHand()>=0 ? aimHand() : 1;
+    int const hand=w.gadgets ? 1-weaponHand : weaponHand;
+    bool const usable=weaponWheelEnabled() && aimHand()>=0 && inputValid() && p && (p->gm & MODE_GAME) && !(p->gm & MODE_MENU)
         && (unsigned)p->i<MAXSPRITES && sprite[p->i].extra>0 && !p->dead_flag && p->newowner<0 && !ud.recstat
         && rawInput.hands[hand].aimValid && validPose(rawInput.hands[hand].aimPose);
-    // Pending switch: press the slot's native weapon key, release, wait for the change, repeat.
-    if (wheel.target>=0)
+    // Pending pick: press the slot's native key (weapons: release, wait for the change, repeat).
+    if (w.target>=0)
     {
-        int const current=p ? wheelCurrentWeapon(p) : -1;
-        if (!p || current==wheel.target || now>wheel.deadline || !wheelSelectable(p,wheel.target)) wheel.target=-1;
-        else if (now<wheel.pressUntil) buttons|=uint64_t(1)<<wheelKey(wheel.target);
-        else if (now>=wheel.waitUntil || current!=wheel.lastCurrent)
+        if (w.gadgets)
         {
-            wheel.pressUntil=now+.07; wheel.waitUntil=wheel.pressUntil+.35; wheel.lastCurrent=current;
-            buttons|=uint64_t(1)<<wheelKey(wheel.target);
+            if (now<w.pressUntil) buttons|=uint64_t(1)<<gadgetKey(w.target);
+            else w.target=-1;
+        }
+        else
+        {
+            int const current=p ? wheelCurrentWeapon(p) : -1;
+            if (!p || current==w.target || now>w.deadline || !wheelSelectable(p,w.target)) w.target=-1;
+            else if (now<w.pressUntil) buttons|=uint64_t(1)<<wheelKey(w.target);
+            else if (now>=w.waitUntil || current!=w.lastCurrent)
+            {
+                w.pressUntil=now+.07; w.waitUntil=w.pressUntil+.35; w.lastCurrent=current;
+                buttons|=uint64_t(1)<<wheelKey(w.target);
+            }
         }
     }
-    auto const &stickHand=rawInput.hands[1];
-    float const sx=stickHand.stickActive ? stickHand.stick.x : 0.f, sy=stickHand.stickActive ? stickHand.stick.y : 0.f;
-    // The dedicated button when this controller binds one, else the stick-up gesture.
-    bool const button=stickHand.activeButtons & eduke_xr::ButtonWheel;
-    bool const held=button ? bool(rightDown & eduke_xr::ButtonWheel) : wheel.open ? sy>=.35f : (sy>.7f && std::fabs(sx)<.6f);
-    if (!usable) { wheel.open=false; wheel.hovered=-1; return false; }
+    bool held;
+    if (w.gadgets)
+        held=(rawInput.hands[0].activeButtons & eduke_xr::ButtonGadget) && (handDown & eduke_xr::ButtonGadget);
+    else
+    {
+        auto const &stickHand=rawInput.hands[1];
+        float const sx=stickHand.stickActive ? stickHand.stick.x : 0.f, sy=stickHand.stickActive ? stickHand.stick.y : 0.f;
+        // The dedicated button when this controller binds one, else the stick-up gesture.
+        bool const button=stickHand.activeButtons & eduke_xr::ButtonWheel;
+        held=button ? bool(handDown & eduke_xr::ButtonWheel) : w.open ? sy>=.35f : (sy>.7f && std::fabs(sx)<.6f);
+    }
+    if (!usable) { w.open=false; w.hovered=-1; return false; }
     auto const &aim=rawInput.hands[hand].aimPose;
     auto const forward=rotate(aim.orientation,{0,0,-1});
-    if (!wheel.open)
+    if (!w.open)
     {
         if (!held) return false;
-        wheelFillSlots();
-        wheel.open=true; wheel.openedAt=now; wheel.hovered=-1;
+        wheelFillSlots(w);
+        w.open=true; w.openedAt=now; w.hovered=-1; w.hand=hand; w.pointerX=w.pointerY=0.f;
         // Yaw/pitch frame of the hand at opening (no roll), like Q3VR.
         XrVector3f r={-forward.z,0.f,forward.x};
         float const rl=std::sqrt(r.x*r.x+r.z*r.z);
         r=rl>1e-4f ? XrVector3f{r.x/rl,0.f,r.z/rl} : XrVector3f{1,0,0};
-        wheel.forward=forward; wheel.right=r;
-        wheel.up={r.y*forward.z-r.z*forward.y,r.z*forward.x-r.x*forward.z,r.x*forward.y-r.y*forward.x};
-        wheel.centre=aim.position;
+        w.forward=forward; w.right=r;
+        w.up={r.y*forward.z-r.z*forward.y,r.z*forward.x-r.x*forward.z,r.x*forward.y-r.y*forward.x};
+        w.centre=aim.position;
         // Display the ring upright and facing the head (pointing still uses the wrist frame above).
         XrVector3f const head=rawInput.headValid && validPose(rawInput.headPose) ? rawInput.headPose.position
             : XrVector3f{aim.position.x-forward.x,aim.position.y-forward.y,aim.position.z-forward.z};
@@ -465,52 +549,57 @@ static bool updateWeaponWheel(uint64_t &buttons, uint32_t rightDown)
         XrVector3f back={head.x-ring.x,0.f,head.z-ring.z};
         float const bl=std::sqrt(back.x*back.x+back.z*back.z);
         back=bl>1e-4f ? XrVector3f{back.x/bl,0.f,back.z/bl} : XrVector3f{-forward.x,0.f,-forward.z};
-        wheel.faceBack=back; wheel.faceUp={0.f,1.f,0.f};
-        wheel.faceRight={back.z,0.f,-back.x};   // up x back
-        if (std::getenv("EDUKE32_XR_TEST_WHEEL"))
+        w.faceBack=back; w.faceUp={0.f,1.f,0.f};
+        w.faceRight={back.z,0.f,-back.x};   // up x back
+        if (wheelLog())
         {
             char list[64]{}; int at=0;
-            for (unsigned i=0;i<wheel.count;++i) at+=Bsnprintf(list+at,sizeof(list)-at,"%s%d",i?",":"",wheel.slots[i]);
-            LOG_F(INFO,"OpenXR weapon wheel: open slots=%u order=%s.",wheel.count,list);
+            for (unsigned i=0;i<w.count;++i) at+=Bsnprintf(list+at,sizeof(list)-at,"%s%d",i?",":"",w.slots[i]);
+            LOG_F(INFO,"OpenXR %s wheel: open slots=%u order=%s.",name,w.count,list);
         }
-        return true;
+        return !w.gadgets;
     }
     if (!held)
     {
-        wheel.open=false;
-        if (wheel.hovered>=0)
+        w.open=false;
+        if (w.hovered>=0)
         {
-            int const weapon=wheel.slots[wheel.hovered];
-            if (weapon!=wheelCurrentWeapon(p) || (weapon==SHRINKER_WEAPON && p->curr_weapon==GROW_WEAPON)
-                || (weapon==FREEZE_WEAPON && p->curr_weapon==FLAMETHROWER_WEAPON))
+            int const item=w.slots[w.hovered];
+            if (w.gadgets) { w.target=item; w.pressUntil=now+.07; }
+            else if (item!=wheelCurrentWeapon(p) || (item==SHRINKER_WEAPON && p->curr_weapon==GROW_WEAPON)
+                     || (item==FREEZE_WEAPON && p->curr_weapon==FLAMETHROWER_WEAPON))
             {
-                wheel.target=weapon; wheel.deadline=now+1.5; wheel.pressUntil=wheel.waitUntil=0; wheel.lastCurrent=-2;
+                w.target=item; w.deadline=now+1.5; w.pressUntil=w.waitUntil=0; w.lastCurrent=-2;
             }
-            if (std::getenv("EDUKE32_XR_TEST_WHEEL")) LOG_F(INFO,"OpenXR weapon wheel: commit weapon=%d current=%d.",weapon,p->curr_weapon);
+            if (wheelLog()) LOG_F(INFO,"OpenXR %s wheel: commit %s=%d current=%d.",name,w.gadgets ? "gadget" : "weapon",item,p->curr_weapon);
         }
-        else if (std::getenv("EDUKE32_XR_TEST_WHEEL")) LOG_F(INFO,"OpenXR weapon wheel: close without selection.");
-        wheel.hovered=-1;
-        return true;
+        else if (wheelLog()) LOG_F(INFO,"OpenXR %s wheel: close without selection.",name);
+        w.hovered=-1;
+        return !w.gadgets;
     }
-    // Pointer from the wrist rotation since opening; slots clockwise from the top.
+    // Pointer from the wrist rotation since opening (22.5 degrees reach the slot circle);
+    // slots clockwise from the top.
     float const s=std::sin(22.5f*Pi/180.f);
-    float const x=(forward.x*wheel.right.x+forward.y*wheel.right.y+forward.z*wheel.right.z)/s;
-    float const y=(forward.x*wheel.up.x+forward.y*wheel.up.y+forward.z*wheel.up.z)/s;
+    float x=(forward.x*w.right.x+forward.y*w.right.y+forward.z*w.right.z)/s;
+    float y=(forward.x*w.up.x+forward.y*w.up.y+forward.z*w.up.z)/s;
+    float const length=std::hypot(x,y);
+    if (length>1.15f) { x*=1.15f/length; y*=1.15f/length; }
+    w.pointerX=x; w.pointerY=y;
     int hovered=-1;
-    if (now-wheel.openedAt>.1 && std::hypot(x,y)>.55f && wheel.count)
+    if (now-w.openedAt>.1 && length>.55f && w.count)
     {
         float angle=std::atan2(x,y);
         if (angle<0) angle+=2*Pi;
-        int const slot=int(std::lround(angle/(2*Pi/wheel.count)))%int(wheel.count);
-        if (wheelSelectable(p,wheel.slots[slot])) hovered=slot;
+        int const slot=int(std::lround(angle/(2*Pi/w.count)))%int(w.count);
+        if (slotSelectable(w,p,slot)) hovered=slot;
     }
-    if (hovered!=wheel.hovered && hovered>=0)
+    if (hovered!=w.hovered && hovered>=0)
     {
-        wheel.hapticPending=true;
-        if (std::getenv("EDUKE32_XR_TEST_WHEEL")) LOG_F(INFO,"OpenXR weapon wheel: hover weapon=%d.",wheel.slots[hovered]);
+        w.hapticPending=true;
+        if (wheelLog()) LOG_F(INFO,"OpenXR %s wheel: hover %s=%d.",name,w.gadgets ? "gadget" : "weapon",w.slots[hovered]);
     }
-    wheel.hovered=hovered;
-    return true;
+    w.hovered=hovered;
+    return !w.gadgets;
 }
 
 static XrVector2f inputStick(eduke_xr::HandInput const &hand)
@@ -553,7 +642,8 @@ static void publishInput()
     analog.dyaw=std::lround(turn.x*16383.f); analog.dpitch=std::lround(-turn.y*16383.f);
     if (!stickPitchAllowed()) analog.dpitch=0;
     uint64_t wheelButtons=0;
-    bool const wheelOwnsStick=updateWeaponWheel(wheelButtons,down[1]);
+    bool const wheelOwnsStick=updateWheel(wheel,wheelButtons,down[1]);
+    updateWheel(gadgetWheel,wheelButtons,down[0]);
     if (wheelOwnsStick) analog.dyaw=analog.dpitch=0;
     if (float const snap=wheelOwnsStick ? 0.f : snapTurnDegrees())
     {
@@ -576,9 +666,11 @@ static void publishInput()
     bool const kickFlick=!stickPitchAllowed() && !wheelOwnsStick && rawInput.hands[1].stickActive
         && rawInput.hands[1].stick.y<-.7f && std::fabs(rawInput.hands[1].stick.x)<.6f;
     button((down[1]&ButtonStickClick) || kickFlick,gamefunc_Quick_Kick);
-    button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(down[0]&ButtonSecondary,gamefunc_Next_Weapon);
+    // Left Y (Index: left B) is next weapon, or the voice push-to-talk button in push-to-talk mode.
+    bool const talkButton=Voice_PushToTalkMode();
+    button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(!talkButton && (down[0]&ButtonSecondary),gamefunc_Next_Weapon);
     button((down[0]|down[1])&ButtonGrip,gamefunc_Run);
-    Voice_SetPushToTalk(down[0]&ButtonStickClick);   // left stick click: voice push-to-talk
+    Voice_SetPushToTalk(talkButton && (down[0]&ButtonSecondary));
     if (physicalThrowEnabled() && aimHand()>=0)
     {
         int const hand=aimHand(), off=1-hand;
@@ -1201,6 +1293,11 @@ struct HandRig
     std::array<std::vector<Segment>,2> segments;
     std::array<std::vector<std::pair<std::string,HandRigPose>>,2> poses;
     std::vector<std::pair<int,std::string>> holds;
+    // Single-shell hand: one skinned MD3 per side; each vertex follows up to two joints, its
+    // position given in each joint's local frame (the segment MD3 frames, model units).
+    struct ShellVertex { uint8_t joint[2]; float weight; XrVector3f local[2]; };
+    std::array<int,2> shellTile{{-1,-1}};
+    std::array<std::vector<ShellVertex>,2> shell;
     HandRigPose const *pose(unsigned side,char const *name) const
     {
         for (auto const &p:poses[side]) if (p.first==name) return &p.second;
@@ -1245,12 +1342,40 @@ static HandRig const *handRig()
             int tile;
             if (std::fscanf(file,"%d %127s",&tile,name)==2) rig.holds.emplace_back(tile,name);
         }
+        else if (!Bstrcmp(word,"shell"))
+        {
+            // shell <side> <tile> <skin file>: "skin 1 <n>" then n lines "j0 w0 x0 y0 z0 j1 x1 y1 z1".
+            int side,tile;
+            char skinPath[1024];
+            if (std::fscanf(file,"%d %d %1023s",&side,&tile,skinPath)!=3 || unsigned(side)>=2 || unsigned(tile)>=MAXTILES) break;
+            std::vector<HandRig::ShellVertex> vertices;
+            if (FILE *skin=std::fopen(skinPath,"r"))
+            {
+                int version=0, count=0;
+                if (std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==1 && count>0 && count<=4096)
+                {
+                    vertices.resize(count);
+                    for (auto &v:vertices)
+                    {
+                        int j0,j1;
+                        if (std::fscanf(skin,"%d %f %f %f %f %d %f %f %f",&j0,&v.weight,&v.local[0].x,&v.local[0].y,&v.local[0].z,
+                                        &j1,&v.local[1].x,&v.local[1].y,&v.local[1].z)!=9
+                            || unsigned(j0)>=eduke_xr::HandInput::JointCount || unsigned(j1)>=eduke_xr::HandInput::JointCount
+                            || !(v.weight>=0.f && v.weight<=1.f)) { vertices.clear(); break; }
+                        v.joint[0]=uint8_t(j0); v.joint[1]=uint8_t(j1);
+                    }
+                }
+                std::fclose(skin);
+            }
+            if (!vertices.empty()) { rig.shellTile[side]=tile; rig.shell[side]=std::move(vertices); }
+            else LOG_F(WARNING,"OpenXR hand rig: unreadable shell skin %s.",skinPath);
+        }
         else break;
     }
     std::fclose(file);
     usable=!rig.segments[0].empty() || !rig.segments[1].empty();
-    LOG_F(INFO,"OpenXR hand rig: %zu+%zu segments, %zu+%zu poses, %zu holds.",rig.segments[0].size(),rig.segments[1].size(),
-          rig.poses[0].size(),rig.poses[1].size(),rig.holds.size());
+    LOG_F(INFO,"OpenXR hand rig: %zu+%zu segments, %zu+%zu poses, %zu holds, shells %zu+%zu vertices.",rig.segments[0].size(),
+          rig.segments[1].size(),rig.poses[0].size(),rig.poses[1].size(),rig.holds.size(),rig.shell[0].size(),rig.shell[1].size());
     return usable ? &rig : nullptr;
 }
 
@@ -1387,6 +1512,61 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         source=name;
     }
     unsigned count=0;
+    // One continuous skinned shell (one draw) when the rig has it; segments otherwise.
+    int const shellModel=rig->shellTile[hand]>=0 ? md_tilehasmodel(rig->shellTile[hand],0) : -1;
+    if (shellModel>=0)
+    {
+        static std::vector<vec3f_t> deformed[2];
+        auto const &skin=rig->shell[hand];
+        auto &vertices=deformed[hand];
+        vertices.resize(skin.size());
+        vec3_t const anchor=roots[1];   // wrist
+        for (size_t i=0;i<skin.size();++i)
+        {
+            auto const &v=skin[i];
+            float acc[3]={0,0,0};
+            for (unsigned k=0;k<2;++k)
+            {
+                float const w=k ? 1.f-v.weight : v.weight;
+                if (w<=0.f) continue;
+                unsigned const j=v.joint[k];
+                auto const &l=v.local[k];
+                auto const &b=bases[j];
+                acc[0]+=w*(float(roots[j].x-anchor.x)+b[0].x*l.x+b[1].x*l.y+b[2].x*l.z);
+                acc[1]+=w*(float(roots[j].y-anchor.y)+b[0].y*l.x+b[1].y*l.y+b[2].y*l.z);
+                acc[2]+=w*(float(roots[j].z-anchor.z)+b[0].z*l.x+b[1].z*l.y+b[2].z*l.z);
+            }
+            vertices[i]={acc[0],acc[1],acc[2]};
+        }
+        HandSegmentSample sample;
+        sample.context.instance=16+hand*32;
+        sample.context.modelid=shellModel;
+        sample.context.skinnum=tile2model[Ptile2tile(rig->shellTile[hand],0)].skinnum;
+        sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+        sample.context.cframe=sample.context.nframe=0;
+        sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+        sample.context.vertices=vertices.data();
+        sample.context.vertexCount=int32_t(vertices.size());
+        if (md3_preflightcontext(&sample.context))
+        {
+            // Vertices are already Build offsets from the wrist: identity basis.
+            sample.root=anchor;
+            sample.pivot={0,0,0};
+            sample.basis[0]={1,0,0}; sample.basis[1]={0,1,0}; sample.basis[2]={0,0,1};
+            sample.sector=body.sector;
+            updatesector(sample.root.x,sample.root.y,&sample.sector);
+            if (sample.sector<0) sample.sector=body.sector;
+            out.push_back(sample);
+            if (std::getenv("EDUKE32_XR_TEST_HANDS"))
+            {
+                static std::string last[2];
+                if (last[hand]!=source)
+                    LOG_F(INFO,"OpenXR shell hand: hand=%u source=%s vertices=%zu.",hand,source,vertices.size());
+                last[hand]=source;
+            }
+            return 1;
+        }
+    }
     for (auto const &segment:rig->segments[hand])
     {
         int const modelid=md_tilehasmodel(segment.tile,0);
@@ -1421,19 +1601,37 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
 // Weapon wheel models: each slot's held-weapon MD3 scaled to a common size on a ring in front of the
 // hand (open-time direction), muzzle to the right in a 3/4 view. Hovered: larger, brighter, spinning;
 // unavailable: smaller and dark. Same explicit model path as the held weapon and hands.
-static unsigned prepareWeaponWheel(std::vector<HandSegmentSample> &out, Camera const &body, eduke_xr::Runtime *runtime)
+// Wheel geometry shared by the 3D parts and the 2D icon panel (tracking space, metres).
+static XrVector3f wheelCentre(Wheel const &w, float frac)
+{
+    // Raised above the aim line so the held weapon sits below the ring instead of across it.
+    static float const testDistance=[]() { auto v=std::getenv("EDUKE32_XR_TEST_WHEEL_DISTANCE"); return v ? float(std::atof(v)) : .36f; }();
+    return {w.centre.x+w.forward.x*testDistance*frac+w.faceUp.x*.18f*frac,
+            w.centre.y+w.forward.y*testDistance*frac+w.faceUp.y*.18f*frac,
+            w.centre.z+w.forward.z*testDistance*frac+w.faceUp.z*.18f*frac};
+}
+static float wheelRadius(Wheel const &w, float frac) { return (w.gadgets ? .14f : .17f)*frac; }
+static float wheelOpenFraction(Wheel const &w)
+{
+    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    return float(std::min(1.0,(now-w.openedAt)/.1));
+}
+
+constexpr int VRWheelBubbleTile=30061, VRWheelBubbleLitTile=30062, VRWheelPointerTile=30063, VRWheelBeamTile=30064;
+
+static unsigned prepareWheel(Wheel const &w, std::vector<HandSegmentSample> &out, Camera const &body, eduke_xr::Runtime *runtime)
 {
     auto const p=g_player[myconnectindex].ps;
-    if (!wheel.open || !wheel.count || !wheelUses3D() || !overlayEnabled() || !recentered || !inputValid()
+    if (!w.open || !w.count || !G_XRModelsEnabled() || !overlayEnabled() || !recentered || !inputValid()
         || inputRuntime!=runtime || inputGeneration!=runtime->generation() || unsigned(body.sector)>=unsigned(numsectors))
     {
-        if (wheel.open && std::getenv("EDUKE32_XR_TEST_WHEEL"))
-            LOG_F(INFO,"OpenXR weapon wheel: no models usemodels=%d overlay=%d recentered=%d input=%d runtime=%d.",usemodels,
+        if (w.open && wheelLog())
+            LOG_F(INFO,"OpenXR wheel: no models usemodels=%d overlay=%d recentered=%d input=%d runtime=%d.",usemodels,
                   overlayEnabled(),recentered,inputValid(),inputRuntime==runtime);
         return 0;
     }
     double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
-    float const frac=float(std::min(1.0,(now-wheel.openedAt)/.1));
+    float const frac=wheelOpenFraction(w);
     auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
     float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
     auto const toBuild=[&](XrVector3f v) {
@@ -1441,66 +1639,103 @@ static unsigned prepareWeaponWheel(std::vector<HandSegmentSample> &out, Camera c
     };
     auto const add=[](XrVector3f a, XrVector3f b, float k) { return XrVector3f{a.x+b.x*k,a.y+b.y*k,a.z+b.z*k}; };
     auto const cross=[](XrVector3f a, XrVector3f b) { return XrVector3f{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}; };
-    static float const testDistance=[]() { auto v=std::getenv("EDUKE32_XR_TEST_WHEEL_DISTANCE"); return v ? float(std::atof(v)) : .36f; }();
-    // Raised above the aim line so the held weapon sits below the ring instead of across it.
-    XrVector3f const centre=add(add(wheel.centre,wheel.forward,testDistance*frac),wheel.faceUp,.18f*frac);
-    float const radius=.17f*frac;
+    XrVector3f const centre=wheelCentre(w,frac);
+    float const radius=wheelRadius(w,frac);
+    int const instanceBase=w.gadgets ? 144 : 128;
     unsigned count=0;
-    for (unsigned slot=0;slot<wheel.count;++slot)
-    {
-        int const weapon=wheel.slots[slot];
-        int const tile=wheelModelTile(p,weapon);
+    // One MD3 at a tracking-space position with axes (unit vectors) scaled to Build per model unit.
+    auto const place=[&](int tile, int instance, int shade, XrVector3f position, XrVector3f const (&axes)[3], float scale,
+                         vec3f_t pivot) {
         int const modelid=md_tilehasmodel(tile,0);
-        vec3f_t lo, hi;
-        if (modelid<0 || !md3_getframebounds(modelid,0,&lo,&hi)) continue;
-        lo={lo.x/64.f,lo.y/64.f,lo.z/64.f}; hi={hi.x/64.f,hi.y/64.f,hi.z/64.f};   // raw vertex units -> model units
-        bool const selectable=wheelSelectable(p,weapon), hovered=int(slot)==wheel.hovered;
-        float const size=std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,1.f});
-        static float const testScale=[]() { auto v=std::getenv("EDUKE32_XR_TEST_WHEEL_SCALE"); return v ? float(std::atof(v)) : 1.f; }();
-        // Long guns display longer than pistols so they don't shrink to slivers (real length in metres).
-        float const length=size/64.f;
-        float const shown=std::min(.20f,std::max(.11f,.11f+.11f*(length-.25f)));
-        float const metres=shown*(hovered ? 1.25f : selectable ? 1.f : .75f)*frac*testScale;
-        float const angle=2*Pi*slot/wheel.count;
-        XrVector3f const position=add(add(centre,wheel.faceRight,radius*std::sin(angle)),wheel.faceUp,radius*std::cos(angle));
-        // Muzzle to the right, turned 30 degrees away (3/4 view); the hovered weapon spins.
-        float const turn=-30.f*Pi/180.f+(hovered ? float(std::fmod(now-wheel.openedAt,4.0))*Pi*.5f : 0.f);
-        XrVector3f const back=wheel.faceBack;
-        XrVector3f const xAxis=add(XrVector3f{wheel.faceRight.x*std::cos(turn),wheel.faceRight.y*std::cos(turn),wheel.faceRight.z*std::cos(turn)},
-                                   back,-std::sin(turn));
-        XrVector3f const zAxis=wheel.faceUp, yAxis=cross(xAxis,zAxis);
+        if (modelid<0) return false;
         HandSegmentSample sample;
-        sample.context.instance=96+slot;
+        sample.context.instance=instance;
         sample.context.modelid=modelid;
         sample.context.skinnum=tile2model[Ptile2tile(tile,0)].skinnum;
-        sample.context.shade=hovered ? -24 : selectable ? -8 : 24;
+        sample.context.shade=shade;
         sample.context.cframe=sample.context.nframe=0;
         sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
-        if (!md3_preflightcontext(&sample.context)) continue;
+        if (!md3_preflightcontext(&sample.context)) return false;
         auto const d=toBuild(rotate(tracking,{position.x-origin.x,position.y-origin.y,position.z-origin.z}));
         sample.root={body.pos.x+int32_t(std::lround(d.x)),body.pos.y+int32_t(std::lround(d.y)),body.pos.z+int32_t(std::lround(d.z))};
-        sample.pivot={(lo.x+hi.x)*.5f,(lo.y+hi.y)*.5f,(lo.z+hi.z)*.5f};
-        float const k=metres/size;   // model units -> metres for this slot
-        XrVector3f const axes[3]={xAxis,yAxis,zAxis};
+        sample.pivot=pivot;
         for (unsigned axis=0;axis<3;++axis)
         {
             auto const b=toBuild(rotate(tracking,axes[axis]));
-            sample.basis[axis]={b.x*k,b.y*k,b.z*k};
+            sample.basis[axis]={b.x*scale,b.y*scale,b.z*scale};
         }
         sample.sector=body.sector;
         updatesector(sample.root.x,sample.root.y,&sample.sector);
         if (sample.sector<0) sample.sector=body.sector;
         out.push_back(sample);
         ++count;
+        return true;
+    };
+    XrVector3f const faceAxes[3]={w.faceBack,w.faceRight,w.faceUp};   // bubble disc faces +X
+    bool const weaponModels=!w.gadgets && wheelUses3D();
+    for (unsigned slot=0;slot<w.count;++slot)
+    {
+        bool const selectable=slotSelectable(w,p,int(slot)), hovered=int(slot)==w.hovered;
+        float const angle=2*Pi*slot/w.count;
+        XrVector3f const position=add(add(centre,w.faceRight,radius*std::sin(angle)),w.faceUp,radius*std::cos(angle));
+        // Bubble behind the slot: lit and larger when hovered, dark when unavailable.
+        float const bubble=(w.gadgets ? .055f : .046f)*(hovered ? 1.2f : 1.f)*frac;
+        place(hovered ? VRWheelBubbleLitTile : VRWheelBubbleTile,instanceBase+int(slot),hovered ? -16 : selectable ? 0 : 26,
+              add(position,w.faceBack,-.035f),faceAxes,bubble/32.f,{0,0,0});
+        if (!weaponModels) continue;
+        int const weapon=w.slots[slot];
+        int const tile=wheelModelTile(p,weapon);
+        int const modelid=md_tilehasmodel(tile,0);
+        vec3f_t lo, hi;
+        if (modelid<0 || !md3_getframebounds(modelid,0,&lo,&hi)) continue;
+        lo={lo.x/64.f,lo.y/64.f,lo.z/64.f}; hi={hi.x/64.f,hi.y/64.f,hi.z/64.f};   // raw vertex units -> model units
+        float const size=std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,1.f});
+        static float const testScale=[]() { auto v=std::getenv("EDUKE32_XR_TEST_WHEEL_SCALE"); return v ? float(std::atof(v)) : 1.f; }();
+        // Long guns display longer than pistols so they don't shrink to slivers (real length in metres).
+        float const length=size/64.f;
+        float const shown=std::min(.20f,std::max(.11f,.11f+.11f*(length-.25f)));
+        float const metres=shown*(hovered ? 1.25f : selectable ? 1.f : .75f)*frac*testScale;
+        // Muzzle to the right, turned 30 degrees away (3/4 view); the hovered weapon spins.
+        float const turn=-30.f*Pi/180.f+(hovered ? float(std::fmod(now-w.openedAt,4.0))*Pi*.5f : 0.f);
+        XrVector3f const xAxis=add(XrVector3f{w.faceRight.x*std::cos(turn),w.faceRight.y*std::cos(turn),w.faceRight.z*std::cos(turn)},
+                                   w.faceBack,-std::sin(turn));
+        XrVector3f const zAxis=w.faceUp, yAxis=cross(xAxis,zAxis);
+        XrVector3f const axes[3]={xAxis,yAxis,zAxis};
+        place(tile,96+int(slot),hovered ? -24 : selectable ? -8 : 24,position,axes,metres/size,
+              {(lo.x+hi.x)*.5f,(lo.y+hi.y)*.5f,(lo.z+hi.z)*.5f});
     }
-    if (std::getenv("EDUKE32_XR_TEST_WHEEL"))
+    // Pointer bead on the ring plane and the beam to it from the hand.
+    XrVector3f const bead=add(add(add(centre,w.faceRight,radius*w.pointerX),w.faceUp,radius*w.pointerY),w.faceBack,.01f);
+    place(VRWheelPointerTile,160+int(w.gadgets),-32,bead,faceAxes,.011f/32.f,{0,0,0});
+    auto const &aim=rawInput.hands[w.hand].aimPose;
+    if (rawInput.hands[w.hand].aimValid && validPose(aim))
+    {
+        XrVector3f const d={bead.x-aim.position.x,bead.y-aim.position.y,bead.z-aim.position.z};
+        float const length=std::sqrt(dot(d,d));
+        if (length>.02f)
+        {
+            XrVector3f const f={d.x/length,d.y/length,d.z/length};
+            XrVector3f side=std::fabs(f.y)<.95f ? cross(f,XrVector3f{0,1,0}) : XrVector3f{1,0,0};
+            float const sl=std::sqrt(dot(side,side));
+            side={side.x/sl,side.y/sl,side.z/sl};
+            XrVector3f const up=cross(side,f);
+            XrVector3f const axes[3]={f,side,up};
+            // The beam MD3 is 64 units long: stretch X to the distance, keep its thickness.
+            int const modelid=md_tilehasmodel(VRWheelBeamTile,0);
+            if (modelid>=0 && place(VRWheelBeamTile,162+int(w.gadgets),-32,aim.position,axes,1.f/64.f,{0,0,0}))
+            {
+                auto &beam=out.back();
+                beam.basis[0]={beam.basis[0].x*length,beam.basis[0].y*length,beam.basis[0].z*length};
+            }
+        }
+    }
+    if (wheelLog())
     {
         static double lastLog;
         if (now-lastLog>1.0)
         {
             lastLog=now;
-            LOG_F(INFO,"OpenXR weapon wheel: models=%u of %u body=%d,%d,%d first=%d,%d,%d.",count,wheel.count,body.pos.x,body.pos.y,body.pos.z,
-                  count ? out.back().root.x : 0,count ? out.back().root.y : 0,count ? out.back().root.z : 0);
+            LOG_F(INFO,"OpenXR %s wheel: parts=%u slots=%u pointer=%.2f,%.2f.",w.gadgets ? "gadget" : "weapon",count,w.count,w.pointerX,w.pointerY);
         }
     }
     return count;
@@ -1572,27 +1807,300 @@ static bool prepareLaser(HandSegmentSample &sample, Camera const &body, eduke_xr
     return true;
 }
 
+// Immersive pipebombs (remote control): the off hand holds Duke's detonator; its trigger sets the
+// bombs off. The detonator sits in the hand by its hold pose: the hold's rigid hand joints (palm,
+// wrist, knuckles, thumb base; MD3 metres) are fitted onto the relaxed pose's in the controller
+// grip. Positions only, so the fit carries the MD3 frame's handedness with it.
+static bool prepareDetonator(HandModelSample &sample, Camera const &body, eduke_xr::Runtime *runtime, unsigned &hand)
+{
+    auto const p=g_player[myconnectindex].ps;
+    int const tile=XRHeldModelTileBase+HANDREMOTE_WEAPON;
+    if (!physicalThrowEnabled() || aimHand()<0 || !G_XRModelsEnabled() || md_tilehasmodel(tile,0)<0
+        || !overlayEnabled() || !recentered || !inputValid() || inputRuntime!=runtime || inputGeneration!=runtime->generation()
+        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on || p->dead_flag
+        || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || unsigned(body.sector)>=unsigned(numsectors)
+        || unsigned(p->curr_weapon)>=MAX_WEAPONS || PWEAPON(myconnectindex,p->curr_weapon,WorksLike)!=HANDBOMB_WEAPON
+        || Gv_GetVarByLabel("PIPEBOMB_CONTROL",PIPEBOMB_REMOTE,-1,myconnectindex)!=PIPEBOMB_REMOTE) return false;
+    hand=unsigned(1-aimHand());
+    auto const *rig=handRig();
+    auto const &input=rawInput.hands[hand];
+    if (!rig || !input.gripValid || !validPose(input.gripPose)) return false;
+    HandRigPose const *hold=nullptr, *relaxed=rig->pose(hand,"relaxed");
+    for (auto const &h:rig->holds)
+        if (h.first==tile) { hold=rig->pose(hand,h.second.c_str()); break; }
+    if (!hold || !hold->weaponFrame || !relaxed || relaxed->weaponFrame) return false;
+    auto const &g=input.gripPose;
+    // Fit onto the hand as it is drawn: tracked joints when finger tracking drives the hands,
+    // else the relaxed pose in the controller grip.
+    auto const fingers=sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING");
+    bool const tracked=input.jointsValid && fingers && !Bstrcmp(fingers,"1");
+    auto const world=[&](unsigned joint) {
+        if (tracked) return input.joints[joint].position;
+        auto const r=rotate(g.orientation,relaxed->joints[joint].position);
+        return XrVector3f{g.position.x+r.x,g.position.y+r.y,g.position.z+r.z};
+    };
+    auto const model=[&](unsigned joint) { return hold->joints[joint].position; };
+    // Orthonormal frames from three hand directions (Gram-Schmidt): along the hand, across the
+    // knuckles, toward the thumb base. World = M * model with M = Fw * Fm^T.
+    auto const frameOf=[](auto const &at, XrVector3f f[3]) {
+        auto const sub=[](XrVector3f a, XrVector3f b) { return XrVector3f{a.x-b.x,a.y-b.y,a.z-b.z}; };
+        XrVector3f v[3]={sub(at(12),at(1)),sub(at(7),at(22)),sub(at(2),at(0))};
+        for (unsigned k=0;k<3;++k)
+        {
+            for (unsigned j=0;j<k;++j)
+            {
+                float const d=dot(v[k],f[j]);
+                v[k]={v[k].x-f[j].x*d,v[k].y-f[j].y*d,v[k].z-f[j].z*d};
+            }
+            float const l=std::sqrt(dot(v[k],v[k]));
+            if (!(l>1e-5f)) return false;
+            f[k]={v[k].x/l,v[k].y/l,v[k].z/l};
+        }
+        return true;
+    };
+    XrVector3f fw[3], fm[3];
+    if (!frameOf(world,fw) || !frameOf(model,fm)) return false;
+    auto const toWorld=[&](XrVector3f m) {
+        XrVector3f out{};
+        for (unsigned k=0;k<3;++k)
+        {
+            float const c=dot(m,fm[k]);
+            out.x+=fw[k].x*c; out.y+=fw[k].y*c; out.z+=fw[k].z*c;
+        }
+        return out;
+    };
+    auto const palmModel=toWorld(model(0)), palmWorld=world(0);
+    XrVector3f const weaponOrigin={palmWorld.x-palmModel.x,palmWorld.y-palmModel.y,palmWorld.z-palmModel.z};
+
+    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+    auto const toBuild=[&](XrVector3f v) {
+        v=rotate(tracking,v);
+        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+    };
+    sample.context.instance=123;
+    sample.context.modelid=md_tilehasmodel(tile,0);
+    sample.context.skinnum=tile2model[Ptile2tile(tile,0)].skinnum;
+    sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+    // Pressing the off-hand trigger shows the detonator's first fire frame (button down).
+    int frame=-1;
+    if (input.buttons & input.activeButtons & eduke_xr::ButtonSelect) frame=md3_getframeindex(sample.context.modelid,"fire_01");
+    if (frame<0) frame=std::max(0,md3_getframeindex(sample.context.modelid,"rest"));
+    sample.context.cframe=sample.context.nframe=frame;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    if (!md3_preflightcontext(&sample.context)) return false;
+    auto const d=toBuild({weaponOrigin.x-origin.x,weaponOrigin.y-origin.y,weaponOrigin.z-origin.z});
+    sample.root={body.pos.x+int32_t(std::lround(d.x)),body.pos.y+int32_t(std::lround(d.y)),body.pos.z+int32_t(std::lround(d.z))};
+    sample.sector=body.sector;
+    sample.pivot={0,0,0};
+    XrVector3f const md3[3]={{1,0,0},{0,1,0},{0,0,1}};
+    for (unsigned axis=0;axis<3;++axis)
+    {
+        auto const b=toBuild(toWorld(md3[axis]));
+        sample.basis[axis]={b.x/64.f,b.y/64.f,b.z/64.f};
+    }
+    return true;
+}
+
+// The mighty foot (quick kick or KNEE_WEAPON): Duke's boot swings out from under the body toward
+// where the head looks, the sole facing forward at full extension. Presentation only; the kick
+// itself is the native one (aimed with the head direction of the shot sample).
+static bool prepareKickBoot(HandSegmentSample &sample, Camera const &body, eduke_xr::Runtime *runtime)
+{
+    auto const p=g_player[myconnectindex].ps;
+    static double started=-1.;
+    static int lastCounter=-1;
+    if (!bootModelAvailable() || !overlayEnabled() || !recentered || !inputValid() || inputRuntime!=runtime
+        || inputGeneration!=runtime->generation() || !rawInput.headValid || !validPose(rawInput.headPose)
+        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on || p->dead_flag
+        || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || unsigned(body.sector)>=unsigned(numsectors))
+    { lastCounter=-1; return false; }
+    int const counter=p->quick_kick>0 ? 14-p->quick_kick
+        : p->curr_weapon==KNEE_WEAPON && p->kickback_pic>0 ? std::min<int>(p->kickback_pic,14) : -1;
+    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    if (counter>=0 && (lastCounter<0 || counter<lastCounter)) started=now-counter/30.;
+    lastCounter=counter;
+    if (counter<0 || started<0.) return false;
+    float const t=float(std::min(1.,(now-started)/(14./30.)));
+    float const extend=std::sin(Pi*t);
+    if (extend<=.02f) return false;
+
+    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+    auto const toBuild=[&](XrVector3f v) {
+        v=rotate(tracking,v);
+        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+    };
+    // Head yaw and pitch in tracking space; the kick rises with the gaze (15 degrees above it,
+    // -10..+50), high enough to be seen in front of you like the native foot.
+    auto const look=rotate(rawInput.headPose.orientation,{0,0,-1});
+    float const horizontal=std::hypot(look.x,look.z);
+    if (horizontal<1e-3f) return false;
+    XrVector3f const forward={look.x/horizontal,0.f,look.z/horizontal};
+    XrVector3f const side={-forward.z,0.f,forward.x};               // to the right
+    float const gaze=std::max(-10.f*Pi/180.f,std::min(50.f*Pi/180.f,std::atan2(look.y,horizontal)+15.f*Pi/180.f));
+    // Leg from the hip: hanging (-80 degrees) to the kick elevation and back.
+    float const elevation=-80.f*Pi/180.f+(gaze+80.f*Pi/180.f)*extend;
+    XrVector3f const leg={forward.x*std::cos(elevation),std::sin(elevation),forward.z*std::cos(elevation)};
+    auto const &head=rawInput.headPose.position;
+    XrVector3f const hip={head.x+side.x*.10f,head.y-.75f,head.z+side.z*.10f};
+    XrVector3f const ankle={hip.x+leg.x*.85f,hip.y+leg.y*.85f,hip.z+leg.z*.85f};
+    // Boot axes (model +X toe, +Y left, +Z up the shin): the toe is the leg turned 90 degrees up.
+    XrVector3f const toe={forward.x*std::cos(elevation+Pi/2),std::sin(elevation+Pi/2),forward.z*std::cos(elevation+Pi/2)};
+    XrVector3f const shin={-leg.x,-leg.y,-leg.z};
+    XrVector3f const left=cross(shin,toe);
+    int const modelid=md_tilehasmodel(XRBootModelTile,0);
+    sample.context.instance=122;
+    sample.context.modelid=modelid;
+    sample.context.skinnum=tile2model[Ptile2tile(XRBootModelTile,0)].skinnum;
+    sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+    sample.context.cframe=sample.context.nframe=0;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    if (!md3_preflightcontext(&sample.context)) return false;
+    auto const d=toBuild({ankle.x-origin.x,ankle.y-origin.y,ankle.z-origin.z});
+    sample.root={body.pos.x+int32_t(std::lround(d.x)),body.pos.y+int32_t(std::lround(d.y)),body.pos.z+int32_t(std::lround(d.z))};
+    sample.sector=body.sector;
+    sample.pivot={0,0,0};
+    XrVector3f const axes[3]={toe,left,shin};
+    for (unsigned axis=0;axis<3;++axis)
+    {
+        auto const b=toBuild(axes[axis]);
+        sample.basis[axis]={b.x/64.f,b.y/64.f,b.z/64.f};
+    }
+    if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static int logged;
+        if (logged++%30==0) LOG_F(INFO,"OpenXR kick boot: t=%.2f extend=%.2f counter=%d.",t,extend,counter);
+    }
+    return true;
+}
+
 } // namespace
 
-// 2D weapon wheel (no VR models, or a slot without one): the native pickup sprites on a ring
-// at the centre of the HUD panel; same slots, pointing and commit as the 3D ring.
-void G_XRDrawWeaponWheel2D()
+// Screen rectangle covered by the native 2D sprites of the current overlay segment.
+struct SpriteBounds
 {
-    if (!wheel.open || !wheel.count || wheelUses3D()) return;
-    auto const p=g_player[myconnectindex].ps;
-    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
-    float const frac=float(std::min(1.0,(now-wheel.openedAt)/.1));
-    for (unsigned slot=0;slot<wheel.count;++slot)
+    float x0=FLT_MAX, y0=FLT_MAX, x1=-FLT_MAX, y1=-FLT_MAX;
+    bool empty() const { return x1<=x0 || y1<=y0; }
+    void add(float ax0,float ay0,float ax1,float ay1) { x0=std::min(x0,ax0); y0=std::min(y0,ay0); x1=std::max(x1,ax1); y1=std::max(y1,ay1); }
+    // Overlay texture coordinates (v up) of the rectangle, clamped to the screen.
+    void uv(float *rect) const
     {
-        int const weapon=wheel.slots[slot];
-        int tile=weapon==GROW_WEAPON ? GROWSPRITEICON : WeaponPickupSprites[weapon];
-        if (weapon==HANDBOMB_WEAPON && p->ammo_amount[weapon]<=0 && p->hbomb_on) tile=WeaponPickupSprites[HANDREMOTE_WEAPON];
-        if ((unsigned)tile>=MAXTILES) continue;
-        bool const selectable=wheelSelectable(p,weapon), hovered=int(slot)==wheel.hovered;
-        float const angle=2*Pi*slot/wheel.count, radius=62.f*frac;
-        int const x=int(std::lround((160.f+radius*std::sin(angle))*65536.f)), y=int(std::lround((100.f-radius*std::cos(angle))*65536.f));
-        int const scale=int((hovered ? 60000.f : selectable ? 42000.f : 32000.f)*frac);
-        rotatesprite_fs(x,y,scale,0,tile,hovered ? -16 : selectable ? 0 : 28,0,2+8);
+        rect[0]=std::max(0.f,x0/xdim); rect[2]=std::min(1.f,x1/xdim);
+        rect[1]=std::max(0.f,1.f-y1/ydim); rect[3]=std::min(1.f,1.f-y0/ydim);
+    }
+};
+static bool flushHeadPanel()
+{
+    XrPosef panel=rawInput.headPose;
+    auto const offset=rotate(panel.orientation,{0,0,-eduke_xr::PanelDistance});
+    panel.position.x+=offset.x; panel.position.y+=offset.y; panel.position.z+=offset.z;
+    std::string error;
+    if (!menuRuntime->flushMenuOverlay(panel,eduke_xr::PanelHalfWidth,eduke_xr::PanelHalfWidth*float(ydim)/xdim,
+                                       rawInput.headValid && validPose(rawInput.headPose),error))
+    { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
+    return true;
+}
+static XrQuaternionf quatFromAxes(XrVector3f x, XrVector3f y, XrVector3f z)
+{
+    float const trace=x.x+y.y+z.z;
+    XrQuaternionf q;
+    if (trace>0.f)
+    {
+        float const s=std::sqrt(trace+1.f)*2.f;
+        q={(y.z-z.y)/s,(z.x-x.z)/s,(x.y-y.x)/s,.25f*s};
+    }
+    else if (x.x>y.y && x.x>z.z)
+    {
+        float const s=std::sqrt(1.f+x.x-y.y-z.z)*2.f;
+        q={.25f*s,(y.x+x.y)/s,(z.x+x.z)/s,(y.z-z.y)/s};
+    }
+    else if (y.y>z.z)
+    {
+        float const s=std::sqrt(1.f+y.y-x.x-z.z)*2.f;
+        q={(y.x+x.y)/s,.25f*s,(z.y+y.z)/s,(z.x-x.z)/s};
+    }
+    else
+    {
+        float const s=std::sqrt(1.f+z.z-x.x-y.y)*2.f;
+        q={(z.x+x.z)/s,(z.y+y.z)/s,.25f*s,(x.y-y.x)/s};
+    }
+    return q;
+}
+
+static SpriteBounds wheelPanelBounds;
+static void wheelPanelSprite(float x0,float y0,float x1,float y1) { wheelPanelBounds.add(x0,y0,x1,y1); }
+
+// 2D icons of a wheel on a panel at the ring itself (never on the HUD): the gadget wheel's
+// inventory items with their charge, and the weapon wheel's pickup sprites when VR models are off
+// or a slot has none. Drawn as its own overlay segment, cropped and placed facing the head.
+void G_XRDrawWheelPanels()
+{
+    auto const p=g_player[myconnectindex].ps;
+    for (Wheel *w:{&wheel,&gadgetWheel})
+    {
+        if (!w->open || !w->count || (!w->gadgets && wheelUses3D())) continue;
+        if (!menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
+        if (!flushHeadPanel()) return;
+        float const frac=wheelOpenFraction(*w);
+        float const ringUnits=62.f*frac;
+        wheelPanelBounds=SpriteBounds{};
+        polymost_xrSpriteBounds=wheelPanelSprite;
+        for (unsigned slot=0;slot<w->count;++slot)
+        {
+            int const item=w->slots[slot];
+            int tile;
+            if (w->gadgets) tile=gadgetTile(item);
+            else
+            {
+                tile=item==GROW_WEAPON ? GROWSPRITEICON : WeaponPickupSprites[item];
+                if (item==HANDBOMB_WEAPON && p->ammo_amount[item]<=0 && p->hbomb_on) tile=WeaponPickupSprites[HANDREMOTE_WEAPON];
+            }
+            if ((unsigned)tile>=MAXTILES) continue;
+            bool const selectable=slotSelectable(*w,p,int(slot)), hovered=int(slot)==w->hovered;
+            float const angle=2*Pi*slot/w->count;
+            float const cx=160.f+ringUnits*std::sin(angle), cy=100.f-ringUnits*std::cos(angle);
+            int const scale=int((hovered ? 62000.f : selectable ? 50000.f : 38000.f)*frac);
+            // Centre the picture itself: pickup sprites carry ground-anchored tile offsets.
+            float const k=scale/65536.f;
+            float const ox=picanm[tile].xofs*k, oy=picanm[tile].yofs*k;
+            rotatesprite_fs(int(std::lround((cx+ox)*65536.f)),int(std::lround((cy+oy)*65536.f)),scale,0,tile,
+                            hovered ? -16 : selectable ? 0 : 28,0,2+8);
+            if (w->gadgets && selectable)
+            {
+                int const amount=p->inv_amount[gadgetItem(item)];
+                int const percent=item==0 ? amount : item==1 ? (amount+3)>>2 : item==2 ? (amount+15)/24
+                    : item==3 ? (amount+15)>>4 : amount/12;
+                char text[8];
+                Bsnprintf(text,sizeof(text),"%d%%",percent);
+                minitext(int(cx)-int(std::strlen(text))*2,int(cy)+12,text,hovered ? 7 : 0,2+8+16);
+            }
+        }
+        polymost_xrSpriteBounds=nullptr;
+        float rect[4]={0,0,1,1};
+        bool const visible=!wheelPanelBounds.empty() && rawInput.headValid;
+        float halfWidth=.01f, halfHeight=.01f;
+        XrPosef pose{}; pose.orientation.w=1;
+        if (visible)
+        {
+            auto &b=wheelPanelBounds;
+            b.x0-=2; b.y0-=2; b.x1+=2; b.y1+=2;
+            b.uv(rect);
+            float const metresPerPixel=wheelRadius(*w,frac)/std::max(1.f,ringUnits*ydim/200.f);
+            float const x0=rect[0]*xdim, x1=rect[2]*xdim, y0=(1.f-rect[3])*ydim, y1=(1.f-rect[1])*ydim;
+            halfWidth=(x1-x0)*.5f*metresPerPixel; halfHeight=(y1-y0)*.5f*metresPerPixel;
+            float const dx=((x0+x1)*.5f-xdim*.5f)*metresPerPixel, dy=-((y0+y1)*.5f-ydim*.5f)*metresPerPixel;
+            auto const c=wheelCentre(*w,frac);
+            pose.position={c.x+w->faceRight.x*dx+w->faceUp.x*dy+w->faceBack.x*.02f,
+                           c.y+w->faceRight.y*dx+w->faceUp.y*dy+w->faceBack.y*.02f,
+                           c.z+w->faceRight.z*dx+w->faceUp.z*dy+w->faceBack.z*.02f};
+            pose.orientation=quatFromAxes(w->faceRight,w->faceUp,w->faceBack);
+        }
+        std::string error;
+        if (!menuRuntime->flushMenuOverlay(pose,halfWidth,halfHeight,visible,error,nullptr,nullptr,rect))
+        { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return; }
     }
 }
 
@@ -1792,7 +2300,14 @@ static bool weaponReceiptMatches()
         && fresh.counter==saved.counter && fresh.reloading==saved.reloading;
 }
 
+static bool suppressWeaponTile(int32_t tile, int32_t uniqueID);
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
+{
+    // Receipts first (they validate the held model), then the blanket rule.
+    bool const handled=suppressWeaponTile(tile,uniqueID);
+    return handled || (handModelReceipt.weaponSegment && handModelReceipt.hideNative);
+}
+static bool suppressWeaponTile(int32_t tile, int32_t uniqueID)
 {
     // The weapon wheel hides the held weapon (3D model and native weapon ART) while it is open.
     if (wheel.open && handModelReceipt.weaponSegment) return true;
@@ -1823,8 +2338,16 @@ static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int3
                                 int32_t flags,int32_t angle,int32_t alpha,int32_t blend);
 // Every rotatesprite during the native weapon display segment: remember the
 // mapped HUD tile, and hide the segment while its HUD-mapped model is shown.
+static bool weaponSegmentTileReceipt(int32_t tile,int32_t uniqueID,int32_t shade,int32_t palette,
+                                     int32_t flags,int32_t angle,int32_t alpha,int32_t blend);
 static bool weaponSegmentTile(int32_t tile,int32_t uniqueID,int32_t shade,int32_t palette,
                               int32_t flags,int32_t angle,int32_t alpha,int32_t blend)
+{
+    bool const handled=weaponSegmentTileReceipt(tile,uniqueID,shade,palette,flags,angle,alpha,blend);
+    return handled || (handModelReceipt.weaponSegment && handModelReceipt.hideNative);
+}
+static bool weaponSegmentTileReceipt(int32_t tile,int32_t uniqueID,int32_t shade,int32_t palette,
+                                     int32_t flags,int32_t angle,int32_t alpha,int32_t blend)
 {
     auto &receipt=handModelReceipt;
     if (wheel.open && receipt.weaponSegment) return true;   // weapon wheel open: no held weapon
@@ -2009,6 +2532,8 @@ void G_XRUpdateShotInput()
             }
             auto const local=rotate(tracking,{position.x-origin.x,position.y-origin.y,position.z-origin.z});
             auto const forward=rotate(multiply(tracking,pose.orientation),{0,0,-1});
+            auto const look=rotate(multiply(tracking,rawInput.headPose.orientation),{0,0,-1});
+            float const head[3]={-look.z*co-look.x*si,-look.z*si+look.x*co,-look.y};
             float const offsets[3]={(-local.z*co-local.x*si)*UnitsPerMetre,(-local.z*si+local.x*co)*UnitsPerMetre,-local.y*ZUnitsPerMetre};
             float const direction[3]={-forward.z*co-forward.x*si,-forward.z*si+forward.x*co,-forward.y};
             bool bounded=calibrated;
@@ -2017,6 +2542,7 @@ void G_XRUpdateShotInput()
                 bounded=bounded && std::isfinite(offsets[i]) && std::fabs(offsets[i])<32767.f;
                 if (bounded) input.offset[i]=int16_t(std::lround(offsets[i]));
                 input.direction[i]=int16_t(std::lround(std::max(-1.f,std::min(1.f,direction[i]))*32767.f));
+                input.head[i]=int16_t(std::lround(std::max(-1.f,std::min(1.f,head[i]))*32767.f));
             }
             input.flags|=VRShotValid;
             if (xrThrow.pending && physicalThrowEnabled())
@@ -2234,6 +2760,9 @@ void G_XRBeginMenuPresentation() { beginMenuPresentation(false); }
 // Reuse the acquired frame and native UI target without arming a world draw.
 void G_XRBeginScreenPresentation() { beginMenuPresentation(true); }
 
+static SpriteBounds weaponCardBounds;
+static void weaponCardSprite(float x0,float y0,float x1,float y1) { weaponCardBounds.add(x0,y0,x1,y1); }
+
 bool G_XRBeginWeapon()
 {
     auto const enabled=sdlayer_xr_option("EDUKE32_XR_WEAPON");
@@ -2256,6 +2785,9 @@ bool G_XRBeginWeapon()
             { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
         }
     handModelReceipt.weaponSegment=true;
+    handModelReceipt.hideNative=nativeWeaponHidden();
+    weaponCardBounds=SpriteBounds{};
+    polymost_xrSpriteBounds=weaponCardSprite;
     if (std::getenv("EDUKE32_XR_TEST_HELD"))
     {
         static int reported=-1;
@@ -2271,9 +2803,16 @@ bool G_XRBeginWeapon()
     return true;
 }
 
+bool G_XRHideHudWeapon()
+{
+    auto const enabled=sdlayer_xr_option("EDUKE32_XR_WEAPON");
+    return enabled && !Bstrcmp(enabled,"1") && sdlayer_xr_worldActive();
+}
+
 void G_XREndWeapon(bool captured)
 {
     handModelReceipt.weaponSegment=false;
+    polymost_xrSpriteBounds=nullptr;
     if (!hudModelMap.empty() && hudSegmentObserved)
     {
         // A newly seen mapped tile (or a weapon change) updates the prediction.
@@ -2321,10 +2860,23 @@ void G_XREndWeapon(bool captured)
                 LOG_F(INFO,"OpenXR resolved hand: pos=%d,%d,%d sector=%d clamped=%d.",position.x,position.y,position.z,sector,clamped);
         }
     }
-    // Native ART is a perspective weapon card. Provisional grip pivot is native
-    // (192,180) in its 320x200, 4:3 subregion. Animation/palette/CON remain native.
-    auto const offset=rotate(pose.orientation,{-.08f,.24f,-.15f});
-    pose.position.x+=offset.x; pose.position.y+=offset.y; pose.position.z+=offset.z;
+    // RazeXR-style 2D fallback: only the drawn native sprites (cropped to their bounds) form a
+    // card held in the hand, its bottom edge at the controller and facing back along the aim;
+    // at 0.6 m per screen height, as large as the native weapon reads on a flat screen.
+    float rect[4]={0,0,1,1};
+    visible=visible && !weaponCardBounds.empty();
+    float halfWidth=.01f, halfHeight=.01f;
+    if (visible)
+    {
+        weaponCardBounds.uv(rect);
+        float const metresPerPixel=.6f/ydim;
+        halfWidth=std::max(.01f,(rect[2]-rect[0])*xdim*metresPerPixel*.5f);
+        halfHeight=std::max(.01f,(rect[3]-rect[1])*ydim*metresPerPixel*.5f);
+        // The sprite's horizontal centre sits over the hand; ART is drawn right of centre
+        // for a right-handed weapon, so this also keeps a left-handed card in its own hand.
+        auto const offset=rotate(pose.orientation,{0.f,halfHeight-.03f,-.04f});
+        pose.position.x+=offset.x; pose.position.y+=offset.y; pose.position.z+=offset.z;
+    }
     char const *prefix=!weaponAnimationCapture.empty() ? weaponAnimationCapture.c_str()
         : worldFrames==59 ? std::getenv("EDUKE32_XR_WEAPON_OUTPUT") : nullptr;
     if (prefix)
@@ -2339,8 +2891,91 @@ void G_XREndWeapon(bool captured)
         }
     }
     std::string error;
-    if (!menuRuntime->flushMenuOverlay(pose,.3f*float(xdim)/ydim,.3f,visible,error,prefix))
+    if (!menuRuntime->flushMenuOverlay(pose,halfWidth,halfHeight,visible,error,prefix,nullptr,rect))
     { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
+}
+
+// Wrist HUD: the native mini status bar is drawn as one overlay segment and split by screen
+// half; the left half (health, armour) becomes a watch face on the left wrist, the right half
+// (ammo, inventory) one on the right wrist. Quotes, voice and menus stay on the head panel.
+static bool wristHudRequested()
+{
+    auto const value=sdlayer_xr_option("EDUKE32_XR_WRIST_HUD");
+    return value && !Bstrcmp(value,"1");
+}
+static SpriteBounds wristBounds[2];
+static bool wristSegment;
+static void wristSprite(float x0,float y0,float x1,float y1)
+{
+    wristBounds[(x0+x1)*.5f<xdim*.5f ? 0 : 1].add(x0,y0,x1,y1);
+}
+bool G_XRWristHudActive() { return wristSegment; }
+
+bool G_XRBeginWristHud()
+{
+    auto const p=g_player[myconnectindex].ps;
+    if (!wristHudRequested() || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()
+        || !inputValid() || screenpeek!=myconnectindex || ud.overhead_on || !(p->gm & MODE_GAME))
+    {
+        static bool reported;
+        if (!reported && std::getenv("EDUKE32_XR_TEST_HELD") && wristHudRequested())
+            LOG_F(INFO,"OpenXR wrist HUD skipped: runtime=%d bound=%d input=%d.",menuRuntime!=nullptr,
+                  menuRuntime && menuRuntime->menuOverlayTargetBound(),int(inputValid()));
+        reported=true;
+        return false;
+    }
+    if (!flushHeadPanel()) return false;   // HUD drawn so far stays on the head panel
+    wristBounds[0]=wristBounds[1]=SpriteBounds{};
+    polymost_xrSpriteBounds=wristSprite;
+    wristSegment=true;
+    return true;
+}
+
+void G_XREndWristHud(bool captured)
+{
+    polymost_xrSpriteBounds=nullptr;
+    wristSegment=false;
+    if (!captured || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
+    // Same scale on both wrists: the wider half spans 13 cm.
+    float const widest=std::max({wristBounds[0].empty() ? 0.f : wristBounds[0].x1-wristBounds[0].x0,
+                                 wristBounds[1].empty() ? 0.f : wristBounds[1].x1-wristBounds[1].x0,1.f});
+    float const metresPerPixel=std::min(.10f/widest,.3f/ydim);
+    if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static int logged;
+        if (logged++%300==0)
+            LOG_F(INFO,"OpenXR wrist HUD: left=%.0f,%.0f-%.0f,%.0f right=%.0f,%.0f-%.0f,%.0f hands=%d,%d.",
+                  wristBounds[0].x0,wristBounds[0].y0,wristBounds[0].x1,wristBounds[0].y1,
+                  wristBounds[1].x0,wristBounds[1].y0,wristBounds[1].x1,wristBounds[1].y1,
+                  int(rawInput.hands[0].aimValid),int(rawInput.hands[1].aimValid));
+    }
+    std::string error;
+    for (unsigned hand=0;hand<2;++hand)
+    {
+        auto const &input=rawInput.hands[hand];
+        float rect[4]={0,0,1,1};
+        bool visible=!wristBounds[hand].empty() && input.aimValid && validPose(input.aimPose)
+            && rawInput.headValid && !wheel.open && !gadgetWheel.open;
+        float halfWidth=.01f, halfHeight=.01f;
+        XrPosef pose=input.aimPose;
+        if (visible)
+        {
+            wristBounds[hand].uv(rect);
+            halfWidth=(rect[2]-rect[0])*xdim*metresPerPixel*.5f;
+            halfHeight=(rect[3]-rect[1])*ydim*metresPerPixel*.5f;
+            // On top of the wrist behind the controller, read like a watch with the arm across the
+            // chest: text along the forearm (left to right as seen), its top edge away from you,
+            // the face tilted 35 degrees toward the eyes. Panel axes in the aim frame:
+            // left X=-Z Y=-X, right X=+Z Y=+X, normal +Y.
+            auto const offset=rotate(pose.orientation,{0.f,.035f,.11f});
+            pose.position.x+=offset.x; pose.position.y+=offset.y; pose.position.z+=offset.z;
+            XrQuaternionf const face=hand==0 ? XrQuaternionf{-.5f,.5f,.5f,.5f} : XrQuaternionf{-.5f,-.5f,-.5f,.5f};
+            float const half=Pi*35.f/360.f;
+            pose.orientation=multiply(multiply(pose.orientation,face),XrQuaternionf{std::sin(half),0,0,std::cos(half)});
+        }
+        if (!menuRuntime->flushMenuOverlay(pose,halfWidth,halfHeight,visible,error,nullptr,nullptr,rect,hand==0))
+        { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return; }
+    }
 }
 
 static char const *crosshairCapturePrefix()
@@ -2617,6 +3252,11 @@ static void updateHaptics(eduke_xr::Runtime *runtime)
         wheel.hapticPending=false;
         runtime->vibrate(hand,.6f,.05f);
     }
+    if (gadgetWheel.hapticPending)
+    {
+        gadgetWheel.hapticPending=false;
+        runtime->vibrate(1-hand,.6f,.05f);
+    }
     bool const spent=weapon==lastWeapon && ammo<lastAmmo;
     bool const swing=weapon==KNEE_WEAPON && lastWeapon==KNEE_WEAPON && lastCounter==0 && p->kickback_pic>0;
     if (spent || swing)
@@ -2635,10 +3275,65 @@ static void updateHaptics(eduke_xr::Runtime *runtime)
     lastWeapon=weapon; lastAmmo=ammo; lastHealth=health; lastCounter=p->kickback_pic;
 }
 
+// Test-only CPU profiler (EDUKE32_XR_PROFILE=1): samples the main thread's call stack every 1 ms
+// of its own CPU time; the console request "xr_profile <path>" writes inclusive/self counts per
+// function (symbols via dladdr; build with -rdynamic or symbolize addresses offline).
+namespace xrprofile
+{
+constexpr unsigned Depth=24, Capacity=1<<16;
+static void *samples[Capacity][Depth];
+static uint8_t depths[Capacity];
+static std::atomic<unsigned> count{0};
+static void onSample(int, siginfo_t *, void *)
+{
+    unsigned const at=count.fetch_add(1);
+    if (at<Capacity) depths[at]=uint8_t(backtrace(samples[at],Depth));
+}
+static void start()
+{
+    static bool started;
+    if (started || !std::getenv("EDUKE32_XR_PROFILE")) return;
+    started=true;
+    struct sigaction action{};
+    action.sa_sigaction=onSample; action.sa_flags=SA_SIGINFO|SA_RESTART;
+    sigaction(SIGPROF,&action,nullptr);
+    void *warm[4]; backtrace(warm,4);   // load the unwinder before the first signal
+    sigevent event{};
+    event.sigev_notify=SIGEV_THREAD_ID; event._sigev_un._tid=int(syscall(SYS_gettid)); event.sigev_signo=SIGPROF;
+    timer_t timer;
+    if (timer_create(CLOCK_THREAD_CPUTIME_ID,&event,&timer)) return;
+    itimerspec spec{}; spec.it_interval.tv_nsec=spec.it_value.tv_nsec=1000000;
+    timer_settime(timer,0,&spec,nullptr);
+    LOG_F(INFO,"OpenXR profiler: sampling the main thread every 1 ms of CPU.");
+}
+static void dump(char const *path)
+{
+    // One stack per line, innermost first: library symbol, else module+offset (symbolize the
+    // game's own frames offline, e.g. tools/vr/profile_report.py with addr2line).
+    unsigned const n=std::min<unsigned>(count.load(),Capacity);
+    FILE *f=std::fopen(path,"w");
+    if (!f) return;
+    for (unsigned i=0;i<n;++i)
+    {
+        for (unsigned d=1;d<depths[i];++d)   // frame 0 is the signal handler
+        {
+            Dl_info info{};
+            if (dladdr(samples[i][d],&info) && info.dli_sname) std::fprintf(f,"%s ",info.dli_sname);
+            else std::fprintf(f,"%s+%#lx ",info.dli_fname ? info.dli_fname : "?",
+                              (unsigned long)((char *)samples[i][d]-(char *)info.dli_fbase));
+        }
+        std::fputc('\n',f);
+    }
+    std::fclose(f);
+    count=0;
+}
+}
+
 // Test hook: run native console commands written into the request file
 // (one per line), then remove it. Used by harnesses to give/switch weapons.
 static void runConsoleRequest()
 {
+    xrprofile::start();
     auto const request=std::getenv("EDUKE32_XR_CONSOLE_REQUEST");
     if (!request) return;
     FILE *file=std::fopen(request,"r");
@@ -2667,6 +3362,27 @@ static void runConsoleRequest()
             }
             continue;
         }
+        if (!command.compare(0,11,"xr_profile "))
+        {
+            xrprofile::dump(command.c_str()+11);
+            continue;
+        }
+        if (command=="xr_items")
+        {
+            // Test hook: a full inventory (native maxima).
+            auto const p=g_player[myconnectindex].ps;
+            p->inv_amount[GET_FIRSTAID]=100; p->inv_amount[GET_STEROIDS]=400; p->inv_amount[GET_HOLODUKE]=2400;
+            p->inv_amount[GET_JETPACK]=1600; p->inv_amount[GET_HEATS]=1200; p->inv_amount[GET_SCUBA]=6400;
+            p->inv_amount[GET_BOOTS]=200;
+            continue;
+        }
+        if (!command.compare(0,10,"xr_select "))
+        {
+            // Test hook: switch the local player's weapon directly.
+            int const weapon=std::atoi(command.c_str()+10);
+            if (unsigned(weapon)<MAX_WEAPONS) P_AddWeapon(g_player[myconnectindex].ps,weapon,1);
+            continue;
+        }
         if (command=="xr_where")
         {
             // Read-only position report for multiplayer harnesses.
@@ -2691,9 +3407,28 @@ static void runConsoleRequest()
     }
 }
 
+// Load every VR model skin once per level, while the level loads, instead of the first time a
+// weapon, the wheel or a hand pose shows it (a visible hitch in the headset).
+static void precacheVRModels()
+{
+    static int precachedLevel=-1;
+    auto const p=g_player[myconnectindex].ps;
+    if (!sdlayer_xr_worldActive() || !G_XRModelsEnabled() || !p || !(p->gm & MODE_GAME)) return;
+    int const level=ud.volume_number*MAXLEVELS+ud.level_number;
+    if (level==precachedLevel) return;
+    precachedLevel=level;
+    double const start=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    unsigned count=0;
+    auto const precache=[&](int tile) { if (md_tilehasmodel(tile,0)>=0) { polymost_precache(tile,0,1); ++count; } };
+    precache(21);
+    for (int tile=XRHeldModelTileBase-10;tile<XRHeldModelTileBase+300 && tile<MAXTILES;++tile) precache(tile);
+    LOG_F(INFO,"OpenXR precached %u VR models in %.0f ms.",count,(double(timerGetNanoTicks())/double(timerGetNanoTickRate())-start)*1000.);
+}
+
 void G_XRBeginFrame()
 {
     runConsoleRequest();
+    precacheVRModels();
     crosshairViews={};
     modelAnimationCapture.clear(); weaponAnimationCapture.clear();
     // Credit only the exact completed projection, never a rendered image that
@@ -3278,22 +4013,29 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         // carries Duke's own hand) on the controller, so that hand's 3D model stays hidden.
         auto const cardOption=sdlayer_xr_option("EDUKE32_XR_WEAPON");
         bool const cardHand=!weaponModel && !wheel.open && cardOption && !Bstrcmp(cardOption,"1")
-            && g_player[myconnectindex].ps->curr_weapon!=KNEE_WEAPON;
+            && g_player[myconnectindex].ps->curr_weapon!=KNEE_WEAPON && !nativeWeaponHidden();
+        HandModelSample detonator;
+        unsigned detonatorHand=2;
+        if (good && !fixtureTest && !wheel.open && !gadgetWheel.open && prepareDetonator(detonator,body,runtime,detonatorHand))
+            models[modelCount++]=&detonator;
         for (unsigned hand=0;hand<2 && good && !fixtureTest;++hand)
         {
             if (cardHand && int(hand)==aimHand()) continue;
             bool const holding=weaponModel && int(hand)==aimHand();
+            HandModelSample const *held=holding ? &handModel : hand==detonatorHand ? &detonator : nullptr;
+            int const heldTile=holding ? weaponModelTile(handModel.presentation.family)
+                : hand==detonatorHand ? XRHeldModelTileBase+HANDREMOTE_WEAPON : -1;
             size_t const before=segments.size();
-            if (prepareHandSegments(segments,hand,body,runtime,holding ? &handModel : nullptr,
-                                    holding ? weaponModelTile(handModel.presentation.family) : -1))
+            if (prepareHandSegments(segments,hand,body,runtime,held,heldTile))
                 continue; // Segmented hand replaces the single-mesh floating hand.
             segments.resize(before);
             if (prepareGripModel(grips[hand],hand,body,runtime))
             { models[modelCount++]=&grips[hand]; gripMask|=1u<<hand; }
         }
-        if (good && !fixtureTest) prepareWeaponWheel(segments,body,runtime);
-        HandSegmentSample laser;
+        if (good && !fixtureTest) { prepareWheel(wheel,segments,body,runtime); prepareWheel(gadgetWheel,segments,body,runtime); }
+        HandSegmentSample laser, boot;
         if (good && !fixtureTest && prepareLaser(laser,body,runtime)) segments.push_back(laser);
+        if (good && !fixtureTest && prepareKickBoot(boot,body,runtime)) segments.push_back(boot);
         for (auto &segment:segments)
             if (modelCount<MaxWorldModels-1) models[modelCount++]=&segment;
         if (good && !fixtureTest && prepareBodyModel(bodyModel,body,runtime)) models[modelCount++]=&bodyModel;

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Assemble the EDuke32 VR model DEF, hand rig and HUD-tile map.
 
-Usage: build_vr_def.py ASSETS DATA [--aa] [--release]
+Usage: build_vr_def.py ASSETS DATA [--aa] [--release] [--glow]
 
 ASSETS is the duke-vr-assets checkout, DATA the private output directory (the
 game's -j search path). Prints the DEF to stdout and writes DATA/hand-rig.txt
@@ -14,9 +14,9 @@ Sources in priority order:
                     game data (Duke Nukem Forever); local use only, never with
                     --release
 Tiles: 21 stock pistol, 30020+weapon held weapons, 30010/30011 single-mesh
-hands, 30060 aiming laser, APLAYER (1405+) Duke for both third and first person (torso/legs),
+hands, 30020 mighty foot boot, 30060 aiming laser, 30061-30064 wheel parts, APLAYER (1405+) Duke for both third and first person (torso/legs),
 30100+family AA held weapons,
-30200+side*32+segment finger-tracking hand segments.
+30200+side*32+segment finger-tracking hand segments, 30264+side single-shell hands.
 """
 import json
 import struct
@@ -35,6 +35,9 @@ JOINTS = ['palm', 'wrist', 'thumb_metacarpal', 'thumb_proximal', 'thumb_distal',
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     aa, release = '--aa' in sys.argv, '--release' in sys.argv
+    # Glow maps make the headset draw every VR model once per eye instead of once for both
+    # (multiview); the parts that must glow (laser, wheel pointer and beam) are drawn fullbright.
+    glow_maps = '--glow' in sys.argv
     assets, data = Path(args[0]), Path(args[1])
     v6 = assets / 'v6-original/exports/eduke32'
     out, notes = [], []
@@ -50,6 +53,8 @@ def main():
         link(md3, name + '.md3')
         link(png, name + '.png')
         glow = png.with_name(png.stem + '_glow.png')
+        if not glow_maps:
+            glow = Path('/nonexistent')
         if glow.is_file():
             link(glow, name + '_glow.png')
         surfaces = struct.unpack_from('<i', md3.read_bytes(), 84)[0]
@@ -85,6 +90,18 @@ def main():
     if (v6 / 'vr_laser.md3').is_file() and (v6 / 'vr_laser.png').is_file():
         model(v6 / 'vr_laser.md3', v6 / 'vr_laser.png', 30060, 'vr_laser')
         notes.append(f'laser: {v6 / "vr_laser.md3"}')
+
+    # Weapon/gadget wheel parts (Q3VR-style selector): slot bubble, hovered bubble, pointer, beam.
+    for tile, name in ((30061, 'vr_wheel_bubble'), (30062, 'vr_wheel_bubble_lit'), (30063, 'vr_wheel_pointer'),
+                       (30064, 'vr_wheel_beam')):
+        if (v6 / f'{name}.md3').is_file() and (v6 / f'{name}.png').is_file():
+            model(v6 / f'{name}.md3', v6 / f'{name}.png', tile, name)
+
+    # Mighty Foot boot (vr_boot) on the held-weapon tile of weapon 0 (KNEE_WEAPON), drawn by the
+    # engine during kicks.
+    if (v6 / 'vr_boot.md3').is_file() and (v6 / 'vr_boot.png').is_file():
+        model(v6 / 'vr_boot.md3', v6 / 'vr_boot.png', 30020, 'vr_boot')
+        notes.append(f'boot: {v6 / "vr_boot.md3"}')
 
     # Third-person Duke for other players: native APLAYER (1405) action tiles,
     # from the stock GAME.CON actions (start, frames, 5 view angles each).
@@ -184,6 +201,13 @@ def main():
                     continue
                 rig_lines.append(f'pose {side_index} {pose} {frame}')
                 rig_lines += [' '.join(f'{x:.6f}' for x in joint) for joint in joints]
+            # Single-shell hand (one skinned mesh, drawn instead of the segments when present).
+            shell = v6 / f'hands/vr_hand_{side}_shell'
+            if all(shell.with_suffix(ext).is_file() for ext in ('.md3', '.png', '.skin')):
+                tile = 30264 + side_index
+                model(shell.with_suffix('.md3'), shell.with_suffix('.png'), tile, f'vr_hand_{side}_shell', frame='bind')
+                link(shell.with_suffix('.skin'), f'vr_hand_{side}_shell.skin')
+                rig_lines.append(f'shell {side_index} {tile} {data / f"vr_hand_{side}_shell.skin"}')
         rig_lines += [f'hold {tile} {name}' for tile, name in holds]
     (data / 'hand-rig.txt').write_text('\n'.join(rig_lines) + '\n')
 

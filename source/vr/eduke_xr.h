@@ -21,7 +21,8 @@ enum HandButton : uint32_t
     ButtonSecondary  = 1u << 3,
     ButtonMenu       = 1u << 4,
     ButtonStickClick = 1u << 5,
-    ButtonWheel      = 1u << 6,   // weapon wheel (right stick click; Index: right trackpad press)
+    ButtonWheel      = 1u << 6,   // weapon wheel (right stick click; Index: touch the right trackpad)
+    ButtonGadget     = 1u << 7,   // gadget wheel (left stick click; Index: touch the left trackpad)
 };
 
 struct HandInput
@@ -113,8 +114,11 @@ class Runtime
     // same capture. The original presentation owner and acquired frame remain.
     // Optional two column-major native clip matrices place a world-space segment
     // with LEQUAL testing against existing eye depth; depth writes remain off.
+    // uvRect (u0,v0,u1,v1; v up) shows only that crop of the segment on the quad; keep=true
+    // leaves the segment in place for another crop.
     bool        flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfHeight, bool visible,
-                                 std::string &error, char const *capturePrefix = nullptr, float const *worldClipMatrices = nullptr);
+                                 std::string &error, char const *capturePrefix = nullptr, float const *worldClipMatrices = nullptr,
+                                 float const *uvRect = nullptr, bool keep = false);
     bool        tintMenuWorld(float const *rgba, float const *correction, std::string &error);
     bool        completeMenuPresentation(std::string &error, char const *capturePrefix = nullptr);
     bool        cancelMenuPresentation(std::string &error, bool mirror = true);
@@ -131,7 +135,8 @@ class Runtime
     bool        sessionRunning() const;
 
   private:
-    bool drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices = nullptr);
+    bool drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices = nullptr,
+                         float const *uvRect = nullptr);
     struct Impl;
     Impl *m_impl;
 };

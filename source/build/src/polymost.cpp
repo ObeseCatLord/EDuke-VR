@@ -145,6 +145,7 @@ struct glfiltermodes glfiltermodes[NUMGLFILTERMODES] = { { "GL_NEAREST",        
 
 int32_t glanisotropy = 16;
 int32_t gltexfiltermode = TEXFILTER_OFF;
+int32_t glhightilefiltermode = -1;
 
 #ifdef EDUKE32_GLES
 int32_t glusetexcompr = 2;
@@ -11194,6 +11195,7 @@ void polymost_dorotatespritemodel(int32_t sx, int32_t sy, int32_t z, int16_t a, 
 
 #ifdef USE_OPENXR
 bool (*polymost_xrWeaponTileConsumer)(int32_t,int32_t,int32_t,int32_t,int32_t,int32_t,int32_t,int32_t)=nullptr;
+void (*polymost_xrSpriteBounds)(float,float,float,float)=nullptr;
 #endif
 
 void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
@@ -11399,6 +11401,18 @@ void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16
         while (nz);
     }
 
+#ifdef USE_OPENXR
+    if (n >= 3 && polymost_xrSpriteBounds)
+    {
+        float x0=FLT_MAX, y0=FLT_MAX, x1=-FLT_MAX, y1=-FLT_MAX;
+        for (int v=0; v<n; v++)
+        {
+            float const x=pxy[v].x*(1.f/65536.f), y=pxy[v].y*(1.f/65536.f);
+            x0=min(x0,x); y0=min(y0,y); x1=max(x1,x); y1=max(y1,y);
+        }
+        polymost_xrSpriteBounds(x0,y0,x1,y1);
+    }
+#endif
     if (n >= 3)
     {
         int32_t i = divscale32(1,z);

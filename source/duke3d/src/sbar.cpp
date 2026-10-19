@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "duke3d.h"
 #include "compat.h"
 #include "sbar.h"
+#include "vr.h"
 
 int32_t althud_flashing = 1;
 int32_t althud_numbertile = 2930;
@@ -560,11 +561,15 @@ void G_DrawStatusBar(int32_t snum)
     int32_t permbit = 0;
 
 #ifdef SPLITSCREEN_MOD_HACKS
-    const int32_t ss = g_fakeMultiMode ? 4 : ud.screen_size;
-    const int32_t althud = g_fakeMultiMode ? 0 : ud.althud;
+    int32_t ss = g_fakeMultiMode ? 4 : ud.screen_size;
+    int32_t althud = g_fakeMultiMode ? 0 : ud.althud;
 #else
-    const int32_t ss = ud.screen_size;
-    const int32_t althud = ud.althud;
+    int32_t ss = ud.screen_size;
+    int32_t althud = ud.althud;
+#endif
+#ifdef USE_OPENXR
+    // Wrist HUD: the compact layout, health/armour on the left half, ammo/items on the right.
+    if (G_XRWristHudActive()) ss = 4, althud = 1;
 #endif
 
     const int32_t SBY = (200-tilesiz[sbartile()].y);

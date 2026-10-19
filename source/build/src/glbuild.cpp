@@ -204,6 +204,13 @@ void buildgl_resetSamplerObjects(void)
         glSamplerParameterf(s, GL_TEXTURE_MAX_ANISOTROPY_EXT, polymost_getanisotropy());
     }
 
+    if (glhightilefiltermode >= 0 && glhightilefiltermode < NUMGLFILTERMODES)
+        for (int i : { SAMPLER_CLAMP, SAMPLER_WRAP_BOTH })
+        {
+            glSamplerParameteri(samplerObjectIDs[i], GL_TEXTURE_MAG_FILTER, glfiltermodes[glhightilefiltermode].mag);
+            glSamplerParameteri(samplerObjectIDs[i], GL_TEXTURE_MIN_FILTER, glfiltermodes[glhightilefiltermode].min);
+        }
+
     GLuint s = samplerObjectIDs[SAMPLER_CLAMP];
     glSamplerParameteri(s, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glSamplerParameteri(s, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);

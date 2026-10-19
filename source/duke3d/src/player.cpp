@@ -1317,13 +1317,8 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
         {
             // Quick-kick's native counter fires KNEE independently of the
             // selected weapon. Custom projectiles never enter this function.
-            bool const tracked=projecTile==KNEE && playerNum>=0 && G_VRShotEnabled(playerNum)
-                && (G_VRHandShotFeature(playerNum,projecTile)==VRShotFeatureMelee || pPlayer->quick_kick==8);
-            if (tracked)
-            {
-                if (!P_HandWeaponHitscan(playerNum,startPos,shootAng,hitData,true,clamped)) return -1;
-            }
-            else
+            // In VR the mighty foot is a kick, not a hand weapon: it leaves the
+            // body like the native one and goes where the head looks.
             {
                 if (projecTile == KNEE)
                 {
@@ -1332,6 +1327,16 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
                         Zvel = fix16_to_int(F16(100) - pPlayer->q16horiz - pPlayer->q16horizoff) << 5;
                         startPos.z += (6 << 8);
                         shootAng += 15;
+                        auto const kick=G_VRGetShotInput(playerNum);
+                        if (G_VRShotValid(playerNum) && (kick.head[0] || kick.head[1] || kick.head[2]))
+                        {
+                            // Head direction: x,y Build axes, z down; Build Z is 16x finer
+                            // and hitscan takes zvel<<6 against a 16384 horizontal vector.
+                            auto const shot=G_VRGetShotInput(playerNum);
+                            double const horizontal=std::hypot(double(shot.head[0]),double(shot.head[1]));
+                            shootAng=horizontal>1. ? getangle(shot.head[0],shot.head[1]) : fix16_to_int(pPlayer->q16ang);
+                            Zvel=int(std::max(-32767.,std::min(32767.,shot.head[2]*4096./std::max(horizontal,4096.))));
+                        }
                     }
                     else
                     {
@@ -1377,16 +1382,11 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             if (hitData.sect < 0)
                 break;
 
-            // Extend the original Manhattan reach to physical Z for a hand
-            // ray; full vertical aiming cannot hit arbitrarily high surfaces.
-            int64_t const reach=tracked ? (std::abs(int64_t(startPos.x)-hitData.x)
-                +std::abs(int64_t(startPos.y)-hitData.y))*16+std::abs(int64_t(startPos.z)-hitData.z) : 0;
-            bool const inRange=tracked ? reach<1024*16
-                : klabs(startPos.x-hitData.x)+klabs(startPos.y-hitData.y)<1024;
-            if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
-                LOG_F(INFO,"VR native melee: player=%d quick=%d hand=%d,%d,%d hit=%d,%d,%d sector=%d target=%d wall=%d angle=%d clamped=%d inRange=%d.",
+            bool const inRange=klabs(startPos.x-hitData.x)+klabs(startPos.y-hitData.y)<1024;
+            if (projecTile==KNEE && playerNum>=0 && G_VRShotValid(playerNum) && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+                LOG_F(INFO,"VR head kick: player=%d quick=%d origin=%d,%d,%d hit=%d,%d,%d sector=%d target=%d wall=%d angle=%d zvel=%d inRange=%d.",
                       playerNum,pPlayer->quick_kick==8,startPos.x,startPos.y,startPos.z,hitData.x,hitData.y,hitData.z,
-                      hitData.sect,hitData.sprite,hitData.wall,shootAng,clamped,inRange);
+                      hitData.sect,hitData.sprite,hitData.wall,shootAng,Zvel,inRange);
             if (inRange)
                 Proj_HandleKnee(&hitData, spriteNum, playerNum, projecTile, shootAng, NULL, KNEE, 7, SMALLSMOKE, KICK_HIT);
             break;
@@ -2549,7 +2549,7 @@ static bool P_XRWeaponBaseReady(int weapon, unsigned maxCounter, uint8_t feature
         || sprite[p->i].xrepeat<40 || sprite[p->i].pal==1
         || p->curr_weapon!=weapon || p->last_weapon>=0 || p->weapon_pos || p->holster_weapon
         || (unsigned)p->kickback_pic>maxCounter || p->fist_incs || p->knuckle_incs || p->tipincs || p->access_incs
-        || p->knee_incs || p->quick_kick || p->last_quick_kick
+        || p->knee_incs // quick kicks keep the held weapon (the 3D boot kicks below it)
         || PWEAPON(myconnectindex,weapon,WorksLike)!=weapon
         || G_VRHandShotFeature(myconnectindex)!=feature) return false;
 #ifdef SPLITSCREEN_MOD_HACKS
@@ -2748,6 +2748,15 @@ void P_DisplayWeapon(void)
 
 #ifdef USE_OPENXR
     bool const xrWeapon=G_XRBeginWeapon();
+    // In the headset native weapon ART belongs on the hand; never fall back to the HUD.
+    if (!xrWeapon && G_XRHideHudWeapon())
+    {
+        G_XREndWeapon(false);
+#ifndef EDUKE32_STANDALONE
+        P_DisplaySpit();
+#endif
+        return;
+    }
 #endif
     int weaponX       = (160) - 90;
     int weaponY       = klabs(pPlayer->look_ang) / 9;

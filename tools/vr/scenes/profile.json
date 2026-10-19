@@ -1,0 +1,9 @@
+[
+ {"pose": {"head": [0, 1.6, 0, 0, 0, 0]}},
+ {"console": "xr_weapons"}, {"wait": 3},
+ {"console": "xr_profile warmup.txt"},
+ {"pose": {"head": [0, 1.6, 0, 30, 0, 0]}}, {"wait": 5},
+ {"pose": {"head": [0, 1.6, 0, -30, -10, 0]}}, {"wait": 5},
+ {"pose": {"head": [0, 1.6, 0, 0, 10, 0]}}, {"wait": 5},
+ {"console": "xr_profile profile.txt"}, {"wait": 1}
+]

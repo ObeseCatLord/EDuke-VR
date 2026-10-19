@@ -1,5 +1,11 @@
 # Native tracked kick and quick-kick
 
+> **Superseded (2026-10-19):** the mighty foot is no longer a hand-tracked melee ray. Selected
+> kicks and quick kicks leave the body like the native kick and go where the **head** looks (the
+> shot sample now carries the head direction), with a 3D boot shown swinging out. The hand-melee
+> validation below (`smoke_melee_hand.py`, removed) documents the earlier design only.
+
+
 The native selected KNEE weapon and quick-kick counter now use the constrained
 physical hand ray. Native windup, damage, steroid bonus, smoke, switches,
 ownership, ammo and actor simulation remain in EDuke32. This is a hand-aimed

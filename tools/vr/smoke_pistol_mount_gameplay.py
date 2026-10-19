@@ -25,7 +25,15 @@ from smoke_actions_multiplayer import wait_for_join_barrier
 from smoke_aim import orientation, players
 from smoke_hand_shots import room
 from smoke_hitscan import rays, samples
-from smoke_melee_hand import traces as melee_traces
+# The mighty foot kicks from the body toward where the head looks (not from the hand).
+KICK = re.compile(r'VR head kick: player=(\d+) quick=(\d) origin=(-?\d+),(-?\d+),(-?\d+) '
+                  r'hit=(-?\d+),(-?\d+),(-?\d+) sector=(-?\d+) target=(-?\d+) wall=(-?\d+) '
+                  r'angle=(-?\d+) zvel=(-?\d+) inRange=(\d)')
+
+
+def melee_traces(text):
+    keys = ('player', 'quick', 'hx', 'hy', 'hz', 'x', 'y', 'z', 'sector', 'target', 'wall', 'angle', 'zvel', 'inRange')
+    return [dict(zip(keys, map(int, row))) for row in KICK.findall(text)]
 from smoke_multiplayer import X11, setup_lab, stop
 
 
@@ -297,8 +305,8 @@ def main():
                         calibrated_mount_pose_published=bool(MOUNT_POSE.findall(co.text())),
                         pistol_reference_uses_native_hand_ray=True,
                         quickkick_trace_is_selected_pistol=bool(quick) and quick[-1]["quick"] == 1,
-                        quickkick_uses_calibrated_pistol_origin=bool(quick) and
-                            [quick[-1][key] for key in ("hx", "hy", "hz")] == [origin[key] for key in ("x", "y", "z")],
+                        quickkick_leaves_the_body_not_the_pistol=bool(quick) and
+                            [quick[-1][key] for key in ("hx", "hy")] != [origin[key] for key in ("x", "y")],
                         quickkick_does_not_consume_pistol_ammo=after_ammo == ammo_before_quick)
                     checks.update(quickkick_ray_hits_actual_target=bool(quick) and quick[-1]['target']==4,
                                   quickkick_native_range_decision=bool(quick) and quick[-1]['inRange']==int(not far),

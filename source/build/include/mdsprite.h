@@ -193,6 +193,10 @@ typedef struct
     float modelToEye[16];
     int32_t instance; // Stable identity within one explicit-model stereo batch.
     uint32_t hiddenSurfaces; // Bit per surface index not drawn (first 32 surfaces).
+    // Optional CPU-deformed positions (model units) replacing surface 0's frame vertices, e.g. a
+    // skinned hand; vertexCount must equal that surface's vertex count.
+    vec3f_t const *vertices;
+    int32_t vertexCount;
 } md3drawcontext_t;
 #endif
 

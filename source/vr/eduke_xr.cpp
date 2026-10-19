@@ -385,7 +385,7 @@ struct Runtime::Impl
     std::vector<XrEventDataReferenceSpaceChangePending> referenceChanges;
     XrSpace                                 viewSpace = XR_NULL_HANDLE;
     XrActionSet                             actionSet = XR_NULL_HANDLE;
-    std::array<XrAction, 7>                 buttonActions {};
+    std::array<XrAction, 8>                 buttonActions {};
     XrAction                                stickAction = XR_NULL_HANDLE, gripPoseAction = XR_NULL_HANDLE, aimPoseAction = XR_NULL_HANDLE;
     XrAction                                hapticAction = XR_NULL_HANDLE;
     // Optional XR_EXT_hand_tracking.
@@ -504,7 +504,7 @@ struct Runtime::Impl
         if (!ensureViewSpace(error)) return fail();
         std::string shaderError;
         char const *menuVert = "#version 410 compatibility\n#extension GL_OVR_multiview2 : require\nlayout(num_views=2) in; layout(location=0) in vec3 p; "
-                               "layout(location=1) in vec2 uv; uniform mat4 uViewProj[2]; uniform int uMode; out vec2 texcoord; void main(){ gl_Position=uMode==2 ? vec4(p,1) : uViewProj[gl_ViewID_OVR]*vec4(p,1); texcoord=uv; }";
+                               "layout(location=1) in vec2 uv; uniform mat4 uViewProj[2]; uniform int uMode; uniform vec4 uUvRect; out vec2 texcoord; void main(){ gl_Position=uMode==2 ? vec4(p,1) : uViewProj[gl_ViewID_OVR]*vec4(p,1); texcoord=mix(uUvRect.xy,uUvRect.zw,uv); }";
         std::string const fragment = std::string("#version 410 compatibility\nin vec2 texcoord; uniform sampler2D uTexture; uniform int uMode; uniform vec4 uTint, uCorrection; out vec4 outColor; ")
             + eduke_native_glsl::ColorCorrection
             + "void main(){ if(uMode==2) outColor=edukeColorCorrection(uTint,uCorrection); else { outColor=texture(uTexture,texcoord); if(uMode==0) outColor.a=1; } }";
@@ -663,8 +663,8 @@ struct Runtime::Impl
             result = xrCreateAction(actionSet, &info, &action);
             return XR_SUCCEEDED(result);
         };
-        char const * const names[] = { "select", "grip", "primary", "secondary", "menu", "stickclick", "weaponwheel" };
-        char const * const labels[] = { "Select", "Grip", "Primary", "Secondary", "Menu", "Stick click", "Weapon wheel" };
+        char const * const names[] = { "select", "grip", "primary", "secondary", "menu", "stickclick", "weaponwheel", "gadgetwheel" };
+        char const * const labels[] = { "Select", "Grip", "Primary", "Secondary", "Menu", "Stick click", "Weapon wheel", "Gadget wheel" };
         for (size_t i = 0; i < buttonActions.size(); ++i)
             if (!create(buttonActions[i], XR_ACTION_TYPE_BOOLEAN_INPUT, names[i], labels[i])) return fail(result, "xrCreateAction button");
         if (!create(stickAction, XR_ACTION_TYPE_VECTOR2F_INPUT, "stick", "Stick")) return fail(result, "xrCreateAction stick");
@@ -694,7 +694,7 @@ struct Runtime::Impl
             result = xrSuggestInteractionProfileBindings(instance, &info);
             return XR_SUCCEEDED(result);
         };
-        auto const select = buttonActions[0], grip = buttonActions[1], primary = buttonActions[2], secondary = buttonActions[3], menu = buttonActions[4], click = buttonActions[5], wheel = buttonActions[6];
+        auto const select = buttonActions[0], grip = buttonActions[1], primary = buttonActions[2], secondary = buttonActions[3], menu = buttonActions[4], click = buttonActions[5], wheel = buttonActions[6], gadget = buttonActions[7];
         if (!suggest("/interaction_profiles/khr/simple_controller", {
                 { select, "/user/hand/left/input/select/click" }, { select, "/user/hand/right/input/select/click" },
                 { menu, "/user/hand/left/input/menu/click" }, { menu, "/user/hand/right/input/menu/click" },
@@ -708,7 +708,7 @@ struct Runtime::Impl
                 { primary, "/user/hand/right/input/a/click" }, { secondary, "/user/hand/right/input/b/click" },
                 { menu, "/user/hand/left/input/menu/click" },
                 { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
-                { click, "/user/hand/left/input/thumbstick/click" }, { wheel, "/user/hand/right/input/thumbstick/click" },
+                { gadget, "/user/hand/left/input/thumbstick/click" }, { wheel, "/user/hand/right/input/thumbstick/click" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
                 { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
                 { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings touch");
@@ -718,7 +718,7 @@ struct Runtime::Impl
                 { primary, "/user/hand/left/input/a/click" }, { secondary, "/user/hand/left/input/b/click" },
                 { primary, "/user/hand/right/input/a/click" }, { secondary, "/user/hand/right/input/b/click" },
                 { menu, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
-                { wheel, "/user/hand/right/input/trackpad/force" },
+                { wheel, "/user/hand/right/input/trackpad/touch" }, { gadget, "/user/hand/left/input/trackpad/touch" },
                 { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
                 { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
@@ -728,9 +728,8 @@ struct Runtime::Impl
                 { grip, "/user/hand/left/input/squeeze/click" }, { grip, "/user/hand/right/input/squeeze/click" },
                 { menu, "/user/hand/left/input/menu/click" }, { secondary, "/user/hand/right/input/menu/click" },
                 { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
-                { click, "/user/hand/left/input/thumbstick/click" }, { wheel, "/user/hand/right/input/thumbstick/click" },
+                { gadget, "/user/hand/left/input/thumbstick/click" }, { wheel, "/user/hand/right/input/thumbstick/click" },
                 { primary, "/user/hand/right/input/trackpad/click" }, { primary, "/user/hand/left/input/trackpad/click" },
-                { secondary, "/user/hand/left/input/thumbstick/click" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
                 { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
                 { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings motion");
@@ -740,7 +739,7 @@ struct Runtime::Impl
                 { grip, "/user/hand/left/input/squeeze/click" }, { grip, "/user/hand/right/input/squeeze/click" },
                 { menu, "/user/hand/left/input/menu/click" }, { secondary, "/user/hand/right/input/menu/click" },
                 { stickAction, "/user/hand/left/input/trackpad" }, { stickAction, "/user/hand/right/input/trackpad" },
-                { primary, "/user/hand/right/input/trackpad/click" }, { click, "/user/hand/left/input/trackpad/click" },
+                { primary, "/user/hand/right/input/trackpad/click" }, { gadget, "/user/hand/left/input/trackpad/click" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
                 { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
                 { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings vive");
@@ -1601,7 +1600,8 @@ bool Runtime::cancelMenuPresentation(std::string &error, bool mirror)
     return good;
 }
 
-bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices)
+bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices,
+                              float const *uvRect)
 {
     GLState state;
     state.save();
@@ -1643,6 +1643,8 @@ bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHe
         glUseProgram(m_impl->menuProgram);
         glUniform1i(glGetUniformLocation(m_impl->menuProgram,"uMode"),m_impl->menuOverlay ? 1 : 0);
         glUniformMatrix4fv(glGetUniformLocation(m_impl->menuProgram, "uViewProj[0]"), kViewCount, GL_FALSE, &matrices[0][0]);
+        static float const fullRect[4] = { 0, 0, 1, 1 };
+        glUniform4fv(glGetUniformLocation(m_impl->menuProgram, "uUvRect"), 1, uvRect ? uvRect : fullRect);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, m_impl->menuColor);
         glBindSampler(0, 0);
@@ -1656,11 +1658,14 @@ bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHe
 }
 
 bool Runtime::flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfHeight, bool visible,
-                              std::string &error, char const *capturePrefix, float const *worldClipMatrices)
+                              std::string &error, char const *capturePrefix, float const *worldClipMatrices,
+                              float const *uvRect, bool keep)
 {
     error.clear();
     if (!menuOverlayTargetBound()) { error="overlay flush requires the active UI target"; return false; }
-    bool good=!visible || drawMenuCapture(pose,halfWidth,halfHeight,error,worldClipMatrices);
+    bool good=!visible || drawMenuCapture(pose,halfWidth,halfHeight,error,worldClipMatrices,uvRect);
+    // A segment shown in several places (one crop per wrist) is mirrored and cleared once, by its last flush.
+    if (good && keep && !capturePrefix) return true;
     if (good && capturePrefix)
     {
         GLint bits=0; glGetIntegerv(GL_SUBPIXEL_BITS,&bits);

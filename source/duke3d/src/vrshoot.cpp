@@ -22,26 +22,31 @@ bool G_VRValidateShot(VRShotInput const &input)
     if ((input.flags & VRShotThrowMask) && !(input.flags & VRShotValid)) return false;
     if (!(input.flags & VRShotValid))
     {
-        for (int i=0;i<3;++i) if (input.offset[i] || input.direction[i]) return false;
+        for (int i=0;i<3;++i) if (input.offset[i] || input.direction[i] || input.head[i]) return false;
         return true;
     }
+    auto const unit=[](int16_t const *v) {
+        int64_t length=0;
+        for (int i=0;i<3;++i) length+=int64_t(v[i])*v[i];
+        return length>=int64_t(32700)*32700 && length<=int64_t(32800)*32800;
+    };
+    // The head direction is optional (all zero: kicks keep the body's angle).
+    if ((input.head[0] || input.head[1] || input.head[2]) && !unit(input.head)) return false;
     int64_t const x=input.offset[0], y=input.offset[1], z=input.offset[2];
     // Unequal Build scales, checked without integer truncation or overflow.
     if ((x*x+y*y)*256+z*z > int64_t(MaxReach)*MaxReach*256) return false;
-    int64_t length=0;
-    for (int i=0;i<3;++i) length+=int64_t(input.direction[i])*input.direction[i];
-    return length>=int64_t(32700)*32700 && length<=int64_t(32800)*32800;
+    return unit(input.direction);
 }
 
 bool G_VRDecodeShot(uint8_t const *bytes, size_t size, VRShotInput &input)
 {
     if (size!=VRShotWireSize || bytes[0]!=1) return false;
     VRShotInput decoded; decoded.flags=bytes[1];
-    for (int i=0;i<6;++i)
+    for (int i=0;i<9;++i)
     {
         uint16_t const word=uint16_t(bytes[2+i*2])|(uint16_t(bytes[3+i*2])<<8);
         int const value=word<32768 ? int(word) : int(word)-65536;
-        (i<3 ? decoded.offset[i] : decoded.direction[i-3])=int16_t(value);
+        (i<3 ? decoded.offset[i] : i<6 ? decoded.direction[i-3] : decoded.head[i-6])=int16_t(value);
     }
     if (!G_VRValidateShot(decoded)) return false;
     input=decoded; return true;
@@ -50,9 +55,9 @@ bool G_VRDecodeShot(uint8_t const *bytes, size_t size, VRShotInput &input)
 void G_VREncodeShot(VRShotInput const &input, uint8_t *bytes)
 {
     bytes[0]=1; bytes[1]=input.flags;
-    for (int i=0;i<6;++i)
+    for (int i=0;i<9;++i)
     {
-        uint16_t const word=uint16_t(i<3 ? input.offset[i] : input.direction[i-3]);
+        uint16_t const word=uint16_t(i<3 ? input.offset[i] : i<6 ? input.direction[i-3] : input.head[i-6]);
         bytes[2+i*2]=uint8_t(word); bytes[3+i*2]=uint8_t(word>>8);
     }
 }
@@ -85,8 +90,11 @@ int G_VRShotThrowVelocity(int player)
 {
     if (unsigned(player)>=MAXPLAYERS) return 0;
     int const units=(shots[player].input.flags & VRShotThrowMask)>>VRShotThrowShift;
-    // Native pipebombs advance ~xvel/2 Build units per 30 Hz tick, 384 units/metre.
-    return units ? int(units*VRShotThrowStep*384.f*2.f/30.f) : 0;
+    // Native pipebombs lose 5 xvel per tick (ground and air), so a literal
+    // conversion of hand speed only rolls a bomb a metre or two. Map hand speed
+    // onto the native throw range instead: a 2 m/s lob ~ a native tap throw
+    // (140), a firm 4 m/s throw ~ 8 m, a hard 8 m/s throw ~ 25 m.
+    return units ? std::min(600,int(64.f+units*VRShotThrowStep*48.f)) : 0;
 }
 bool G_VRShotPhysicalThrow(int player) { return unsigned(player)<MAXPLAYERS && (shots[player].input.flags & VRShotPhysical); }
 bool G_VRShotDetonate(int player) { return unsigned(player)<MAXPLAYERS && (shots[player].input.flags & VRShotDetonate); }

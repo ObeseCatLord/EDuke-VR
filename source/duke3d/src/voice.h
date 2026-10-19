@@ -22,7 +22,8 @@ void Voice_ReceivePacket(int source, uint8_t const *body, uint32_t length);
 bool Voice_ValidBody(uint8_t const *body, uint32_t length);
 void Voice_ResetPlayer(int player);
 bool Voice_IsTalking(int player);
-void Voice_SetPushToTalk(bool held); // VR controller push-to-talk (left stick click)
+void Voice_SetPushToTalk(bool held); // VR controller push-to-talk (left Y / Index left B)
+bool Voice_PushToTalkMode(void);     // voice chat on in push-to-talk mode (the VR button talks)
 void Voice_DrawStatus(void);         // HUD: mic state and who is talking
 
 // Transport, implemented by network.cpp.
@@ -37,5 +38,6 @@ static inline bool Voice_ValidBody(uint8_t const *, uint32_t) { return false; }
 static inline void Voice_ResetPlayer(int) {}
 static inline bool Voice_IsTalking(int) { return false; }
 static inline void Voice_SetPushToTalk(bool) {}
+static inline bool Voice_PushToTalkMode(void) { return false; }
 static inline void Voice_DrawStatus(void) {}
 #endif

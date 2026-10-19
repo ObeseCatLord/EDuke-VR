@@ -595,6 +595,8 @@ bool Voice_IsTalking(int player)
     return nowMs() < speakers[player].talkingUntil;
 }
 
+bool Voice_PushToTalkMode(void) { return voice_enable && voice_mode==1; }
+
 void Voice_SetPushToTalk(bool held) { vrPushToTalk = held; }
 
 void Voice_Frame(void)

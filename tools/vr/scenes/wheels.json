@@ -1,0 +1,138 @@
+[
+ {
+  "pose": {
+   "head": [
+    0,
+    1.6,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "console": "xr_weapons"
+ },
+ {
+  "console": "xr_items"
+ },
+ {
+  "wait": 2
+ },
+ {
+  "buttons": {
+   "right": {
+    "trackpad_touch": 1
+   }
+  }
+ },
+ {
+  "until": "weapon wheel: open",
+  "timeout": 15
+ },
+ {
+  "wait": 1
+ },
+ {
+  "pose": {
+   "right": [
+    0.2,
+    1.3,
+    -0.35,
+    -23.755714605142387,
+    -3.41555611855884,
+    0
+   ]
+  }
+ },
+ {
+  "until": "hover weapon=4",
+  "timeout": 15
+ },
+ {
+  "wait": 1
+ },
+ {
+  "capture": "wheel-rpg"
+ },
+ {
+  "buttons": {
+   "right": {
+    "trackpad_touch": 0
+   }
+  }
+ },
+ {
+  "pose": {
+   "right": [
+    0.2,
+    1.3,
+    -0.35,
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "until": "held model: weapon=4",
+  "timeout": 15
+ },
+ {
+  "wait": 1
+ },
+ {
+  "buttons": {
+   "left": {
+    "trackpad_touch": 1
+   }
+  }
+ },
+ {
+  "until": "gadget wheel: open",
+  "timeout": 15
+ },
+ {
+  "wait": 1
+ },
+ {
+  "pose": {
+   "left": [
+    -0.2,
+    1.3,
+    -0.35,
+    14.106846055019354,
+    -19.416407864998742,
+    0
+   ]
+  }
+ },
+ {
+  "until": "hover gadget=3",
+  "timeout": 15
+ },
+ {
+  "wait": 1
+ },
+ {
+  "capture": "wheel-gadget"
+ },
+ {
+  "buttons": {
+   "left": {
+    "trackpad_touch": 0
+   }
+  }
+ },
+ {
+  "until": "commit gadget=3",
+  "timeout": 15
+ },
+ {
+  "wait": 2
+ },
+ {
+  "capture": "after-jetpack"
+ }
+]

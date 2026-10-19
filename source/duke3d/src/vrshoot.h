@@ -9,15 +9,16 @@
 struct VRShotInput
 {
     int16_t offset[3] {}, direction[3] {};
+    int16_t head[3] {}; // head forward (same axes): the mighty foot kicks where you look
     uint8_t flags=0;
 };
 constexpr uint8_t VRShotEnabled=1, VRShotValid=2;
-// Immersive pipebombs ride spare flag bits of the same 14-byte sample:
+// Immersive pipebombs ride spare flag bits of the same 20-byte sample:
 // bits 2..5 throw speed (0 = no physical throw, n*0.75 m/s), bit 6 physical
 // throwing mode, bit 7 off-hand detonate request.
 constexpr uint8_t VRShotThrowShift=2, VRShotThrowMask=0x3c, VRShotPhysical=0x40, VRShotDetonate=0x80;
 constexpr float VRShotThrowStep=.75f; // metres/second per speed unit
-constexpr size_t VRShotWireSize=14;
+constexpr size_t VRShotWireSize=20;
 constexpr uint8_t VRShotFeatureRPG=1, VRShotFeatureHitscan=2, VRShotFeatureFreezeShrink=4;
 constexpr uint8_t VRShotFeatureHandBomb=8, VRShotFeatureTripmine=16;
 constexpr uint8_t VRShotFeatureMelee=32;

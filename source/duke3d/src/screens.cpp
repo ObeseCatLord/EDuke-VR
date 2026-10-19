@@ -1152,8 +1152,14 @@ void G_DisplayRest(int32_t smoothratio)
 
     if (pp->invdisptime > 0) G_DrawInventory(pp);
 
+#ifdef USE_OPENXR
+    bool const xrWrist=G_XRBeginWristHud();
+#endif
     if (VM_OnEvent(EVENT_DISPLAYSBAR, g_player[screenpeek].ps->i, screenpeek) == 0)
         G_DrawStatusBar(screenpeek);
+#ifdef USE_OPENXR
+    G_XREndWristHud(xrWrist);
+#endif
 
 #ifdef SPLITSCREEN_MOD_HACKS
     // HACK
@@ -1167,7 +1173,7 @@ void G_DisplayRest(int32_t smoothratio)
     G_PrintGameQuotes(screenpeek);
     Voice_DrawStatus();
 #ifdef USE_OPENXR
-    G_XRDrawWeaponWheel2D();
+    G_XRDrawWheelPanels();
 #endif
 
     if (ud.show_level_text && hud_showmapname && g_levelTextTime > 1)

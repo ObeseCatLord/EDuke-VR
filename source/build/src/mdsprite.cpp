@@ -2463,12 +2463,19 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
         {
             float const currentWeight = (1.f - interpol) * (1.f/64.f);
             float const nextWeight = interpol * (1.f/64.f);
+            vec3f_t const *const deformed = explicitContext && surfi == 0 && ctx->vertices
+                && ctx->vertexCount == s->numverts ? ctx->vertices : nullptr;
 
             for (i=s->numverts-1; i>=0; i--)
             {
+                if (deformed)
+                    fp = deformed[i];
+                else
+                {
                 fp.x = v0[i].x*currentWeight + v1[i].x*nextWeight;
                 fp.y = v0[i].y*currentWeight + v1[i].y*nextWeight;
                 fp.z = v0[i].z*currentWeight + v1[i].z*nextWeight;
+                }
 
 #ifdef USE_GLEXT
                 if (r_vertexarrays)

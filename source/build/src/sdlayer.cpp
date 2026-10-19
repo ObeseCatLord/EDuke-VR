@@ -171,11 +171,11 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_STICK_PITCH", "0" },     // head tracking owns pitch
         { "EDUKE32_XR_HAPTICS", "1" },         // controller pulses on fire/damage
         { "EDUKE32_XR_RESOLUTION", "auto" },   // game mode = OpenXR recommended eye size
-        { "EDUKE32_XR_BODY_TILE", "1405" },    // first-person body = third-person Duke (APLAYER)
         { "EDUKE32_XR_FINGER_TRACKING", "1" }, // XR_EXT_hand_tracking drives segmented hands
-        { "EDUKE32_XR_PIXELATED", "1" },       // unfiltered (nearest) textures, Quake-style
+        { "EDUKE32_XR_PIXELATED", "1" },       // nearest texels (mipmapped), Quake-style
         { "EDUKE32_XR_PHYSICAL_THROW", "1" },  // swing-and-release pipebombs, off-hand detonates
-        { "EDUKE32_XR_WEAPON_WHEEL", "1" },    // hold the turn stick up: point to pick a weapon
+        { "EDUKE32_XR_WEAPON_WHEEL", "1" },    // weapon wheel (right stick click) and gadget wheel (left)
+        { "EDUKE32_XR_WRIST_HUD", "1" },       // status bar as watches: health/armour left wrist, ammo/items right
     };
     for (auto const &option : preset)
         if (!std::strcmp(option.name, name))
@@ -219,9 +219,12 @@ eduke_xr::Runtime *sdlayer_xr_worldRuntime()
         sdl_xr_worldWidth=width; sdl_xr_worldHeight=height;
         sdlayer_xr_desktopSync(true);
         char const *pixelated = sdlayer_xr_option("EDUKE32_XR_PIXELATED");
-        if (pixelated && !std::strcmp(pixelated, "1") && gltexfiltermode != TEXFILTER_OFF)
+        // World ART stays palette-indexed and unfiltered (it must, for multiview); model skins get
+        // nearest texels up close but mipmaps at a distance: crisp without headset sparkle.
+        if (pixelated && !std::strcmp(pixelated, "1") && (gltexfiltermode != TEXFILTER_OFF || glhightilefiltermode != 4))
         {
             gltexfiltermode = TEXFILTER_OFF;
+            glhightilefiltermode = 4; // GL_NEAREST_MIPMAP_LINEAR
             gltexapplyprops();
         }
         LOG_F(INFO, "OpenXR experimental Polymost world session started (two-pass stereo oracle).");

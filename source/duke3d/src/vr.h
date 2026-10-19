@@ -15,6 +15,13 @@ void G_XRClearInput();
 void G_XRResetAim(int playerNum);
 bool G_XRBeginWeapon();
 void G_XREndWeapon(bool captured);
+// The headset world is up with hand-held weapon ART requested: native weapon ART is never drawn on the HUD.
+bool G_XRHideHudWeapon();
+// Status bar on the wrists (EDUKE32_XR_WRIST_HUD): bracket G_DrawStatusBar; while active the
+// status bar uses the mini (alternative) layout so each wrist gets its own half.
+bool G_XRBeginWristHud();
+void G_XREndWristHud(bool captured);
+bool G_XRWristHudActive();
 enum class XRWeaponFamily { Unsupported, StockPistol, AAPistol, AARpg, StockHeld, HudMapped };
 struct XRWeaponPresentation
 {
@@ -38,7 +45,7 @@ int G_XRListenerAngle(int fallback);
 bool G_XRModelsEnabled();
 void G_XRRegisterCvars();
 void G_XRWorldModelToggle(int spriteNum, int picnum);
-void G_XRDrawWeaponWheel2D();
+void G_XRDrawWheelPanels(); // 2D wheel icons on a panel at the ring (gadgets; weapons without 3D models)
 fix16_t G_XRMovementAngle(fix16_t nativeAngle);
 bool G_XRCrosshairPosition(vec2_t &position);
 bool G_XRBeginCrosshair();
