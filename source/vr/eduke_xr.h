@@ -30,6 +30,8 @@ struct HandInput
     bool       stickActive = false;
     XrPosef    aimPose {}, gripPose {};
     bool       aimValid = false, gripValid = false;
+    XrVector3f gripVelocity {}; // LOCAL-space linear velocity, metres/second
+    bool       gripVelocityValid = false;
     // XR_EXT_hand_tracking joints (XR_HAND_JOINT_PALM_EXT order, LOCAL space).
     static constexpr uint32_t JointCount = 26;
     XrPosef    joints[JointCount] {};

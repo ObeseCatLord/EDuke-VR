@@ -2056,7 +2056,7 @@ bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &erro
             target.stickActive = true;
             target.stick = stick.currentState;
         }
-        auto pose = [&](XrAction action, XrSpace actionSpace, XrPosef &value, bool &valid)
+        auto pose = [&](XrAction action, XrSpace actionSpace, XrPosef &value, bool &valid, XrVector3f *velocity = nullptr, bool *velocityValid = nullptr)
         {
             XrActionStateGetInfo info { XR_TYPE_ACTION_STATE_GET_INFO };
             info.action = action;
@@ -2065,7 +2065,9 @@ bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &erro
             result = xrGetActionStatePose(m_impl->session, &info, &state);
             if (XR_FAILED(result)) return false;
             if (!state.isActive || !atTime) return true;
+            XrSpaceVelocity motion { XR_TYPE_SPACE_VELOCITY };
             XrSpaceLocation location { XR_TYPE_SPACE_LOCATION };
+            if (velocity) location.next = &motion;
             result = xrLocateSpace(actionSpace, m_impl->space, atTime, &location);
             if (XR_FAILED(result)) return false;
             if ((location.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
@@ -2073,10 +2075,16 @@ bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &erro
             {
                 value = location.pose;
                 valid = true;
+                if (velocity && (motion.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT))
+                {
+                    *velocity = motion.linearVelocity;
+                    *velocityValid = true;
+                }
             }
             return true;
         };
-        if (!pose(m_impl->gripPoseAction, m_impl->gripSpaces[hand], target.gripPose, target.gripValid))
+        if (!pose(m_impl->gripPoseAction, m_impl->gripSpaces[hand], target.gripPose, target.gripValid,
+                  &target.gripVelocity, &target.gripVelocityValid))
         {
             if (neutralIfUnfocused()) return true;
             error = xrError(m_impl->instance, result, "OpenXR grip pose query");

@@ -14,8 +14,9 @@ constexpr uint32_t MaxAge=30; // .25s on the existing120Hz native clock.
 
 bool G_VRValidateShot(VRShotInput const &input)
 {
-    if (input.flags & ~(VRShotEnabled|VRShotValid)) return false;
     if (!(input.flags & VRShotEnabled) && input.flags) return false;
+    // A throw speed needs a valid hand sample to carry its direction.
+    if ((input.flags & VRShotThrowMask) && !(input.flags & VRShotValid)) return false;
     if (!(input.flags & VRShotValid))
     {
         for (int i=0;i<3;++i) if (input.offset[i] || input.direction[i]) return false;
@@ -77,6 +78,15 @@ void G_VRResetShot(int player, bool preserveMode)
 }
 void G_VRResetShots() { for (auto &state:shots) state={}; }
 bool G_VRShotEnabled(int player) { return unsigned(player)<MAXPLAYERS && (shots[player].input.flags & VRShotEnabled); }
+int G_VRShotThrowVelocity(int player)
+{
+    if (unsigned(player)>=MAXPLAYERS) return 0;
+    int const units=(shots[player].input.flags & VRShotThrowMask)>>VRShotThrowShift;
+    // Native pipebombs advance ~xvel/2 Build units per 30 Hz tick, 384 units/metre.
+    return units ? int(units*VRShotThrowStep*384.f*2.f/30.f) : 0;
+}
+bool G_VRShotPhysicalThrow(int player) { return unsigned(player)<MAXPLAYERS && (shots[player].input.flags & VRShotPhysical); }
+bool G_VRShotDetonate(int player) { return unsigned(player)<MAXPLAYERS && (shots[player].input.flags & VRShotDetonate); }
 uint8_t G_VRHandShotFeature(int player, int tile)
 {
 #ifndef EDUKE32_STANDALONE

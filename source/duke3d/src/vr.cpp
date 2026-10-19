@@ -255,6 +255,22 @@ static bool stickPitchAllowed()
 }
 static float pendingSnapTurn; // radians, consumed by the next native tick
 
+// Immersive pipebombs: hold the trigger, swing, release to throw with the
+// hand's measured velocity; the off-hand trigger detonates live remote bombs.
+static bool physicalThrowEnabled()
+{
+    auto value=sdlayer_xr_option("EDUKE32_XR_PHYSICAL_THROW");
+    return value && !Bstrcmp(value,"1");
+}
+static struct
+{
+    bool held=false, pending=false, detonateHeld=false, detonatePending=false;
+    XrVector3f velocity{}; // LOCAL metres/second at release
+    float speed=0.f;
+    struct Sample { double time; XrVector3f velocity; } recent[16]{};
+    unsigned next=0;
+} xrThrow;
+
 // Opt-in while tracked weapon presentation and the full authority matrix develop.
 static int aimHand()
 {
@@ -346,6 +362,49 @@ static void publishInput()
     button(down[1]&ButtonStickClick,gamefunc_Quick_Kick);
     button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(down[0]&ButtonSecondary,gamefunc_Next_Weapon);
     button((down[0]|down[1])&ButtonGrip,gamefunc_Run);
+    if (physicalThrowEnabled() && aimHand()>=0)
+    {
+        int const hand=aimHand(), off=1-hand;
+        auto const p=g_player[myconnectindex].ps;
+        bool const bomb=(unsigned)p->curr_weapon<MAX_WEAPONS && PWEAPON(myconnectindex,p->curr_weapon,WorksLike)==HANDBOMB_WEAPON
+            && p->ammo_amount[HANDBOMB_WEAPON]>0;
+        double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+        auto const &input=rawInput.hands[hand];
+        if (input.gripVelocityValid)
+        {
+            xrThrow.recent[xrThrow.next++%16]={now,input.gripVelocity};
+        }
+        bool const trigger=down[hand]&ButtonSelect;
+        if (bomb && trigger) xrThrow.held=true;
+        else if (bomb && xrThrow.held)
+        {
+            // Release: use the fastest hand sample of the last 120 ms.
+            xrThrow.held=false;
+            float best=0.f; XrVector3f velocity{};
+            for (auto const &sample:xrThrow.recent)
+                if (now-sample.time<=.12)
+                {
+                    float const speed=std::sqrt(dot(sample.velocity,sample.velocity));
+                    if (speed>best) { best=speed; velocity=sample.velocity; }
+                }
+            if (best>=1.f) { xrThrow.pending=true; xrThrow.velocity=velocity; xrThrow.speed=best; }
+        }
+        else if (!bomb) xrThrow.held=xrThrow.pending=false;
+        if (bomb)
+        {
+            // The pipebomb fires only through a measured throw.
+            buttons&=~(uint64_t(1)<<gamefunc_Fire);
+            if (xrThrow.pending) buttons|=uint64_t(1)<<gamefunc_Fire;
+        }
+        bool const live=p->hbomb_on && Gv_GetVarByLabel("PIPEBOMB_CONTROL",PIPEBOMB_REMOTE,-1,myconnectindex)==PIPEBOMB_REMOTE;
+        bool const offTrigger=down[off]&ButtonSelect;
+        if (live)
+        {
+            if (offTrigger && !xrThrow.detonateHeld) xrThrow.detonatePending=true;
+            if (off==0) buttons&=~(uint64_t(1)<<gamefunc_Open); // off-hand trigger means "detonate" now
+        }
+        xrThrow.detonateHeld=offTrigger;
+    }
     UserInput menu{false,false,false,dir_None};
     menu.b_advance=(down[0]|down[1])&(ButtonSelect|ButtonPrimary);
     menu.b_return=(down[0]|down[1])&ButtonSecondary;
@@ -1509,6 +1568,20 @@ void G_XRUpdateShotInput()
                 input.direction[i]=int16_t(std::lround(std::max(-1.f,std::min(1.f,direction[i]))*32767.f));
             }
             input.flags|=VRShotValid;
+            if (xrThrow.pending && physicalThrowEnabled())
+            {
+                // Throw direction and speed come from the hand's motion, not its aim.
+                auto const v=rotate(tracking,xrThrow.velocity);
+                float const d[3]={-v.z*co-v.x*si,-v.z*si+v.x*co,-v.y};
+                float const length=std::sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+                if (length>1e-3f)
+                {
+                    for (int i=0;i<3;++i) input.direction[i]=int16_t(std::lround(d[i]/length*32767.f));
+                    int const units=std::max(1,std::min(15,int(std::lround(xrThrow.speed/VRShotThrowStep))));
+                    input.flags|=uint8_t(units<<VRShotThrowShift);
+                }
+                xrThrow.pending=false;
+            }
             if (!bounded || !G_VRValidateShot(input))
             {
                 char why[96];
@@ -1549,6 +1622,14 @@ void G_XRUpdateShotInput()
             if (!reported) { reported=true; LOG_F(WARNING,"VR hand shots waiting for server capability; firing is suppressed until supported."); }
         }
     }
+    if ((input.flags & VRShotEnabled) && physicalThrowEnabled())
+    {
+        input.flags|=VRShotPhysical;
+        if (xrThrow.detonatePending) { input.flags|=VRShotDetonate; xrThrow.detonatePending=false; }
+    }
+    if (std::getenv("EDUKE32_XR_TEST_SHOTS") && (input.flags & (VRShotThrowMask|VRShotDetonate)))
+        LOG_F(INFO,"VR physical throw sample: speedUnits=%d detonate=%d direction=%d,%d,%d.",(input.flags&VRShotThrowMask)>>VRShotThrowShift,
+              int(!!(input.flags&VRShotDetonate)),input.direction[0],input.direction[1],input.direction[2]);
     G_VRSetShotInput(myconnectindex,input);
     shotReferenceInvalidated=false; // One native sample conveys the unknown reference reset.
 }
@@ -2133,6 +2214,13 @@ static void runConsoleRequest()
                 p->gotweapon|=1<<weapon;
                 P_AddAmmo(p,weapon,p->max_ammo_amount[weapon]);
             }
+            continue;
+        }
+        int weapon;
+        if (std::sscanf(command.c_str(),"xr_weapon %d",&weapon)==1 && (unsigned)weapon<MAX_WEAPONS)
+        {
+            auto const p=g_player[myconnectindex].ps;
+            if (p->gotweapon & (1<<weapon)) P_AddWeapon(p,weapon,1);
             continue;
         }
         OSD_Dispatch(command.c_str());

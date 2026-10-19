@@ -12,6 +12,11 @@ struct VRShotInput
     uint8_t flags=0;
 };
 constexpr uint8_t VRShotEnabled=1, VRShotValid=2;
+// Immersive pipebombs ride spare flag bits of the same 14-byte sample:
+// bits 2..5 throw speed (0 = no physical throw, n*0.75 m/s), bit 6 physical
+// throwing mode, bit 7 off-hand detonate request.
+constexpr uint8_t VRShotThrowShift=2, VRShotThrowMask=0x3c, VRShotPhysical=0x40, VRShotDetonate=0x80;
+constexpr float VRShotThrowStep=.75f; // metres/second per speed unit
 constexpr size_t VRShotWireSize=14;
 constexpr uint8_t VRShotFeatureRPG=1, VRShotFeatureHitscan=2, VRShotFeatureFreezeShrink=4;
 constexpr uint8_t VRShotFeatureHandBomb=8, VRShotFeatureTripmine=16;
@@ -25,6 +30,10 @@ VRShotInput G_VRGetShotInput(int player);
 void G_VRResetShot(int player, bool preserveMode=false);
 void G_VRResetShots();
 bool G_VRShotEnabled(int player);
+// Physical throw speed of this sample as a native pipebomb xvel, or 0.
+int G_VRShotThrowVelocity(int player);
+bool G_VRShotPhysicalThrow(int player);
+bool G_VRShotDetonate(int player);
 // Required firing/presentation capability, or zero for an unsupported replacement.
 uint8_t G_VRHandShotFeature(int player, int tile=-1);
 bool G_VRShotReady(int player);

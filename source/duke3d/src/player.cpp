@@ -4732,6 +4732,16 @@ static void P_ProcessWeapon(int playerNum)
     int const      playerShrunk = (sprite[pPlayer->i].yrepeat < 32);
     uint32_t       playerBits   = g_player[playerNum].input.bits;
 
+    // Off-hand detonation of live remote pipebombs (immersive throwing). The
+    // owner's hbomb_on is authoritative on the host, as for the detonator.
+    if (pPlayer->hbomb_on && G_VRShotEnabled(playerNum) && G_VRShotDetonate(playerNum)
+        && PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE && Net_VRShotAvailable(playerNum,VRShotFeatureHandBomb))
+    {
+        pPlayer->hbomb_on = 0;
+        if (std::getenv("EDUKE32_XR_TEST_SHOTS"))
+            LOG_F(INFO,"VR off-hand detonation: player=%d.",playerNum);
+    }
+
     switch (pPlayer->weapon_pos)
     {
         case WEAPON_POS_LOWER:
@@ -5007,7 +5017,13 @@ static void P_ProcessWeapon(int playerNum)
     {
         if (PWEAPON(playerNum, pPlayer->curr_weapon, WorksLike) == HANDBOMB_WEAPON)
         {
-            if (PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay) && ((*weaponFrame) == PWEAPON(playerNum, pPlayer->curr_weapon, FireDelay)) && TEST_SYNC_KEY(playerBits, SK_FIRE))
+            // Immersive throw: the trigger release already happened in the
+            // hand; the sample carries the measured speed. Release this tick.
+            int const physicalVelocity=G_VRShotEnabled(playerNum)
+                && Net_VRShotAvailable(playerNum,VRShotFeatureHandBomb) ? G_VRShotThrowVelocity(playerNum) : 0;
+            if (physicalVelocity && (*weaponFrame) < PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay)-1)
+                (*weaponFrame) = PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay)-1;
+            if (!physicalVelocity && PWEAPON(playerNum, pPlayer->curr_weapon, HoldDelay) && ((*weaponFrame) == PWEAPON(playerNum, pPlayer->curr_weapon, FireDelay)) && TEST_SYNC_KEY(playerBits, SK_FIRE))
             {
                 pPlayer->rapid_fire_hold = 1;
                 return;
@@ -5044,8 +5060,8 @@ static void P_ProcessWeapon(int playerNum)
                         pipeBombZvel   = -512 - (fix16_to_int(pPlayer->q16horiz + pPlayer->q16horizoff - F16(100)) * 20);
                     }
                     int pq16ang = fix16_to_int(pPlayer->q16ang);
-                    int velocity=pipeBombFwdVel+(pPlayer->hbomb_hold_delay<<5);
-                    bool const rolling=pipeBombFwdVel==15;
+                    int velocity=physicalVelocity ? physicalVelocity : pipeBombFwdVel+(pPlayer->hbomb_hold_delay<<5);
+                    bool const rolling=!physicalVelocity && pipeBombFwdVel==15;
                     vec3_t position={pPlayer->pos.x+(sintable[(pq16ang+512)&2047]>>6),
                                      pPlayer->pos.y+(sintable[pq16ang&2047]>>6),pPlayer->pos.z};
                     int16_t spawnSector=pPlayer->cursectnum;
@@ -5098,7 +5114,14 @@ static void P_ProcessWeapon(int playerNum)
             else if ((*weaponFrame) > PWEAPON(playerNum, pPlayer->curr_weapon, TotalTime))
             {
                 (*weaponFrame) = 0;
-                if (PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE)
+                // Physical throwing keeps the next bomb in hand; the off hand
+                // detonates (VRShotDetonate). Without ammo the detonator remains.
+                if (PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE && G_VRShotPhysicalThrow(playerNum)
+                    && pPlayer->ammo_amount[HANDBOMB_WEAPON] > 0)
+                {
+                    pPlayer->weapon_pos = WEAPON_POS_RAISE;
+                }
+                else if (PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE)
                 {
                     pPlayer->weapon_pos = WEAPON_POS_RAISE;
                     pPlayer->curr_weapon = HANDREMOTE_WEAPON;

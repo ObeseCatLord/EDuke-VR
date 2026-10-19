@@ -42,6 +42,10 @@ anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
 | `EDUKE32_XR_HAPTICS` | `1` | weapon-hand pulse when firing, both hands when damaged |
 | `EDUKE32_XR_RESOLUTION` | `auto` | game/eye render size from OpenXR's recommended per-eye size (`WxH` to force, `window` to keep the config) |
 | `EDUKE32_XR_RENDER_SCALE` | unset (1.0) | multiplies the OpenXR size, 0.25–2.0 (e.g. `0.8` for speed, `1.4` to supersample) |
+| `EDUKE32_XR_PHYSICAL_THROW` | `1` | pipebombs: hold trigger, swing, release to throw with your hand's real speed/direction; off-hand trigger detonates live remote bombs |
+| `EDUKE32_XR_FINGER_TRACKING` | `1` | OpenXR hand tracking drives the segmented hands when available |
+| `EDUKE32_XR_PIXELATED` | `1` | force nearest (unfiltered) textures |
+| `EDUKE32_XR_BODY_TILE` | `1405` | first-person body = the third-person Duke model (head/arms hidden) |
 | `EDUKE32_XR_RETRY` | `1` | restart a stopped XR session (1, 2, 4, 8, 16 s backoff, 8 attempts); a held-model receipt mismatch drops one frame instead of stopping |
 
 Any variable you export explicitly overrides the preset. `EDUKE32_XR=1` keeps
@@ -118,3 +122,15 @@ switches). The launcher builds this map for AA from the aa-v1 arsenal metadata
 Tracked pitch note: with `EDUKE32_XR_STICK_PITCH=0` native view centering
 (hard landings, auto-centering) is cancelled instead of locking tracked aim;
 previously it could disable VR shots and held models indefinitely.
+
+## Immersive pipebombs
+
+With the pipebomb selected, hold the weapon-hand trigger, swing and let go:
+the bomb leaves your hand with the controller's measured velocity (peak of the
+last 120 ms; releases under 1 m/s don't throw). The native pipebomb actor,
+bounce, fuse, damage and multiplayer replication are unchanged: the swing
+speed (0.75 m/s steps up to ~11 m/s) and direction travel in spare bits of
+the existing hand-shot sample, and the host releases the bomb on that tick.
+In remote-detonation mode the next bomb stays in your hand; while bombs are
+live the off-hand trigger detonates them (instead of Open/Use). Verified with
+`tools/vr/smoke_xr_throw.py`.
