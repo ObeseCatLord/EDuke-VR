@@ -38,7 +38,7 @@ def main():
     (lab / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
     capture, console = lab / 'capture-request', lab / 'console-request'
     env = dict(os.environ, DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
-               EDUKE32_XR='play', EDUKE32_XR_TEST_HELD='1', EDUKE32_XR_TEST_HAPTICS='1', EDUKE32_XR_TEST_INPUT='1',
+               EDUKE32_XR='play', EDUKE32_XR_TEST_HELD='1', EDUKE32_XR_TEST_HAPTICS='1', EDUKE32_XR_TEST_INPUT='1', EDUKE32_XR_TEST_SHOTS='1',
                EDUKE32_XR_CAPTURE_REQUEST=str(capture), EDUKE32_XR_CONSOLE_REQUEST=str(console),
                XDG_DATA_HOME=str(lab / 'data'))
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'

@@ -705,7 +705,7 @@ void prepareWeaponVisual(Camera const &body, eduke_xr::Runtime *runtime)
     visual.player=myconnectindex; visual.hand=aimHand();
     if (!overlayEnabled() || !handShotsRequested() || !localAimCamera() || !aimPoseUsable() || !recentered
         || inputRuntime!=runtime || inputGeneration!=runtime->generation() || shotReferenceInvalidated || !shotLookAllowed
-        || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)) { heldReject("prepareWeaponVisual#2"); return; }
+        || !Net_VRShotAvailable() || !G_VRShotValid(myconnectindex)) { heldReject("prepareWeaponVisual#2"); return; }
     vec3f_t muzzle{}, palm{}; XrVector3f position;
     if (!weaponMuzzle(visual.family,visual.hand,visual.model,muzzle,palm,position)) { heldReject("prepareWeaponVisual#3"); return; }
     visual.pose=rawInput.hands[visual.hand].aimPose;
@@ -761,7 +761,7 @@ bool weaponVisualOwned()
         && visual.family==P_XRWeaponFamily() && visual.model==md_tilehasmodel(weaponModelTile(visual.family),0)
         && inputRuntime==menuRuntime && inputGeneration==menuGeneration && inputValid()
         && aimPoseUsable() && rawInput.hands[visual.hand].gripValid
-        && G_VRShotReady(myconnectindex) && Net_VRShotAvailable();
+        && G_VRShotValid(myconnectindex) && Net_VRShotAvailable();
 }
 
 int gripModelTile(unsigned hand)
@@ -1209,11 +1209,11 @@ bool prepareHandModel(HandModelSample &sample)
     auto weapon=sdlayer_xr_option("EDUKE32_XR_WEAPON");
     if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
         || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
-        || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex))
+        || !Net_VRShotAvailable() || !G_VRShotValid(myconnectindex))
     {
         char why[96];
         Bsnprintf(why,sizeof(why),"prepareHandModel#1 local=%d pose=%d shots=%d net=%d ready=%d enabled=%d",
-                  localAimCamera(),aimPoseUsable(),handShotsRequested(),Net_VRShotAvailable(),G_VRShotReady(myconnectindex),
+                  localAimCamera(),aimPoseUsable(),handShotsRequested(),Net_VRShotAvailable(),G_VRShotValid(myconnectindex),
                   G_VRShotEnabled(myconnectindex));
         heldReject(why);
         return false;
@@ -1685,7 +1685,7 @@ bool G_XRCrosshairPosition(vec2_t &position)
     auto tracked=ray(body,head);
     if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
     {
-        if (!G_VRShotReady(myconnectindex)) return false;
+        if (!G_VRShotValid(myconnectindex)) return false;
         auto const shot=G_VRGetShotInput(myconnectindex);
         float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
         XrVector3f const direction={(-shot.direction[0]*si+shot.direction[1]*co)/32767.f,-shot.direction[2]/32767.f,

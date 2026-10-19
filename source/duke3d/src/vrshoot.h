@@ -37,6 +37,7 @@ bool G_VRShotDetonate(int player);
 // Required firing/presentation capability, or zero for an unsupported replacement.
 uint8_t G_VRHandShotFeature(int player, int tile=-1);
 bool G_VRShotReady(int player);
+bool G_VRShotValid(int player);
 bool G_VRShotCanFire(int player);
 // Native shared keys run before P_ProcessInput's release/readiness filter.
 bool G_VRQuickKickBlocked(int player);

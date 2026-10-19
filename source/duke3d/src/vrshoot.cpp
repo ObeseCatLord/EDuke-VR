@@ -10,6 +10,9 @@ struct ShotState { VRShotInput input; uint32_t at=0; bool blocked=true; };
 ShotState shots[MAXPLAYERS];
 constexpr int MaxReach=768; // 2 metres; native horizontal384/metre, Z6144/metre.
 constexpr uint32_t MaxAge=30; // .25s on the existing120Hz native clock.
+// A frame hitch delays samples without invalidating tracking; only a long gap
+// (pause, reconnect) re-arms the trigger release gate.
+constexpr uint32_t ReleaseGapAge=240;
 }
 
 bool G_VRValidateShot(VRShotInput const &input)
@@ -59,7 +62,7 @@ void G_VRSetShotInput(int player, VRShotInput const &input)
     if (unsigned(player)>=MAXPLAYERS || !G_VRValidateShot(input)) return;
     auto &state=shots[player];
     if (!(state.input.flags & VRShotEnabled) || !(input.flags & VRShotValid)
-        || uint32_t(uint32_t(totalclock)-state.at)>MaxAge) state.blocked=true;
+        || uint32_t(uint32_t(totalclock)-state.at)>ReleaseGapAge) state.blocked=true;
     state.input=input; state.at=uint32_t(totalclock);
 }
 VRShotInput G_VRGetShotInput(int player) { return unsigned(player)<MAXPLAYERS ? shots[player].input : VRShotInput{}; }
@@ -122,6 +125,12 @@ bool G_VRShotReady(int player)
     return G_VRShotEnabled(player) && (shots[player].input.flags & VRShotValid)
         && uint32_t(uint32_t(totalclock)-shots[player].at)<=MaxAge;
 }
+// Presentation (held model, crosshair) follows the live pose and survives a
+// frame hitch; only firing requires a fresh sample.
+bool G_VRShotValid(int player)
+{
+    return G_VRShotEnabled(player) && (shots[player].input.flags & VRShotValid);
+}
 bool G_VRShotCanFire(int player) { return G_VRShotReady(player) && !shots[player].blocked; }
 void G_VRBlockShot(int player) { if (unsigned(player)<MAXPLAYERS) shots[player].blocked=true; }
 bool G_VRQuickKickBlocked(int player)
@@ -135,6 +144,16 @@ void G_VRFilterShotInput(int player, input_t &input)
     bool const held=(input.bits & (BIT(SK_FIRE)|BIT(SK_QUICK_KICK))) || (input.extbits & BIT(EK_ALT_FIRE));
     if (!G_VRShotReady(player)) state.blocked=true;
     if (!held) state.blocked=false;
+    if (held && (!G_VRShotReady(player) || state.blocked) && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+    {
+        static uint32_t lastLog;
+        if (uint32_t(uint32_t(totalclock)-lastLog)>=60)
+        {
+            lastLog=uint32_t(totalclock);
+            LOG_F(INFO,"VR fire filtered: player=%d enabled=%d valid=%d age=%u blocked=%d.",player,!!(state.input.flags & VRShotEnabled),
+                  !!(state.input.flags & VRShotValid),uint32_t(uint32_t(totalclock)-state.at),state.blocked);
+        }
+    }
     if (!G_VRShotReady(player) || state.blocked)
     { input.bits &= ~(BIT(SK_FIRE)|BIT(SK_QUICK_KICK)); input.extbits &= ~BIT(EK_ALT_FIRE); }
     if (G_VRQuickKickBlocked(player)) input.bits &= ~BIT(SK_QUICK_KICK);

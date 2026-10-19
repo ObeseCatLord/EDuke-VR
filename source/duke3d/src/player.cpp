@@ -4883,6 +4883,19 @@ static void P_ProcessWeapon(int playerNum)
     bool const doFire    = (playerBits & BIT(SK_FIRE) && (*weaponFrame) == 0);
     bool const doAltFire = g_player[playerNum].input.extbits & BIT(EK_ALT_FIRE);
     bool startFiring     = false;
+#ifdef USE_OPENXR
+    if (std::getenv("EDUKE32_XR_TEST_SHOTS") && (playerBits & BIT(SK_FIRE)))
+    {
+        static int32_t lastKey=INT32_MIN;
+        int32_t const key=(*weaponFrame)|(pPlayer->weapon_pos<<8)|((pPlayer->last_weapon+1)<<16)|(pPlayer->fist_incs?1<<24:0)
+            |(pPlayer->holster_weapon?1<<25:0)|(playerShrunk?1<<26:0)|(pPlayer->tipincs?1<<27:0)|(pPlayer->access_incs?1<<28:0);
+        if (key!=lastKey)
+            LOG_F(INFO,"VR fire gate: weapon=%d frame=%d pos=%d last=%d fist=%d holster=%d shrunk=%d tip=%d access=%d ammo=%d.",
+                  pPlayer->curr_weapon,*weaponFrame,pPlayer->weapon_pos,pPlayer->last_weapon,pPlayer->fist_incs,pPlayer->holster_weapon,
+                  playerShrunk,pPlayer->tipincs,pPlayer->access_incs,pPlayer->ammo_amount[pPlayer->curr_weapon]);
+        lastKey=key;
+    }
+#endif
 
     if (doAltFire)
     {
