@@ -3765,12 +3765,33 @@ static void G_PlaceHeldWeapons(void)
 {
     for (int k = 0; k < g_heldAttachCount; ++k)
     {
-        auto const w = &tsprite[g_heldAttach[k].weapon];
         auto const o = &tsprite[g_heldAttach[k].owner];
-        int32_t const duke = md_tilehasmodel(o->picnum, o->pal), held = md_tilehasmodel(w->picnum, 0);
+        int32_t const duke = md_tilehasmodel(o->picnum, o->pal);
         md3tag_t hand, grip;
-        if (duke < 0 || held < 0 || !o->xrepeat || (o->cstat & 32768)
-            || !md3_gettag(duke, "tag_weapon_right", tile2model[Ptile2tile(o->picnum, o->pal)].framenum, &hand))
+        int const frame = duke >= 0 ? tile2model[Ptile2tile(o->picnum, o->pal)].framenum : -1;
+        bool const tagged = duke >= 0 && md3_gettag(duke, "tag_weapon_right", frame, &hand);
+        // Tagged VR player models are authored with +Y to the model's right;
+        // the native path draws MD3 +Y as left, so draw them x-flipped.
+        if (tagged)
+            o->cstat |= 4;
+        if (g_heldAttach[k].weapon < 0)
+            continue;
+        auto const w = &tsprite[g_heldAttach[k].weapon];
+        int32_t const held = md_tilehasmodel(w->picnum, 0);
+        bool const ok = tagged && held >= 0 && o->xrepeat && !(o->cstat & 32768);
+#ifdef USE_OPENXR
+        if (Bgetenv("EDUKE32_XR_TEST_HELD"))
+        {
+            static int reported;
+            if (reported < 8)
+            {
+                ++reported;
+                LOG_F(INFO, "Held weapon attach: owner tile=%d pal=%d model=%d frame=%d weapon tile=%d model=%d ok=%d mirror=%d.",
+                      o->picnum, o->pal, duke, frame, w->picnum, held, int(ok), int(display_mirror));
+            }
+        }
+#endif
+        if (!ok)
         {
             w->xrepeat = w->yrepeat = 0;
             continue;
@@ -3790,6 +3811,7 @@ static void G_PlaceHeldWeapons(void)
         w->xrepeat = o->xrepeat; w->yrepeat = o->yrepeat;
         w->xoffset = w->yoffset = 0;
         w->shade = o->shade; w->pal = o->pal;
+        w->cstat = 4; // same authoring convention as the player model
     }
     g_heldAttachCount = 0;
 }
@@ -4177,17 +4199,30 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
 
             heldShown = false;
 #ifdef USE_OPENGL
-            if ((display_mirror || ((g_netServer || ud.multimode > 1) && (screenpeek != playerNum || pSprite->owner == -1)))
-                && sprite[g_player[playerNum].ps->i].extra > 0 && g_heldAttachCount < ARRAY_SSIZE(g_heldAttach)
-                && md_tilehasmodel(t->picnum, t->pal) >= 0 && !(spriteext[i].flags & SPREXT_NOTMD)
 # ifdef USE_OPENXR
-                && G_XRCanAppendSprite(maxspritesonscreen))
-# else
-                && spritesortcnt < maxspritesonscreen)
+            if (Bgetenv("EDUKE32_XR_TEST_HELD"))
+            {
+                static int reported;
+                if (reported < 8 && (display_mirror || screenpeek != playerNum))
+                {
+                    ++reported;
+                    LOG_F(INFO, "Held weapon candidate: player=%d mirror=%d multi=%d extra=%d model=%d notmd=%d weapon=%d heldTile=%d.",
+                          playerNum, int(display_mirror), int(g_netServer || ud.multimode > 1), sprite[g_player[playerNum].ps->i].extra,
+                          md_tilehasmodel(t->picnum, t->pal), int(!!(spriteext[i].flags & SPREXT_NOTMD)),
+                          g_player[playerNum].ps->curr_weapon, G_HeldWeaponModelTile(g_player[playerNum].ps->curr_weapon));
+                }
+            }
 # endif
+            if (g_heldAttachCount < ARRAY_SSIZE(g_heldAttach) && md_tilehasmodel(t->picnum, t->pal) >= 0 && !(spriteext[i].flags & SPREXT_NOTMD))
             {
                 int32_t const heldTile = G_HeldWeaponModelTile(g_player[playerNum].ps->curr_weapon);
-                if (heldTile >= 0)
+                if (heldTile >= 0 && sprite[g_player[playerNum].ps->i].extra > 0
+                    && (display_mirror || ((g_netServer || ud.multimode > 1) && (screenpeek != playerNum || pSprite->owner == -1)))
+# ifdef USE_OPENXR
+                    && G_XRCanAppendSprite(maxspritesonscreen))
+# else
+                    && spritesortcnt < maxspritesonscreen)
+# endif
                 {
                     auto const newTspr = &tsprite[spritesortcnt];
                     *newTspr          = *t;
@@ -4201,6 +4236,8 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                     spritesortcnt++;
                     heldShown = true;
                 }
+                else
+                    g_heldAttach[g_heldAttachCount++] = { -1, (int16_t)j };
             }
 #endif
             if ((g_netServer || ud.multimode > 1) && (display_mirror || screenpeek != playerNum || pSprite->owner == -1))

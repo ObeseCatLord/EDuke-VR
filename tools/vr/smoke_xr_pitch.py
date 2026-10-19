@@ -71,12 +71,12 @@ def main():
     (lab / 'eduke32.cfg').write_text(CONFIG)
     (lab / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
     request = lab / 'capture-request'
-    env = dict(os.environ, DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
+    env = dict(os.environ, EDUKE32_XR_TEST_HELD='1', DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
                EDUKE32_XR='1', EDUKE32_XR_CAPTURE_REQUEST=str(request), EDUKE32_XR_TEST_PITCH='1')
     if args.single_pass:
         env['EDUKE32_XR_SINGLE_PASS'] = '1'
     for key in list(env):
-        if key.startswith('EDUKE32_XR_TEST_') and key not in ('EDUKE32_XR_TEST_PITCH', 'EDUKE32_XR_TEST_TIMING'):
+        if key.startswith('EDUKE32_XR_TEST_') and key not in ('EDUKE32_XR_TEST_PITCH', 'EDUKE32_XR_TEST_TIMING', 'EDUKE32_XR_TEST_HELD'):
             env.pop(key)
     if args.fail:
         env['EDUKE32_XR_TEST_FAIL'] = args.fail
