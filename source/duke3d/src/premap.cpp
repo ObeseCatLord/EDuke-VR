@@ -644,6 +644,11 @@ void P_MoveToRandomSpawnPoint(int playerNum)
         }
     }
 
+    // Fixed (co-op) respawn indexes spawn points by player number; a map with
+    // fewer co-op starts than players must not read past the collected ones.
+    if ((unsigned)i >= (unsigned)g_playerSpawnCnt && g_playerSpawnCnt > 0)
+        i %= g_playerSpawnCnt;
+
     p.opos = p.pos = g_playerSpawnPoints[i].xyz;
 
     p.bobpos     = p.pos.xy;

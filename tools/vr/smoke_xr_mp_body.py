@@ -49,6 +49,7 @@ def main():
     parser.add_argument('--remote-port', type=int, default=49777)
     parser.add_argument('--port', type=int, default=24611)
     parser.add_argument('--timeout', type=int, default=500)
+    parser.add_argument('--mode', default='1', help='native -c game type (1 DukeMatch, 2 co-op)')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='mp-body-', dir=args.work_dir.resolve()))
@@ -81,7 +82,7 @@ def main():
 
     try:
         binary = str(args.binary.resolve())
-        server, so = launch('server', [binary, *common, '-dedicated', '-port', str(args.port), '-c1', '-map', 'body.map'], native)
+        server, so = launch('server', [binary, *common, '-dedicated', '-port', str(args.port), '-c' + args.mode, '-map', 'body.map'], native)
         until(so, lambda t: 'Multiplayer server initialized.' in t, 30)
         so.pause(8)
         x11 = X11(args.display)

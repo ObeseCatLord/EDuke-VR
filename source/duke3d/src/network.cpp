@@ -1776,7 +1776,8 @@ static void Net_AdmitClient(ENetPeer *peer)
 
     if (g_playerSpawnCnt <= ud.multimode)
     {
-        OSD_Printf("Connection dropped: No player spawn point available for this new player.\n");
+        OSD_Printf("Connection dropped: No player spawn point available for this new player (spawns=%d multimode=%d players=%d coop=%d).\n",
+                   g_playerSpawnCnt, ud.multimode, numplayers, ud.coop);
         enet_peer_disconnect_later(peer, DISC_SERVER_FULL);
         return;
     }
@@ -1905,6 +1906,21 @@ static void Net_Server_SetupPlayer(int playerindex)
     = actor[g_player[playerindex].ps->i].t_data[4]                                   = 0;
 
     P_ResetPlayer(playerindex);
+
+    // The copy above put the joining player on top of player 0. Start at a
+    // spawn point instead, like a respawn: co-op uses the player's own co-op
+    // start, DukeMatch a random one.
+    if (g_playerSpawnCnt > 0)
+    {
+        auto &p = *g_player[playerindex].ps;
+        P_MoveToRandomSpawnPoint(playerindex);
+        actor[p.i].bpos = p.opos = p.pos;
+        p.bobpos  = p.pos.xy;
+        p.oq16ang = p.q16ang;
+        setsprite(p.i, &p.pos);
+        sprite[p.i].ang = fix16_to_int(p.q16ang);
+    }
+
     Net_SpawnPlayer(playerindex);
 }
 
