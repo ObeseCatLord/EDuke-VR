@@ -122,7 +122,10 @@ def main():
     holds = []
     if aa:
         out.insert(0, 'include "duke3d.def"')
-        inventory = assets / 'aa-v1/metadata/arsenal_inventory.json'
+        # Family ids and AA HUD tile numbers; v6 ships its own copy.
+        inventory = v6.parent.parent / 'metadata/aa_inventory.json'
+        if not inventory.is_file():
+            inventory = assets / 'aa-v1/metadata/arsenal_inventory.json'
         families = json.loads(inventory.read_text())['families'] if inventory.is_file() else []
         hud = []
         for index, family in enumerate(families):
