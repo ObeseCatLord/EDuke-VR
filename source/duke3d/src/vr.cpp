@@ -3,6 +3,7 @@
 #ifdef USE_OPENXR
 #include "duke3d.h"
 #include "sdlayer.h"
+#include "voice.h"
 #include "vr.h"
 #include "vrshoot.h"
 #include "network.h"
@@ -520,6 +521,7 @@ static void publishInput()
     button(down[1]&ButtonStickClick,gamefunc_Quick_Kick);
     button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(down[0]&ButtonSecondary,gamefunc_Next_Weapon);
     button((down[0]|down[1])&ButtonGrip,gamefunc_Run);
+    Voice_SetPushToTalk(down[0]&ButtonStickClick);   // left stick click: voice push-to-talk
     if (physicalThrowEnabled() && aimHand()>=0)
     {
         int const hand=aimHand(), off=1-hand;
@@ -1766,6 +1768,18 @@ void G_XRResetAim(int playerNum)
 }
 
 bool G_XRTrackedPitchOwner() { return localAimCamera() && !stickPitchAllowed(); }
+
+int G_XRListenerAngle(int fallback)
+{
+    // The native body angle follows the aim source; recover the head's yaw in
+    // the same frame G_XRApplyAim uses (body reference = q16ang - aim offset).
+    if (!localAimCamera() || !recentered || !inputValid() || !rawInput.headValid || !validPose(rawInput.headPose)) return fallback;
+    auto const p=g_player[myconnectindex].ps;
+    auto const forward=rotate(multiply(inverseYaw,rawInput.headPose.orientation),{0,0,-1});
+    if (std::hypot(forward.x,forward.z)<1e-4f) return fallback;
+    float const yaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset+std::atan2(forward.x,-forward.z);
+    return int(std::lround(yaw*1024.f/Pi))&2047;
+}
 
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
 {

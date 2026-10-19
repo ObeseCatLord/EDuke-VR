@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "duke3d.h"
 #include "game.h"
 #include "gamedef.h"
+#include "voice.h"
 #include "network.h"
 #include "premap.h"
 #include "savegame.h"
@@ -53,6 +54,7 @@ int32_t     g_netDisconnect = 0;
 char        g_netPassword[32];
 int32_t     g_networkMode       = NET_CLIENT;
 static uint8_t vrServerCapability;
+static bool voiceClientCapability[MAXPLAYERS], voiceServerCapability; // voice chat handshake
 static uint8_t vrClientCapability[MAXPLAYERS];
 bool Net_VRShotAvailable(int player, uint8_t feature)
 {
@@ -1716,6 +1718,7 @@ static void Net_Disconnect(void)
 static void Net_ReceiveDisconnect(ENetEvent *event)
 {
     g_netDisconnect = 1;
+    voiceServerCapability = false;
     numplayers = g_mostConcurrentPlayers = ud.multimode = 1;
     myconnectindex = screenpeek = 0;
     G_BackToMenu();
@@ -1847,6 +1850,98 @@ static void Net_ReceiveClientUpdate(ENetEvent *event)
 }
 
 // One optional reliable request/ack after native authentication/index assignment.
+// ---- Voice chat transport (voice.cpp owns capture, codec and playback).
+
+bool Net_VoiceAvailable(void)
+{
+    if (g_netClient)
+        return voiceServerCapability && g_netClientPeer && myconnectindex > 0 && (g_player[myconnectindex].ps->gm & MODE_GAME);
+    if (g_netServer)
+        return g_networkMode != NET_DEDICATED_SERVER && numplayers > 1;
+    return false;
+}
+
+#ifdef USE_VOICECHAT
+static void Net_SendVoiceCapability(ENetPeer *peer, bool reply, int player)
+{
+    uint8_t bytes[8]={PACKET_VOICE_CAPABILITIES,'E','D','V','C',1,uint8_t(reply),uint8_t(player)};
+    enet_peer_send(peer,CHAN_MISC,enet_packet_create(bytes,sizeof(bytes),ENET_PACKET_FLAG_RELIABLE));
+}
+
+static void Net_ReceiveVoiceCapability(ENetEvent *event, bool server)
+{
+    if (event->channelID!=CHAN_MISC || event->packet->dataLength!=8 || (!server && event->peer!=g_netClientPeer)) return;
+    auto const bytes=event->packet->data;
+    if (Bmemcmp(bytes+1,"EDVC",4) || bytes[5]!=1 || bytes[6]!=(server ? 0 : 1)) return;
+    int const player=server ? int(intptr_t(event->peer->data)) : myconnectindex;
+    if (player<=0 || player>=MAXPLAYERS || bytes[7]!=player) return;
+    if (server)
+    {
+        if (event->peer->channelCount<=CHAN_VOICE) return;
+        voiceClientCapability[player]=true;
+        Net_SendVoiceCapability(event->peer,true,player);
+    }
+    else voiceServerCapability=event->peer->channelCount>CHAN_VOICE;
+    LOG_F(INFO,"Voice chat: %s player=%d.",server ? "client enabled" : "server supports voice",player);
+}
+
+// Server: forward one talker's frame to every other voice-capable client (and play it locally on a listen server).
+static void Net_RelayVoice(int source, uint8_t const *body, uint32_t length)
+{
+    uint8_t buffer[2+VoiceHeaderBytes+VoiceMaxPayload];
+    buffer[0]=PACKET_VOICE; buffer[1]=uint8_t(source);
+    Bmemcpy(buffer+2,body,length);
+    for (size_t i=0;i<g_netServer->peerCount;++i)
+    {
+        ENetPeer *const peer=&g_netServer->peers[i];
+        int const player=int(intptr_t(peer->data));
+        if (peer->state!=ENET_PEER_STATE_CONNECTED || player<=0 || player>=MAXPLAYERS || player==source
+            || !voiceClientCapability[player] || peer->channelCount<=CHAN_VOICE) continue;
+        enet_peer_send(peer,CHAN_VOICE,enet_packet_create(buffer,length+2,ENET_PACKET_FLAG_UNSEQUENCED));
+    }
+    if (g_networkMode!=NET_DEDICATED_SERVER && source!=myconnectindex) Voice_ReceivePacket(source,body,length);
+}
+
+static void Net_ReceiveVoice(ENetEvent *event, bool server)
+{
+    if (event->channelID!=CHAN_VOICE) return;
+    auto const data=event->packet->data;
+    uint32_t const length=uint32_t(event->packet->dataLength);
+    if (server)
+    {
+        int const player=int(intptr_t(event->peer->data));
+        if (player<=0 || player>=MAXPLAYERS || !voiceClientCapability[player] || length<1 || !Voice_ValidBody(data+1,length-1)) return;
+        // Per-talker budget: 75 packets and 16 kB per second (Opus 24 kbps uses 50 and ~3 kB).
+        static struct { uint32_t window; int packets, bytes; } budget[MAXPLAYERS];
+        uint32_t const second=uint32_t(timerGetNanoTicks()/timerGetNanoTickRate());
+        auto &b=budget[player];
+        if (b.window!=second) { b.window=second; b.packets=b.bytes=0; }
+        if (++b.packets>75 || (b.bytes+=int(length))>16000) return;
+        Net_RelayVoice(player,data+1,length-1);
+    }
+    else if (event->peer==g_netClientPeer && length>=2 && data[1]<MAXPLAYERS)
+        Voice_ReceivePacket(data[1],data+2,length-2);
+}
+#endif
+
+void Net_SendVoice(uint8_t const *body, uint32_t length)
+{
+#ifdef USE_VOICECHAT
+    if (!Voice_ValidBody(body,length)) return;
+    if (g_netClient && g_netClientPeer && voiceServerCapability)
+    {
+        uint8_t buffer[1+VoiceHeaderBytes+VoiceMaxPayload];
+        buffer[0]=PACKET_VOICE;
+        Bmemcpy(buffer+1,body,length);
+        enet_peer_send(g_netClientPeer,CHAN_VOICE,enet_packet_create(buffer,length+1,ENET_PACKET_FLAG_UNSEQUENCED));
+    }
+    else if (g_netServer && g_networkMode!=NET_DEDICATED_SERVER)
+        Net_RelayVoice(myconnectindex,body,length);
+#else
+    UNREFERENCED_PARAMETER(body); UNREFERENCED_PARAMETER(length);
+#endif
+}
+
 // CHAN_MISC prevents native broadcast routing; no movement format changes until ACK.
 static void Net_SendVRCapability(ENetPeer *peer, bool reply, int player, uint8_t features=VRShotFeatureRPG)
 {
@@ -2235,6 +2330,14 @@ static void Net_ParseClientPacket(ENetEvent *event)
         case PACKET_VR_CAPABILITIES:
             Net_ReceiveVRCapability(event,true);
             break;
+#ifdef USE_VOICECHAT
+        case PACKET_VOICE_CAPABILITIES:
+            Net_ReceiveVoiceCapability(event,true);
+            break;
+        case PACKET_VOICE:
+            Net_ReceiveVoice(event,true);
+            break;
+#endif
         case PACKET_SLAVE_TO_MASTER:  //[1] (receive slave sync buffer)
             Net_ReceiveClientUpdate(event);
             break;
@@ -2354,6 +2457,8 @@ static void Net_HandleClientPackets(void)
             numplayers--;
             ud.multimode--;
 
+            voiceClientCapability[playeridx]=false;
+            Voice_ResetPlayer(playeridx);
             P_RemovePlayer(playeridx);
 
             g_player[playeridx].revision = cInitialMapStateRevisionNumber;
@@ -2568,6 +2673,10 @@ static void Net_ReceivePlayerIndex(uint8_t *pbuf, int32_t packbufleng)
     Net_SendClientInfo();
     auto const negative=std::getenv("EDUKE32_XR_TEST_BAD_SHOT");
     if (!negative || Bstrcmp(negative,"capability")) Net_SendVRCapability(g_netClientPeer,false,myconnectindex);
+#ifdef USE_VOICECHAT
+    voiceServerCapability=false;
+    if (g_netClientPeer->channelCount>CHAN_VOICE) Net_SendVoiceCapability(g_netClientPeer,false,myconnectindex);
+#endif
 }
 
 
@@ -2589,6 +2698,14 @@ static void Net_ParseServerPacket(ENetEvent *event)
     case PACKET_VR_CAPABILITIES:
         Net_ReceiveVRCapability(event,false);
         break;
+#ifdef USE_VOICECHAT
+    case PACKET_VOICE_CAPABILITIES:
+        Net_ReceiveVoiceCapability(event,false);
+        break;
+    case PACKET_VOICE:
+        Net_ReceiveVoice(event,false);
+        break;
+#endif
     case PACKET_MASTER_TO_SLAVE:
 
         if (!(g_player[myconnectindex].ps->gm & MODE_GAME))
@@ -2616,6 +2733,7 @@ static void Net_ParseServerPacket(ENetEvent *event)
         break;
 
     case PACKET_PLAYER_DISCONNECTED:
+        if (pbuf[1] < MAXPLAYERS) Voice_ResetPlayer(pbuf[1]);
         if ((g_player[myconnectindex].ps->gm & MODE_GAME))
         {
             P_RemovePlayer(pbuf[1]);

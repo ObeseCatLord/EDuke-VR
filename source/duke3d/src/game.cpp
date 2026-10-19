@@ -50,6 +50,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "vfs.h"
 #include "vr.h"
+#include "voice.h"
 #ifdef USE_OPENGL
 # include "mdsprite.h"
 #endif
@@ -7089,6 +7090,7 @@ int app_main(int argc, char const* const* argv)
     OSD_SetVersion(tempbuf, 10,0);
     OSD_SetParameters(0, 0, 0, 12, 2, 12, OSD_ERROR, OSDTEXT_RED, OSDTEXT_DARKRED, gamefunctions[gamefunc_Show_Console][0] == '\0' ? OSD_PROTECTED : 0);
     registerosdcommands();
+    Voice_Init();
 
     if (g_networkMode != NET_DEDICATED_SERVER)
     {
@@ -7314,6 +7316,8 @@ MAIN_LOOP_RESTART:
             quitevent = 0;
         }
 
+        Voice_Frame();   // voice chat: capture/send, decode, spatialize (every frame)
+
         //if (g_restartFrameRoutine)
         //{
         //    dukeCreateFrameRoutine();
@@ -7342,6 +7346,7 @@ MAIN_LOOP_RESTART:
                     {
                         g_frameJustDrawn = false;
                         Net_GetPackets();
+                        Voice_Frame();
                         G_DoMoveThings();
                     }
 

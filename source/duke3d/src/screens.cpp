@@ -34,6 +34,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "mdsprite.h"
 #include "microprofile.h"
 #include "sbar.h"
+#include "voice.h"
 #include "screens.h"
 
 #define COLOR_RED redcol
@@ -1164,6 +1165,7 @@ void G_DisplayRest(int32_t smoothratio)
 #endif
 
     G_PrintGameQuotes(screenpeek);
+    Voice_DrawStatus();
 
     if (ud.show_level_text && hud_showmapname && g_levelTextTime > 1)
     {

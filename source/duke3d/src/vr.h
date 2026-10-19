@@ -32,6 +32,8 @@ void G_XRUpdateShotInput();
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
 // Tracked aim owns pitch completely (no stick pitch): native centering is moot.
 bool G_XRTrackedPitchOwner();
+// Build angle of the tracked head for audio listeners (voice chat); `fallback` outside VR.
+int G_XRListenerAngle(int fallback);
 fix16_t G_XRMovementAngle(fix16_t nativeAngle);
 bool G_XRCrosshairPosition(vec2_t &position);
 bool G_XRBeginCrosshair();

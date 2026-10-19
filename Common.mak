@@ -1019,6 +1019,14 @@ ifeq ($(USE_OPENXR),1)
 endif
 
 
+# Multiplayer voice chat (Opus); on by default when libopus is found.
+USE_VOICECHAT ?= $(shell $(PKG_CONFIG) --exists opus 2>/dev/null && echo 1 || echo 0)
+ifeq ($(USE_VOICECHAT),1)
+    COMPILERFLAGS += -DUSE_VOICECHAT $(shell $(PKG_CONFIG) --cflags opus)
+    LIBS += $(shell $(PKG_CONFIG) --libs opus)
+endif
+
+
 ##### Detect version control revision, if applicable
 
 VC_REV :=
