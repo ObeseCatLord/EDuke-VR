@@ -59,3 +59,20 @@ Normal E1L1 single-pass coverage is unchanged (opaque 60/60, masks 58/60).
 - Residual sparse seam pixels in rolled poses; mirrors/YAX are still excluded
   from the XR world path as before.
 - Physical headset comfort/performance not measured.
+
+## Room-over-room (YAX) maps
+
+`G_XRDrawRooms` used to return false for any map with YAX bunches, so the XR
+frame was never submitted (many AA 5.66 maps, e.g. all of HTTKB/Attrition,
+are v9 YAX maps). The opaque phase now calls the native `yax_drawrooms` after
+each eye/pass room traversal, exactly as `G_DrawRooms` does: other levels are
+drawn with their own native sprite animation and masks per view, and the base
+level keeps the single shared animation transaction and per-eye mask pass.
+`yax_drawrooms` only clears depth when `yax_polymostclearzbuffer` is set, so a
+split back pass keeps its front pass's depth. YAX frames use the per-eye
+reference path (no multiview collection).
+
+Consequence: on YAX maps the per-level `G_DoSpriteAnimations` runs once per
+view (natively it already runs once per level per frame). Verified on AA
+`maps/httkb/high_rise.map`: level/60° down/90° down/60° up all submit distinct
+stereo frames with the expected split passes.

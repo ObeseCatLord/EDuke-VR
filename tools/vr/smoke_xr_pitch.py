@@ -60,6 +60,9 @@ def main():
     parser.add_argument('--timeout', default=150, type=int)
     parser.add_argument('--level', default='1')
     parser.add_argument('--single-pass', action='store_true')
+    parser.add_argument('--aa-root', type=Path, help='Alien Armageddon install; uses its GRP/CON/DEF')
+    parser.add_argument('--map', help='user map to load instead of an episode level')
+    parser.add_argument('--poses', help='comma-separated subset of pose names')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='pitch-', dir=args.work_dir.resolve()))
@@ -74,7 +77,13 @@ def main():
         if key.startswith('EDUKE32_XR_TEST_') and key != 'EDUKE32_XR_TEST_PITCH':
             env.pop(key)
     log_path = lab / 'game.log'
-    command = [str(args.binary.resolve()), '-usecwd', '-nosetup', '-noautoload', '-v1', '-l' + args.level, '-s1']
+    command = [str(args.binary.resolve()), '-usecwd', '-nosetup', '-noautoload']
+    if args.aa_root:
+        aa = args.aa_root.resolve()
+        command += ['-nologo', '-j', str(aa), '-g', str(aa / 'AA.grp'), '-x', 'scripts/AAGAME.CON', '-h', 'duke3d.def']
+    command += ['-map', args.map] if args.map else ['-v1', '-l' + args.level]
+    command += ['-s1']
+    poses = [p for p in POSES if not args.poses or p[0] in args.poses.split(',')]
     result = {'passed': False, 'poses': {}, 'evidence_directory': str(lab)}
     deadline = time.monotonic() + args.timeout
     remote = None
@@ -92,7 +101,7 @@ def main():
             time.sleep(.5)
             base = remote.packet.head.center.position
             base = (base.x, base.y, base.z)
-            for name, yaw, pitch, roll, offset in POSES:
+            for name, yaw, pitch, roll, offset in poses:
                 head = remote.packet.head.center
                 head.orientation = orientation(yaw, pitch, roll)
                 head.position.x, head.position.y, head.position.z = (b + o for b, o in zip(base, offset))
@@ -120,8 +129,8 @@ def main():
             poses = result['poses']
             result['checks'] = {
                 'all_poses_captured': all(p['captured'] for p in poses.values()),
-                'level_single_pass': poses['level']['passes'] == [1, 1],
-                'steep_poses_split': all(poses[n]['passes'] == [2, 2] for n in ('down60', 'down89', 'down90', 'up60', 'up90')),
+                'level_unsplit': poses['level']['passes'] == [1, 1] if 'level' in poses else True,
+                'steep_poses_split': all(poses[n]['passes'] == [2, 2] for n in ('down60', 'down89', 'down90', 'up60', 'up90') if n in poses),
                 'no_world_stop': not result['world_stopped'],
                 'no_rejected_frames': not result['rejected_frames_warning'],
                 'game_alive': process.poll() is None,

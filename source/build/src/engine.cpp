@@ -1130,7 +1130,10 @@ void yax_drawrooms(void (*SpriteAnimFunc)(int32_t,int32_t,int32_t,int32_t,int32_
 #ifdef USE_OPENGL
     if (videoGetRenderMode() == REND_POLYMOST)
     {
-        glClear(GL_DEPTH_BUFFER_BIT);
+        // A caller drawing a second view region into the same target (XR
+        // full-pitch passes) clears the latch beforehand to keep its depth.
+        if (yax_polymostclearzbuffer)
+            glClear(GL_DEPTH_BUFFER_BIT);
         yax_polymostclearzbuffer = 0;
     }
 #endif

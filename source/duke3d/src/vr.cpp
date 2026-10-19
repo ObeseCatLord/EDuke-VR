@@ -1709,11 +1709,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
 {
     // Initial renderer oracle deliberately excludes multi-view sector effects.
     // Further camera/draw families and tracked weapon origins remain required.
-    if (videoGetRenderMode() != REND_POLYMOST || g_screenCapture
-#ifdef YAX_ENABLE
-        || numyaxbunches
-#endif
-        )
+    if (videoGetRenderMode() != REND_POLYMOST || g_screenCapture)
         return false;
     auto *runtime=pendingRuntime;
     if (!runtime || runtime->generation() != pendingGeneration) return false;
@@ -1857,6 +1853,11 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 yax_polymostclearzbuffer=!pass;
                 renderDrawRoomsQ16(view.camera.pos.x,view.camera.pos.y,view.camera.pos.z,
                                   view.camera.angle,view.camera.horizon,view.camera.sector);
+                // Room-over-room levels are drawn natively per view, each
+                // with its own masks and sprite animation exactly as the flat
+                // renderer does; the base level keeps one shared transaction.
+                if (numyaxbunches)
+                    yax_drawrooms(G_DoSpriteAnimations,view.camera.sector,0,smoothRatio);
                 yax_polymostclearzbuffer=1;
                 if (collect && polymost_xrEndCollection(i) != POLYMOST_XR_COLLECT_OK)
                     return false;
@@ -1881,7 +1882,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     char const *singleValue=std::getenv("EDUKE32_XR_SINGLE_PASS");
     // Split full-pitch eyes carry two camera rotations per eye; their replay
     // uses the per-eye reference path until multiview can pair split passes.
-    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1") && !eyes[0].split && !eyes[1].split;
+    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1") && !eyes[0].split && !eyes[1].split && !numyaxbunches;
     if (eyes[0].split || eyes[1].split)
     {
         static unsigned splitFrames;
