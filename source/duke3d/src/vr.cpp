@@ -1644,6 +1644,8 @@ static bool weaponReceiptMatches()
 
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
 {
+    // The weapon wheel hides the held weapon (3D model and native weapon ART) while it is open.
+    if (wheel.open && handModelReceipt.weaponSegment) return true;
     // A generic held model replaces the whole native weapon display segment,
     // including its hands; native animation and CON state still run.
     if (handModelReceipt.presentation.family==XRWeaponFamily::StockHeld)
@@ -1675,6 +1677,7 @@ static bool weaponSegmentTile(int32_t tile,int32_t uniqueID,int32_t shade,int32_
                               int32_t flags,int32_t angle,int32_t alpha,int32_t blend)
 {
     auto &receipt=handModelReceipt;
+    if (wheel.open && receipt.weaponSegment) return true;   // weapon wheel open: no held weapon
     if (aaWeaponFamily(receipt.presentation.family) && receipt.runtime)
         return consumeAAWeaponTile(tile,uniqueID,shade,palette,flags,angle,alpha,blend);
     if (receipt.weaponSegment && std::getenv("EDUKE32_XR_TEST_HELD"))
@@ -3112,7 +3115,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         segments.reserve(MaxWorldModels);
         WorldModelSample *models[MaxWorldModels]{};
         unsigned modelCount=0, gripMask=0;
-        bool const weaponModel=good && !fixtureTest && prepareHandModel(handModel);
+        bool const weaponModel=good && !fixtureTest && !wheel.open && prepareHandModel(handModel);
         if (weaponModel) models[modelCount++]=&handModel;
         for (unsigned hand=0;hand<2 && good && !fixtureTest;++hand)
         {
