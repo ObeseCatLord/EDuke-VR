@@ -1462,7 +1462,16 @@ void G_XRArmMenuPresentation()
                   menuRuntime && menuRuntime->menuOverlayTargetBound(),unsigned(handModelReceipt.seen),handModelReceipt.mismatch,
                   (unsigned long long)handModelReceipt.serial,(unsigned long long)pendingFrame.serial);
         }
+        // The submitted image would disagree with native weapon state: drop
+        // this one frame. Test runs (EDUKE32_XR=1) keep the strict stop.
         G_XRCancelMenuPresentation();
+        auto const retry=sdlayer_xr_option("EDUKE32_XR_RETRY");
+        if (retry && !Bstrcmp(retry,"1"))
+        {
+            static unsigned dropped;
+            if (dropped++<4) LOG_F(WARNING,"OpenXR held-model receipt mismatch; frame dropped.");
+            return;
+        }
         sdlayer_xr_disableWorld("held-model/native weapon receipt mismatch");
         return;
     }

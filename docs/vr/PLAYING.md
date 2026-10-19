@@ -36,6 +36,7 @@ anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
 | `EDUKE32_XR_MODELS`, `EDUKE32_XR_AA_MODELS` | `1` | held MD3 pistol/RPG when a model is defined |
 | `EDUKE32_XR_WEAPON_MOUNT` | `1` | palm-calibrated muzzle from model tags |
 | `EDUKE32_XR_HAND_LEFT_TILE` / `_RIGHT_TILE` | `30010` / `30011` | floating hand models |
+| `EDUKE32_XR_RETRY` | `1` | restart a stopped XR session (1, 2, 4, 8, 16 s backoff, 8 attempts); a held-model receipt mismatch drops one frame instead of stopping |
 
 Any variable you export explicitly overrides the preset. `EDUKE32_XR=1` keeps
 the old behaviour (everything off unless set), which the test harnesses use.

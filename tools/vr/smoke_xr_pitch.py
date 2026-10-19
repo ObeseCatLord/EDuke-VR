@@ -64,6 +64,7 @@ def main():
     parser.add_argument('--map', help='user map to load instead of an episode level')
     parser.add_argument('--poses', help='comma-separated subset of pose names')
     parser.add_argument('--play', action='store_true', help='launch through package/vr/eduke32-vr-play')
+    parser.add_argument('--fail', help='EDUKE32_XR_TEST_FAIL injection point (one shot)')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='pitch-', dir=args.work_dir.resolve()))
@@ -77,6 +78,8 @@ def main():
     for key in list(env):
         if key.startswith('EDUKE32_XR_TEST_') and key != 'EDUKE32_XR_TEST_PITCH':
             env.pop(key)
+    if args.fail:
+        env['EDUKE32_XR_TEST_FAIL'] = args.fail
     log_path = lab / 'game.log'
     command = [str(args.binary.resolve()), '-usecwd', '-nosetup', '-noautoload']
     if args.play:
@@ -135,6 +138,7 @@ def main():
                 }
             output = text()
             result['world_stopped'] = 'OpenXR world stopped' in output
+            result['session_retries'] = output.count('OpenXR world: retrying session')
             result['rejected_frames_warning'] = 'outside native camera coverage' in output
             poses = result['poses']
             result['checks'] = {
@@ -143,7 +147,7 @@ def main():
                 'level_unsplit': poses['level']['passes'] in ([1, 1], None) if 'level' in poses else True,
                 'steep_poses_split': all(poses[n]['passes'] in ([2, 2], None)
                                          for n in ('down60', 'down89', 'down90', 'up60', 'up90') if n in poses),
-                'no_world_stop': not result['world_stopped'],
+                'no_world_stop': not result['world_stopped'] or (args.fail and result['session_retries'] > 0),
                 'no_rejected_frames': not result['rejected_frames_warning'],
                 'game_alive': process.poll() is None,
             }

@@ -115,6 +115,9 @@ static bool sdl_xr_active;
 static unsigned long sdl_xr_frameLimit;
 static bool sdl_xr_worldAttempted, sdl_xr_worldActive;
 static int sdl_xr_worldWidth, sdl_xr_worldHeight;
+// Play mode retries a stopped world session with backoff (ms tick, attempts).
+static uint64_t sdl_xr_retryAt;
+static unsigned sdl_xr_retries;
 
 static void sdlayer_xr_shutdown()
 {
@@ -152,6 +155,7 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_WEAPON_MOUNT", "1" },    // palm-calibrated muzzles when tagged
         { "EDUKE32_XR_HAND_LEFT_TILE", "30010" },  // floating hands when defined
         { "EDUKE32_XR_HAND_RIGHT_TILE", "30011" },
+        { "EDUKE32_XR_RETRY", "1" },           // restart a stopped session
     };
     for (auto const &option : preset)
         if (!std::strcmp(option.name, name))
@@ -171,6 +175,12 @@ eduke_xr::Runtime *sdlayer_xr_worldRuntime()
     {
         sdlayer_xr_shutdown();
         LOG_F(INFO,"OpenXR world extent changed at native frame boundary: %dx%d.",width,height);
+    }
+    if (sdl_xr_worldAttempted && !sdl_xr_worldActive && sdl_xr_retryAt && timerGetTicks() >= sdl_xr_retryAt)
+    {
+        sdl_xr_retryAt = 0;
+        sdl_xr_worldAttempted = false;
+        LOG_F(INFO, "OpenXR world: retrying session (attempt %u).", sdl_xr_retries);
     }
     if (!sdl_xr_worldAttempted)
     {
@@ -196,6 +206,14 @@ void sdlayer_xr_disableWorld(char const *reason)
     LOG_F(ERROR, "OpenXR world stopped: %s", reason);
     sdl_xr.shutdown();
     sdl_xr_worldActive = false;
+    // A player in a headset should not be left on the desktop by one bad
+    // frame. Tests keep the stop final (EDUKE32_XR=1 without the option).
+    char const *retry = sdlayer_xr_option("EDUKE32_XR_RETRY");
+    if (retry && !std::strcmp(retry, "1") && sdl_xr_retries < 8)
+    {
+        sdl_xr_retryAt = timerGetTicks() + (1000u << std::min(sdl_xr_retries, 4u));
+        ++sdl_xr_retries;
+    }
 }
 
 bool sdlayer_xr_worldActive() { return sdl_xr_worldActive; }
