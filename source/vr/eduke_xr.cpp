@@ -987,6 +987,10 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
         shutdown();
         return false;
     }
+    if (renderWidth && renderHeight && (renderWidth != m_impl->width || renderHeight != m_impl->height))
+        std::fprintf(stderr, "OpenXR: runtime recommends %ux%u per eye; rendering at the game resolution %ux%u. "
+                     "Set the game video mode to the recommended size for full sharpness.\n",
+                     m_impl->width, m_impl->height, renderWidth, renderHeight);
     if (renderWidth || renderHeight)
     {
         if (!renderWidth || !renderHeight)
@@ -1179,6 +1183,10 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
         {
             auto const *changed = reinterpret_cast<XrEventDataSessionStateChanged const *>(&event);
             m_impl->sessionState = changed->state;
+            static char const *const names[] = { "UNKNOWN", "IDLE", "READY", "SYNCHRONIZED", "VISIBLE",
+                                                 "FOCUSED", "STOPPING", "LOSS_PENDING", "EXITING" };
+            std::fprintf(stderr, "OpenXR session state: %s.\n",
+                         unsigned(changed->state) < 9 ? names[changed->state] : "?");
             if (changed->state == XR_SESSION_STATE_READY)
             {
                 XrSessionBeginInfo begin { XR_TYPE_SESSION_BEGIN_INFO };

@@ -156,6 +156,8 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_HAND_LEFT_TILE", "30010" },  // floating hands when defined
         { "EDUKE32_XR_HAND_RIGHT_TILE", "30011" },
         { "EDUKE32_XR_RETRY", "1" },           // restart a stopped session
+        { "EDUKE32_XR_MOVE", "head" },         // stick movement follows the head
+        { "EDUKE32_XR_STICK_PITCH", "0" },     // head tracking owns pitch
     };
     for (auto const &option : preset)
         if (!std::strcmp(option.name, name))

@@ -197,6 +197,20 @@ static bool handShotsRequested()
     return mode && !Bstrcmp(mode,"1");
 }
 
+// Comfort options. Snap turn in degrees (0 = smooth native stick turning).
+static float snapTurnDegrees()
+{
+    auto value=sdlayer_xr_option("EDUKE32_XR_SNAP_TURN");
+    float const degrees=value ? float(std::atof(value)) : 0.f;
+    return degrees>0.f && degrees<=180.f ? degrees : 0.f;
+}
+static bool stickPitchAllowed()
+{
+    auto value=sdlayer_xr_option("EDUKE32_XR_STICK_PITCH");
+    return !value || Bstrcmp(value,"0");
+}
+static float pendingSnapTurn; // radians, consumed by the next native tick
+
 // Opt-in while tracked weapon presentation and the full authority matrix develop.
 static int aimHand()
 {
@@ -267,6 +281,20 @@ static void publishInput()
     analog.dx=std::lround(move.x*32767.f); analog.dz=std::lround(-move.y*32767.f);
     // These are native joystick units, retaining native Strafe/AimWeight/locks.
     analog.dyaw=std::lround(turn.x*16383.f); analog.dpitch=std::lround(-turn.y*16383.f);
+    if (!stickPitchAllowed()) analog.dpitch=0;
+    if (float const snap=snapTurnDegrees())
+    {
+        // One discrete body rotation per stick flick; re-arm near centre.
+        static bool armed=true;
+        float const x=rawInput.hands[1].stickActive ? rawInput.hands[1].stick.x : 0.f;
+        if (armed && std::fabs(x)>.6f)
+        {
+            pendingSnapTurn+=(x>0.f ? 1.f : -1.f)*snap*Pi/180.f;
+            armed=false;
+        }
+        else if (std::fabs(x)<.3f) armed=true;
+        analog.dyaw=0;
+    }
     uint64_t buttons=0;
     auto const button=[&](bool pressed, unsigned gamefunc) { if (pressed) buttons |= uint64_t(1)<<gamefunc; };
     button(down[1]&ButtonSelect,gamefunc_Fire); button(down[0]&ButtonSelect,gamefunc_Open);
@@ -947,6 +975,9 @@ void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
     // temporarily unavailable. The XR context retains look-mode ownership.
     input.bits|=uint32_t(1)<<SK_AIMMODE;
     input.extbits &= ~(BIT(EK_GAMEPAD_CENTERING)|BIT(EK_GAMEPAD_AIM_ASSIST));
+    if (pendingSnapTurn!=0.f && yawAllowed)
+        input.q16avel=fix16_sadd(input.q16avel,fix16_from_float(pendingSnapTurn*1024.f/Pi));
+    pendingSnapTurn=0.f;
     if (!aimPoseUsable()) return;
     if (!recentered) setTrackingReference(rawInput.headPose);
     auto const p=g_player[myconnectindex].ps;
@@ -1052,9 +1083,38 @@ void G_XRUpdateShotInput()
     shotReferenceInvalidated=false; // One native sample conveys the unknown reference reset.
 }
 
+// Yaw of a tracked pose relative to the recentered body reference, radians.
+static bool trackedYaw(XrPosef const &pose, float &yaw)
+{
+    if (!validPose(pose) || !recentered) return false;
+    auto const forward=rotate(multiply(inverseYaw,pose.orientation),{0,0,-1});
+    if (std::hypot(forward.x,forward.z)<1e-3f) return false;
+    yaw=std::atan2(forward.x,-forward.z);
+    return true;
+}
+
 fix16_t G_XRMovementAngle(fix16_t nativeAngle)
 {
-    return localAimCamera() ? (nativeAngle-fix16_from_float(aimYawOffset*1024.f/Pi)) & 0x7FFFFFF : nativeAngle;
+    if (!localAimCamera()) return nativeAngle;
+    float offset=-aimYawOffset; // body yaw
+    // Stick movement follows the head (default in play mode) or the left
+    // controller, like RazeXR; "body" keeps the recentered body direction.
+    auto const mode=sdlayer_xr_option("EDUKE32_XR_MOVE");
+    float yaw;
+    if (mode && !Bstrcmp(mode,"head") && inputValid() && rawInput.headValid && trackedYaw(rawInput.headPose,yaw))
+        offset+=yaw;
+    else if (mode && !Bstrcmp(mode,"hand") && inputValid() && rawInput.hands[0].aimValid && trackedYaw(rawInput.hands[0].aimPose,yaw))
+        offset+=yaw;
+    fix16_t const angle=(nativeAngle+fix16_from_float(offset*1024.f/Pi)) & 0x7FFFFFF;
+    if (std::getenv("EDUKE32_XR_TEST_MOVE"))
+    {
+        static unsigned ticks;
+        auto const p=g_player[myconnectindex].ps;
+        if (ticks++%2==0)
+            LOG_F(INFO,"OpenXR move: native=%.3f move=%.3f pos=%d,%d,%d.",fix16_to_float(nativeAngle),
+                  fix16_to_float(angle),p->pos.x,p->pos.y,p->pos.z);
+    }
+    return angle;
 }
 
 bool G_XRCrosshairPosition(vec2_t &position)
@@ -1901,8 +1961,10 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     {
         static unsigned splitFrames;
         if (!splitFrames++ || std::getenv("EDUKE32_XR_TEST_PITCH"))
-            LOG_F(INFO,"OpenXR full-pitch split frame: serial=%llu passes=%u,%u.",
-                  (unsigned long long)frame.serial,eyes[0].passCount(),eyes[1].passCount());
+            LOG_F(INFO,"OpenXR full-pitch split frame: serial=%llu passes=%u,%u pitch=%.1f bodyPitch=%.1f fov=%.2f,%.2f,%.2f,%.2f.",
+                  (unsigned long long)frame.serial,eyes[0].passCount(),eyes[1].passCount(),
+                  std::atan2(eyes[0].upSin,eyes[0].upCos)*180.f/Pi,nativePitch(body.horizon)*180.f/Pi,
+                  frame.views[0].fov.angleLeft,frame.views[0].fov.angleRight,frame.views[0].fov.angleUp,frame.views[0].fov.angleDown);
     }
     if (singlePass)
     {

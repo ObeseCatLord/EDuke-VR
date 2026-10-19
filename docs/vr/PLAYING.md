@@ -36,6 +36,9 @@ anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
 | `EDUKE32_XR_MODELS`, `EDUKE32_XR_AA_MODELS` | `1` | held MD3 pistol/RPG when a model is defined |
 | `EDUKE32_XR_WEAPON_MOUNT` | `1` | palm-calibrated muzzle from model tags |
 | `EDUKE32_XR_HAND_LEFT_TILE` / `_RIGHT_TILE` | `30010` / `30011` | floating hand models |
+| `EDUKE32_XR_MOVE` | `head` | stick movement direction: `head`, `hand` (left controller) or `body` |
+| `EDUKE32_XR_STICK_PITCH` | `0` | right stick Y does not pitch the world (head tracking owns pitch) |
+| `EDUKE32_XR_SNAP_TURN` | unset | degrees per right-stick flick (e.g. `45`); unset = smooth turning |
 | `EDUKE32_XR_RETRY` | `1` | restart a stopped XR session (1, 2, 4, 8, 16 s backoff, 8 attempts); a held-model receipt mismatch drops one frame instead of stopping |
 
 Any variable you export explicitly overrides the preset. `EDUKE32_XR=1` keeps
@@ -48,7 +51,7 @@ controller aim pose instead of being suppressed.
 | Control | Action |
 | --- | --- |
 | Left stick | move/strafe |
-| Right stick | turn (x), look (y) |
+| Right stick | turn (x; smooth or snap) |
 | Right trigger | fire |
 | Left trigger | open/use |
 | Right A / B | jump / crouch |
@@ -61,8 +64,8 @@ In menus: triggers/A advance, B back, sticks navigate.
 
 ## Known limits
 
-- Eye render size equals the game window size; set the game resolution close
-  to your headset's per-eye recommendation for sharpness.
+- Eye render size equals the game window size; the log prints the runtime's
+  recommended per-eye size. Set the game resolution close to it for sharpness.
 - Mirrors are not yet rendered per eye.
 - Steep head pitch and room-over-room maps render through the per-eye path
   instead of multiview (see FULL_PITCH.md).
