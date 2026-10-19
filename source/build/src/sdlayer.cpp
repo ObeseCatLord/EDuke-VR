@@ -107,6 +107,8 @@ static SDL_GLContext sdl_context;
 static int vsync_unsupported;
 #endif
 
+static int32_t vsync_renderlayer;
+
 #ifdef USE_OPENXR
 // Explicit diagnostic using Polymost's context; this is not game-world VR.
 static eduke_xr::Runtime sdl_xr;
@@ -116,7 +118,6 @@ static unsigned long sdl_xr_frameLimit;
 static bool sdl_xr_worldAttempted, sdl_xr_worldActive;
 static int sdl_xr_worldWidth, sdl_xr_worldHeight;
 static int sdlayer_getswapinterval(int const syncMode);
-static int32_t vsync_renderlayer;
 // OpenXR's xrWaitFrame paces the game while a world session runs; the desktop
 // mirror must not block on the monitor's vsync.
 static void sdlayer_xr_desktopSync(bool xrPaced)
