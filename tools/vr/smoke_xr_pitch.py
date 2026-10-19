@@ -76,7 +76,7 @@ def main():
     if args.single_pass:
         env['EDUKE32_XR_SINGLE_PASS'] = '1'
     for key in list(env):
-        if key.startswith('EDUKE32_XR_TEST_') and key != 'EDUKE32_XR_TEST_PITCH':
+        if key.startswith('EDUKE32_XR_TEST_') and key not in ('EDUKE32_XR_TEST_PITCH', 'EDUKE32_XR_TEST_TIMING'):
             env.pop(key)
     if args.fail:
         env['EDUKE32_XR_TEST_FAIL'] = args.fail

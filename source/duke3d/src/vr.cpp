@@ -2363,8 +2363,20 @@ static void drawEyeMirror(Camera const &cam, int32_t smoothRatio)
     maskwallcnt=0;
 }
 
+// Opt-in CPU phase timing (EDUKE32_XR_TEST_TIMING=1): averages every 120 frames.
+static struct
+{
+    double opaque=0, animate=0, models=0, masks=0, total=0;
+    unsigned frames=0;
+} xrTiming;
+static double xrNowMs() { return double(timerGetNanoTicks())*1000.0/double(timerGetNanoTickRate()); }
+
 bool G_XRDrawRooms(int32_t smoothRatio)
 {
+    double const timingStart=xrNowMs();
+    double timingMark=timingStart;
+    bool const timing=std::getenv("EDUKE32_XR_TEST_TIMING")!=nullptr;
+    auto const lap=[&](double &slot) { if (!timing) return; double const now=xrNowMs(); slot+=now-timingMark; timingMark=now; };
     // Initial renderer oracle deliberately excludes multi-view sector effects.
     // Further camera/draw families and tracked weapon origins remain required.
     if (videoGetRenderMode() != REND_POLYMOST || g_screenCapture)
@@ -2599,6 +2611,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     }
     else drawOpaque(false);
     mirrorSeen=bitmap_test(gotpic,MIRROR);
+    lap(xrTiming.opaque);
     if (good)
     {
         std::vector<int> byOwner(MAXSPRITES,-1);
@@ -2642,6 +2655,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         generationSaturated=false;
         animating=true;
         G_DoSpriteAnimations(logical.pos.x,logical.pos.y,logical.pos.z,fix16_to_int(logical.angle),smoothRatio);
+        lap(xrTiming.animate);
         animating=false;
         animated=true;
         logical=camera(); // Preserve any CON changes to the common logical camera.
@@ -2998,6 +3012,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 }
             }
         }
+        lap(xrTiming.models);
         auto const maskPrefix=std::getenv("EDUKE32_XR_TEST_MASK_ORACLE");
         bool const maskCapture=maskPrefix && maskPrefix[0] && singlePass && !fixtureTest && worldFrames==59;
         auto const drawMasks = [&](bool collect,NativeOracleTarget *oracle=nullptr) {
@@ -3126,6 +3141,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             polymost_xrDiscardCollection();
         }
         else if (good) drawMasks(false);
+        lap(xrTiming.masks);
         if (good && fixtureTest && g_frameCounter == 12)
         {
             if (auto prefix=std::getenv("EDUKE32_XR_TEST_CAPTURE"))
@@ -3207,6 +3223,17 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     maskwallcnt=0;
     // Before animation a native fallback is safe. After it, the logical pass
     // must be consumed even on failure so CON/persistent state cannot run twice.
+    if (timing)
+    {
+        xrTiming.total+=xrNowMs()-timingStart;
+        if (++xrTiming.frames==120)
+        {
+            double const n=xrTiming.frames;
+            LOG_F(INFO,"OpenXR CPU ms/frame: opaque=%.2f animate=%.2f models=%.2f masks=%.2f world total=%.2f.",
+                  xrTiming.opaque/n,xrTiming.animate/n,xrTiming.models/n,xrTiming.masks/n,xrTiming.total/n);
+            xrTiming={};
+        }
+    }
     return good || animated;
 }
 #endif
