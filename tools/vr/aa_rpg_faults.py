@@ -133,3 +133,67 @@ def blocked_fire(observer, remote, native_rows, side: str) -> dict:
                     and after['shots'] == before['shots'] and all(row['counter'] == 0 and row['shots'] == before['shots'] for row in observed),
                 'invalid_calibration_has_no_native_RPG_insertion': 'VR authoritative RPG:' not in released[start:]
                     and 'VR native projectile:' not in released[start:] and 'addlog aarpg_spawn_' not in released[start:]}}
+
+
+HELD = re.compile(r'OpenXR input: sample=\d+ focus=\d+ active=\d+,(\d+) buttons=\d+,\d+ funcs=(\d+) .*? aim=(\d+),\d+ gen=\d+ held=\d+,(\d+)')
+FIRE = 1 << 5  # gamefunc_Fire in the published native function mask
+
+
+def held_rows(text):
+    return [{'right_active': int(a), 'functions': int(f), 'left_aim': int(l), 'right_held': int(h)}
+            for a, f, l, h in HELD.findall(text)]
+
+
+def tracking_recovery(observer, remote, native_rows) -> dict:
+    """Lose selected left aim/grip together while the right trigger stays held.
+
+    The input layer must not publish Fire while the selected pose is invalid,
+    nor when the pose returns with the trigger still held (no automatic shot).
+    The caller's subsequent release/repress must fire exactly once. This does
+    not simulate isolated grip-only loss.
+    """
+    left = remote.packet.left
+    left.pose.position.x, left.pose.position.y, left.pose.position.z = .2, 1.3, -.5
+    left.pose.orientation = orientation(10, 4)
+    remote.packet.right.trigger_value, remote.packet.right.trigger_click = 0, False
+    remote.send()
+    start = len(observer.text())
+    observer.wait(lambda text: len(native_rows(text[start:])) >= 4)
+    baseline = native_rows(observer.text())[-1]
+    stages = {}
+    def observe(name, start, predicate):
+        text = observer.wait(lambda text: len(native_rows(text[start:])) >= 8 and
+                             any(predicate(row) for row in held_rows(text[start:])), timeout=30)
+        part = text[start:]
+        stages[name] = {'native': native_rows(part), 'XR': held_rows(part),
+                        'no_RPG_inserted': 'VR authoritative RPG:' not in part and 'addlog aarpg_spawn_' not in part}
+    try:
+        start = len(observer.text())
+        left.active = False
+        remote.packet.right.trigger_value, remote.packet.right.trigger_click = 1, True
+        remote.send()
+        observe('lost', start, lambda row: not row['left_aim'] and row['right_held'] & 1)
+        start = len(observer.text())
+        left.active = True
+        remote.send()  # Right trigger remains physically held throughout recovery.
+        observe('recovered_held', start, lambda row: row['left_aim'] and row['right_held'] & 1)
+    finally:
+        left.active = True
+        remote.packet.right.trigger_value, remote.packet.right.trigger_click = 0, False
+        remote.send()
+    start = len(observer.text())
+    released = observer.wait(lambda text: len(native_rows(text[start:])) >= 4)
+    stages['released'] = {'native': native_rows(released[start:])}
+    no_fire = lambda rows: bool(rows) and all(row['counter'] == 0 and row['shots'] == baseline['shots']
+                                            and row['ammo'] == baseline['ammo'] for row in rows)
+    both = (stages['lost'], stages['recovered_held'])
+    return {'scope': 'Left aim and grip lost together; right trigger held. Not isolated grip-only loss.',
+            'baseline': baseline, 'stages': stages, 'checks': {
+                'held_trigger_not_published_while_pose_lost': all(
+                    not row['functions'] & FIRE for row in stages['lost']['XR'] if row['right_held'] & 1),
+                'held_trigger_not_published_after_pose_recovery': all(
+                    not row['functions'] & FIRE for row in stages['recovered_held']['XR'] if row['right_held'] & 1),
+                'pose_loss_and_held_recovery_do_not_advance_native_weapon': all(no_fire(stage['native']) for stage in both),
+                'pose_loss_and_held_recovery_insert_no_RPG': all(stage['no_RPG_inserted'] for stage in both),
+                'release_retains_ammo_without_an_automatic_shot': no_fire(stages['released']['native']),
+            }}

@@ -317,11 +317,12 @@ static void publishInput()
             static std::string previous;
             static uint32_t sample;
             char state[384];
-            Bsnprintf(state,sizeof(state),"focus=%u active=%u,%u buttons=%u,%u funcs=%llu axes=%d,%d,%d,%d menu=%u,%u,%u,%d gm=%u screen=%d aim=%u,%u gen=%llu",
+            Bsnprintf(state,sizeof(state),"focus=%u active=%u,%u buttons=%u,%u funcs=%llu axes=%d,%d,%d,%d menu=%u,%u,%u,%d gm=%u screen=%d aim=%u,%u gen=%llu held=%u,%u",
                       rawInput.focused,rawInput.hands[0].activeButtons,rawInput.hands[1].activeButtons,down[0],down[1],
                       (unsigned long long)buttons,analog.dx,analog.dz,analog.dyaw,analog.dpitch,
                       menu.b_advance,menu.b_return,menu.b_escape,int(menu.dir),unsigned(g_player[myconnectindex].ps->gm),int(g_currentMenu),
-                      rawInput.hands[0].aimValid,rawInput.hands[1].aimValid,(unsigned long long)inputGeneration);
+                      rawInput.hands[0].aimValid,rawInput.hands[1].aimValid,(unsigned long long)inputGeneration,
+                      rawInput.hands[0].buttons&rawInput.hands[0].activeButtons,rawInput.hands[1].buttons&rawInput.hands[1].activeButtons);
             if (previous != state || sample%60 == 0)
             {
                 LOG_F(INFO,"OpenXR input: sample=%u %s",sample,state);

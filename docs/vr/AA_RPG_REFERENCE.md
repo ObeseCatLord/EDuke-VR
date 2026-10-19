@@ -219,3 +219,16 @@ Preserve the prior [AA renderer ordering decision](AA_MODEL_DESIGN.md) and
 [shared mount authority](PISTOL_MOUNT.md). This experimental opt-in increment
 adds no duplicate AA state machine, animation clock, protocol or late opaque HUD
 renderer.
+
+## Tracking recovery with a held trigger (2026-10-19)
+
+`smoke_aa_rpg_native.py --mount --aim-hand left --tracking-recovery` passes in the
+private software-XR lab (`work/claude-aa-rpg-tracking-recovery-1`): with the
+selected left controller lost (aim and grip together) and the right trigger
+held, the input layer never publishes Fire and no RPG is inserted; when the
+pose returns with the trigger still held there is still no shot; release keeps
+ammo; the next press fires exactly one native RPG from unchanged inventory.
+The earlier attempt timed out because its predicates expected the held trigger
+in the post-gate `buttons` trace field. The input trace now also prints the raw
+held (active) buttons as `held=left,right`, and the checks assert that Fire is
+withheld while held. Isolated grip-only loss remains untested.

@@ -450,6 +450,7 @@ def main() -> int:
     parser.add_argument('--aim-hand', choices=('left', 'right'), default='right')
     parser.add_argument('--switch-pistol-model', type=Path)
     parser.add_argument('--switch-pistol-skin', type=Path)
+    parser.add_argument('--tracking-recovery', action='store_true', help='lose selected left tracking while right trigger stays active')
     parser.add_argument('--asset-fault', choices=('missing-skin', 'missing-palm'))
     parser.add_argument('--draw-fault', choices=('duplicate-body', 'wrong-tile'))
     parser.add_argument('--missing-frame', type=int,
@@ -476,6 +477,8 @@ def main() -> int:
     if args.switch_pistol_model:
         args.switch_pistol_model = args.switch_pistol_model.resolve()
         args.switch_pistol_skin = args.switch_pistol_skin.resolve()
+    if args.tracking_recovery and (not args.mount or args.aim_hand != 'left' or args.asset_fault or args.draw_fault or args.missing_frame is not None or args.switch_pistol_model):
+        parser.error('tracking recovery requires a normal mounted left-hand case with separate right trigger')
     args.binary, args.grp, args.mod_root, args.compat_con, args.work_dir = (
         args.binary.resolve(), args.grp.resolve(), args.mod_root.resolve(), args.compat_con.resolve(), args.work_dir.resolve())
     if args.model:
@@ -512,7 +515,7 @@ def main() -> int:
         (root / 'autoexec.cfg').write_text('r_maxfps 60\n' +
             ('bind F4 norepeat "setvar aarpg_fault 1"\n' if args.draw_fault else ''))
         from pistol_mount_check import observer as mount_observer
-        from aa_rpg_faults import remove_palm_tag, draw_fault_con, exercise_draw_fault, blocked_fire
+        from aa_rpg_faults import remove_palm_tag, draw_fault_con, exercise_draw_fault, blocked_fire, tracking_recovery
         (root / 'aa_rpg_observer.con').write_text(rpg_observer() + (mount_observer() if model_case else '')
             + (draw_fault_con(args.draw_fault) if args.draw_fault else ''))
         definition = 'duke3d.def'
@@ -570,6 +573,9 @@ def main() -> int:
                 result['idle_model'] = wait_idle_model(observer, root, switching=bool(args.switch_pistol_model))
             prior_capture = max(map(int, PVP_CAPTURE.findall(observer.text())), default=0)
             result['gameplay_capture'] = post_gameplay_capture(observer, root, prior_capture, timeout=25)
+            if args.tracking_recovery:
+                phase = 'selected tracking loss and held-trigger recovery'
+                result['tracking_recovery'] = tracking_recovery(observer, remote, rpg_rows)
             if blocked:
                 phase = 'native RPG firing suppressed by missing calibration'
                 result['blocked_fire'] = blocked_fire(observer, remote, rpg_rows, args.aim_hand)
@@ -640,6 +646,12 @@ def main() -> int:
                 native_RPG_projectile_inserted=len(spawns) == 1 and spawns[0]['player'] == selected['player'] and
                     spawns[0]['sector'] >= 0 and spawns[0]['speed'] > 0
             )
+        if args.tracking_recovery:
+            checks.update(result['tracking_recovery']['checks'])
+            checks['recovery_repress_fires_exactly_once_from_unchanged_inventory'] = (
+                fire['before']['ammo'] == result['tracking_recovery']['baseline']['ammo'] and
+                fire['after']['ammo'] == fire['before']['ammo'] - 1 and len(spawns) == 1 and
+                fire['after']['shots'] == fire['before']['shots'] + 1)
         if args.switch_pistol_model:
             checks.update(result['switches']['checks'])
         if args.draw_fault:
