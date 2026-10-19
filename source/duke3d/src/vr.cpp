@@ -862,18 +862,34 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     float const speed=moved/UnitsPerMetre; // metres this frame
     stride+=moved/(1.4f*UnitsPerMetre);
     stride-=std::floor(stride);
-    char name[16];
-    if (airborne) Bstrcpy(name,"jump");
-    else if (crouched) Bstrcpy(name,"crouch");
-    else if (moved>1.f) Bsprintf(name,"%s_%02d",speed>.08f ? "run" : "walk",1+int(stride*8.f)%8);
-    else Bstrcpy(name,"rest");
-    int frame=md3_getframeindex(sample.context.modelid,name);
-    if (frame<0 && !Bstrncmp(name,"run",3))
-    {
-        Bsprintf(name,"walk_%02d",1+int(stride*8.f)%8);
+    // Frames of the shared third-person Duke model (4-step cycles), falling
+    // back to a dedicated body's 8-step names, then the rest pose.
+    int const step=1+int(stride*4.f)%4;
+    char name[24];
+    int frame=-1;
+    auto const tryFrame=[&](char const *format,int index) {
+        if (frame>=0) return;
+        Bsnprintf(name,sizeof(name),format,index);
         frame=md3_getframeindex(sample.context.modelid,name);
+    };
+    if (airborne) { tryFrame(p->vel.z>0 ? "fall" : "jump",0); tryFrame("jump",0); }
+    else if (crouched) { if (moved>1.f) tryFrame("crouch_walk_%02d",step); tryFrame("crouch",0); }
+    else if (moved>1.f)
+    {
+        if (speed>.08f) tryFrame("run_%02d",step);
+        tryFrame("walk_%02d",step);
+        tryFrame("walk_%02d",1+int(stride*8.f)%8);
     }
-    if (frame<0) frame=std::max(0,md3_getframeindex(sample.context.modelid,"rest"));
+    tryFrame("stand",0);
+    tryFrame("rest",0);
+    if (frame<0) frame=0;
+    // First person never draws Duke's own head or arms (floating hands do).
+    sample.context.hiddenSurfaces=0;
+    for (char const *hidden:{"head","arm_left","arm_right"})
+    {
+        int const surface=md3_getsurfaceindex(sample.context.modelid,hidden);
+        if (surface>=0 && surface<32) sample.context.hiddenSurfaces|=1u<<surface;
+    }
     sample.context.cframe=sample.context.nframe=frame;
     sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
     if (!md3_preflightcontext(&sample.context)) return false;

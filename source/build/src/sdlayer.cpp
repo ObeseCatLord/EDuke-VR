@@ -170,7 +170,7 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_STICK_PITCH", "0" },     // head tracking owns pitch
         { "EDUKE32_XR_HAPTICS", "1" },         // controller pulses on fire/damage
         { "EDUKE32_XR_RESOLUTION", "auto" },   // game mode = OpenXR recommended eye size
-        { "EDUKE32_XR_BODY_TILE", "30040" },   // first-person body when defined
+        { "EDUKE32_XR_BODY_TILE", "1405" },    // first-person body = third-person Duke (APLAYER)
         { "EDUKE32_XR_FINGER_TRACKING", "1" }, // XR_EXT_hand_tracking drives segmented hands
         { "EDUKE32_XR_PIXELATED", "1" },       // unfiltered (nearest) textures, Quake-style
     };

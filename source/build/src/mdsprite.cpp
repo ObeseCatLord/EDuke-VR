@@ -2052,6 +2052,15 @@ int32_t md3_getframeindex(int32_t modelid, char const *name)
     return -1;
 }
 
+int32_t md3_getsurfaceindex(int32_t modelid, char const *name)
+{
+    if (!models || (unsigned)modelid>=(unsigned)nextmodelid || !models[modelid] || models[modelid]->mdnum!=3 || !name || !name[0]) return -1;
+    auto const m=(md3model_t *)models[modelid];
+    for (int i=0;i<m->head.numsurfs && m->head.surfs;++i)
+        if (!Bstrncasecmp(m->head.surfs[i].nam,name,sizeof(m->head.surfs[i].nam))) return i;
+    return -1;
+}
+
 int32_t md3_gettagposition(int32_t modelid, char const *name, vec3f_t *position)
 {
     if (!name || !name[0] || !position || (unsigned)modelid >= (unsigned)nextmodelid || !models)
@@ -2328,6 +2337,14 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
 
     for (surfi=0; surfi<m->head.numsurfs; surfi++)
     {
+        if (explicitContext && surfi<32 && (ctx->hiddenSurfaces>>surfi & 1))
+        {
+#ifdef USE_OPENXR
+            // The stereo collector expects every surface of an instance.
+            if (polymost_xrCollectingModels()) polymost_xrRejectModel("hidden model surface");
+#endif
+            continue;
+        }
         //PLAG : sorting stuff
 #ifdef USE_GLEXT
         void               *vbotemp;
