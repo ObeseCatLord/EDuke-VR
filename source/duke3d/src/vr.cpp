@@ -15,6 +15,9 @@
 #include <cstdlib>
 #include <vector>
 
+// Engine-private depth-clear latch for Polymost room passes.
+extern int32_t yax_polymostclearzbuffer;
+
 namespace
 {
 constexpr float Pi = 3.14159265358979323846f;
@@ -56,14 +59,32 @@ XrVector3f cross(XrVector3f a, XrVector3f b)
 {
     return {a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};
 }
-struct Eye
+// Polymost visibility works in a yaw-relative projection and can only see the
+// half-space in front of its yaw. A steeply pitched eye whose frustum crosses
+// that plane is drawn as two passes of the same physical camera: the front
+// pass, and a back pass expressed with yaw+pi, pitch pi-p and roll+pi.
+struct EyePass
 {
     Camera camera;
-    float left, right, down, up, cover;
     std::vector<tspritetype> sprites;
     std::vector<int16_t> walls;
-    std::array<uint8_t, sizeof(gotsector)> sectors;
 };
+struct Eye
+{
+    Camera camera; // Front pass, also the eye's model/crosshair camera.
+    float left, right, down, up, cover;
+    bool split=false;
+    float upSin=0.f, upCos=1.f;
+    std::array<EyePass,2> passes;
+    std::array<uint8_t, sizeof(gotsector)> sectors;
+    unsigned passCount() const { return split ? 2 : 1; }
+};
+// View directions this close to the split plane (in Polymost's focal-length
+// units) are left to the other pass; much tighter than the native SCISDIST.
+constexpr float SplitViewportClip=1.f/256.f;
+// Wall near plane for split passes, in Build units (native SCISDIST is 1).
+// Measured: 1 leaves a 1-2px seam, 1/4 and below 1/32 show precision holes.
+constexpr float SplitNearClip=1.f/16.f;
 static std::array<uint8_t, MAXSPRITESONSCREEN> membership;
 static bool animating, generationSaturated;
 static uint64_t worldFrames, worldMultiviewFrames, worldOracleFrames;
@@ -343,6 +364,54 @@ bool testFailure(char const *point)
 }
 
 
+// Keep a tracked eye inside the level instead of dropping the frame: clamp
+// its height to the sector and pull it back towards the body camera until the
+// native sector lookup and line of sight agree.
+static bool placeEye(Camera const &base, vec3_t target, Camera &eye)
+{
+    auto const valid=[&](vec3_t p, int16_t &sector) {
+        sector=base.sector;
+        updatesector(p.x,p.y,&sector);
+        if (sector<0) return false;
+        int32_t ceiling, floor;
+        getzsofslope(sector,p.x,p.y,&ceiling,&floor);
+        int32_t const margin=4<<8;
+        if (floor-ceiling<=2*margin) return false;
+        p.z=std::max(ceiling+margin,std::min(p.z,floor-margin));
+        updatesectorz(p.x,p.y,p.z,&sector);
+        if (sector<0 || !cansee(base.pos.x,base.pos.y,base.pos.z,base.sector,p.x,p.y,p.z,sector)) return false;
+        eye.pos=p;
+        return true;
+    };
+    int16_t sector;
+    if (valid(target,sector)) { eye.sector=sector; return true; }
+    float low=0.f, high=1.f;
+    bool found=false;
+    for (int step=0;step<10;++step)
+    {
+        float const t=(low+high)*.5f;
+        vec3_t const p{base.pos.x+int32_t(std::lround((target.x-base.pos.x)*t)),
+                       base.pos.y+int32_t(std::lround((target.y-base.pos.y)*t)),
+                       base.pos.z+int32_t(std::lround((target.z-base.pos.z)*t))};
+        int16_t candidate;
+        if (valid(p,candidate)) { low=t; sector=candidate; found=true; }
+        else high=t;
+    }
+    if (!found)
+    {
+        eye.pos=base.pos;
+        sector=base.sector;
+    }
+    eye.sector=sector;
+    return sector>=0;
+}
+
+static fix16_t horizonFromTan(float tangent)
+{
+    // Native Q16 horizon range; explicit pitch carries the exact angle.
+    return fix16_from_float(100.f+128.f*std::max(-200.f,std::min(tangent,200.f)));
+}
+
 bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye, char const *&rejection)
 {
     float const pitch = std::atan((fix16_to_float(base.horizon)-100.f)/128.f);
@@ -357,27 +426,40 @@ bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye, cha
     float const body = fix16_to_float(base.angle)*Pi/1024.f;
     float const co = std::cos(body), si = std::sin(body);
     eye.camera = base;
-    eye.camera.pos.x += std::lround((-p.z*co-p.x*si)*UnitsPerMetre);
-    eye.camera.pos.y += std::lround((-p.z*si+p.x*co)*UnitsPerMetre);
-    eye.camera.pos.z -= std::lround(p.y*ZUnitsPerMetre);
-    updatesectorz(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,&eye.camera.sector);
-    if (eye.camera.sector < 0 || !cansee(base.pos.x,base.pos.y,base.pos.z,base.sector,
-        eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,eye.camera.sector))
+    eye.split = false; eye.upSin=0.f; eye.upCos=1.f;
+    vec3_t const target{base.pos.x+int32_t(std::lround((-p.z*co-p.x*si)*UnitsPerMetre)),
+                        base.pos.y+int32_t(std::lround((-p.z*si+p.x*co)*UnitsPerMetre)),
+                        base.pos.z-int32_t(std::lround(p.y*ZUnitsPerMetre))};
+    if (!placeEye(base,target,eye.camera))
     {
         rejection="collision";
-        return false;  // Camera collision/fade policy is a subsequent gameplay slice.
+        return false;
     }
 
     auto const q = multiply(trackingRotation,view.pose.orientation);
     auto forward = rotate(q,{0,0,-1});
     float const horizontal = std::hypot(forward.x,forward.z);
-    if (horizontal < 1e-4f)
+    // The pass yaw follows the view direction. Looking straight up or down,
+    // the view's own up vector (or its opposite) gives the same heading.
+    XrVector3f yawForward{forward.x,0,forward.z};
+    if (horizontal < 1e-3f)
+    {
+        auto const up=rotate(q,{0,1,0});
+        float const sign=forward.y<0.f ? 1.f : -1.f;
+        yawForward={up.x*sign,0,up.z*sign};
+    }
+    float const yawLength=std::hypot(yawForward.x,yawForward.z);
+    if (!(yawLength > 1e-6f))
     { rejection="vertical"; return false; }
-    XrVector3f const right {-forward.z/horizontal,0,forward.x/horizontal};
-    auto const up = cross(right,forward);
+    yawForward={yawForward.x/yawLength,0,yawForward.z/yawLength};
+    XrVector3f const right {-yawForward.z,0,yawForward.x};
+    float const along=dot(forward,yawForward);
+    float const pitchAngle=std::atan2(forward.y,along);
+    XrVector3f const pitchForward{yawForward.x*std::cos(pitchAngle),std::sin(pitchAngle),yawForward.z*std::cos(pitchAngle)};
+    auto const up = cross(right,pitchForward);
     auto actualRight = rotate(q,{1,0,0});
-    eye.camera.angle = fix16_from_float((body+std::atan2(forward.x,-forward.z))*1024.f/Pi);
-    eye.camera.horizon = fix16_from_float(100.f+128.f*forward.y/horizontal);
+    eye.camera.angle = fix16_from_float((body+std::atan2(yawForward.x,-yawForward.z))*1024.f/Pi) & 0x7FFFFFF;
+    eye.camera.horizon = horizonFromTan(std::tan(pitchAngle));
     eye.camera.roll = std::atan2(dot(actualRight,up),dot(actualRight,right));
     eye.left = std::tan(view.fov.angleLeft); eye.right = std::tan(view.fov.angleRight);
     eye.down = std::tan(view.fov.angleDown); eye.up = std::tan(view.fov.angleUp);
@@ -385,20 +467,34 @@ bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye, cha
                          std::fabs(eye.down)*aspect,std::fabs(eye.up)*aspect});
     if (!(eye.cover > 0.f && eye.cover < 16.f))
     { rejection="fov"; return false; }
-    // Native Polymost clips CPU rays to the yaw-forward half-space. Reject an
-    // unsupported frame instead of silently clamping tracked head orientation.
-    XrVector3f const yawForward {forward.x/horizontal,0,forward.z/horizontal};
+    // Native Polymost clips CPU rays to the yaw-forward half-space. When any
+    // part of the frustum leaves it, add the complementary back pass.
     for (float x : {eye.left,eye.right})
         for (float y : {eye.down,eye.up})
-            if (dot(rotate(q,{x,y,-1}),yawForward) <= .001f)
-            { rejection="half-space"; return false; }
+        {
+            auto const corner=rotate(q,{x,y,-1});
+            if (dot(corner,yawForward) <= .02f*std::sqrt(dot(corner,corner)))
+                eye.split=true;
+        }
+    eye.passes[0].camera=eye.camera;
+    if (eye.split)
+    {
+        eye.upSin=std::sin(pitchAngle); eye.upCos=std::cos(pitchAngle);
+        auto &back=eye.passes[1].camera;
+        back=eye.camera;
+        back.angle=(eye.camera.angle+F16(1024)) & 0x7FFFFFF;
+        back.horizon=horizonFromTan(-std::tan(pitchAngle));
+        back.roll=wrapRadians(eye.camera.roll+Pi);
+    }
     return true;
 }
-void eyeState(Eye const &eye)
+void eyeState(Eye const &eye, unsigned pass=0)
 {
-    install(eye.camera);
+    install(pass ? eye.passes[1].camera : eye.camera);
     renderSetAspect(std::lround(eye.cover*65536.f),81920);
     polymost_xrProjection(eye.left,eye.right,eye.down,eye.up);
+    if (eye.split)
+        polymost_xrViewPitch(eye.upSin,pass ? -eye.upCos : eye.upCos,SplitViewportClip,SplitNearClip);
 }
 
 struct WorldModelSample
@@ -1740,29 +1836,40 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         for (unsigned i=0;i<2 && good;++i)
         {
             auto &eye=eyes[i];
-            eye.sprites.clear();
-            eye.walls.clear();
             good=runtime->bindEye(i,error);
             if (!good) return false;
-            eyeState(eye);
-            glClearColor(0,0,0,1);
-            glClear(GL_COLOR_BUFFER_BIT);
-            spritesortcnt=0;
-            if (collect) polymost_xrBeginCollection(POLYMOST_XR_OPAQUE,i);
-            yax_preparedrawrooms();
-            renderDrawRoomsQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,
-                              eye.camera.angle,eye.camera.horizon,eye.camera.sector);
-            if (collect && polymost_xrEndCollection(i) != POLYMOST_XR_COLLECT_OK)
-                return false;
-            if (spritesortcnt >= maxspritesonscreen || maskwallcnt >= MAXWALLSB)
+            eye.sectors.fill(0);
+            for (unsigned pass=0;pass<eye.passCount();++pass)
             {
-                error="stereo collection saturated native list capacity";
-                good=false; return false;
+                auto &view=eye.passes[pass];
+                view.sprites.clear();
+                view.walls.clear();
+                eyeState(eye,pass);
+                if (!pass)
+                {
+                    glClearColor(0,0,0,1);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                }
+                spritesortcnt=0;
+                if (collect) polymost_xrBeginCollection(POLYMOST_XR_OPAQUE,i);
+                yax_preparedrawrooms();
+                // The back pass covers a disjoint screen region of the same eye.
+                yax_polymostclearzbuffer=!pass;
+                renderDrawRoomsQ16(view.camera.pos.x,view.camera.pos.y,view.camera.pos.z,
+                                  view.camera.angle,view.camera.horizon,view.camera.sector);
+                yax_polymostclearzbuffer=1;
+                if (collect && polymost_xrEndCollection(i) != POLYMOST_XR_COLLECT_OK)
+                    return false;
+                if (spritesortcnt >= maxspritesonscreen || maskwallcnt >= MAXWALLSB)
+                {
+                    error="stereo collection saturated native list capacity";
+                    good=false; return false;
+                }
+                view.sprites.assign(tsprite,tsprite+spritesortcnt);
+                view.walls.reserve(maskwallcnt);
+                for (int j=0;j<maskwallcnt;++j) view.walls.push_back(thewall[maskwall[j]]);
+                for (size_t j=0;j<sizeof(gotsector);++j) eye.sectors[j]|=gotsector[j];
             }
-            eye.sprites.assign(tsprite,tsprite+spritesortcnt);
-            eye.walls.reserve(maskwallcnt);
-            for (int j=0;j<maskwallcnt;++j) eye.walls.push_back(thewall[maskwall[j]]);
-            std::copy(std::begin(gotsector),std::end(gotsector),eye.sectors.begin());
             if (i == 0 && testFailure("opaque"))
             {
                 error="injected failure after left opaque pass";
@@ -1772,7 +1879,16 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         return good;
     };
     char const *singleValue=std::getenv("EDUKE32_XR_SINGLE_PASS");
-    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1");
+    // Split full-pitch eyes carry two camera rotations per eye; their replay
+    // uses the per-eye reference path until multiview can pair split passes.
+    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1") && !eyes[0].split && !eyes[1].split;
+    if (eyes[0].split || eyes[1].split)
+    {
+        static unsigned splitFrames;
+        if (!splitFrames++ || std::getenv("EDUKE32_XR_TEST_PITCH"))
+            LOG_F(INFO,"OpenXR full-pitch split frame: serial=%llu passes=%u,%u.",
+                  (unsigned long long)frame.serial,eyes[0].passCount(),eyes[1].passCount());
+    }
     if (singlePass)
     {
         bool committed=drawOpaque(true);
@@ -1824,7 +1940,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         spritesortcnt=0;
         membership.fill(0);
         for (unsigned i=0;i<2 && good;++i)
-            for (auto const &sprite : eyes[i].sprites)
+            for (unsigned pass=0;pass<eyes[i].passCount() && good;++pass)
+            for (auto const &sprite : eyes[i].passes[pass].sprites)
             {
                 int slot=(unsigned)sprite.owner < byOwner.size() ? byOwner[sprite.owner] : -1;
                 if (slot >= 0 && Bmemcmp(&tsprite[slot],&sprite,sizeof(sprite)))
@@ -1843,7 +1960,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     tsprite[slot]=sprite;
                     if ((unsigned)sprite.owner < byOwner.size()) byOwner[sprite.owner]=slot;
                 }
-                membership[slot] |= 1u<<i;
+                membership[slot] |= 1u<<(i*2+pass);
             }
     }
     if (good)
@@ -2211,26 +2328,32 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 good=runtime->bindEye(i,error);
                 if (!good) return false;
                 if (oracle && !oracle->copyEye(i,error)) { good=false; return false; }
+                for (unsigned pass=0;pass<eye.passCount() && good;++pass)
+                {
+                auto const &view=eye.passes[pass];
                 videoSetViewableArea(0,0,xdim-1,ydim-1);
-                eyeState(eye);
+                eyeState(eye,pass);
                 // Begin before camera preparation, which captures this eye's
                 // projection. Native sorting/animation of tiles stays intact.
                 if (collect && !polymost_xrBeginCollection(POLYMOST_XR_MASKS,i))
                     return false; // Preflight rejection must skip editor/direct paths.
                 int const scriptVisibility=g_visibility, scriptParallax=parallaxvisibility;
                 g_visibility=frozenVisibility; parallaxvisibility=frozenParallax;
-                renderPrepareMasksQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,
-                                     eye.camera.angle,eye.camera.horizon,eye.camera.sector);
+                renderPrepareMasksQ16(view.camera.pos.x,view.camera.pos.y,view.camera.pos.z,
+                                     view.camera.angle,view.camera.horizon,view.camera.sector);
                 g_visibility=scriptVisibility; parallaxvisibility=scriptParallax;
-                polymost_xrRelativeWorldToClip(crosshairViews.matrix[i]);
-                crosshairViews.eye[i]=eye.camera.pos;
+                if (!pass)
+                {
+                    polymost_xrRelativeWorldToClip(crosshairViews.matrix[i]);
+                    crosshairViews.eye[i]=eye.camera.pos;
+                }
                 if (testArtClock()) totalclocklock=1;
                 spritesortcnt=pristine.size();
                 std::copy(pristine.begin(),pristine.end(),tsprite);
                 for (int j=0;j<spritesortcnt;++j)
-                    if (!(membership[j] & (1u<<i))) tsprite[j].xrepeat=tsprite[j].yrepeat=0;
-                maskwallcnt=eye.walls.size();
-                for (int j=0;j<maskwallcnt;++j) { maskwall[j]=j; thewall[j]=eye.walls[j]; }
+                    if (!(membership[j] & (1u<<(i*2+pass)))) tsprite[j].xrepeat=tsprite[j].yrepeat=0;
+                maskwallcnt=view.walls.size();
+                for (int j=0;j<maskwallcnt;++j) { maskwall[j]=j; thewall[j]=view.walls[j]; }
                 if (maskCapture) polymost_xrObserveMaskInput(i,oracle!=nullptr);
                 if (!collect) polymost_xrMeasureNativeMasks(i,g_frameCounter);
                 renderDrawMasks();
@@ -2246,6 +2369,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 // A rejected begin for the next eye skips that traversal.
                 if (collect && polymost_xrEndCollection(i) != POLYMOST_XR_COLLECT_OK)
                     accepted=false;
+                }
             }
             return good && accepted;
         };
@@ -2336,6 +2460,26 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             if (auto prefix=std::getenv("EDUKE32_XR_WORLD_OUTPUT"))
                 good=runtime->captureFrame(prefix,false,error,overlayEnabled());
         }
+        // Test hook: a harness writes an output prefix into the request file;
+        // the next world frame captures both eyes there and removes the file.
+        if (good && !fixtureTest)
+            if (auto request=std::getenv("EDUKE32_XR_CAPTURE_REQUEST"))
+                if (FILE *file=std::fopen(request,"r"))
+                {
+                    char prefix[1024]={};
+                    bool const named=std::fgets(prefix,sizeof(prefix),file)!=nullptr;
+                    std::fclose(file);
+                    std::remove(request);
+                    prefix[strcspn(prefix,"\r\n")]=0;
+                    if (named && prefix[0])
+                    {
+                        good=runtime->captureFrame(prefix,false,error,true);
+                        LOG_F(INFO,"OpenXR capture request: serial=%llu prefix=%s passes=%u,%u roll=%.4f,%.4f horizon=%.3f,%.3f ok=%d.",
+                              (unsigned long long)frame.serial,prefix,eyes[0].passCount(),eyes[1].passCount(),
+                              eyes[0].camera.roll,eyes[1].camera.roll,fix16_to_float(eyes[0].camera.horizon),
+                              fix16_to_float(eyes[1].camera.horizon),int(good));
+                    }
+                }
         if (good) good=runtime->mirrorEye(0,error);
     }
     install(logical);

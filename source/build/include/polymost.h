@@ -51,6 +51,9 @@ void polymost_xrEndTint();
 // The Build CPU traversal remains on its covering symmetric frustum.
 void polymost_xrProjection(float leftTan, float rightTan, float downTan, float upTan);
 void polymost_xrProjectionReset();
+// Explicit upward view pitch (any angle) and viewport direction clip for
+// the current XR projection; reset by the next polymost_xrProjection call.
+void polymost_xrViewPitch(float upSin, float upCos, float viewportClip, float nearClip);
 void polymost_prepareMasksView();
 // Current XR native camera: relative Build coordinates to exact GL clip/depth.
 // Call immediately after camera preparation, before drawing masks/UI.

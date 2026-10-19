@@ -87,7 +87,14 @@ static float dxb1[MAXWALLSB], dxb2[MAXWALLSB];
 
 //POGOTODO: the SCISDIST could be set to 0 now to allow close objects to render properly,
 //          but there's a nasty rendering bug that needs to be dug into when setting SCISDIST lower than 1
+#ifdef USE_OPENXR
+// Native near plane is 1 unit. Split full-pitch XR passes meet at the yaw
+// plane, where that distance would leave a visible seam in nearby geometry.
+static float polymost_scisdist = 1.f;
+#define SCISDIST polymost_scisdist
+#else
 #define SCISDIST 1.f  //close plane clipping distance
+#endif
 
 #define SOFTROTMAT 0
 
@@ -158,6 +165,10 @@ static struct
 {
     float left, right, down, up;
     bool active;
+    // Explicit view pitch for full-pitch XR views. gchang may be negative: a
+    // pass behind the yaw plane is the same camera expressed with yaw+pi.
+    bool pitchOverride;
+    float pitchSin, pitchCos, viewportClip, nearClip;
 } xrProjection;
 #endif
 static GLuint polymosttext = 0;
@@ -8687,8 +8698,18 @@ static float polymost_prepareCamera(bool clearDebugBuffers = true)
         gshang  = r / Bsqrtf(r * r + ghalfx * ghalfx / (gvrcorrection * gvrcorrection));
         gchang  = Bsqrtf(1.f - gshang * gshang);
         ghoriz2 = 0.f;
+#ifdef USE_OPENXR
+        if (xrProjection.active && xrProjection.pitchOverride)
+        {
+            gshang = xrProjection.pitchSin;
+            gchang = xrProjection.pitchCos;
+        }
+#endif
     }
 
+#ifdef USE_OPENXR
+    polymost_scisdist = xrProjection.active && xrProjection.pitchOverride ? xrProjection.nearClip : 1.f;
+#endif
     ghoriz = (float)(ydimen>>1);
 
     resizeglcheck(clearDebugBuffers);
@@ -8719,7 +8740,19 @@ void polymost_xrProjection(float leftTan, float rightTan, float downTan, float u
         return;
     }
 
-    xrProjection = { leftTan, rightTan, downTan, upTan, true };
+    xrProjection = { leftTan, rightTan, downTan, upTan, true, false, 0.f, 1.f, 1.f, 1.f };
+}
+
+void polymost_xrViewPitch(float upSin, float upCos, float viewportClip, float nearClip)
+{
+    if (!xrProjection.active)
+        return;
+    // Native gshang is the negated sine of the upward pitch.
+    xrProjection.pitchOverride = true;
+    xrProjection.pitchSin = -upSin;
+    xrProjection.pitchCos = upCos;
+    xrProjection.viewportClip = viewportClip;
+    xrProjection.nearClip = nearClip;
 }
 
 void polymost_xrProjectionReset()
@@ -8865,18 +8898,25 @@ void polymost_drawrooms()
     int n = 0;
 
     vec3f_t p2[6];
+    float viewportClip = SCISDIST;
+#ifdef USE_OPENXR
+    // Full-pitch XR passes meet at the yaw plane; clip view directions there
+    // tightly. Wall geometry keeps the native SCISDIST near plane.
+    if (xrProjection.active && xrProjection.pitchOverride)
+        viewportClip = xrProjection.viewportClip;
+#endif
 
     for (bssize_t i=0; i<4; i++)
     {
         int const j = i < 3 ? i + 1 : 0;
 
-        if (p[i].z >= SCISDIST)
+        if (p[i].z >= viewportClip)
             p2[n++] = p[i];
 
-        if ((p[i].z >= SCISDIST) != (p[j].z >= SCISDIST))
+        if ((p[i].z >= viewportClip) != (p[j].z >= viewportClip))
         {
-            float const r = (SCISDIST - p[i].z) / (p[j].z - p[i].z);
-            p2[n++] = { (p[j].x - p[i].x) * r + p[i].x, (p[j].y - p[i].y) * r + p[i].y, SCISDIST };
+            float const r = (viewportClip - p[i].z) / (p[j].z - p[i].z);
+            p2[n++] = { (p[j].x - p[i].x) * r + p[i].x, (p[j].y - p[i].y) * r + p[i].y, viewportClip };
         }
     }
 
