@@ -66,7 +66,8 @@ In menus: triggers/A advance, B back, sticks navigate.
 
 - Eye render size equals the game window size; the log prints the runtime's
   recommended per-eye size. Set the game resolution close to it for sharpness.
-- Mirrors are not yet rendered per eye.
+- Mirrors render per eye from the front pass camera (not in the back half of a
+  steep-pitch split view); frames with a visible mirror use the per-eye path.
 - Steep head pitch and room-over-room maps render through the per-eye path
   instead of multiview (see FULL_PITCH.md).
 - Only the pistol and AA RPG have held 3D models; other weapons use the

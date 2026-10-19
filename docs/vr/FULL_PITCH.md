@@ -56,8 +56,7 @@ Normal E1L1 single-pass coverage is unchanged (opaque 60/60, masks 58/60).
 
 - Split frames are two-pass per eye (up to four room traversals per frame);
   pairing split passes in the multiview replay is future work.
-- Residual sparse seam pixels in rolled poses; mirrors/YAX are still excluded
-  from the XR world path as before.
+- Residual sparse seam pixels in rolled poses.
 - Physical headset comfort/performance not measured.
 
 ## Room-over-room (YAX) maps
@@ -76,3 +75,16 @@ Consequence: on YAX maps the per-level `G_DoSpriteAnimations` runs once per
 view (natively it already runs once per level per frame). Verified on AA
 `maps/httkb/high_rise.map`: level/60° down/90° down/60° up all submit distinct
 stereo frames with the expected split passes.
+
+## Mirrors
+
+Native Polymost draws a mirror before the room, marking its region in the
+stencil buffer. The eye depth arrays are now `GL_DEPTH24_STENCIL8`
+(multiview and per-eye attachments use `GL_DEPTH_STENCIL_ATTACHMENT`).
+`drawEyeMirror` repeats `G_HandleMirror`'s mirror choice and draw order with
+each eye's front-pass camera (prepare, room, per-view sprite animation, masks,
+complete). Script `EVENT_DISPLAYROOMS`/`EVENT_RESETGOTPICS` stay with the native
+once-per-frame call. Because `G_ClearGotMirror` clears the native gotpic bit
+before the XR pass, the XR pass remembers whether its own previous frame drew a
+mirror. Verified with `tools/vr/mirror_fixture.py`: both eyes show the
+reflection, matching a native flat capture (`tools/vr/native_capture.py`).

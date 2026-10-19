@@ -752,7 +752,7 @@ struct NativeOracleTarget
         glBindTexture(GL_TEXTURE_2D_ARRAY,color);
         glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_RGBA8,xdim,ydim,2,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
         glBindTexture(GL_TEXTURE_2D_ARRAY,depth);
-        glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_DEPTH_COMPONENT24,xdim,ydim,2,0,GL_DEPTH_COMPONENT,GL_UNSIGNED_INT,nullptr);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_DEPTH24_STENCIL8,xdim,ydim,2,0,GL_DEPTH_STENCIL,GL_UNSIGNED_INT_24_8,nullptr);
         glBindTexture(GL_TEXTURE_2D_ARRAY,array); glActiveTexture(active);
     }
     bool copyEye(unsigned eye,std::string &error)
@@ -760,11 +760,11 @@ struct NativeOracleTarget
         GLint source; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&source);
         glBindFramebuffer(GL_READ_FRAMEBUFFER,source); glBindFramebuffer(GL_DRAW_FRAMEBUFFER,fbo);
         glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,color,0,eye);
-        glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,depth,0,eye);
+        glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER,GL_DEPTH_STENCIL_ATTACHMENT,depth,0,eye);
         glDrawBuffer(GL_COLOR_ATTACHMENT0);
         if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)
         { error="native reference framebuffer incomplete"; return false; }
-        glBlitFramebuffer(0,0,xdim,ydim,0,0,xdim,ydim,GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT,GL_NEAREST);
+        glBlitFramebuffer(0,0,xdim,ydim,0,0,xdim,ydim,GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT,GL_NEAREST);
         glBindFramebuffer(GL_FRAMEBUFFER,fbo);
         if (glGetError()!=GL_NO_ERROR) { error="native reference target copy failed"; return false; }
         return true;
@@ -1779,6 +1779,44 @@ void G_XRInheritSprite(int32_t destination, int32_t parent)
         membership[destination] = membership[parent];
 }
 
+// A mirror was drawn by the previous XR frame (native gotpic is cleared by
+// G_ClearGotMirror before our pass, after the flat G_HandleMirror used it).
+static bool mirrorSeen;
+
+// G_HandleMirror's mirror choice and draw order from one eye's camera, into
+// that eye's target (stencil marks the mirror region). Script DISPLAYROOMS /
+// RESETGOTPICS events stay with the native once-per-frame call.
+static void drawEyeMirror(Camera const &cam, int32_t smoothRatio)
+{
+    if (!mirrorSeen || g_mirrorCount<=0) return;
+    int best=-1;
+    int32_t distance=INT32_MAX;
+    for (int k=g_mirrorCount-1;k>=0;--k)
+    {
+        if (!wallvisible(cam.pos.x,cam.pos.y,g_mirrorWall[k])) continue;
+        int32_t const d=klabs(wall[g_mirrorWall[k]].x-cam.pos.x)+klabs(wall[g_mirrorWall[k]].y-cam.pos.y);
+        if (d<distance) { distance=d; best=k; }
+    }
+    if (best<0 || wall[g_mirrorWall[best]].overpicnum!=MIRROR) return;
+    int32_t tposx, tposy;
+    fix16_t tang;
+    renderPrepareMirror(cam.pos.x,cam.pos.y,cam.pos.z,cam.angle,cam.horizon,g_mirrorWall[best],&tposx,&tposy,&tang);
+    int32_t const visibility=g_visibility;
+    g_visibility=(visibility>>1)+(visibility>>2);
+    spritesortcnt=0;
+    yax_preparedrawrooms();
+    int32_t const didmirror=renderDrawRoomsQ16(tposx,tposy,cam.pos.z,tang,cam.horizon,g_mirrorSector[best]+MAXSECTORS);
+    if (numyaxbunches) yax_drawrooms(G_DoSpriteAnimations,g_mirrorSector[best],didmirror,smoothRatio);
+    display_mirror=1;
+    G_DoSpriteAnimations(tposx,tposy,cam.pos.z,fix16_to_int(tang),smoothRatio);
+    display_mirror=0;
+    renderDrawMasks();
+    renderCompleteMirror();
+    g_visibility=visibility;
+    spritesortcnt=0;
+    maskwallcnt=0;
+}
+
 bool G_XRDrawRooms(int32_t smoothRatio)
 {
     // Initial renderer oracle deliberately excludes multi-view sector effects.
@@ -1919,6 +1957,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 {
                     glClearColor(0,0,0,1);
                     glClear(GL_COLOR_BUFFER_BIT);
+                    // Mirrors use the front pass camera only.
+                    if (!collect) drawEyeMirror(view.camera,smoothRatio);
                 }
                 spritesortcnt=0;
                 if (collect) polymost_xrBeginCollection(POLYMOST_XR_OPAQUE,i);
@@ -1956,7 +1996,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     char const *singleValue=sdlayer_xr_option("EDUKE32_XR_SINGLE_PASS");
     // Split full-pitch eyes carry two camera rotations per eye; their replay
     // uses the per-eye reference path until multiview can pair split passes.
-    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1") && !eyes[0].split && !eyes[1].split && !numyaxbunches;
+    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1") && !eyes[0].split && !eyes[1].split && !numyaxbunches
+        && !mirrorSeen;
     if (eyes[0].split || eyes[1].split)
     {
         static unsigned splitFrames;
@@ -2011,6 +2052,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         polymost_xrDiscardCollection();
     }
     else drawOpaque(false);
+    mirrorSeen=bitmap_test(gotpic,MIRROR);
     if (good)
     {
         std::vector<int> byOwner(MAXSPRITES,-1);

@@ -93,6 +93,10 @@ def main():
     elif args.aa_root:
         aa = args.aa_root.resolve()
         command += ['-nologo', '-j', str(aa), '-g', str(aa / 'AA.grp'), '-x', 'scripts/AAGAME.CON', '-h', 'duke3d.def']
+    if args.map and Path(args.map).is_file():
+        # A local fixture map: EDuke32 resolves -map names in its search path.
+        (lab / Path(args.map).name).write_bytes(Path(args.map).read_bytes())
+        args.map = Path(args.map).name
     command += ['-map', args.map] if args.map else ['-v1', '-l' + args.level]
     command += ['-s1']
     poses = [p for p in POSES if not args.poses or p[0] in args.poses.split(',')]

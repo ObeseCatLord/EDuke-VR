@@ -1087,7 +1087,8 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
     glGenFramebuffers(1, &m_impl->fbo);
     glGenTextures(1, &m_impl->depth);
     glBindTexture(GL_TEXTURE_2D_ARRAY, m_impl->depth);
-    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT24, m_impl->width, m_impl->height, kViewCount, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+    // Depth plus stencil: native Polymost mirrors mark their region in stencil.
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH24_STENCIL8, m_impl->width, m_impl->height, kViewCount, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glGenVertexArrays(1, &m_impl->vao);
@@ -1309,7 +1310,7 @@ bool Runtime::bindEye(uint32_t eye, std::string &error)
     }
     glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fbo);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[m_impl->imageIndex].image, 0, eye);
-    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_impl->depth, 0, eye);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, m_impl->depth, 0, eye);
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE)
@@ -1329,7 +1330,7 @@ bool Runtime::bindMultiview(std::string &error)
     }
     glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fbo);
     m_impl->multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[m_impl->imageIndex].image, 0, 0, kViewCount);
-    m_impl->multiview(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, m_impl->depth, 0, 0, kViewCount);
+    m_impl->multiview(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, m_impl->depth, 0, 0, kViewCount);
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE)
@@ -1675,7 +1676,7 @@ bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::
         {
             glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[imageIndex].image, 0, layer);
             if (captureDepth)
-                glFramebufferTextureLayer(GL_READ_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,m_impl->depth,0,layer);
+                glFramebufferTextureLayer(GL_READ_FRAMEBUFFER,GL_DEPTH_STENCIL_ATTACHMENT,m_impl->depth,0,layer);
             glReadBuffer(GL_COLOR_ATTACHMENT0);
             if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE || !glSucceeded("setting up diagnostic readback", error))
             {
