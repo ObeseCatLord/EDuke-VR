@@ -58,7 +58,7 @@ controller aim pose instead of being suppressed.
 | Control | Action |
 | --- | --- |
 | Left stick | move/strafe |
-| Right stick | turn (x; smooth or snap) |
+| Right stick | turn (x; smooth or snap); hold up: weapon wheel |
 | Right trigger | fire |
 | Left trigger | open/use |
 | Right A / B | jump / crouch |
@@ -66,11 +66,50 @@ controller aim pose instead of being suppressed.
 | Left X / Y | previous / next weapon |
 | Either grip | run |
 | Menu button | menu |
+| Left stick click | voice push-to-talk (when `voice_mode 1`) |
 
 In menus: triggers/A advance, B back, sticks navigate.
 
 Bound profiles: Oculus Touch, Valve Index, HTC Vive (trackpad as stick, right
 menu = crouch, right pad click = jump), WMR, and the KHR simple controller.
+
+## Weapon wheel
+
+Hold the right stick up: a ring of your weapons (their 3D models) opens in
+front of and above your weapon hand, facing you, and the held weapon hides.
+Turn your wrist about 20 degrees toward a weapon to highlight it (it grows,
+brightens and spins; the controller pulses), then let go of the stick to
+switch. Weapons you don't have or have no ammo for are dark and can't be
+picked. Shrinker/Expander and Freezer/Flamethrower each have their own slot;
+the switch goes through the normal weapon keys, so it works in multiplayer.
+Turning is paused while the wheel is open. `EDUKE32_XR_WEAPON_WHEEL=0`
+disables it. Verified with `tools/vr/smoke_xr_wheel.py`.
+
+## Voice chat (multiplayer)
+
+Built in when libopus is available. In VR your microphone transmits by voice
+activation as soon as you join a game (`voice_transmit 2`, the default, means
+on in VR, off on desktop); the HUD shows `MIC READY` / `MIC LIVE` and
+`> name` for whoever is talking. Other players' voices come from where they
+are: louder and panned when near, fading to a centred "radio" level beyond
+`voice_spatial_distance` (about 24 m), following your head in VR.
+
+| Command / cvar | Default | |
+| --- | --- | --- |
+| `voice_transmit` | 2 | 0 off, 1 on, 2 auto (VR on, desktop off) |
+| `voice_mode` | 0 | 0 voice activation, 1 push-to-talk (VR: left stick click; desktop: `voice_ptt_key` scancode) |
+| `voice_vad_sensitivity` | 55 | 0-100 |
+| `voice_input_gain` / `voice_volume` | 1 / 1 | |
+| `voice_radio_volume` | 0.45 | distant talkers |
+| `voice_device` | "" | recording device (`voice_devices` lists them) |
+| `voice_enable`, `voice_hud` | 1 | |
+| `voice_loopback` | 0 | hear yourself (mic test) |
+| `voice_mute <name\|slot>`, `voice_status`, `voice_restart` | | |
+
+Opus 24 kbps (~3 kB/s per talker) on its own unreliable channel; the server
+relays only between clients that announced voice support, so older clients
+are unaffected. Opus is BSD-licensed (system library). Verified with
+`tools/vr/smoke_voice.py` (test tone, relay, 440 Hz decode, head-tracked pan).
 
 ## Known limits
 
