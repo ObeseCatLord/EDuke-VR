@@ -274,8 +274,7 @@ def start_gameplay(run):
         else:
             raise RuntimeError('native cursor did not settle in START ' + axis)
     cursor = current
-    remote.packet.left.trigger_value = 1
-    remote.packet.left.trigger_click = True
+    remote.packet.left.squeeze_value = 1   # left grip: native Open (use/interact)
     remote.send()
     try:
         for _ in range(12):

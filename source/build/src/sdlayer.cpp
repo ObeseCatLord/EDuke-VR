@@ -175,7 +175,8 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_PIXELATED", "1" },       // nearest texels (mipmapped), Quake-style
         { "EDUKE32_XR_PHYSICAL_THROW", "1" },  // swing-and-release pipebombs, off-hand detonates
         { "EDUKE32_XR_WEAPON_WHEEL", "1" },    // weapon wheel (right stick click) and gadget wheel (left)
-        { "EDUKE32_XR_WRIST_HUD", "1" },       // status bar as watches: health/armour left wrist, ammo/items right
+        { "EDUKE32_XR_WRIST_HUD", "1" },
+        { "EDUKE32_XR_ALWAYS_RUN", "1" },     // run by default; hold the right grip to walk       // status bar as watches: health/armour left wrist, ammo/items right
     };
     for (auto const &option : preset)
         if (!std::strcmp(option.name, name))

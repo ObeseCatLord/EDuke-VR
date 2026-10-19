@@ -14,7 +14,7 @@ Sources in priority order:
                     game data (Duke Nukem Forever); local use only, never with
                     --release
 Tiles: 21 stock pistol, 30020+weapon held weapons, 30010/30011 single-mesh
-hands, 30020 mighty foot boot, 30060 aiming laser, 30061-30064 wheel parts, APLAYER (1405+) Duke for both third and first person (torso/legs),
+hands, 30020 mighty foot boot, 30060 aiming laser, 30061-30064 wheel parts, 30066 first-person body (torso/legs), APLAYER (1405+) Duke for both third and first person (torso/legs),
 30100+family AA held weapons,
 30200+side*32+segment finger-tracking hand segments, 30264+side single-shell hands.
 """
@@ -140,6 +140,13 @@ def main():
             out.append(f' frame {{ name "{name if name in frames else "stand"}" tile {tile} smoothduration 0.1 }}')
         out.append('}')
         notes.append(f'player model: {duke_md3} ({len(tiles)} tiles)')
+        # First-person body: Duke's torso and legs as their own single shell (same frames).
+        body_md3 = v6 / 'vr_duke_body.md3'
+        body_png = v6 / 'vr_duke_body.png'
+        if not body_png.is_file():
+            body_png = duke_png
+        if body_md3.is_file():
+            model(body_md3, body_png, 30066, 'vr_duke_body', frame='stand')
 
     holds = []
     if aa:

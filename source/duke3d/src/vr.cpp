@@ -660,7 +660,10 @@ static void publishInput()
     }
     uint64_t buttons=wheelButtons;
     auto const button=[&](bool pressed, unsigned gamefunc) { if (pressed) buttons |= uint64_t(1)<<gamefunc; };
-    button(down[1]&ButtonSelect,gamefunc_Fire); button(down[0]&ButtonSelect,gamefunc_Open);
+    // Right trigger fires, left trigger is alt fire (mods such as Alien Armageddon use it; it also
+    // detonates live remote pipebombs, below), left grip is use/interact, right grip runs.
+    button(down[1]&ButtonSelect,gamefunc_Fire); button(down[0]&ButtonSelect,gamefunc_Alt_Fire);
+    button(down[0]&ButtonGrip,gamefunc_Open);
     button(down[1]&ButtonPrimary,gamefunc_Jump); button(down[1]&ButtonSecondary,gamefunc_Crouch);
     // Quick kick: right stick click where it isn't the wheel (Index), or a right-stick-down flick.
     bool const kickFlick=!stickPitchAllowed() && !wheelOwnsStick && rawInput.hands[1].stickActive
@@ -669,7 +672,14 @@ static void publishInput()
     // Left Y (Index: left B) is next weapon, or the voice push-to-talk button in push-to-talk mode.
     bool const talkButton=Voice_PushToTalkMode();
     button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(!talkButton && (down[0]&ButtonSecondary),gamefunc_Next_Weapon);
-    button((down[0]|down[1])&ButtonGrip,gamefunc_Run);
+    {
+        // Always run (EDUKE32_XR_ALWAYS_RUN, on in the preset): the right grip walks instead.
+        // The native rule combines the Run key with the user's auto-run setting.
+        auto const always=sdlayer_xr_option("EDUKE32_XR_ALWAYS_RUN");
+        bool const grip=down[1]&ButtonGrip;
+        bool const wantRun=always && !Bstrcmp(always,"1") ? !grip : grip;
+        button(ud.runkey_mode ? wantRun : (wantRun!=bool(ud.auto_run)),gamefunc_Run);
+    }
     Voice_SetPushToTalk(talkButton && (down[0]&ButtonSecondary));
     if (physicalThrowEnabled() && aimHand()>=0)
     {
@@ -710,7 +720,7 @@ static void publishInput()
         if (live)
         {
             if (offTrigger && !xrThrow.detonateHeld) xrThrow.detonatePending=true;
-            if (off==0) buttons&=~(uint64_t(1)<<gamefunc_Open); // off-hand trigger means "detonate" now
+            if (off==0) buttons&=~(uint64_t(1)<<gamefunc_Alt_Fire); // off-hand trigger means "detonate" now
         }
         xrThrow.detonateHeld=offTrigger;
     }
@@ -1175,7 +1185,10 @@ static int bodyModelTile()
 {
     auto value=sdlayer_xr_option("EDUKE32_XR_BODY_TILE");
     int const tile=value ? std::atoi(value) : -1;
-    return tile>0 && tile<MAXTILES ? tile : -1;
+    if (tile<=0 || tile>=MAXTILES) return -1;
+    // The dedicated torso/legs shell (no head or arms to hide) when the asset pack has it.
+    constexpr int BodyShellTile=30066;
+    return md_tilehasmodel(BodyShellTile,0)>=0 ? BodyShellTile : tile;
 }
 
 bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Runtime *runtime)

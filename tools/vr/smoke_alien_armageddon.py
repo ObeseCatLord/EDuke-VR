@@ -27,7 +27,7 @@ from smoke_hitscan import rays
 from smoke_crosshair import raster
 
 
-AA_SELECT_BIT = 1 << 29  # Native Open / AA ifhitspace, mapped to left Select.
+AA_SELECT_BIT = 1 << 29  # Native Open / AA ifhitspace, mapped to the left grip.
 
 AA_FIELDS = ('tick', 'player', 'bits', 'q16avel', 'q16horz', 'cursorx', 'cursory',
              'startmode', 'charsel', 'pchar', 'currentweapon', 'ammo', 'gm',
@@ -208,8 +208,7 @@ def drive_character_selection(observer, remote, stages=None, before_start=None):
     stages['initial'] = initial
 
     def select_press():
-        remote.packet.left.trigger_value = 1
-        remote.packet.left.trigger_click = True
+        remote.packet.left.squeeze_value = 1   # left grip: native Open (use/interact)
         remote.send()
 
     def hold_until(label, activate, observed, released, timeout=8):
@@ -231,7 +230,7 @@ def drive_character_selection(observer, remote, stages=None, before_start=None):
 
     def select_edge(requirement):
         held, released = hold_until(
-            'left trigger / native Open', select_press,
+            'left grip / native Open', select_press,
             lambda rows: any((row['bits'] & AA_SELECT_BIT) and requirement(row) for row in rows),
             lambda rows: any(not (row['bits'] & AA_SELECT_BIT) for row in rows))
         return [row for row in held if (row['bits'] & AA_SELECT_BIT) and requirement(row)][-1], released[-1]

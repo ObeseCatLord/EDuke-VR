@@ -51,6 +51,7 @@ EDuke32 (e.g. `-- -map E2L1.MAP`).
 | `EDUKE32_XR_FINGER_TRACKING` | `1` | OpenXR hand tracking drives the hands when available |
 | `EDUKE32_XR_PIXELATED` | `1` | unfiltered world ART; model skins nearest up close, mipmapped at a distance |
 | `EDUKE32_XR_WEAPON_WHEEL` | `1` | weapon wheel and gadget wheel |
+| `EDUKE32_XR_ALWAYS_RUN` | `1` | always run; the right grip walks |
 | `EDUKE32_XR_WRIST_HUD` | `1` | status bar as two watches: health/armour on the left wrist, ammo/items on the right |
 | `EDUKE32_XR_BODY_TILE` | unset | `1405` shows the third-person Duke model as your first-person body (head/arms hidden) |
 | `EDUKE32_XR_RETRY` | `1` | restart a stopped XR session (1, 2, 4, 8, 16 s backoff, 8 attempts); a held-model receipt mismatch drops one frame instead of stopping |
@@ -69,11 +70,12 @@ controller aim pose instead of being suppressed.
 | Right stick click (Index: rest your thumb on the right trackpad) | hold: weapon wheel |
 | Left stick click (Index: rest your thumb on the left trackpad) | hold: gadget wheel |
 | Right trigger | fire |
-| Left trigger | open/use; with remote pipebombs out: detonate |
+| Left trigger | alt fire (mods that have it, e.g. Alien Armageddon; stock Duke has none); with remote pipebombs out: detonate |
+| Left grip | use / interact (doors, switches) |
 | Right A / B | jump / crouch |
 | Right stick click on Index | quick kick |
 | Left X / Y (Index: left A / B) | previous / next weapon; Y is voice push-to-talk when `voice_mode 1` |
-| Either grip | run |
+| Right grip | walk (you always run; `EDUKE32_XR_ALWAYS_RUN=0` makes the grip run instead) |
 | Menu button | menu |
 
 In menus: triggers/A advance, B back, sticks navigate.
