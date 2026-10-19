@@ -135,6 +135,13 @@ builds that load the same DEF. The first-person body is the same model with
 the head and arms hidden. VR assets are authored with MD3 +Y to the model's
 right, so the native sprite path draws tagged player models x-flipped.
 
+World models in XR: native sprite models (third-person players, HRP props)
+are placed in camera-relative Build units and mapped with the world pass's
+own rotation in XR views; previously any head pitch sheared them. Verified in
+multiplayer with `tools/vr/smoke_xr_mp_body.py` (dedicated server, flat peer,
+XR peer: the flat player is drawn holding his weapon at level and -20 deg
+pitch, and the XR player's swing throw spawns the pipebomb on the server).
+
 Trigger gating: a frame hitch no longer re-arms the trigger release gate
 (only invalid tracking or a gap over 2 s do), and held models stay visible on
 slow frames; firing itself still needs a fresh tracked sample.
