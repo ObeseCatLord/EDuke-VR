@@ -70,7 +70,7 @@ def main():
     copied = []
     for path in sorted((v6_src / 'exports/eduke32').rglob('*')):
         rel = path.relative_to(v6_src).as_posix()
-        if path.is_file() and path.suffix in ('.md3', '.png') and not excluded(rel):
+        if path.is_file() and path.suffix in ('.md3', '.png', '.skin') and not excluded(rel):
             target = v6 / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)

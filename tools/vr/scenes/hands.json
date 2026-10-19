@@ -1,0 +1,14 @@
+[
+ {"pose": {"head": [0, 1.6, 0, 0, -10, 0], "left": [-0.12, 1.4, -0.3, -30, 20, 0], "right": [0.2, 1.3, -0.35, 0, 0, 0]}}, {"wait": 3},
+ {"capture": "open"},
+ {"buttons": {"left": {"squeeze_value": 1.0, "trigger_value": 1.0, "trigger_click": 1}}}, {"wait": 2},
+ {"capture": "fist"},
+ {"buttons": {"left": {"squeeze_value": 0.0, "trigger_value": 0.0, "trigger_click": 0}}},
+ {"console": "xr_weapons"}, {"wait": 2},
+ {"pose": {"right": [0.12, 1.42, -0.3, 30, 15, 0]}}, {"wait": 2},
+ {"capture": "pistol"},
+ {"buttons": {"right": {"trigger_value": 1.0, "trigger_click": 1}}}, {"wait": 1}, {"capture": "pistol-trigger"},
+ {"buttons": {"right": {"trigger_value": 0.0, "trigger_click": 0}}},
+ {"console": "xr_select 3"}, {"until": "held model: weapon=3", "timeout": 15}, {"wait": 2},
+ {"capture": "chaingun"}
+]
