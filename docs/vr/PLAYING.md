@@ -99,25 +99,55 @@ menu = crouch, right pad click = jump), WMR, and the KHR simple controller.
 Every stock weapon can be held as a 3D model. The pistol keeps its calibrated
 family on its pickup tile (21); the others use reserved tiles `30020 + weapon
 index` (2 shotgun … 12 flamethrower), so world pickups keep their sprites. The
-launcher maps the reference-built `duke-vr-assets/v5-vanilla` set when present,
-falling back to the older v3 set. Models need `tag_muzzle` and
-`tag_palm_left`/`tag_palm_right` (or `tag_grip`); frames are chosen from the
-native weapon counter as `fire_NN`, holding the nearest earlier authored frame,
-else `rest`. An optional `<skin>_glow.png` becomes a DEF glow map (muzzle
-flash), drawn by the explicit held-model path (multiview collection falls back
-to per-eye for that model). While a held model is shown the native 2D
-weapon/hand ART for that weapon is suppressed; tinted HUD palettes (underwater,
-night vision) fall back to the 2D card. The v5 set is built from the Duke
-Nukem Forever (2001) meshes adjusted toward the Duke 3D handheld sprites (see
-`duke-vr-assets/v5-vanilla/README.md`). Verified with
-`tools/vr/smoke_xr_weapons.py`: 10 weapons drawn in hand, counter-keyed fire
-frames advancing, firing feedback.
+launcher maps `duke-vr-assets/v6-original`: original, redistributable models
+built from primitives in a chunky Duke 3D style with palette-quantised,
+unfiltered skins (Duke Nukem Forever was used only as visual reference). Older
+private packages are used only if v6 is missing and never with `--release`.
+Models need `tag_muzzle` and `tag_palm_left`/`tag_palm_right` (or `tag_grip`);
+frames are chosen from the native weapon counter as `fire_NN`, holding the
+nearest earlier authored frame, else `rest`. An optional `<skin>_glow.png`
+becomes a DEF glow map (muzzle flash), drawn by the explicit held-model path
+(multiview collection falls back to per-eye for that model). While a held
+model is shown the native 2D weapon/hand ART for that weapon is suppressed;
+tinted HUD palettes (underwater, night vision) fall back to the 2D card.
+Verified with `tools/vr/smoke_xr_weapons.py`: every weapon drawn in hand,
+counter-keyed fire frames advancing, native shots and haptics for each.
+
+Hands: 16 segments per hand follow OpenXR hand-tracking joints when available
+(`EDUKE32_XR_FINGER_TRACKING=1`), otherwise button poses (fist, point,
+trigger, relaxed); with a weapon they take that weapon's solved `hold_*` pose.
 
 Mods / Alien Armageddon: `EDUKE32_XR_HUD_MODEL_MAP` (lines `hudTile modelTile`)
 selects a held model from the HUD weapon tiles a frame draws; the choice holds
 through animation tiles until the selected weapon changes (one-frame latency on
-switches). The launcher builds this map for AA from the aa-v1 arsenal metadata
-(69 families on tiles 30100+).
+switches). The launcher builds this map for AA from v6's
+`metadata/aa_inventory.json` (69 families on tiles 30100+). Verified through
+AA's real start flow with `tools/vr/smoke_xr_aa_weapons.py`: the controller A
+button advances AA's opening screens, and AA's character-select cursor follows
+the weapon hand's pointing (tracked yaw/pitch feed the native look input) or
+the right stick.
+
+Other players (and you, in mirrors) are drawn with the `vr_duke` model on the
+native APLAYER action tiles and hold their current weapon: its held model is
+placed with `tag_grip` on the model's animated `tag_weapon_right` instead of
+the classic pickup icon over the head. This also works in flat (non-XR)
+builds that load the same DEF. The first-person body is the same model with
+the head and arms hidden. VR assets are authored with MD3 +Y to the model's
+right, so the native sprite path draws tagged player models x-flipped.
+
+Trigger gating: a frame hitch no longer re-arms the trigger release gate
+(only invalid tracking or a gap over 2 s do), and held models stay visible on
+slow frames; firing itself still needs a fresh tracked sample.
+
+## Redistributing
+
+`package/vr/make_release.py OUT` assembles a redistributable tree: launcher,
+DEF builder, AA compatibility CON, docs, GPL text, the binary and a source
+archive of the current commit, plus only the v6-original models, skins, hand
+rig and metadata. The asset manifest's `release_excludes` (private reference
+tiles and comparison sheets) are enforced, and the DEF builder must succeed
+with `--release` on the assembled tree. No game data is included; players
+supply their own DUKE3D.GRP or AA install. Nothing is uploaded.
 
 Tracked pitch note: with `EDUKE32_XR_STICK_PITCH=0` native view centering
 (hard landings, auto-centering) is cancelled instead of locking tracked aim;
