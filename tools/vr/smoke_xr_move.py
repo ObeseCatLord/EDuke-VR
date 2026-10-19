@@ -23,14 +23,17 @@ def main():
     parser.add_argument('--display', default=':105')
     parser.add_argument('--remote-port', type=int, default=49777)
     parser.add_argument('--timeout', default=400, type=int)
+    parser.add_argument('--fire-only', action='store_true', help='diagnose firing with input/shot traces')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='move-', dir=args.work_dir.resolve()))
     (lab / 'eduke32.cfg').write_text(CONFIG)
     (lab / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
     env = dict(os.environ, DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
-               EDUKE32_XR='play', EDUKE32_XR_TEST_MOVE='1', EDUKE32_XR_SNAP_TURN='45',
+               EDUKE32_XR='play', EDUKE32_XR_TEST_MOVE='1', EDUKE32_XR_TEST_HAPTICS='1', EDUKE32_XR_TEST_INPUT='1', EDUKE32_XR_SNAP_TURN='45',
                XDG_DATA_HOME=str(lab / 'data'))
+    if args.fire_only:
+        env.update(EDUKE32_XR_TEST_INPUT='1', EDUKE32_XR_TEST_SHOTS='1')
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
     command = [str(launcher), '--binary', str(args.binary.resolve()), '--',
                '-usecwd', '-nosetup', '-noautoload', '-nologo', '-v1', '-l1', '-s1']
@@ -77,6 +80,12 @@ def main():
                         'distance': math.hypot(x1 - x0, y1 - y0), 'heading_deg': heading,
                         'move_angle_deg': build, 'heading_error_deg': error}
 
+            if args.fire_only:
+                start = len(text())
+                remote.packet.right.trigger_value = 1.0; remote.packet.right.trigger_click = True; remote.send(); ticks(6, start)
+                remote.packet.right.trigger_value = 0.0; remote.packet.right.trigger_click = False; remote.send(); ticks(12, start)
+                print(text()[start:][-6000:])
+                return 0
             straight = walk(0)
             turned = walk(90)   # OpenXR +yaw turns the head left
             start = len(text())
@@ -85,6 +94,12 @@ def main():
             remote.packet.right.thumbstick.x = 0.0; remote.send(); ticks(15, start)
             after = samples(start)[-1][0]
             snap = ((after - before) * 360 / 2048 + 180) % 360 - 180
+            # Fire the starting pistol once: native ammo drops, weapon hand pulses.
+            start = len(text())
+            remote.packet.right.trigger_value = 1.0; remote.packet.right.trigger_click = True; remote.send(); ticks(8, start)
+            remote.packet.right.trigger_value = 0.0; remote.packet.right.trigger_click = False; remote.send(); ticks(16, start)
+            haptics = re.findall(r'OpenXR haptic: fire hand=(\d) weapon=(\d+) ammo=(\d+) applied=(\d)', text()[start:])
+            result['haptics'] = haptics
             result.update(straight=straight, turned=turned, snap_turn_deg=snap)
             delta = (turned['move_angle_deg'] - straight['move_angle_deg'] + 180) % 360 - 180
             result['move_rotation_with_head_deg'] = delta
@@ -93,6 +108,7 @@ def main():
                 'turned_walk_follows_move_angle': turned['distance'] > 200 and abs(turned['heading_error_deg']) < 10,
                 'move_angle_follows_head_90': abs(abs(delta) - 90) < 5,
                 'snap_turn_45': abs(abs(snap) - 45) < 3,
+                'fire_pulses_right_hand': any(h[0] == '1' and h[3] == '1' for h in haptics),
                 'world_alive': 'OpenXR world stopped' not in text() and process.poll() is None,
             }
             result['passed'] = all(result['checks'].values())

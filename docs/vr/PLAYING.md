@@ -39,6 +39,7 @@ anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
 | `EDUKE32_XR_MOVE` | `head` | stick movement direction: `head`, `hand` (left controller) or `body` |
 | `EDUKE32_XR_STICK_PITCH` | `0` | right stick Y does not pitch the world (head tracking owns pitch) |
 | `EDUKE32_XR_SNAP_TURN` | unset | degrees per right-stick flick (e.g. `45`); unset = smooth turning |
+| `EDUKE32_XR_HAPTICS` | `1` | weapon-hand pulse when firing, both hands when damaged |
 | `EDUKE32_XR_RETRY` | `1` | restart a stopped XR session (1, 2, 4, 8, 16 s backoff, 8 attempts); a held-model receipt mismatch drops one frame instead of stopping |
 
 Any variable you export explicitly overrides the preset. `EDUKE32_XR=1` keeps
@@ -61,6 +62,9 @@ controller aim pose instead of being suppressed.
 | Menu button | menu |
 
 In menus: triggers/A advance, B back, sticks navigate.
+
+Bound profiles: Oculus Touch, Valve Index, HTC Vive (trackpad as stick, right
+menu = crouch, right pad click = jump), WMR, and the KHR simple controller.
 
 ## Known limits
 

@@ -379,7 +379,9 @@ static Camera aimBodyCamera(Camera c)
     if (localAimCamera())
     {
         c.angle=(c.angle-fix16_from_float(aimYawOffset*1024.f/Pi)) & 0x7FFFFFF;
-        c.horizon=fix16_from_float(100.f+128.f*std::tan(nativePitch(c.horizon)-aimPitchOffset));
+        // Head-owned pitch keeps the rendered body level from the first frame.
+        c.horizon=!stickPitchAllowed() ? F16(100)
+            : fix16_from_float(100.f+128.f*std::tan(nativePitch(c.horizon)-aimPitchOffset));
     }
     return c;
 }
@@ -986,7 +988,11 @@ void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
     float const bodyYaw=fix16_to_float(p->q16ang)*Pi/1024.f-aimYawOffset+fix16_to_float(input.q16avel)*Pi/1024.f;
     float const oldPitch=nativePitch(p->q16horiz);
     float const nativePitchDelta=fix16_to_float(input.q16horz)*Pi/512.f;
-    float const bodyPitch=clampNativePitch(oldPitch-aimPitchOffset+(pitchAllowed ? nativePitchDelta : 0.f));
+    // Without stick pitch the head owns pitch entirely: keep the body level,
+    // so a native horizon excursion before tracking starts cannot tilt the
+    // world permanently.
+    float const bodyPitch=stickPitchAllowed()
+        ? clampNativePitch(oldPitch-aimPitchOffset+(pitchAllowed ? nativePitchDelta : 0.f)) : 0.f;
     int const hand=aimHand();
     auto const pose=hand<0 ? rawInput.headPose : rawInput.hands[hand].aimPose;
     auto const q=multiply(multiply(pitchRoll(bodyPitch,gtang),inverseYaw),pose.orientation);
@@ -1579,6 +1585,40 @@ void G_XREndFrame()
     }
 }
 
+// Controller feedback from native player state, sampled once per display
+// frame: a pulse in the weapon hand when ammo is spent or a melee/zero-ammo
+// weapon starts its native firing counter, and in both hands on damage.
+static void updateHaptics(eduke_xr::Runtime *runtime)
+{
+    static int lastWeapon=-1, lastAmmo=-1, lastHealth=-1, lastCounter=0;
+    auto const option=sdlayer_xr_option("EDUKE32_XR_HAPTICS");
+    auto const p=g_player[myconnectindex].ps;
+    if (!option || Bstrcmp(option,"1") || !runtime || !inputValid() || !(p->gm & MODE_GAME) || ud.recstat
+        || (unsigned)p->i>=MAXSPRITES || (unsigned)p->curr_weapon>=MAX_WEAPONS)
+    {
+        lastWeapon=lastAmmo=lastHealth=-1; lastCounter=0;
+        return;
+    }
+    int const weapon=p->curr_weapon, ammo=p->ammo_amount[weapon], health=sprite[p->i].extra;
+    unsigned const hand=aimHand()==0 ? 0 : 1;
+    bool const spent=weapon==lastWeapon && ammo<lastAmmo;
+    bool const swing=weapon==KNEE_WEAPON && lastWeapon==KNEE_WEAPON && lastCounter==0 && p->kickback_pic>0;
+    if (spent || swing)
+    {
+        bool const applied=runtime->vibrate(hand,weapon==RPG_WEAPON || weapon==DEVISTATOR_WEAPON ? 1.f : .6f,
+                                            weapon==CHAINGUN_WEAPON ? .03f : .07f);
+        if (std::getenv("EDUKE32_XR_TEST_HAPTICS"))
+            LOG_F(INFO,"OpenXR haptic: fire hand=%u weapon=%d ammo=%d applied=%d.",hand,weapon,ammo,int(applied));
+    }
+    if (lastHealth>=0 && health<lastHealth && health>=0)
+    {
+        float const strength=std::min(1.f,.3f+float(lastHealth-health)/40.f);
+        runtime->vibrate(0,strength,.12f);
+        runtime->vibrate(1,strength,.12f);
+    }
+    lastWeapon=weapon; lastAmmo=ammo; lastHealth=health; lastCounter=p->kickback_pic;
+}
+
 void G_XRBeginFrame()
 {
     crosshairViews={};
@@ -1679,6 +1719,7 @@ void G_XRBeginFrame()
         if (recentered) { lastHeadPose=rawInput.headPose; lastHeadValid=true; }
     }
     publishInput();
+    updateHaptics(runtime);
 }
 
 static bool testArtClock()

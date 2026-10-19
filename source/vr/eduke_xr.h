@@ -111,6 +111,8 @@ class Runtime
     bool        finishFrame(bool submit, std::string &error);
     TickResult  diagnosticFrame(bool verifyPixels, char const *outputPrefix, std::string &error);
     bool        readInput(ActionInput &out, XrTime atTime, std::string &error);
+    // Best-effort controller vibration (focused sessions only); hand 0=left.
+    bool        vibrate(uint32_t hand, float amplitude, float seconds);
     uint64_t    submittedFrames() const;
     uint64_t    lastSubmittedSerial() const;
     uint64_t    generation() const;

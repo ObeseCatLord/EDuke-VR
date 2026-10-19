@@ -387,6 +387,7 @@ struct Runtime::Impl
     XrActionSet                             actionSet = XR_NULL_HANDLE;
     std::array<XrAction, 6>                 buttonActions {};
     XrAction                                stickAction = XR_NULL_HANDLE, gripPoseAction = XR_NULL_HANDLE, aimPoseAction = XR_NULL_HANDLE;
+    XrAction                                hapticAction = XR_NULL_HANDLE;
     std::array<XrPath, kViewCount>          handPaths {};
     std::array<XrSpace, kViewCount>         gripSpaces {}, aimSpaces {};
     XrSwapchain                             color    = XR_NULL_HANDLE;
@@ -633,6 +634,7 @@ struct Runtime::Impl
         if (!create(stickAction, XR_ACTION_TYPE_VECTOR2F_INPUT, "stick", "Stick")) return fail(result, "xrCreateAction stick");
         if (!create(gripPoseAction, XR_ACTION_TYPE_POSE_INPUT, "grip_pose", "Grip pose")) return fail(result, "xrCreateAction grip pose");
         if (!create(aimPoseAction, XR_ACTION_TYPE_POSE_INPUT, "aim_pose", "Aim pose")) return fail(result, "xrCreateAction aim pose");
+        if (!create(hapticAction, XR_ACTION_TYPE_VIBRATION_OUTPUT, "haptic", "Haptic feedback")) return fail(result, "xrCreateAction haptic");
 
         struct Binding { XrAction action; char const *path; };
         auto suggest = [&](char const *profile, std::initializer_list<Binding> bindings)
@@ -661,7 +663,8 @@ struct Runtime::Impl
                 { select, "/user/hand/left/input/select/click" }, { select, "/user/hand/right/input/select/click" },
                 { menu, "/user/hand/left/input/menu/click" }, { menu, "/user/hand/right/input/menu/click" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
-                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" }})) return fail(result, "xrSuggestInteractionProfileBindings simple");
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
+                { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings simple");
         if (!suggest("/interaction_profiles/oculus/touch_controller", {
                 { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
                 { grip, "/user/hand/left/input/squeeze/value" }, { grip, "/user/hand/right/input/squeeze/value" },
@@ -671,7 +674,8 @@ struct Runtime::Impl
                 { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
                 { click, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
-                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" }})) return fail(result, "xrSuggestInteractionProfileBindings touch");
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
+                { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings touch");
         if (!suggest("/interaction_profiles/valve/index_controller", {
                 { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
                 { grip, "/user/hand/left/input/squeeze/value" }, { grip, "/user/hand/right/input/squeeze/value" },
@@ -680,7 +684,8 @@ struct Runtime::Impl
                 { menu, "/user/hand/left/input/thumbstick/click" }, { click, "/user/hand/right/input/thumbstick/click" },
                 { stickAction, "/user/hand/left/input/thumbstick" }, { stickAction, "/user/hand/right/input/thumbstick" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
-                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" }})) return fail(result, "xrSuggestInteractionProfileBindings index");
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
+                { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings index");
         if (!suggest("/interaction_profiles/microsoft/motion_controller", {
                 { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
                 { grip, "/user/hand/left/input/squeeze/click" }, { grip, "/user/hand/right/input/squeeze/click" },
@@ -690,7 +695,18 @@ struct Runtime::Impl
                 { primary, "/user/hand/right/input/thumbstick/click" }, { primary, "/user/hand/left/input/trackpad/click" },
                 { secondary, "/user/hand/right/input/trackpad/click" }, { secondary, "/user/hand/left/input/thumbstick/click" },
                 { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
-                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" }})) return fail(result, "xrSuggestInteractionProfileBindings motion");
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
+                { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings motion");
+        // HTC Vive wands: the trackpad stands in for the stick.
+        if (!suggest("/interaction_profiles/htc/vive_controller", {
+                { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
+                { grip, "/user/hand/left/input/squeeze/click" }, { grip, "/user/hand/right/input/squeeze/click" },
+                { menu, "/user/hand/left/input/menu/click" }, { secondary, "/user/hand/right/input/menu/click" },
+                { stickAction, "/user/hand/left/input/trackpad" }, { stickAction, "/user/hand/right/input/trackpad" },
+                { primary, "/user/hand/right/input/trackpad/click" }, { click, "/user/hand/left/input/trackpad/click" },
+                { gripPoseAction, "/user/hand/left/input/grip/pose" }, { gripPoseAction, "/user/hand/right/input/grip/pose" },
+                { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
+                { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings vive");
 
         for (size_t hand = 0; hand < handPaths.size(); ++hand)
         {
@@ -751,7 +767,7 @@ struct Runtime::Impl
         viewSpace = XR_NULL_HANDLE;
         actionSet = XR_NULL_HANDLE;
         buttonActions = {};
-        stickAction = gripPoseAction = aimPoseAction = XR_NULL_HANDLE;
+        stickAction = gripPoseAction = aimPoseAction = hapticAction = XR_NULL_HANDLE;
         handPaths = {};
         gripSpaces = {};
         aimSpaces = {};
@@ -1840,6 +1856,21 @@ bool Runtime::finishFrame(bool submit, std::string &error)
     m_impl->submittedSerial=m_impl->frameSerial;
     ++m_impl->submitted;
     return true;
+}
+
+bool Runtime::vibrate(uint32_t hand, float amplitude, float seconds)
+{
+    if (hand >= m_impl->handPaths.size() || m_impl->hapticAction == XR_NULL_HANDLE || !m_impl->running
+        || m_impl->sessionState != XR_SESSION_STATE_FOCUSED)
+        return false;
+    XrHapticVibration vibration { XR_TYPE_HAPTIC_VIBRATION };
+    vibration.amplitude = std::max(0.f, std::min(amplitude, 1.f));
+    vibration.duration  = XrDuration(std::max(0.f, seconds) * 1e9f);
+    vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+    XrHapticActionInfo info { XR_TYPE_HAPTIC_ACTION_INFO };
+    info.action        = m_impl->hapticAction;
+    info.subactionPath = m_impl->handPaths[hand];
+    return XR_SUCCEEDED(xrApplyHapticFeedback(m_impl->session, &info, reinterpret_cast<XrHapticBaseHeader const *>(&vibration)));
 }
 
 bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &error)
