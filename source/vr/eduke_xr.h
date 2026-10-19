@@ -30,6 +30,11 @@ struct HandInput
     bool       stickActive = false;
     XrPosef    aimPose {}, gripPose {};
     bool       aimValid = false, gripValid = false;
+    // XR_EXT_hand_tracking joints (XR_HAND_JOINT_PALM_EXT order, LOCAL space).
+    static constexpr uint32_t JointCount = 26;
+    XrPosef    joints[JointCount] {};
+    float      jointRadii[JointCount] {};
+    bool       jointsValid = false;
 };
 
 struct ActionInput

@@ -131,10 +131,13 @@ static int32_t hudMappedModelTile()
     return hudPredictedModel;
 }
 // Native families first; a HUD-mapped model only for otherwise unsupported weapons.
+static int weaponModelTile(XRWeaponFamily family);
 static XRWeaponFamily effectiveWeaponFamily()
 {
     auto const family=P_XRWeaponFamily();
-    return family==XRWeaponFamily::Unsupported && hudMappedModelTile()>=0 ? XRWeaponFamily::HudMapped : family;
+    // A native family without its own model defers to the HUD-mapped model.
+    bool const nativeModel=family!=XRWeaponFamily::Unsupported && md_tilehasmodel(weaponModelTile(family),0)>=0;
+    return !nativeModel && hudMappedModelTile()>=0 ? XRWeaponFamily::HudMapped : family;
 }
 
 static int weaponModelTile(XRWeaponFamily family)
@@ -602,8 +605,13 @@ struct BodyModelSample : WorldModelSample {};
 static void heldReject(char const *where)
 {
     static std::string last;
+    static std::vector<std::string> seen;
     if (!std::getenv("EDUKE32_XR_TEST_HELD") || last==where) return;
     last=where;
+    // Alternating reasons would flood the log: report each reason once per weapon.
+    std::string const key=std::string(where)+"/"+std::to_string(g_player[myconnectindex].ps->curr_weapon);
+    if (std::find(seen.begin(),seen.end(),key)!=seen.end()) return;
+    seen.push_back(key);
     LOG_F(INFO,"OpenXR held model skipped: %s weapon=%d.",where,g_player[myconnectindex].ps->curr_weapon);
 }
 
@@ -888,6 +896,196 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     return true;
 }
 
+// Segmented finger-tracking hands (EDUKE32_XR_HAND_RIG, written by the
+// launcher from the asset's hand_poses_flat.json):
+//   segment <side> <tile> <joint>            one rigid MD3 per bone segment
+//   pose <side> <name> <frame>               frame 0 = controller grip, 1 = weapon model
+//     followed by 26 lines "px py pz qx qy qz qw" (metres, XR_EXT_hand_tracking order)
+//   hold <weaponModelTile> <poseName>        pose used while holding that model
+struct HandRigPose { bool weaponFrame=false; std::array<XrPosef,eduke_xr::HandInput::JointCount> joints{}; };
+struct HandRig
+{
+    struct Segment { int tile, joint; };
+    std::array<std::vector<Segment>,2> segments;
+    std::array<std::vector<std::pair<std::string,HandRigPose>>,2> poses;
+    std::vector<std::pair<int,std::string>> holds;
+    HandRigPose const *pose(unsigned side,char const *name) const
+    {
+        for (auto const &p:poses[side]) if (p.first==name) return &p.second;
+        return nullptr;
+    }
+};
+static HandRig const *handRig()
+{
+    static bool loaded;
+    static HandRig rig;
+    static bool usable;
+    if (loaded) return usable ? &rig : nullptr;
+    loaded=true;
+    auto path=sdlayer_xr_option("EDUKE32_XR_HAND_RIG");
+    FILE *file=path ? std::fopen(path,"r") : nullptr;
+    if (!file) return nullptr;
+    char word[64], name[128];
+    while (std::fscanf(file,"%63s",word)==1)
+    {
+        if (!Bstrcmp(word,"segment"))
+        {
+            int side,tile,joint;
+            if (std::fscanf(file,"%d %d %d",&side,&tile,&joint)==3 && unsigned(side)<2 && unsigned(tile)<MAXTILES
+                && unsigned(joint)<eduke_xr::HandInput::JointCount)
+                rig.segments[side].push_back({tile,joint});
+        }
+        else if (!Bstrcmp(word,"pose"))
+        {
+            int side,frame;
+            HandRigPose pose;
+            if (std::fscanf(file,"%d %127s %d",&side,name,&frame)!=3 || unsigned(side)>=2) break;
+            pose.weaponFrame=frame==1;
+            bool good=true;
+            for (auto &joint:pose.joints)
+                good=good && std::fscanf(file,"%f %f %f %f %f %f %f",&joint.position.x,&joint.position.y,&joint.position.z,
+                                         &joint.orientation.x,&joint.orientation.y,&joint.orientation.z,&joint.orientation.w)==7;
+            if (!good) break;
+            rig.poses[side].emplace_back(name,pose);
+        }
+        else if (!Bstrcmp(word,"hold"))
+        {
+            int tile;
+            if (std::fscanf(file,"%d %127s",&tile,name)==2) rig.holds.emplace_back(tile,name);
+        }
+        else break;
+    }
+    std::fclose(file);
+    usable=!rig.segments[0].empty() || !rig.segments[1].empty();
+    LOG_F(INFO,"OpenXR hand rig: %zu+%zu segments, %zu+%zu poses, %zu holds.",rig.segments[0].size(),rig.segments[1].size(),
+          rig.poses[0].size(),rig.poses[1].size(),rig.holds.size());
+    return usable ? &rig : nullptr;
+}
+
+struct HandSegmentSample : WorldModelSample {};
+
+// Pose one hand's segments. Joint sources in priority order: the weapon hold
+// pose (fingers wrap the held model's grip), tracked XR_EXT_hand_tracking
+// joints, then a controller-button pose in the grip frame.
+static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigned hand, Camera const &body,
+                                    eduke_xr::Runtime *runtime, HandModelSample const *heldModel, int heldTile)
+{
+    auto const *rig=handRig();
+    auto const p=g_player[myconnectindex].ps;
+    auto const &input=rawInput.hands[hand];
+    if (!rig || rig->segments[hand].empty() || !usemodels || !overlayEnabled() || !recentered || !inputValid()
+        || inputRuntime!=runtime || inputGeneration!=runtime->generation()
+        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
+        || p->dead_flag || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0
+        || unsigned(body.sector)>=unsigned(numsectors)) return 0;
+
+    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+    auto const toBuild=[&](XrVector3f v) {
+        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+    };
+    XrVector3f const axes[3]={{1,0,0},{0,1,0},{0,0,1}};
+    // Joint pose -> Build root/basis for a segment.
+    std::array<vec3_t,eduke_xr::HandInput::JointCount> roots;
+    std::array<std::array<XrVector3f,3>,eduke_xr::HandInput::JointCount> bases;
+    auto fromLocal=[&](unsigned joint,XrPosef const &pose) {
+        auto const d=toBuild(rotate(tracking,{pose.position.x-origin.x,pose.position.y-origin.y,pose.position.z-origin.z}));
+        roots[joint]={body.pos.x+int32_t(std::lround(d.x)),body.pos.y+int32_t(std::lround(d.y)),body.pos.z+int32_t(std::lround(d.z))};
+        auto const q=multiply(tracking,pose.orientation);
+        for (unsigned axis=0;axis<3;++axis)
+        {
+            auto const b=toBuild(rotate(q,axes[axis]));
+            bases[joint][axis]={b.x/64.f,b.y/64.f,b.z/64.f};
+        }
+    };
+    char const *source=nullptr;
+    HandRigPose const *hold=nullptr;
+    if (heldModel && heldTile>=0)
+        for (auto const &h:rig->holds)
+            if (h.first==heldTile) { hold=rig->pose(hand,h.second.c_str()); break; }
+    if (hold && hold->weaponFrame)
+    {
+        // Weapon model frame (metres) -> model units -> Build through the held model's own transform.
+        for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint)
+        {
+            auto const &j=hold->joints[joint];
+            float const m[3]={j.position.x*64.f-heldModel->pivot.x,j.position.y*64.f-heldModel->pivot.y,j.position.z*64.f-heldModel->pivot.z};
+            float pos[3]={float(heldModel->root.x),float(heldModel->root.y),float(heldModel->root.z)};
+            for (unsigned k=0;k<3;++k)
+            {
+                pos[0]+=heldModel->basis[k].x*m[k]; pos[1]+=heldModel->basis[k].y*m[k]; pos[2]+=heldModel->basis[k].z*m[k];
+            }
+            roots[joint]={int32_t(std::lround(pos[0])),int32_t(std::lround(pos[1])),int32_t(std::lround(pos[2]))};
+            for (unsigned axis=0;axis<3;++axis)
+            {
+                // Hold-pose rotations use the weapon's right-handed aim frame
+                // W=(MD3 +Y, MD3 +Z, MD3 -X); convert back to MD3 components.
+                auto const r=rotate(j.orientation,axes[axis]);
+                float const c[3]={-r.z,r.x,r.y};
+                XrVector3f b{};
+                for (unsigned k=0;k<3;++k)
+                { b.x+=heldModel->basis[k].x*c[k]; b.y+=heldModel->basis[k].y*c[k]; b.z+=heldModel->basis[k].z*c[k]; }
+                bases[joint][axis]=b;
+            }
+        }
+        source="hold";
+    }
+    else if (input.jointsValid && sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING") && !Bstrcmp(sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING"),"1"))
+    {
+        for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint) fromLocal(joint,input.joints[joint]);
+        source="tracked";
+    }
+    else
+    {
+        if (!input.gripValid || !validPose(input.gripPose)) return 0;
+        uint32_t const buttons=input.buttons & input.activeButtons;
+        bool const trigger=buttons & eduke_xr::ButtonSelect, grip=buttons & eduke_xr::ButtonGrip;
+        char const *name=grip && trigger ? "fist" : grip ? "point" : trigger ? "trigger" : "relaxed";
+        auto const *pose=rig->pose(hand,name);
+        if (!pose) pose=rig->pose(hand,"relaxed");
+        if (!pose || pose->weaponFrame) return 0;
+        for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint)
+        {
+            auto const &j=pose->joints[joint];
+            auto const g=input.gripPose;
+            auto const r=rotate(g.orientation,j.position);
+            fromLocal(joint,{multiply(g.orientation,j.orientation),{g.position.x+r.x,g.position.y+r.y,g.position.z+r.z}});
+        }
+        source=name;
+    }
+    unsigned count=0;
+    for (auto const &segment:rig->segments[hand])
+    {
+        int const modelid=md_tilehasmodel(segment.tile,0);
+        if (modelid<0) continue;
+        HandSegmentSample sample;
+        sample.context.instance=16+hand*32+count;
+        sample.context.modelid=modelid;
+        sample.context.skinnum=tile2model[Ptile2tile(segment.tile,0)].skinnum;
+        sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+        sample.context.cframe=sample.context.nframe=0;
+        sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+        if (!md3_preflightcontext(&sample.context)) continue;
+        sample.root=roots[segment.joint];
+        sample.pivot={0,0,0};
+        for (unsigned axis=0;axis<3;++axis) sample.basis[axis]=bases[segment.joint][axis];
+        sample.sector=body.sector;
+        updatesector(sample.root.x,sample.root.y,&sample.sector);
+        if (sample.sector<0) sample.sector=body.sector;
+        out.push_back(sample);
+        ++count;
+    }
+    if (count && std::getenv("EDUKE32_XR_TEST_HANDS"))
+    {
+        static std::string last[2];
+        if (last[hand]!=source)
+            LOG_F(INFO,"OpenXR segmented hand: hand=%u source=%s segments=%u.",hand,source,count);
+        last[hand]=source;
+    }
+    return count;
+}
+
 // Test-only target ownership, not a renderer/state recorder. Native reference
 // emission copies the actual eye into another RGBA8/D24 array layer; frozen
 // model or world MASK inputs are compared with replay on the untouched XR target.
@@ -1118,6 +1316,16 @@ static bool weaponSegmentTile(int32_t tile,int32_t uniqueID,int32_t shade,int32_
     auto &receipt=handModelReceipt;
     if (aaWeaponFamily(receipt.presentation.family) && receipt.runtime)
         return consumeAAWeaponTile(tile,uniqueID,shade,palette,flags,angle,alpha,blend);
+    if (receipt.weaponSegment && std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static std::vector<int32_t> reported;
+        if (reported.size()<64 && std::find(reported.begin(),reported.end(),tile)==reported.end())
+        {
+            reported.push_back(tile);
+            LOG_F(INFO,"OpenXR HUD tile: tile=%d segment=%d mapped=%d weapon=%d.",tile,int(receipt.weaponSegment),
+                  (unsigned)tile<hudModelMap.size() ? hudModelMap[tile] : -1,g_player[myconnectindex].ps->curr_weapon);
+        }
+    }
     if (!receipt.weaponSegment) return false;
     hudSegmentObserved=true;
     if ((unsigned)tile<hudModelMap.size() && hudModelMap[tile]>=0 && hudObservedModel<0)
@@ -1505,6 +1713,13 @@ bool G_XRBeginWeapon()
             { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
         }
     handModelReceipt.weaponSegment=true;
+    if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static int reported=-1;
+        int const state=loadHudModelMap() ? int(hudModelMap.size()) : 0;
+        if (reported!=state) LOG_F(INFO,"OpenXR weapon segment: hud map tiles=%d.",state);
+        reported=state;
+    }
     if (loadHudModelMap())
     {
         hudObservedModel=-1; hudSegmentObserved=false;
@@ -2470,13 +2685,26 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         HandModelSample handModel;
         GripModelSample grips[2];
         BodyModelSample bodyModel;
-        WorldModelSample *models[4]{};
+        constexpr unsigned MaxWorldModels=72;
+        std::vector<HandSegmentSample> segments;
+        segments.reserve(MaxWorldModels);
+        WorldModelSample *models[MaxWorldModels]{};
         unsigned modelCount=0, gripMask=0;
         bool const weaponModel=good && !fixtureTest && prepareHandModel(handModel);
         if (weaponModel) models[modelCount++]=&handModel;
         for (unsigned hand=0;hand<2 && good && !fixtureTest;++hand)
+        {
+            bool const holding=weaponModel && int(hand)==aimHand();
+            size_t const before=segments.size();
+            if (prepareHandSegments(segments,hand,body,runtime,holding ? &handModel : nullptr,
+                                    holding ? weaponModelTile(handModel.presentation.family) : -1))
+                continue; // Segmented hand replaces the single-mesh floating hand.
+            segments.resize(before);
             if (prepareGripModel(grips[hand],hand,body,runtime))
             { models[modelCount++]=&grips[hand]; gripMask|=1u<<hand; }
+        }
+        for (auto &segment:segments)
+            if (modelCount<MaxWorldModels-1) models[modelCount++]=&segment;
         if (good && !fixtureTest && prepareBodyModel(bodyModel,body,runtime)) models[modelCount++]=&bodyModel;
         int const gripState=((gripMask&1) ? grips[0].state+1 : 0)+4*((gripMask&2) ? grips[1].state+1 : 0);
         std::string gripPrefix;
@@ -2558,8 +2786,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 return !prefix
                     || runtime->captureFrame((std::string(prefix)+suffix).c_str(),false,error,true);
             };
-            float modelMatrices[2][4][16]{}, modelProjections[2][16]{};
-            float oracleMatrices[2][4][16]{}, oracleProjections[2][16]{};
+            float modelMatrices[2][MaxWorldModels][16]{}, modelProjections[2][16]{};
+            float oracleMatrices[2][MaxWorldModels][16]{}, oracleProjections[2][16]{};
             bool oracleSamples[2]{}, oracleCompared[2]{};
             auto const drawHandModel = [&](bool collect,NativeOracleTarget *oracle=nullptr) {
                 bool accepted=true;

@@ -388,6 +388,42 @@ struct Runtime::Impl
     std::array<XrAction, 6>                 buttonActions {};
     XrAction                                stickAction = XR_NULL_HANDLE, gripPoseAction = XR_NULL_HANDLE, aimPoseAction = XR_NULL_HANDLE;
     XrAction                                hapticAction = XR_NULL_HANDLE;
+    // Optional XR_EXT_hand_tracking.
+    std::array<XrHandTrackerEXT, 2>         handTrackers {};
+    PFN_xrLocateHandJointsEXT               locateHandJoints = nullptr;
+    PFN_xrDestroyHandTrackerEXT             destroyHandTracker = nullptr;
+
+    void createHandTrackers()
+    {
+        XrSystemHandTrackingPropertiesEXT tracking { XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
+        XrSystemProperties properties { XR_TYPE_SYSTEM_PROPERTIES };
+        properties.next = &tracking;
+        if (XR_FAILED(xrGetSystemProperties(instance, system, &properties)) || !tracking.supportsHandTracking)
+            return;
+        PFN_xrCreateHandTrackerEXT create = nullptr;
+        xrGetInstanceProcAddr(instance, "xrCreateHandTrackerEXT", reinterpret_cast<PFN_xrVoidFunction *>(&create));
+        xrGetInstanceProcAddr(instance, "xrLocateHandJointsEXT", reinterpret_cast<PFN_xrVoidFunction *>(&locateHandJoints));
+        xrGetInstanceProcAddr(instance, "xrDestroyHandTrackerEXT", reinterpret_cast<PFN_xrVoidFunction *>(&destroyHandTracker));
+        if (!create || !locateHandJoints || !destroyHandTracker)
+            return;
+        for (uint32_t hand = 0; hand < 2; ++hand)
+        {
+            XrHandTrackerCreateInfoEXT info { XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT };
+            info.hand         = hand ? XR_HAND_RIGHT_EXT : XR_HAND_LEFT_EXT;
+            info.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
+            if (XR_FAILED(create(session, &info, &handTrackers[hand])))
+                handTrackers[hand] = XR_NULL_HANDLE;
+        }
+        std::fprintf(stderr, "OpenXR hand tracking: %s.\n", handTrackers[0] || handTrackers[1] ? "enabled" : "unavailable");
+    }
+    void destroyHandTrackers()
+    {
+        for (auto &tracker : handTrackers)
+            if (tracker != XR_NULL_HANDLE && destroyHandTracker) destroyHandTracker(tracker);
+        handTrackers = {};
+        locateHandJoints = nullptr;
+        destroyHandTracker = nullptr;
+    }
     std::array<XrPath, kViewCount>          handPaths {};
     std::array<XrSpace, kViewCount>         gripSpaces {}, aimSpaces {};
     XrSwapchain                             color    = XR_NULL_HANDLE;
@@ -744,6 +780,7 @@ struct Runtime::Impl
     }
     void destroyXr()
     {
+        destroyHandTrackers();
         if (color != XR_NULL_HANDLE)
             xrDestroySwapchain(color);
         for (XrSpace &actionSpace : gripSpaces)
@@ -904,20 +941,25 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
     }
     std::vector<XrExtensionProperties> extensions(extensionCount, { XR_TYPE_EXTENSION_PROPERTIES });
     result      = xrEnumerateInstanceExtensionProperties(nullptr, extensionCount, &extensionCount, extensions.data());
-    bool opengl = false;
+    bool opengl = false, handTracking = false;
     for (auto const &extension : extensions)
+    {
         if (!std::strcmp(extension.extensionName, XR_KHR_OPENGL_ENABLE_EXTENSION_NAME))
             opengl = true;
+        if (!std::strcmp(extension.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME))
+            handTracking = true;
+    }
     if (XR_FAILED(result) || !opengl)
     {
         error = XR_FAILED(result) ? xrError(XR_NULL_HANDLE, result, "xrEnumerateInstanceExtensionProperties") : "OpenXR runtime lacks XR_KHR_opengl_enable";
         return false;
     }
-    char const          *enabled[] = { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME };
+    // Finger tracking is optional: enabled only when the runtime offers it.
+    char const          *enabled[] = { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME, XR_EXT_HAND_TRACKING_EXTENSION_NAME };
     XrInstanceCreateInfo instanceInfo { XR_TYPE_INSTANCE_CREATE_INFO };
     std::snprintf(instanceInfo.applicationInfo.applicationName, sizeof(instanceInfo.applicationInfo.applicationName), "EDuke32 VR");
     instanceInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
-    instanceInfo.enabledExtensionCount      = 1;
+    instanceInfo.enabledExtensionCount      = handTracking ? 2 : 1;
     instanceInfo.enabledExtensionNames      = enabled;
     result                                  = xrCreateInstance(&instanceInfo, &m_impl->instance);
     if (XR_FAILED(result))
@@ -970,6 +1012,8 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
         shutdown();
         return false;
     }
+    if (handTracking)
+        m_impl->createHandTrackers();
     uint32_t blendCount = 0;
     result              = xrEnumerateEnvironmentBlendModes(m_impl->instance, m_impl->system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &blendCount, nullptr);
     std::vector<XrEnvironmentBlendMode> blends(blendCount);
@@ -2043,6 +2087,30 @@ bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &erro
             if (neutralIfUnfocused()) return true;
             error = xrError(m_impl->instance, result, "OpenXR aim pose query");
             return false;
+        }
+        // Finger tracking is best-effort: a failed locate just leaves the
+        // hand on its controller-driven pose.
+        if (atTime && m_impl->handTrackers[hand] != XR_NULL_HANDLE && m_impl->locateHandJoints)
+        {
+            XrHandJointLocationEXT joints[HandInput::JointCount];
+            XrHandJointLocationsEXT locations { XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
+            locations.jointCount     = HandInput::JointCount;
+            locations.jointLocations = joints;
+            XrHandJointsLocateInfoEXT locate { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
+            locate.baseSpace = m_impl->space;
+            locate.time      = atTime;
+            if (XR_SUCCEEDED(m_impl->locateHandJoints(m_impl->handTrackers[hand], &locate, &locations)) && locations.isActive)
+            {
+                XrSpaceLocationFlags const needed = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+                bool valid = true;
+                for (uint32_t joint = 0; joint < HandInput::JointCount; ++joint)
+                {
+                    valid = valid && (joints[joint].locationFlags & needed) == needed;
+                    target.joints[joint]     = joints[joint].pose;
+                    target.jointRadii[joint] = joints[joint].radius;
+                }
+                target.jointsValid = valid;
+            }
         }
     }
     out = sample;

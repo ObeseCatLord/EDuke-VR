@@ -2,14 +2,16 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Launch EDuke32 VR with the qualified gameplay features (EDUKE32_XR=play).
 #
-#   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models]
+#   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release]
 #                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [-- eduke32 args]
 #
 # Stock Duke: pass --grp (or run where DUKE3D.GRP is found natively).
 # Alien Armageddon 5.66: pass --aa with the install directory; the shipped
 # eduke32_vr_aa566.con compatibility entry is selected automatically.
-# Held weapon/hand models come from the sibling duke-vr-assets packages and are
-# linked into a private directory; the installed game data is never modified.
+# Held weapon/hand/body models come from the sibling duke-vr-assets packages and
+# are linked into a private directory; installed game data is never modified.
+# Original v6 assets are preferred; --release refuses the older packages that
+# derive from commercial game data (see build_vr_def.py).
 # Any EDUKE32_XR_* variable you export still overrides the preset.
 set -euo pipefail
 
@@ -17,7 +19,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 binary="$repo/eduke32-xr"
 assets="$(cd "$repo/.." && pwd)/duke-vr-assets"
-aa="" grp="" models=1
+aa="" grp="" models=1 release=""
 args=()
 while (($#)); do
     case "$1" in
@@ -25,6 +27,7 @@ while (($#)); do
         --grp) grp=$(realpath "$2"); shift 2 ;;
         --left) export EDUKE32_XR_AIM="${EDUKE32_XR_AIM:-left}"; shift ;;
         --no-models) models=0; shift ;;
+        --release) release=1; shift ;;
         --assets) assets=$(cd "$2" && pwd); shift 2 ;;
         --binary) binary=$(realpath "$2"); shift 2 ;;
         --) shift; args+=("$@"); break ;;
@@ -42,97 +45,10 @@ def="$data/eduke32-vr-models.def"
     [[ -n $aa ]] && echo 'include "duke3d.def"'
 } > "$def"
 
-link() { ln -sfn "$1" "$data/$2"; }
-surfaces() { python3 -c 'import struct,sys;print(struct.unpack_from("<i",open(sys.argv[1],"rb").read(),84)[0])' "$1"; }
-model() { # file skin tile scale; an optional <skin>_glow.png adds a glow map
-    local n glow=""; n=$(surfaces "$data/$1")
-    [[ -e "$data/${2%.png}_glow.png" ]] && glow="${2%.png}_glow.png"
-    {
-        echo "model \"$1\" {"
-        echo " scale $4"
-        for ((i = 0; i < n; i++)); do
-            echo " skin { pal 0 surface $i file \"$2\" }"
-            [[ -n $glow ]] && echo " glow { pal 0 surface $i file \"$glow\" }"
-        done
-        echo " frame { name \"rest\" tile $3 smoothduration 0 }"
-        echo "}"
-    } >> "$def"
-}
 if ((models)) && [[ -d $assets ]]; then
-    hands="$assets/aa-v3-hands-grip/exports/eduke32/aa_assets"
-    for side in left right; do
-        link "$hands/hand_$side.md3" "vr_hand_$side.md3"
-        link "$hands/hand_$side.png" "vr_hand_$side.png"
-    done
-    model vr_hand_left.md3 vr_hand_left.png 30010 1.0
-    model vr_hand_right.md3 vr_hand_right.png 30011 1.0
-    body="$assets/v5-vanilla/exports/eduke32/vr_body"
-    if [[ -f $body.md3 && -f $body.png ]]; then
-        link "$body.md3" vr_body.md3; link "$body.png" vr_body.png
-        model vr_body.md3 vr_body.png 30040 1.0
-    fi
-    if [[ -n $aa ]]; then
-        pistol="$assets/pistol-palm-mount/aa/exports/eduke32/aa_assets"
-        rpg="$assets/aa-rpg-native/exports/eduke32/aa_assets"
-        link "$pistol/duke_pistol.md3" vr_pistol.md3; link "$pistol/duke_pistol.png" vr_pistol.png
-        link "$rpg/duke_rpg.md3" vr_rpg.md3; link "$rpg/duke_rpg.png" vr_rpg.png
-        model vr_pistol.md3 vr_pistol.png 21 0.5859375
-        model vr_rpg.md3 vr_rpg.png 23 1.0
-        # Every other AA weapon: held models chosen from the HUD tiles AA draws
-        # (aa-v1 arsenal metadata), on reserved tiles 30100+.
-        arsenal="$assets/aa-v1"
-        if [[ -f $arsenal/metadata/arsenal_inventory.json ]]; then
-            python3 - "$arsenal" "$data" >> "$def" <<'PY'
-import json, struct, sys
-from pathlib import Path
-arsenal, data = Path(sys.argv[1]), Path(sys.argv[2])
-families = json.loads((arsenal / 'metadata/arsenal_inventory.json').read_text())['families']
-lines = []
-for index, family in enumerate(families):
-    paths = family.get('paths') or {}
-    md3, png = arsenal / paths.get('md3', ''), arsenal / paths.get('png', '')
-    if not paths or not md3.is_file() or not png.is_file():
-        continue
-    tile = 30100 + index
-    for source, name in ((md3, f'vr_aa_{index}.md3'), (png, f'vr_aa_{index}.png')):
-        link = data / name
-        if link.is_symlink() or link.exists():
-            link.unlink()
-        link.symlink_to(source)
-    surfaces = struct.unpack_from('<i', md3.read_bytes(), 84)[0]
-    print(f'model "vr_aa_{index}.md3" {{\n scale 1.0')
-    for surface in range(surfaces):
-        print(f' skin {{ pal 0 surface {surface} file "vr_aa_{index}.png" }}')
-    print(f' frame {{ name "rest" tile {tile} smoothduration 0 }}\n}}')
-    lines += [f'{hud} {tile}' for hud in family.get('reference_tiles', [])]
-(data / 'hud-model-map.txt').write_text('\n'.join(lines) + '\n')
-PY
-            export EDUKE32_XR_HUD_MODEL_MAP="${EDUKE32_XR_HUD_MODEL_MAP:-$data/hud-model-map.txt}"
-        fi
-    else
-        pistol="$assets/pistol-palm-mount/stock/exports/eduke32/duke_assets/pistol"
-        [[ -f $assets/v5-vanilla/exports/eduke32/vr_pistol.md3 ]] && pistol="$assets/v5-vanilla/exports/eduke32/vr_pistol"
-        link "$pistol.md3" vr_pistol.md3; link "$pistol.png" vr_pistol.png
-        rm -f "$data/vr_pistol_glow.png"; [[ -f ${pistol}_glow.png ]] && link "${pistol}_glow.png" vr_pistol_glow.png
-        model vr_pistol.md3 vr_pistol.png 21 0.5859375
-        # Generic held models on reserved tiles 30020+weapon index. Prefer the
-        # reference-built v5 set; fall back to the older v3 set per weapon.
-        held=(2:shotgun 3:chaingun 4:rpg 5:pipebomb 6:shrinker 7:devastator 8:tripmine:tripbomb
-              9:freezer 10:detonator 11:expander 12:flamethrower)
-        for entry in "${held[@]}"; do
-            IFS=: read -r index v3name v5name <<< "$entry"
-            v5name=${v5name:-$v3name}
-            v5="$assets/v5-vanilla/exports/eduke32/vr_$v5name"
-            v3="$assets/v3/exports/eduke32/duke_assets/$v3name"
-            if [[ -f $v5.md3 && -f $v5.png ]]; then src=$v5
-            elif [[ -f $v3.md3 && -f $v3.png ]]; then src=$v3
-            else continue; fi
-            link "$src.md3" "vr_held_$index.md3"; link "$src.png" "vr_held_$index.png"
-            rm -f "$data/vr_held_${index}_glow.png"
-            [[ -f ${src}_glow.png ]] && link "${src}_glow.png" "vr_held_${index}_glow.png"
-            model "vr_held_$index.md3" "vr_held_$index.png" $((30020 + index)) 1.0
-        done
-    fi
+    python3 "$here/build_vr_def.py" "$assets" "$data" ${aa:+--aa} ${release:+--release} >> "$def"
+    export EDUKE32_XR_HAND_RIG="${EDUKE32_XR_HAND_RIG:-$data/hand-rig.txt}"
+    [[ -n $aa ]] && export EDUKE32_XR_HUD_MODEL_MAP="${EDUKE32_XR_HUD_MODEL_MAP:-$data/hud-model-map.txt}"
 fi
 
 export EDUKE32_XR="${EDUKE32_XR:-play}"

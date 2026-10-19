@@ -171,6 +171,8 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_HAPTICS", "1" },         // controller pulses on fire/damage
         { "EDUKE32_XR_RESOLUTION", "auto" },   // game mode = OpenXR recommended eye size
         { "EDUKE32_XR_BODY_TILE", "30040" },   // first-person body when defined
+        { "EDUKE32_XR_FINGER_TRACKING", "1" }, // XR_EXT_hand_tracking drives segmented hands
+        { "EDUKE32_XR_PIXELATED", "1" },       // unfiltered (nearest) textures, Quake-style
     };
     for (auto const &option : preset)
         if (!std::strcmp(option.name, name))
@@ -213,6 +215,12 @@ eduke_xr::Runtime *sdlayer_xr_worldRuntime()
         sdl_xr_worldActive = true;
         sdl_xr_worldWidth=width; sdl_xr_worldHeight=height;
         sdlayer_xr_desktopSync(true);
+        char const *pixelated = sdlayer_xr_option("EDUKE32_XR_PIXELATED");
+        if (pixelated && !std::strcmp(pixelated, "1") && gltexfiltermode != TEXFILTER_OFF)
+        {
+            gltexfiltermode = TEXFILTER_OFF;
+            gltexapplyprops();
+        }
         LOG_F(INFO, "OpenXR experimental Polymost world session started (two-pass stereo oracle).");
     }
     return sdl_xr_worldActive ? &sdl_xr : nullptr;
