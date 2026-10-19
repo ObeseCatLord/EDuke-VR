@@ -3853,6 +3853,9 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
         auto const s = &sprite[i];
 
         Duke_ApplySpritePropertiesToTSprite(t, (uspriteptr_t)s);
+#ifdef USE_OPENXR
+        G_XRWorldModelToggle(i, s->picnum);
+#endif
 
         switch (tileGetMapping(s->picnum))
         {
@@ -7091,6 +7094,9 @@ int app_main(int argc, char const* const* argv)
     OSD_SetParameters(0, 0, 0, 12, 2, 12, OSD_ERROR, OSDTEXT_RED, OSDTEXT_DARKRED, gamefunctions[gamefunc_Show_Console][0] == '\0' ? OSD_PROTECTED : 0);
     registerosdcommands();
     Voice_Init();
+#ifdef USE_OPENXR
+    G_XRRegisterCvars();
+#endif
 
     if (g_networkMode != NET_DEDICATED_SERVER)
     {

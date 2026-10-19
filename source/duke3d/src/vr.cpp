@@ -124,9 +124,48 @@ static bool loadHudModelMap()
     }
     return !hudModelMap.empty();
 }
+// Runtime switches (console/settings.cfg): vr_models turns every VR model off (held weapons,
+// hands, body, third-person players, 3D weapon wheel) and falls back to native 2D art, like
+// RazeXR; vr_laser draws an aiming beam from the muzzle to the aim point.
+static int32_t vr_models=1, vr_laser=1;
+constexpr int32_t VRLaserTile=30060;
+} // namespace
+
+
+bool G_XRModelsEnabled()
+{
+    auto const option=sdlayer_xr_option("EDUKE32_XR_MODELS");
+    return vr_models && usemodels && option && !Bstrcmp(option,"1");
+}
+
+void G_XRRegisterCvars()
+{
+    static osdcvardata_t cvars[] = {
+        { "vr_models", "VR 3D models (held weapons, hands, body, other players, weapon wheel); 0 = native 2D sprites", (void *)&vr_models, CVAR_BOOL, 0, 1 },
+        { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
+    };
+    for (auto &cv : cvars) OSD_RegisterCvar(&cv, osdcmd_cvar_set);
+}
+
+// Models the VR pack adds to native world sprites (third-person Duke, the 3D pistol pickup) hide
+// with vr_models 0; only flags this code set are cleared again.
+void G_XRWorldModelToggle(int spriteNum, int picnum)
+{
+    static std::vector<bool> flagged(MAXSPRITES);
+    if ((unsigned)spriteNum>=MAXSPRITES || (picnum!=APLAYER && picnum!=FIRSTGUNSPRITE)) return;
+    auto &flags=spriteext[spriteNum].flags;
+    if (!vr_models)
+    {
+        if (!(flags & SPREXT_NOTMD)) { flags|=SPREXT_NOTMD; flagged[spriteNum]=true; }
+    }
+    else if (flagged[spriteNum]) { flags&=~SPREXT_NOTMD; flagged[spriteNum]=false; }
+}
+
+namespace
+{
 static int32_t hudMappedModelTile()
 {
-    if (!loadHudModelMap()) return -1;
+    if (!G_XRModelsEnabled() || !loadHudModelMap()) return -1;
     auto const p=g_player[myconnectindex].ps;
     if (!p || p->curr_weapon!=hudPredictedWeapon || hudPredictedModel<0 || md_tilehasmodel(hudPredictedModel,0)<0) return -1;
     return hudPredictedModel;
@@ -358,6 +397,17 @@ static void wheelFillSlots()
         if (weapon==FLAMETHROWER_WEAPON && !WORLDTOUR) continue;
         wheel.slots[wheel.count++]=weapon;
     }
+}
+
+// The 3D ring needs every slot's model; otherwise the wheel is drawn in 2D on the HUD
+// (G_XRDrawWeaponWheel2D) with the native pickup sprites.
+static bool wheelUses3D()
+{
+    if (!G_XRModelsEnabled()) return false;
+    auto const p=g_player[myconnectindex].ps;
+    for (unsigned i=0;i<wheel.count;++i)
+        if (md_tilehasmodel(wheelModelTile(p,wheel.slots[i]),0)<0) return false;
+    return true;
 }
 
 static int wheelKey(int weapon)
@@ -951,7 +1001,7 @@ bool prepareGripModel(GripModelSample &sample, unsigned hand, Camera const &body
     int const tile=gripModelTile(hand);
     auto const p=g_player[myconnectindex].ps;
     auto const &input=rawInput.hands[hand];
-    if (tile<0 || !usemodels || !overlayEnabled() || !recentered || !inputValid()
+    if (tile<0 || !G_XRModelsEnabled() || !overlayEnabled() || !recentered || !inputValid()
         || inputRuntime!=runtime || inputGeneration!=runtime->generation()
         || !rawInput.headValid || !validPose(rawInput.headPose) || !input.gripValid || !validPose(input.gripPose)
         || screenpeek!=myconnectindex || ud.recstat || ud.show_help || ud.overhead_on || ud.camerasprite>=0
@@ -1043,7 +1093,7 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     static bool yawValid;
     int const tile=bodyModelTile();
     auto const p=g_player[myconnectindex].ps;
-    if (tile<0 || !usemodels || !overlayEnabled() || !recentered || !inputValid()
+    if (tile<0 || !G_XRModelsEnabled() || !overlayEnabled() || !recentered || !inputValid()
         || inputRuntime!=runtime || inputGeneration!=runtime->generation()
         || !rawInput.headValid || !validPose(rawInput.headPose)
         || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
@@ -1215,7 +1265,7 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
     auto const *rig=handRig();
     auto const p=g_player[myconnectindex].ps;
     auto const &input=rawInput.hands[hand];
-    if (!rig || rig->segments[hand].empty() || !usemodels || !overlayEnabled() || !recentered || !inputValid()
+    if (!rig || rig->segments[hand].empty() || !G_XRModelsEnabled() || !overlayEnabled() || !recentered || !inputValid()
         || inputRuntime!=runtime || inputGeneration!=runtime->generation()
         || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
         || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
@@ -1374,7 +1424,7 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
 static unsigned prepareWeaponWheel(std::vector<HandSegmentSample> &out, Camera const &body, eduke_xr::Runtime *runtime)
 {
     auto const p=g_player[myconnectindex].ps;
-    if (!wheel.open || !wheel.count || !usemodels || !overlayEnabled() || !recentered || !inputValid()
+    if (!wheel.open || !wheel.count || !wheelUses3D() || !overlayEnabled() || !recentered || !inputValid()
         || inputRuntime!=runtime || inputGeneration!=runtime->generation() || unsigned(body.sector)>=unsigned(numsectors))
     {
         if (wheel.open && std::getenv("EDUKE32_XR_TEST_WHEEL"))
@@ -1456,6 +1506,98 @@ static unsigned prepareWeaponWheel(std::vector<HandSegmentSample> &out, Camera c
     return count;
 }
 
+// Aiming laser (vr_laser): the vr_laser MD3 (1 m along +X) stretched from the shot origin (the held
+// model's muzzle, else the resolved hand origin) to where the native aim ray hits.
+static bool prepareLaser(HandSegmentSample &sample, Camera const &body, eduke_xr::Runtime *runtime)
+{
+    auto const p=g_player[myconnectindex].ps;
+    int const modelid=md_tilehasmodel(VRLaserTile,0);
+    if (!vr_laser || modelid<0 || wheel.open || aimHand()<0 || !handShotsRequested() || !localAimCamera() || !aimPoseUsable()
+        || !recentered || !inputValid() || inputRuntime!=runtime || inputGeneration!=runtime->generation()
+        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on || p->dead_flag
+        || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || unsigned(body.sector)>=unsigned(numsectors)) return false;
+    vec3_t start; int16_t sector; bool clamped=false; vec3_t ray;
+    auto const &visual=crosshairViews.weapon;
+    if (visual.selected && visual.valid)
+    {
+        start=visual.root; sector=visual.sector;
+        ray={visual.ray.direction[0],visual.ray.direction[1],visual.ray.direction[2]*16};
+    }
+    else
+    {
+        if (!G_VRHandShotFeature(myconnectindex) || !G_VRShotValid(myconnectindex)) return false;
+        start={p->pos.x,p->pos.y,int32_t(p->pos.z+p->pyoff)}; sector=p->cursectnum;
+        if (!G_VRResolveShot(myconnectindex,start,sector,clamped)) return false;
+        auto const shot=G_VRGetShotInput(myconnectindex);
+        ray={shot.direction[0],shot.direction[1],shot.direction[2]*16};
+    }
+    if (unsigned(sector)>=unsigned(numsectors)) return false;
+    hitdata_t hit{}; hit.sect=-1;
+    {
+        auto &owner=sprite[p->i]; auto const cstat=owner.cstat;
+        owner.cstat &= ~(CSTAT_SPRITE_BLOCK|CSTAT_SPRITE_BLOCK_HITSCAN);
+        hitscan(&start,sector,ray.x,ray.y,ray.z,&hit,CLIPMASK1);
+        owner.cstat=cstat;
+    }
+    if (hit.sect<0) return false;
+    // Metres between the origin and the hit (Build z is 16x finer).
+    XrVector3f const d={float(hit.x-start.x)/UnitsPerMetre,float(hit.y-start.y)/UnitsPerMetre,float(hit.z-start.z)/ZUnitsPerMetre};
+    float const length=std::sqrt(dot(d,d));
+    if (!(length>.02f)) return false;
+    XrVector3f const f={d.x/length,d.y/length,d.z/length};
+    XrVector3f side=std::fabs(f.z)<.95f ? XrVector3f{-f.y,f.x,0.f} : XrVector3f{1.f,0.f,0.f};
+    float const sl=std::sqrt(dot(side,side));
+    side={side.x/sl,side.y/sl,side.z/sl};
+    XrVector3f const up={f.y*side.z-f.z*side.y,f.z*side.x-f.x*side.z,f.x*side.y-f.y*side.x};
+    auto const build=[](XrVector3f m, float k) { return XrVector3f{m.x*UnitsPerMetre*k,m.y*UnitsPerMetre*k,m.z*ZUnitsPerMetre*k}; };
+    sample.context.instance=120;
+    sample.context.modelid=modelid;
+    sample.context.skinnum=tile2model[Ptile2tile(VRLaserTile,0)].skinnum;
+    sample.context.shade=-32;
+    sample.context.cframe=sample.context.nframe=0;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    if (!md3_preflightcontext(&sample.context)) return false;
+    sample.root=start;
+    sample.pivot={0,0,0};
+    sample.basis[0]=build(f,length/64.f);          // 64 model units = the whole beam
+    sample.basis[1]=build(side,1.f/64.f);
+    sample.basis[2]=build(up,1.f/64.f);
+    sample.sector=sector;
+    if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static int logged;
+        if (logged++%120==0) LOG_F(INFO,"OpenXR laser: length=%.2fm origin=%s.",length,visual.selected && visual.valid ? "muzzle" : "hand");
+    }
+    return true;
+}
+
+} // namespace
+
+// 2D weapon wheel (no VR models, or a slot without one): the native pickup sprites on a ring
+// at the centre of the HUD panel; same slots, pointing and commit as the 3D ring.
+void G_XRDrawWeaponWheel2D()
+{
+    if (!wheel.open || !wheel.count || wheelUses3D()) return;
+    auto const p=g_player[myconnectindex].ps;
+    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    float const frac=float(std::min(1.0,(now-wheel.openedAt)/.1));
+    for (unsigned slot=0;slot<wheel.count;++slot)
+    {
+        int const weapon=wheel.slots[slot];
+        int tile=weapon==GROW_WEAPON ? GROWSPRITEICON : WeaponPickupSprites[weapon];
+        if (weapon==HANDBOMB_WEAPON && p->ammo_amount[weapon]<=0 && p->hbomb_on) tile=WeaponPickupSprites[HANDREMOTE_WEAPON];
+        if ((unsigned)tile>=MAXTILES) continue;
+        bool const selectable=wheelSelectable(p,weapon), hovered=int(slot)==wheel.hovered;
+        float const angle=2*Pi*slot/wheel.count, radius=62.f*frac;
+        int const x=int(std::lround((160.f+radius*std::sin(angle))*65536.f)), y=int(std::lround((100.f-radius*std::cos(angle))*65536.f));
+        int const scale=int((hovered ? 60000.f : selectable ? 42000.f : 32000.f)*frac);
+        rotatesprite_fs(x,y,scale,0,tile,hovered ? -16 : selectable ? 0 : 28,0,2+8);
+    }
+}
+
+namespace
+{
 // Test-only target ownership, not a renderer/state recorder. Native reference
 // emission copies the actual eye into another RGBA8/D24 array layer; frozen
 // model or world MASK inputs are compared with replay on the untouched XR target.
@@ -1500,9 +1642,8 @@ struct NativeOracleTarget
 
 bool prepareHandModel(HandModelSample &sample)
 {
-    auto enabled=sdlayer_xr_option("EDUKE32_XR_MODELS");
     auto weapon=sdlayer_xr_option("EDUKE32_XR_WEAPON");
-    if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
+    if (!G_XRModelsEnabled() || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
         || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
         || !G_VRShotValid(myconnectindex))
     {
@@ -3133,8 +3274,14 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         unsigned modelCount=0, gripMask=0;
         bool const weaponModel=good && !fixtureTest && !wheel.open && prepareHandModel(handModel);
         if (weaponModel) models[modelCount++]=&handModel;
+        // RazeXR-style fallback: a weapon without a 3D model shows its native 2D sprite (which
+        // carries Duke's own hand) on the controller, so that hand's 3D model stays hidden.
+        auto const cardOption=sdlayer_xr_option("EDUKE32_XR_WEAPON");
+        bool const cardHand=!weaponModel && !wheel.open && cardOption && !Bstrcmp(cardOption,"1")
+            && g_player[myconnectindex].ps->curr_weapon!=KNEE_WEAPON;
         for (unsigned hand=0;hand<2 && good && !fixtureTest;++hand)
         {
+            if (cardHand && int(hand)==aimHand()) continue;
             bool const holding=weaponModel && int(hand)==aimHand();
             size_t const before=segments.size();
             if (prepareHandSegments(segments,hand,body,runtime,holding ? &handModel : nullptr,
@@ -3145,6 +3292,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             { models[modelCount++]=&grips[hand]; gripMask|=1u<<hand; }
         }
         if (good && !fixtureTest) prepareWeaponWheel(segments,body,runtime);
+        HandSegmentSample laser;
+        if (good && !fixtureTest && prepareLaser(laser,body,runtime)) segments.push_back(laser);
         for (auto &segment:segments)
             if (modelCount<MaxWorldModels-1) models[modelCount++]=&segment;
         if (good && !fixtureTest && prepareBodyModel(bodyModel,body,runtime)) models[modelCount++]=&bodyModel;

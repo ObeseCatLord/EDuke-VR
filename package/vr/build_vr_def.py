@@ -14,7 +14,7 @@ Sources in priority order:
                     game data (Duke Nukem Forever); local use only, never with
                     --release
 Tiles: 21 stock pistol, 30020+weapon held weapons, 30010/30011 single-mesh
-hands, APLAYER (1405+) Duke for both third and first person (torso/legs),
+hands, 30060 aiming laser, APLAYER (1405+) Duke for both third and first person (torso/legs),
 30100+family AA held weapons,
 30200+side*32+segment finger-tracking hand segments.
 """
@@ -80,6 +80,11 @@ def main():
                                        (old / f'hand_{side}.md3', old / f'hand_{side}.png', True)])
         if chosen:
             model(*chosen, tile, f'vr_hand_{side}')
+
+    # Aiming laser beam (vr_laser), drawn by the engine from the muzzle to the aim point.
+    if (v6 / 'vr_laser.md3').is_file() and (v6 / 'vr_laser.png').is_file():
+        model(v6 / 'vr_laser.md3', v6 / 'vr_laser.png', 30060, 'vr_laser')
+        notes.append(f'laser: {v6 / "vr_laser.md3"}')
 
     # Third-person Duke for other players: native APLAYER (1405) action tiles,
     # from the stock GAME.CON actions (start, frames, 5 view angles each).

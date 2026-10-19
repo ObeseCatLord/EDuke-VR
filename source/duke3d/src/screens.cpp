@@ -1166,6 +1166,9 @@ void G_DisplayRest(int32_t smoothratio)
 
     G_PrintGameQuotes(screenpeek);
     Voice_DrawStatus();
+#ifdef USE_OPENXR
+    G_XRDrawWeaponWheel2D();
+#endif
 
     if (ud.show_level_text && hud_showmapname && g_levelTextTime > 1)
     {

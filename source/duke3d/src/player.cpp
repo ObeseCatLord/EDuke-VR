@@ -2563,7 +2563,7 @@ XRWeaponFamily P_XRWeaponFamily()
 {
 #ifndef EDUKE32_STANDALONE
     auto const p=g_player[myconnectindex].ps;
-    if (FURY || NAM_WW2GI || !p || unsigned(p->i)>=MAXSPRITES) return XRWeaponFamily::Unsupported;
+    if (FURY || NAM_WW2GI || !p || unsigned(p->i)>=MAXSPRITES || !G_XRModelsEnabled()) return XRWeaponFamily::Unsupported;
     int const weapon=p->curr_weapon;
     bool const stockDisplay=DUKE && !VM_HaveEvent(EVENT_DISPLAYROOMSEND) && !VM_HaveEvent(EVENT_DISPLAYREST)
         && !VM_HaveEvent(EVENT_DISPLAYWEAPON) && !VM_HaveEvent(EVENT_DRAWWEAPON);

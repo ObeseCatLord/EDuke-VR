@@ -34,6 +34,11 @@ void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
 bool G_XRTrackedPitchOwner();
 // Build angle of the tracked head for audio listeners (voice chat); `fallback` outside VR.
 int G_XRListenerAngle(int fallback);
+// VR 3D models on (vr_models cvar, EDUKE32_XR_MODELS, usemodels); off = native 2D sprites.
+bool G_XRModelsEnabled();
+void G_XRRegisterCvars();
+void G_XRWorldModelToggle(int spriteNum, int picnum);
+void G_XRDrawWeaponWheel2D();
 fix16_t G_XRMovementAngle(fix16_t nativeAngle);
 bool G_XRCrosshairPosition(vec2_t &position);
 bool G_XRBeginCrosshair();

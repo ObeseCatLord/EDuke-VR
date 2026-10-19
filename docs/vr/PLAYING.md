@@ -76,6 +76,24 @@ menu = crouch, right pad click = jump, hold the right pad up for the weapon
 wheel), WMR (right stick click = wheel, right pad click = jump, right menu =
 crouch), and the KHR simple controller.
 
+## Aiming, 3D models and the 2D fallback
+
+- **Projected crosshair**: Duke's own crosshair is placed on whatever surface
+  the weapon hand's aim ray hits (`crosshair`, `crosshairscale` as usual).
+- **Laser pointer** (`vr_laser 1`, default on): a thin glowing beam from the
+  weapon's muzzle (or the hand when the weapon has no 3D model) to the aim
+  point.
+- **`vr_models`** (default 1): `vr_models 0` turns every VR model off at
+  runtime: held weapons, hands, first-person body, other players' 3D Duke and
+  the 3D pistol pickup. Everything falls back to the native 2D art like
+  RazeXR: the weapon's HUD sprite (with Duke's 2D hand) rides on the
+  controller and the weapon wheel becomes a 2D ring of pickup sprites on the
+  HUD. `eduke32-vr-play --no-models` starts without loading any VR models.
+- A weapon that has no 3D model in the asset pack (e.g. a mod's custom gun)
+  gets the same 2D sprite on the controller on its own, and that hand's 3D
+  model hides so there are never two hands. Verified with
+  `tools/vr/smoke_xr_models_toggle.py` (also with `--assets` lacking a model).
+
 ## Weapon wheel
 
 Hold the right stick click (Valve Index: press the right trackpad; HTC Vive
