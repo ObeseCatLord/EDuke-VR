@@ -11977,6 +11977,12 @@ int32_t videoSetGameMode(char davidoption, int32_t daupscaledxdim, int32_t daups
 #ifdef USE_OPENGL
     if (nogl) dabpp = 8;
 #endif
+#ifdef USE_OPENXR
+    // In XR the game resolution is the per-eye render size; the desktop
+    // window is only a mirror.
+    if (dabpp > 8 && sdlayer_xr_renderExtent(daupscaledxdim, daupscaledydim))
+        davidoption = 0, daupscalefactor = 1;
+#endif
     daupscaledxdim = max(640, daupscaledxdim);
     daupscaledydim = max(400, daupscaledydim);
 

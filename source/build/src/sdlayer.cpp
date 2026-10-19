@@ -115,6 +115,16 @@ static bool sdl_xr_active;
 static unsigned long sdl_xr_frameLimit;
 static bool sdl_xr_worldAttempted, sdl_xr_worldActive;
 static int sdl_xr_worldWidth, sdl_xr_worldHeight;
+static int sdlayer_getswapinterval(int const syncMode);
+static int32_t vsync_renderlayer;
+// OpenXR's xrWaitFrame paces the game while a world session runs; the desktop
+// mirror must not block on the monitor's vsync.
+static void sdlayer_xr_desktopSync(bool xrPaced)
+{
+    if (sdl_window && sdl_context)
+        SDL_GL_SetSwapInterval(xrPaced ? 0 : sdlayer_getswapinterval(vsync_renderlayer));
+}
+
 // Play mode retries a stopped world session with backoff (ms tick, attempts).
 static uint64_t sdl_xr_retryAt;
 static unsigned sdl_xr_retries;
@@ -159,6 +169,7 @@ char const *sdlayer_xr_option(char const *name)
         { "EDUKE32_XR_MOVE", "head" },         // stick movement follows the head
         { "EDUKE32_XR_STICK_PITCH", "0" },     // head tracking owns pitch
         { "EDUKE32_XR_HAPTICS", "1" },         // controller pulses on fire/damage
+        { "EDUKE32_XR_RESOLUTION", "auto" },   // game mode = OpenXR recommended eye size
     };
     for (auto const &option : preset)
         if (!std::strcmp(option.name, name))
@@ -169,8 +180,9 @@ char const *sdlayer_xr_option(char const *name)
 // The game owns room rendering; SDL owns the session/context lifetime.
 eduke_xr::Runtime *sdlayer_xr_worldRuntime()
 {
-    int width=0,height=0;
-    SDL_GetWindowSize(sdl_window,&width,&height);
+    // The game's committed mode, not the window: a window manager may clamp a
+    // headset-sized desktop mirror window to the monitor.
+    int const width=xres, height=yres;
     // The native mode must have committed before rebuilding XR at this ordinary
     // frame boundary. Same-context SDL resize does not change our generation.
     if (width!=xdim || height!=ydim || !width || !height) return nullptr;
@@ -199,6 +211,7 @@ eduke_xr::Runtime *sdlayer_xr_worldRuntime()
         }
         sdl_xr_worldActive = true;
         sdl_xr_worldWidth=width; sdl_xr_worldHeight=height;
+        sdlayer_xr_desktopSync(true);
         LOG_F(INFO, "OpenXR experimental Polymost world session started (two-pass stereo oracle).");
     }
     return sdl_xr_worldActive ? &sdl_xr : nullptr;
@@ -209,6 +222,7 @@ void sdlayer_xr_disableWorld(char const *reason)
     LOG_F(ERROR, "OpenXR world stopped: %s", reason);
     sdl_xr.shutdown();
     sdl_xr_worldActive = false;
+    sdlayer_xr_desktopSync(false);
     // A player in a headset should not be left on the desktop by one bad
     // frame. Tests keep the stop final (EDUKE32_XR=1 without the option).
     char const *retry = sdlayer_xr_option("EDUKE32_XR_RETRY");
@@ -220,6 +234,36 @@ void sdlayer_xr_disableWorld(char const *reason)
 }
 
 bool sdlayer_xr_worldActive() { return sdl_xr_worldActive; }
+bool sdlayer_xr_paced() { return sdl_xr_worldActive && sdl_xr.sessionRunning(); }
+
+bool sdlayer_xr_renderExtent(int32_t &x, int32_t &y)
+{
+    if (!sdlayer_xr_requested()) return false;
+    char const *mode = sdlayer_xr_option("EDUKE32_XR_RESOLUTION");
+    if (!mode || !std::strcmp(mode, "window")) return false;
+    uint32_t width = 0, height = 0;
+    if (std::sscanf(mode, "%ux%u", &width, &height) != 2)
+    {
+        std::string error;
+        if (!eduke_xr::queryRecommendedExtent(width, height, error))
+        {
+            static bool reported;
+            if (!reported) LOG_F(WARNING, "OpenXR resolution: %s; keeping the configured mode.", error.c_str());
+            reported = true;
+            return false;
+        }
+    }
+    float scale = 1.f;
+    if (char const *value = sdlayer_xr_option("EDUKE32_XR_RENDER_SCALE"))
+        scale = std::max(.25f, std::min(float(std::atof(value)), 2.f));
+    int32_t const newX = int32_t(width * scale) & ~1, newY = int32_t(height * scale) & ~1;
+    if (newX < 320 || newY < 200) return false;
+    if (newX != x || newY != y)
+        LOG_F(INFO, "OpenXR resolution: rendering %dx%d per eye (runtime %ux%u, scale %.2f) instead of %dx%d.",
+              newX, newY, width, height, scale, x, y);
+    x = newX; y = newY;
+    return true;
+}
 
 void sdlayer_xr_cancelMenuPresentation()
 {
@@ -248,8 +292,7 @@ static void sdlayer_xr_presentMenu()
     // Never acquire or initialize from a swap: only the logical owner can arm
     // final presentation. A nested native fade/swap cancels the capture safely.
     if (!sdl_xr_worldActive || !sdl_xr.menuPresentationActive()) return;
-    int width=0,height=0;
-    SDL_GetWindowSize(sdl_window,&width,&height);
+    int const width=xres, height=yres;
     if (bpp<=8 || videoGetRenderMode()!=REND_POLYMOST || width!=xdim || height!=ydim)
     {
         sdlayer_xr_cancelMenuPresentation();
@@ -358,7 +401,7 @@ static void sdlayer_xr_diagnostic()
 }
 #endif
 
-static int32_t vsync_renderlayer;
+
 int32_t maxrefreshfreq=0;
 int32_t xres=-1, yres=-1, bpp=0, fullscreen=0, bytesperline;
 double refreshfreq = 59.0;
@@ -2374,7 +2417,7 @@ void videoShowFrame(int32_t w)
             g_ImGuiFrameActive = false;
         }
 #endif
-        if ((r_glfinish == 1 && r_finishbeforeswap == 1) || vsync_renderlayer == 2)
+        if (((r_glfinish == 1 && r_finishbeforeswap == 1) || vsync_renderlayer == 2) && !headsetActive)
         {
             MICROPROFILE_SCOPEI("Engine", "glFinish", MP_GREEN);
             glFinish();
@@ -2413,7 +2456,7 @@ void videoShowFrame(int32_t w)
 #endif
         }
 
-        if (r_glfinish == 1 && r_finishbeforeswap == 0 && vsync_renderlayer != 2)
+        if (r_glfinish == 1 && r_finishbeforeswap == 0 && vsync_renderlayer != 2 && !headsetActive)
         {
             MICROPROFILE_SCOPEI("Engine", "glFinish2", MP_GREEN4);
             glFinish();

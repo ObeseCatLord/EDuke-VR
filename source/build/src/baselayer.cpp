@@ -8,6 +8,9 @@
 #include "osd.h"
 #include "polymost.h"
 #include "renderlayer.h"
+#ifdef USE_OPENXR
+#include "sdlayer.h"
+#endif
 
 #define MINICORO_IMPL
 #define MCO_LOG initprintf
@@ -890,6 +893,12 @@ int engineFPSLimit(bool const throttle)
 
     if (r_maxfps == -2)
         return true;
+#ifdef USE_OPENXR
+    // A running OpenXR session already paces each frame in xrWaitFrame at the
+    // headset's rate; the monitor-based limiter would cap it below that.
+    if (sdlayer_xr_paced())
+        return true;
+#endif
 
     g_frameDelay = calcFrameDelay(!throttle || ((unsigned)(r_maxfps-1) < (unsigned)refreshfreq) ? r_maxfps : -1);
 

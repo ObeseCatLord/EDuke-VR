@@ -1146,6 +1146,11 @@ void G_DrawRooms(int32_t playerNum, int32_t smoothRatio)
                 LOG_F(ERROR, "EVENT_DISPLAYROOMS return value must be 0 or 1, all other values are reserved.");
 #endif
 
+#ifdef USE_OPENXR
+            // The XR world pass draws mirrors per eye; the flat desktop
+            // mirror would be a full extra scene render nobody sees.
+            if (!xrWorldOwner || !sdlayer_xr_worldActive())
+#endif
             G_HandleMirror(CAMERA(pos.x), CAMERA(pos.y), CAMERA(pos.z), CAMERA(q16ang), CAMERA(q16horiz), smoothRatio);
             G_ClearGotMirror();
 #ifdef LEGACY_ROR

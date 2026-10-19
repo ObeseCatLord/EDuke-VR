@@ -782,6 +782,53 @@ struct Runtime::Impl
     }
 };
 
+bool queryRecommendedExtent(uint32_t &width, uint32_t &height, std::string &error)
+{
+    // A short-lived instance: no graphics binding is needed to read view sizes.
+    static bool queried, found;
+    static uint32_t cachedWidth, cachedHeight;
+    static std::string cachedError;
+    if (!queried)
+    {
+        queried = true;
+        XrInstance instance = XR_NULL_HANDLE;
+        XrInstanceCreateInfo info { XR_TYPE_INSTANCE_CREATE_INFO };
+        std::snprintf(info.applicationInfo.applicationName, sizeof(info.applicationInfo.applicationName), "EDuke32 VR");
+        info.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+        XrResult result = xrCreateInstance(&info, &instance);
+        if (XR_FAILED(result))
+            cachedError = xrError(XR_NULL_HANDLE, result, "xrCreateInstance");
+        else
+        {
+            XrSystemGetInfo systemInfo { XR_TYPE_SYSTEM_GET_INFO };
+            systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+            XrSystemId system = XR_NULL_SYSTEM_ID;
+            std::array<XrViewConfigurationView, kViewCount> views {};
+            for (auto &view : views) view.type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
+            uint32_t count = 0;
+            result = xrGetSystem(instance, &systemInfo, &system);
+            if (XR_SUCCEEDED(result))
+                result = xrEnumerateViewConfigurationViews(instance, system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+                                                           kViewCount, &count, views.data());
+            if (XR_FAILED(result) || count != kViewCount)
+                cachedError = XR_FAILED(result) ? xrError(instance, result, "querying OpenXR view sizes") : "OpenXR did not expose two views";
+            else
+            {
+                for (auto const &view : views)
+                {
+                    cachedWidth  = std::max(cachedWidth, view.recommendedImageRectWidth);
+                    cachedHeight = std::max(cachedHeight, view.recommendedImageRectHeight);
+                }
+                found = cachedWidth && cachedHeight;
+                if (!found) cachedError = "OpenXR recommended an empty view size";
+            }
+            xrDestroyInstance(instance);
+        }
+    }
+    width = cachedWidth; height = cachedHeight; error = cachedError;
+    return found;
+}
+
 Runtime::Runtime() : m_impl(new Impl)
 {
 }
@@ -1003,7 +1050,7 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
         shutdown();
         return false;
     }
-    if (renderWidth && renderHeight && (renderWidth != m_impl->width || renderHeight != m_impl->height))
+    if (renderWidth && renderHeight && (renderWidth < m_impl->width || renderHeight < m_impl->height))
         std::fprintf(stderr, "OpenXR: runtime recommends %ux%u per eye; rendering at the game resolution %ux%u. "
                      "Set the game video mode to the recommended size for full sharpness.\n",
                      m_impl->width, m_impl->height, renderWidth, renderHeight);
@@ -2064,6 +2111,8 @@ uint64_t Runtime::lastSubmittedSerial() const { return m_impl ? m_impl->submitte
 
 uint64_t Runtime::submittedFrames() const
 { return m_impl ? m_impl->submitted : 0; }
+
+bool Runtime::sessionRunning() const { return m_impl->running; }
 
 uint64_t Runtime::generation() const
 { return m_impl ? m_impl->actionGeneration : 0; }

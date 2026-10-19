@@ -40,6 +40,8 @@ anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`).
 | `EDUKE32_XR_STICK_PITCH` | `0` | right stick Y does not pitch the world (head tracking owns pitch) |
 | `EDUKE32_XR_SNAP_TURN` | unset | degrees per right-stick flick (e.g. `45`); unset = smooth turning |
 | `EDUKE32_XR_HAPTICS` | `1` | weapon-hand pulse when firing, both hands when damaged |
+| `EDUKE32_XR_RESOLUTION` | `auto` | game/eye render size from OpenXR's recommended per-eye size (`WxH` to force, `window` to keep the config) |
+| `EDUKE32_XR_RENDER_SCALE` | unset (1.0) | multiplies the OpenXR size, 0.25–2.0 (e.g. `0.8` for speed, `1.4` to supersample) |
 | `EDUKE32_XR_RETRY` | `1` | restart a stopped XR session (1, 2, 4, 8, 16 s backoff, 8 attempts); a held-model receipt mismatch drops one frame instead of stopping |
 
 Any variable you export explicitly overrides the preset. `EDUKE32_XR=1` keeps
@@ -68,8 +70,8 @@ menu = crouch, right pad click = jump), WMR, and the KHR simple controller.
 
 ## Known limits
 
-- Eye render size equals the game window size; the log prints the runtime's
-  recommended per-eye size. Set the game resolution close to it for sharpness.
+- The desktop window mirrors the left eye at the eye resolution; a window
+  manager may clamp it to the monitor, which does not affect the headset.
 - Mirrors render per eye from the front pass camera (not in the back half of a
   steep-pitch split view); frames with a visible mirror use the per-eye path.
 - Steep head pitch and room-over-room maps render through the per-eye path
@@ -77,3 +79,13 @@ menu = crouch, right pad click = jump), WMR, and the KHR simple controller.
 - Only the pistol and AA RPG have held 3D models; other weapons use the
   controller-attached 2D ART card.
 - No headset comfort/performance qualification yet.
+
+## Performance notes
+
+- While an OpenXR session runs, `xrWaitFrame` paces the game: the native
+  `r_maxfps` limiter, desktop vsync and `r_glfinish` are bypassed so the game
+  can run at the headset's refresh rate.
+- Ordinary frames render both eyes with one multiview submission. Steep-pitch,
+  room-over-room and mirror frames use the per-eye path (about 2x draw calls).
+- The flat desktop mirror pass is skipped in XR; mirrors are drawn per eye.
+- Lower `EDUKE32_XR_RENDER_SCALE` first if the headset drops frames.

@@ -40,6 +40,10 @@ struct ActionInput
     HandInput hands[2] {};
 };
 
+// The runtime's recommended per-eye image size (largest of both views),
+// queried once without a graphics binding; cached for the process.
+bool queryRecommendedExtent(uint32_t &width, uint32_t &height, std::string &error);
+
 // Save the currently drawn framebuffer without changing its rendering state.
 // Used for native-versus-stereo regression captures at the world boundary.
 bool captureFramebuffer(char const *path, uint32_t width, uint32_t height, std::string &error);
@@ -116,6 +120,7 @@ class Runtime
     uint64_t    submittedFrames() const;
     uint64_t    lastSubmittedSerial() const;
     uint64_t    generation() const;
+    bool        sessionRunning() const;
 
   private:
     bool drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices = nullptr);

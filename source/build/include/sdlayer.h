@@ -19,6 +19,11 @@ bool sdlayer_xr_requested();
 char const *sdlayer_xr_option(char const *name);
 void sdlayer_xr_disableWorld(char const *reason);
 bool sdlayer_xr_worldActive();
+// True while a running OpenXR session paces frames through xrWaitFrame.
+bool sdlayer_xr_paced();
+// Game render size from OpenXR (EDUKE32_XR_RESOLUTION=auto|WxH|window and
+// EDUKE32_XR_RENDER_SCALE). Returns false to keep the requested mode.
+bool sdlayer_xr_renderExtent(int32_t &x, int32_t &y);
 void sdlayer_xr_cancelMenuPresentation();
 bool sdlayer_xr_overlayTargetBound();
 bool sdlayer_xr_tintWorld(float const *rgba, float const *correction);
