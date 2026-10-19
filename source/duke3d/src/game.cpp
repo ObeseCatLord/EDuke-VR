@@ -3782,10 +3782,11 @@ static void G_PlaceHeldWeapons(void)
 #ifdef USE_OPENXR
         if (Bgetenv("EDUKE32_XR_TEST_HELD"))
         {
-            static int reported;
-            if (reported < 8)
+            static int reported, lastKey = -1;
+            int const key = o->picnum * 64 + frame;
+            if (reported < 48 && key != lastKey)
             {
-                ++reported;
+                ++reported; lastKey = key;
                 LOG_F(INFO, "Held weapon attach: owner tile=%d pal=%d model=%d frame=%d weapon tile=%d model=%d ok=%d mirror=%d.",
                       o->picnum, o->pal, duke, frame, w->picnum, held, int(ok), int(display_mirror));
             }

@@ -2216,6 +2216,19 @@ static void runConsoleRequest()
             }
             continue;
         }
+        if (command=="xr_where")
+        {
+            // Read-only position report for multiplayer harnesses.
+            for (int TRAVERSE_CONNECT(i))
+            {
+                auto const q=g_player[i].ps;
+                if ((unsigned)q->i>=MAXSPRITES) continue;
+                auto const &body=sprite[q->i];
+                LOG_F(INFO,"VR where: player=%d local=%d pos=%d,%d,%d ang=%d weapon=%d sprite=%d,%d,%d,%d.",i,int(i==myconnectindex),
+                      q->pos.x,q->pos.y,q->pos.z,fix16_to_int(q->q16ang),q->curr_weapon,body.x,body.y,body.z,body.ang);
+            }
+            continue;
+        }
         int weapon;
         if (std::sscanf(command.c_str(),"xr_weapon %d",&weapon)==1 && (unsigned)weapon<MAX_WEAPONS)
         {

@@ -2265,6 +2265,46 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
     if (grhalfxdown10x < 0) { mat[0] = -mat[0]; mat[4] = -mat[4]; mat[8] = -mat[8]; mat[12] = -mat[12]; }
     }
 
+#ifdef USE_OPENXR
+    // XR views: place the model in camera-relative Build units and map them
+    // with the world pass's rotation, so explicit view pitch cannot shear it.
+    // Vertices then stay in model units, as on the explicit path.
+    bool xrSprite = false;
+    float xrToEye[16];
+    if (!explicitContext && !sext->mdpitch && !sext->mdroll
+        && !(globalorientation & (8 | CSTAT_SPRITE_ALIGNMENT_FLOOR)) && polymost_xrSpriteWorldToEye(xrToEye))
+    {
+        float const xy = m->scale * tspr->xrepeat * (1.f/64.f) * m->bscale * 1024.f;
+        float const zs = m->scale * tspr->yrepeat * (1.f/64.f) * m->bscale * 16384.f;
+        float baseZ = (float)tspr->z + spriteext[tspr->owner].mdposition_offset.z - 4.f*tspr->yoffset*tspr->yrepeat;
+        if (globalorientation & 128)
+            baseZ += (float)(sizyrep<<1);
+        baseZ -= (m->zadd + m->yoffset) * zs;
+        float const angle = (float)((tspr->ang + spriteext[tspr->owner].mdangoff) & 2047) * (fPI/1024.f);
+        float const ca = cosf(angle), sa = sinf(angle);
+        // MD3 +X forward, +Y left (x-flip: right), +Z up; Build z grows down.
+        float const side = (globalorientation & 4) ? -1.f : 1.f;
+        float const local[16] = {
+            ca*xy, sa*xy, 0.f, 0.f,
+            side*sa*xy, -side*ca*xy, 0.f, 0.f,
+            0.f, 0.f, -zs, 0.f,
+            (float)(tspr->x + spriteext[tspr->owner].mdposition_offset.x - globalposx),
+            (float)(tspr->y + spriteext[tspr->owner].mdposition_offset.y) - fglobalposy,
+            baseZ - fglobalposz, 1.f,
+        };
+        for (int column = 0; column < 4; ++column)
+            for (int row = 0; row < 4; ++row)
+            {
+                mat[column*4+row] = 0.f;
+                for (int k = 0; k < 4; ++k) mat[column*4+row] += xrToEye[k*4+row]*local[column*4+k];
+            }
+        if (grhalfxdown10x < 0) { mat[0] = -mat[0]; mat[4] = -mat[4]; mat[8] = -mat[8]; mat[12] = -mat[12]; }
+        xrSprite = true;
+    }
+#else
+    bool const xrSprite = false;
+#endif
+
     //------------
     // TSPR_FLAGS_MDHACK is an ugly hack in game.c:G_DoSpriteAnimations() telling md2sprite
     // to use Z-buffer hacks to hide overdraw problems with the flat-tsprite-on-floor shadows,
@@ -2286,9 +2326,9 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
 
 //    glPushAttrib(GL_POLYGON_BIT);
     bool clockwise;
-    if (explicitContext)
+    if (explicitContext || xrSprite)
     {
-        float const *a=ctx->modelToEye;
+        float const *a=explicitContext ? ctx->modelToEye : mat;
         clockwise=(a[0]*(a[5]*a[10]-a[9]*a[6])-a[4]*(a[1]*a[10]-a[9]*a[2])+a[8]*(a[1]*a[6]-a[5]*a[2]))>0.f;
     }
     else clockwise=(grhalfxdown10x >= 0) ^((globalorientation&8) != 0) ^((globalorientation&4) != 0);
@@ -2404,7 +2444,7 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
         }
 #endif
 
-        if (explicitContext)
+        if (explicitContext || xrSprite)
         {
             float const currentWeight = (1.f - interpol) * (1.f/64.f);
             float const nextWeight = interpol * (1.f/64.f);

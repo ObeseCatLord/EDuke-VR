@@ -23,6 +23,7 @@ from smoke_world import CONFIG
 # name, yaw, pitch, roll (degrees), head offset (metres, x/y/z)
 POSES = [
     ('level', 0, 0, 0, (0, 0, 0)),
+    ('down15', 0, -15, 0, (0, 0, 0)),
     ('down35', 0, -35, 0, (0, 0, 0)),
     ('down60', 0, -60, 0, (0, 0, 0)),
     ('down89', 0, -89, 0, (0, 0, 0)),

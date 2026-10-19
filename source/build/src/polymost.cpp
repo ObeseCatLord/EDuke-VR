@@ -4136,6 +4136,34 @@ static void polymost_waitForSubBuffer(uint32_t subBufferIndex)
     while (true);
 }
 
+// The world pass's up/down + tilt rotation (polymost1RotMatrix while walls draw).
+static void polymost_worldrotmat(float matrix[16])
+{
+    float const identity[16] = {
+        1.f, 0.f, 0.f, 0.f,
+        0.f, 1.f, 0.f, 0.f,
+        0.f, 0.f, 1.f, 0.f,
+        0.f, 0.f, 0.f, 1.f,
+    };
+    Bmemcpy(matrix, identity, sizeof(identity));
+#if !SOFTROTMAT
+    float udmatrix[16] = {
+        1.f, 0.f, 0.f, 0.f,
+        0.f, gchang, -gshang*gvrcorrection, 0.f,
+        0.f, gshang/gvrcorrection, gchang, 0.f,
+        0.f, 0.f, 0.f, 1.f,
+    };
+    float tiltmatrix[16] = {
+        gctang, -gstang, 0.f, 0.f,
+        gstang, gctang, 0.f, 0.f,
+        0.f, 0.f, 1.f, 0.f,
+        0.f, 0.f, 0.f, 1.f,
+    };
+    multiplyMatrix4f(matrix, udmatrix);
+    multiplyMatrix4f(matrix, tiltmatrix);
+#endif
+}
+
 static void polymost_updaterotmat(void)
 {
     if (gl.currentShaderProgramID == polymost1CurrentShaderProgramID)
@@ -8788,6 +8816,30 @@ void polymost_xrRelativeWorldToEye(float *matrix)
             for (int k=0;k<4;++k) matrix[column*4+row]+=polymost1RotMatrix[k*4+row]*coordinates[column*4+k];
         }
     }
+}
+
+bool polymost_xrSpriteWorldToEye(float *matrix)
+{
+    // Native sprite models draw with the shader rotation reset to identity and
+    // fold pitch into a matrix built in Polymost's screen-derived space, which
+    // shears models under explicit XR view pitch. XR views instead map
+    // camera-relative Build units through the world pass's own rotation.
+    if (!xrProjection.active)
+        return false;
+    float rotation[16];
+    polymost_worldrotmat(rotation);
+    float const scale=1.f/(gviewxrange*1024.f);
+    float const coordinates[16]={-gsinang*scale,0,gcosang2*scale,0,
+                                gcosang*scale,0,gsinang2*scale,0,
+                                0,-gyxscale*grhalfxdown10/gviewxrange,0,0,
+                                0,0,0,1};
+    for (int column=0;column<4;++column)
+        for (int row=0;row<4;++row)
+        {
+            matrix[column*4+row]=0;
+            for (int k=0;k<4;++k) matrix[column*4+row]+=rotation[k*4+row]*coordinates[column*4+k];
+        }
+    return true;
 }
 
 void polymost_xrRelativeWorldToClip(float *matrix)
