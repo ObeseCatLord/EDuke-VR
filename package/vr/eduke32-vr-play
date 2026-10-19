@@ -78,6 +78,37 @@ if ((models)) && [[ -d $assets ]]; then
         link "$rpg/duke_rpg.md3" vr_rpg.md3; link "$rpg/duke_rpg.png" vr_rpg.png
         model vr_pistol.md3 vr_pistol.png 21 0.5859375
         model vr_rpg.md3 vr_rpg.png 23 1.0
+        # Every other AA weapon: held models chosen from the HUD tiles AA draws
+        # (aa-v1 arsenal metadata), on reserved tiles 30100+.
+        arsenal="$assets/aa-v1"
+        if [[ -f $arsenal/metadata/arsenal_inventory.json ]]; then
+            python3 - "$arsenal" "$data" >> "$def" <<'PY'
+import json, struct, sys
+from pathlib import Path
+arsenal, data = Path(sys.argv[1]), Path(sys.argv[2])
+families = json.loads((arsenal / 'metadata/arsenal_inventory.json').read_text())['families']
+lines = []
+for index, family in enumerate(families):
+    paths = family.get('paths') or {}
+    md3, png = arsenal / paths.get('md3', ''), arsenal / paths.get('png', '')
+    if not paths or not md3.is_file() or not png.is_file():
+        continue
+    tile = 30100 + index
+    for source, name in ((md3, f'vr_aa_{index}.md3'), (png, f'vr_aa_{index}.png')):
+        link = data / name
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(source)
+    surfaces = struct.unpack_from('<i', md3.read_bytes(), 84)[0]
+    print(f'model "vr_aa_{index}.md3" {{\n scale 1.0')
+    for surface in range(surfaces):
+        print(f' skin {{ pal 0 surface {surface} file "vr_aa_{index}.png" }}')
+    print(f' frame {{ name "rest" tile {tile} smoothduration 0 }}\n}}')
+    lines += [f'{hud} {tile}' for hud in family.get('reference_tiles', [])]
+(data / 'hud-model-map.txt').write_text('\n'.join(lines) + '\n')
+PY
+            export EDUKE32_XR_HUD_MODEL_MAP="${EDUKE32_XR_HUD_MODEL_MAP:-$data/hud-model-map.txt}"
+        fi
     else
         pistol="$assets/pistol-palm-mount/stock/exports/eduke32/duke_assets/pistol"
         [[ -f $assets/v5-vanilla/exports/eduke32/vr_pistol.md3 ]] && pistol="$assets/v5-vanilla/exports/eduke32/vr_pistol"
@@ -87,7 +118,7 @@ if ((models)) && [[ -d $assets ]]; then
         # Generic held models on reserved tiles 30020+weapon index. Prefer the
         # reference-built v5 set; fall back to the older v3 set per weapon.
         held=(2:shotgun 3:chaingun 4:rpg 5:pipebomb 6:shrinker 7:devastator 8:tripmine:tripbomb
-              9:freezer:freezethrower 10:detonator 11:expander 12:flamethrower)
+              9:freezer 10:detonator 11:expander 12:flamethrower)
         for entry in "${held[@]}"; do
             IFS=: read -r index v3name v5name <<< "$entry"
             v5name=${v5name:-$v3name}

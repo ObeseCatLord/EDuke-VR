@@ -76,7 +76,7 @@ menu = crouch, right pad click = jump), WMR, and the KHR simple controller.
   steep-pitch split view); frames with a visible mirror use the per-eye path.
 - Steep head pitch and room-over-room maps render through the per-eye path
   instead of multiview (see FULL_PITCH.md).
-- Only the pistol and AA RPG have held 3D models; other weapons use the
+- Weapons without a mapped held model (and tinted HUD palettes) use the
   controller-attached 2D ART card.
 - No headset comfort/performance qualification yet.
 
@@ -100,6 +100,21 @@ falling back to the older v3 set. Models need `tag_muzzle` and
 `tag_palm_left`/`tag_palm_right` (or `tag_grip`); frames are chosen from the
 native weapon counter as `fire_NN`, holding the nearest earlier authored frame,
 else `rest`. An optional `<skin>_glow.png` becomes a DEF glow map (muzzle
-flash). While a held model is shown the native 2D weapon/hand ART for that
-weapon is suppressed; tinted HUD palettes (underwater, night vision) fall back
-to the 2D card. Verified with `tools/vr/smoke_xr_weapons.py` (10 weapons).
+flash), drawn by the explicit held-model path (multiview collection falls back
+to per-eye for that model). While a held model is shown the native 2D
+weapon/hand ART for that weapon is suppressed; tinted HUD palettes (underwater,
+night vision) fall back to the 2D card. The v5 set is built from the Duke
+Nukem Forever (2001) meshes adjusted toward the Duke 3D handheld sprites (see
+`duke-vr-assets/v5-vanilla/README.md`). Verified with
+`tools/vr/smoke_xr_weapons.py`: 10 weapons drawn in hand, counter-keyed fire
+frames advancing, firing feedback.
+
+Mods / Alien Armageddon: `EDUKE32_XR_HUD_MODEL_MAP` (lines `hudTile modelTile`)
+selects a held model from the HUD weapon tiles a frame draws; the choice holds
+through animation tiles until the selected weapon changes (one-frame latency on
+switches). The launcher builds this map for AA from the aa-v1 arsenal metadata
+(69 families on tiles 30100+).
+
+Tracked pitch note: with `EDUKE32_XR_STICK_PITCH=0` native view centering
+(hard landings, auto-centering) is cancelled instead of locking tracked aim;
+previously it could disable VR shots and held models indefinitely.

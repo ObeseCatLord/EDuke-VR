@@ -28,6 +28,9 @@ def main():
     parser.add_argument('--remote-port', type=int, default=49777)
     parser.add_argument('--timeout', default=550, type=int)
     parser.add_argument('--assets', type=Path, help='duke-vr-assets directory for the launcher')
+    parser.add_argument('--aa-root', type=Path, help='Alien Armageddon install (launcher --aa)')
+    parser.add_argument('--map', help='user map instead of E1L1 (e.g. maps/httkb/high_rise.map)')
+    parser.add_argument('--switches', type=int, default=16)
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='weapons-', dir=args.work_dir.resolve()))
@@ -35,14 +38,18 @@ def main():
     (lab / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
     capture, console = lab / 'capture-request', lab / 'console-request'
     env = dict(os.environ, DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
-               EDUKE32_XR='play', EDUKE32_XR_TEST_HELD='1', EDUKE32_XR_TEST_HAPTICS='1',
+               EDUKE32_XR='play', EDUKE32_XR_TEST_HELD='1', EDUKE32_XR_TEST_HAPTICS='1', EDUKE32_XR_TEST_INPUT='1',
                EDUKE32_XR_CAPTURE_REQUEST=str(capture), EDUKE32_XR_CONSOLE_REQUEST=str(console),
                XDG_DATA_HOME=str(lab / 'data'))
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
     command = [str(launcher), '--binary', str(args.binary.resolve())]
     if args.assets:
         command += ['--assets', str(args.assets.resolve())]
-    command += ['--', '-usecwd', '-nosetup', '-noautoload', '-nologo', '-v1', '-l1', '-s1']
+    if args.aa_root:
+        command += ['--aa', str(args.aa_root.resolve())]
+    command += ['--', '-usecwd', '-nosetup', '-noautoload', '-nologo']
+    command += ['-map', args.map] if args.map else ['-v1', '-l1']
+    command += ['-s1']
     log_path = lab / 'game.log'
     text = lambda: log_path.read_text(errors='replace')
     deadline = time.monotonic() + args.timeout
@@ -70,11 +77,15 @@ def main():
                 raise RuntimeError('world did not start')
             remote = Remote(args.remote_port).__enter__()
             time.sleep(.5)
-            run('god', 'give weapons', 'give ammo')
+            # god/give weapons share one deferred cheat slot: one per frame.
+            time.sleep(8)  # let level-start inventory setup finish first
+            run('xr_weapons'); time.sleep(2)
+            run('give ammo'); time.sleep(1)
+            run('god'); time.sleep(2)
             names = {1: 'pistol', 2: 'shotgun', 3: 'chaingun', 4: 'rpg', 5: 'pipebomb', 6: 'shrinker',
                      7: 'devastator', 8: 'tripbomb', 9: 'freezer', 10: 'detonator', 11: 'expander', 12: 'flamethrower'}
             last = None
-            for press in range(16):
+            for press in range(args.switches):
                 start = len(text())
                 # Native Next_Weapon (left controller Y) cycles owned weapons.
                 remote.packet.left.b_click = True; remote.send()
@@ -85,7 +96,7 @@ def main():
                 if not rows:
                     continue
                 weapon = int(rows[-1][0]); last = rows[-1][0]
-                label = names.get(weapon, f'weapon{weapon}')
+                label = names.get(weapon, f'weapon{weapon}') + ('' if int(rows[-1][1]) != 5 else f'-mapped{rows[-1][2]}')
                 if label in result['weapons']:
                     if len(result['weapons']) >= 10:
                         break

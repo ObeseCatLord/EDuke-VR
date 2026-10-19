@@ -11,7 +11,7 @@ void G_XRClearInput();
 void G_XRResetAim(int playerNum);
 bool G_XRBeginWeapon();
 void G_XREndWeapon(bool captured);
-enum class XRWeaponFamily { Unsupported, StockPistol, AAPistol, AARpg, StockHeld };
+enum class XRWeaponFamily { Unsupported, StockPistol, AAPistol, AARpg, StockHeld, HudMapped };
 // Stock weapons other than the calibrated pistol use one generic held MD3 per
 // weapon on reserved tile XRHeldModelTileBase+weapon (no world ART exists).
 constexpr int32_t XRHeldModelTileBase=30020;
@@ -24,9 +24,13 @@ struct XRWeaponPresentation
 XRWeaponFamily P_XRWeaponFamily();
 // Read-only native presentation sample; never advances weapon/animation state.
 bool P_XRWeaponPresentation(XRWeaponPresentation &sample);
+// Generic sample for a weapon whose held model was chosen from its HUD tiles.
+bool P_XRMappedPresentation(XRWeaponPresentation &sample);
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID);
 void G_XRUpdateShotInput();
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed);
+// Tracked aim owns pitch completely (no stick pitch): native centering is moot.
+bool G_XRTrackedPitchOwner();
 fix16_t G_XRMovementAngle(fix16_t nativeAngle);
 bool G_XRCrosshairPosition(vec2_t &position);
 bool G_XRBeginCrosshair();

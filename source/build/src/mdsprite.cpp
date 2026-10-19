@@ -2017,8 +2017,10 @@ int32_t md3_preflightcontext(md3drawcontext_t const *ctx)
     if (!std::isfinite(determinant) || determinant==0.f) return 0;
 
     for (mdskinmap_t const *skin=m->skinmap;skin;skin=skin->next)
-        if (skin->skinnum==ctx->skinnum && (skin->palette==DETAILPAL || skin->palette==GLOWPAL))
+        if (skin->skinnum==ctx->skinnum && skin->palette==DETAILPAL)
             return 0; // Unsupported material must fall back, not silently lose a layer.
+    // Glow maps (e.g. muzzle flashes) are drawn by the direct explicit path;
+    // multiview collection rejects them so the reference path keeps the layer.
 
     // The initial explicit path supports only already-native opaque base skins.
     for (int32_t surfi = 0; surfi < m->head.numsurfs; ++surfi)
@@ -2470,6 +2472,8 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
         if (polymost_xrCollectingModels())
         {
             if (!explicitContext || m->usesalpha) polymost_xrRejectModel("unsupported model draw family");
+            else if (r_glowmapping && mdgetskinmap(m, GLOWPAL, skinNum, surfi))
+                polymost_xrRejectModel("model glow map");
             polymost_xrCollectModelSurface(s,vertlist,pc,surfi,m->head.numsurfs);
             continue;
         }
@@ -2572,6 +2576,20 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
         else
         {
 #ifdef USE_GLEXT
+            // Explicit (held) models keep an optional glow layer.
+            if (explicitContext && r_glowmapping && mdgetskinmap(m, GLOWPAL, skinNum, surfi))
+            {
+                if ((i = mdloadskin((md2model_t *) m, skinNum, GLOWPAL, surfi)))
+                {
+                    auto sk = mdgetskinmap(m, GLOWPAL, skinNum, surfi);
+                    texunits += 4;
+                    polymost_useGlowMapping(true);
+                    polymost_setupglowtexture(GL_TEXTURE4, i, (sk->flags & HICR_FORCEFILTER) ? (PTH_HIGHTILE | PTH_FORCEFILTER) : PTH_HIGHTILE);
+                    glMatrixMode(GL_TEXTURE);
+                    glLoadIdentity();
+                    glMatrixMode(GL_MODELVIEW);
+                }
+            }
             if (r_vertexarrays)
             {
                 buildgl_bindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexvbos[curvbo]);

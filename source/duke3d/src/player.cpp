@@ -2624,6 +2624,19 @@ static bool P_XRHeldPresentation(XRWeaponPresentation &sample)
 #endif
 }
 
+bool P_XRMappedPresentation(XRWeaponPresentation &sample)
+{
+#ifndef EDUKE32_STANDALONE
+    auto const p=g_player[myconnectindex].ps;
+    if (!p || (unsigned)p->curr_weapon>=MAX_WEAPONS
+        || !P_XRWeaponBaseReady(p->curr_weapon,UINT16_MAX,G_VRHandShotFeature(myconnectindex))) return false;
+    sample={P_GetHudPal(p),min<int32_t>(sprite[p->i].shade,24),p->kickback_pic,p->reloading,XRWeaponFamily::HudMapped};
+    return sample.palette==0;
+#else
+    return false;
+#endif
+}
+
 static bool P_XRPistolPresentation(XRWeaponPresentation &sample)
 {
 #ifndef EDUKE32_STANDALONE
@@ -3951,7 +3964,25 @@ void P_GetInput(int const playerNum)
 #ifdef USE_OPENXR
     if (!ud.recstat && playerNum==myconnectindex)
     {
-        int const locked=P_CheckLockedMovement(playerNum);
+        int locked=P_CheckLockedMovement(playerNum);
+        // When head tracking owns pitch, native view centering can never
+        // converge and would lock out tracked aim (and VR shots) indefinitely.
+        if (locked==IL_NOHORIZ && G_XRTrackedPitchOwner())
+        {
+            pPlayer->return_to_center=0;
+            g_player[playerNum].horizRecenter=false;
+            locked=0;
+        }
+        if (locked && std::getenv("EDUKE32_XR_TEST_HELD"))
+        {
+            static int reported=-1;
+            if (reported!=locked)
+                LOG_F(INFO,"OpenXR native look lock: %d extra=%d dead=%d fist=%d transporter=%d landing=%d access=%d knee=%d crane=%d newowner=%d center=%d recenter=%d.",
+                      locked,sprite[pPlayer->i].extra,pPlayer->dead_flag,pPlayer->fist_incs,pPlayer->transporter_hold,pPlayer->hard_landing,
+                      pPlayer->access_incs,pPlayer->knee_incs,pPlayer->on_crane,pPlayer->newowner,pPlayer->return_to_center,
+                      int(g_player[playerNum].horizRecenter));
+            reported=locked;
+        }
         G_XRApplyAim(input,!(locked & IL_NOANGLE),!(locked & IL_NOHORIZ));
     }
 #endif

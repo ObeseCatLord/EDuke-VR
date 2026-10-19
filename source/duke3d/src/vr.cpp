@@ -99,8 +99,47 @@ static bool aaWeaponFamily(XRWeaponFamily family)
 {
     return family==XRWeaponFamily::AAPistol || family==XRWeaponFamily::AARpg;
 }
+// HUD-tile model map (EDUKE32_XR_HUD_MODEL_MAP: "hudTile modelTile" lines).
+// The weapon tiles a frame draws pick the held model for the next frame; the
+// choice sticks through animation tiles until the selected weapon changes.
+static std::vector<int32_t> hudModelMap; // indexed by HUD tile, -1 = none
+static int32_t hudPredictedModel=-1, hudPredictedWeapon=-1, hudObservedModel=-1;
+static bool hudSegmentObserved;
+static bool loadHudModelMap()
+{
+    static bool loaded;
+    if (!loaded)
+    {
+        loaded=true;
+        if (auto path=sdlayer_xr_option("EDUKE32_XR_HUD_MODEL_MAP"))
+            if (FILE *file=std::fopen(path,"r"))
+            {
+                hudModelMap.assign(MAXTILES,-1);
+                int hud, model;
+                while (std::fscanf(file,"%d %d",&hud,&model)==2)
+                    if ((unsigned)hud<MAXTILES && (unsigned)model<MAXTILES && hudModelMap[hud]<0) hudModelMap[hud]=model;
+                std::fclose(file);
+            }
+    }
+    return !hudModelMap.empty();
+}
+static int32_t hudMappedModelTile()
+{
+    if (!loadHudModelMap()) return -1;
+    auto const p=g_player[myconnectindex].ps;
+    if (!p || p->curr_weapon!=hudPredictedWeapon || hudPredictedModel<0 || md_tilehasmodel(hudPredictedModel,0)<0) return -1;
+    return hudPredictedModel;
+}
+// Native families first; a HUD-mapped model only for otherwise unsupported weapons.
+static XRWeaponFamily effectiveWeaponFamily()
+{
+    auto const family=P_XRWeaponFamily();
+    return family==XRWeaponFamily::Unsupported && hudMappedModelTile()>=0 ? XRWeaponFamily::HudMapped : family;
+}
+
 static int weaponModelTile(XRWeaponFamily family)
 {
+    if (family==XRWeaponFamily::HudMapped) return hudMappedModelTile();
     if (family==XRWeaponFamily::StockHeld)
         return XRHeldModelTileBase+g_player[myconnectindex].ps->curr_weapon;
     return family==XRWeaponFamily::AARpg ? RPGSPRITE
@@ -108,7 +147,7 @@ static int weaponModelTile(XRWeaponFamily family)
 }
 static XRWeaponFamily mountedWeaponFamily()
 {
-    auto const family=P_XRWeaponFamily();
+    auto const family=effectiveWeaponFamily();
     // Without any held model for this family there is nothing to calibrate
     // from; aim from the controller instead of suppressing fire. A present
     // model with a missing tag still fails closed below in weaponMuzzle.
@@ -559,17 +598,27 @@ struct GripModelSample : WorldModelSample
 
 struct BodyModelSample : WorldModelSample {};
 
+// Test-only: report why the held weapon model was not drawn (on change).
+static void heldReject(char const *where)
+{
+    static std::string last;
+    if (!std::getenv("EDUKE32_XR_TEST_HELD") || last==where) return;
+    last=where;
+    LOG_F(INFO,"OpenXR held model skipped: %s weapon=%d.",where,g_player[myconnectindex].ps->curr_weapon);
+}
+
 // Stable palette-zero metadata is shared by native input and local visuals.
 // Texture availability, HUD counters and material state never choose a muzzle.
 bool weaponMuzzle(XRWeaponFamily family, int hand, int &model, vec3f_t &muzzle, vec3f_t &palm, XrVector3f &position)
 {
-    if (unsigned(hand)>=2) return false;
+    if (unsigned(hand)>=2) { heldReject("weaponMuzzle#1"); return false; }
     auto const &input=rawInput.hands[hand];
     model=md_tilehasmodel(weaponModelTile(family),0);
     if (!input.gripValid || !validPose(input.gripPose) || !input.aimValid || !validPose(input.aimPose)
-        || !md3_gettagposition(model,"tag_muzzle",&muzzle)) return false;
+        || !md3_gettagposition(model,"tag_muzzle",&muzzle)) { heldReject("weaponMuzzle#2"); return false; }
     if (!md3_gettagposition(model,hand ? "tag_palm_right" : "tag_palm_left",&palm)
-        && (family!=XRWeaponFamily::StockHeld || !md3_gettagposition(model,"tag_grip",&palm))) return false;
+        && ((family!=XRWeaponFamily::StockHeld && family!=XRWeaponFamily::HudMapped)
+            || !md3_gettagposition(model,"tag_grip",&palm))) { heldReject("weaponMuzzle#3"); return false; }
     auto const d=rotate(input.aimPose.orientation,{(muzzle.y-palm.y)/64.f,
                                                  (muzzle.z-palm.z)/64.f,-(muzzle.x-palm.x)/64.f});
     position={input.gripPose.position.x+d.x,input.gripPose.position.y+d.y,input.gripPose.position.z+d.z};
@@ -585,13 +634,13 @@ void prepareWeaponVisual(Camera const &body, eduke_xr::Runtime *runtime)
     visual={}; crosshairViews.body=body;
     visual.family=handShotsRequested() && aimHand()>=0 ? mountedWeaponFamily() : XRWeaponFamily::Unsupported;
     visual.selected=visual.family!=XRWeaponFamily::Unsupported;
-    if (!visual.selected) return;
+    if (!visual.selected) { heldReject("prepareWeaponVisual#1"); return; }
     visual.player=myconnectindex; visual.hand=aimHand();
     if (!overlayEnabled() || !handShotsRequested() || !localAimCamera() || !aimPoseUsable() || !recentered
         || inputRuntime!=runtime || inputGeneration!=runtime->generation() || shotReferenceInvalidated || !shotLookAllowed
-        || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)) return;
+        || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)) { heldReject("prepareWeaponVisual#2"); return; }
     vec3f_t muzzle{}, palm{}; XrVector3f position;
-    if (!weaponMuzzle(visual.family,visual.hand,visual.model,muzzle,palm,position)) return;
+    if (!weaponMuzzle(visual.family,visual.hand,visual.model,muzzle,palm,position)) { heldReject("prepareWeaponVisual#3"); return; }
     visual.pose=rawInput.hands[visual.hand].aimPose;
     visual.pose.position=position;
     auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
@@ -612,7 +661,7 @@ void prepareWeaponVisual(Camera const &body, eduke_xr::Runtime *runtime)
         // limit itself. Validate against the actual native anchor explicitly.
         double const offset=requested[axis]-anchor[axis];
         if (!std::isfinite(requested[axis]) || requested[axis]<INT32_MIN || requested[axis]>INT32_MAX
-            || !std::isfinite(offset) || std::fabs(offset)>=32767.) return;
+            || !std::isfinite(offset) || std::fabs(offset)>=32767.) { heldReject("prepareWeaponVisual#4"); return; }
         visual.ray.offset[axis]=int16_t(offset);
         auto const v=toBuild(rotate(orientation,axes[axis]));
         visual.basis[axis]={v.x/64.f,v.y/64.f,v.z/64.f};
@@ -622,11 +671,11 @@ void prepareWeaponVisual(Camera const &body, eduke_xr::Runtime *runtime)
     for (unsigned axis=0;axis<3;++axis)
         visual.ray.direction[axis]=int16_t(std::lround(std::max(-1.f,std::min(1.f,forward[axis]))*32767.f));
     visual.ray.flags=VRShotEnabled|VRShotValid;
-    if (!G_VRValidateShot(visual.ray)) return;
+    if (!G_VRValidateShot(visual.ray)) { heldReject("prepareWeaponVisual#5"); return; }
     vec3_t const desired={int32_t(requested[0]),int32_t(requested[1]),int32_t(requested[2])};
-    if (!G_VRResolveShot(myconnectindex,visual.root,visual.sector,visual.clamped,&desired)) return;
+    if (!G_VRResolveShot(myconnectindex,visual.root,visual.sector,visual.clamped,&desired)) { heldReject("prepareWeaponVisual#6"); return; }
     int64_t const correction[]={int64_t(visual.root.x)-desired.x,int64_t(visual.root.y)-desired.y,int64_t(visual.root.z)-desired.z};
-    for (auto value:correction) if (value<INT32_MIN || value>INT32_MAX) return;
+    for (auto value:correction) if (value<INT32_MIN || value>INT32_MAX) { heldReject("prepareWeaponVisual#7"); return; }
     visual.correction={int32_t(correction[0]),int32_t(correction[1]),int32_t(correction[2])};
     // Include Build rounding when converting the resolved muzzle back to LOCAL,
     // so the native ART card and mesh consume exactly the same visual root.
@@ -714,7 +763,7 @@ bool prepareGripModel(GripModelSample &sample, unsigned hand, Camera const &body
     auto const &visual=crosshairViews.weapon;
     if (visual.selected && visual.hand==int(hand))
     {
-        if (!visual.valid || visual.family!=P_XRWeaponFamily()) return false;
+        if (!visual.valid || visual.family!=effectiveWeaponFamily()) return false;
         // One collision translation for the gun and its holding hand. Validate
         // the translated palm below; independent clamping would break contact.
         int32_t const correction[]={visual.correction.x,visual.correction.y,visual.correction.z};
@@ -885,8 +934,17 @@ bool prepareHandModel(HandModelSample &sample)
     auto weapon=sdlayer_xr_option("EDUKE32_XR_WEAPON");
     if (!enabled || Bstrcmp(enabled,"1") || !weapon || Bstrcmp(weapon,"1") || !overlayEnabled()
         || !usemodels || aimHand()<0 || !localAimCamera() || !aimPoseUsable() || !handShotsRequested()
-        || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex)
-        || !P_XRWeaponPresentation(sample.presentation)) return false;
+        || !Net_VRShotAvailable() || !G_VRShotReady(myconnectindex))
+    {
+        char why[96];
+        Bsnprintf(why,sizeof(why),"prepareHandModel#1 local=%d pose=%d shots=%d net=%d ready=%d enabled=%d",
+                  localAimCamera(),aimPoseUsable(),handShotsRequested(),Net_VRShotAvailable(),G_VRShotReady(myconnectindex),
+                  G_VRShotEnabled(myconnectindex));
+        heldReject(why);
+        return false;
+    }
+    if (effectiveWeaponFamily()==XRWeaponFamily::HudMapped ? !P_XRMappedPresentation(sample.presentation)
+                                                          : !P_XRWeaponPresentation(sample.presentation)) { heldReject("prepareHandModel#2"); return false; }
 
     sample.context.palette=sample.presentation.palette;
     sample.context.shade=sample.presentation.shade;
@@ -896,10 +954,10 @@ bool prepareHandModel(HandModelSample &sample)
     auto const &visual=crosshairViews.weapon;
     if (visual.selected)
     {
-        if (!visual.valid || visual.hand!=aimHand() || visual.family!=sample.presentation.family) return false;
+        if (!visual.valid || visual.hand!=aimHand() || visual.family!=sample.presentation.family) { heldReject("prepareHandModel#3"); return false; }
         sample.shot=visual.ray; sample.root=visual.root; sample.sector=visual.sector;
     }
-    else if (!G_VRResolveShot(myconnectindex,sample.root,sample.sector,clamped)) return false;
+    else if (!G_VRResolveShot(myconnectindex,sample.root,sample.sector,clamped)) { heldReject("prepareHandModel#4"); return false; }
     // Reuse the current native pickup DEF routing, loader and skin cache.
     // This opt-in contract uses the supplied 64-model-units/metre MD3 assets.
     int const modelTile=weaponModelTile(sample.presentation.family);
@@ -915,6 +973,7 @@ bool prepareHandModel(HandModelSample &sample)
     // Counter-keyed stock sets name the whole native cycle fire_NN and may
     // author only key counters: hold the nearest earlier authored frame.
     if (frame<0 && (sample.presentation.family==XRWeaponFamily::StockHeld
+                    || sample.presentation.family==XRWeaponFamily::HudMapped
                     || (sample.presentation.family==XRWeaponFamily::StockPistol && md3_gettagposition(sample.context.modelid,"tag_support",&sample.grip))))
     {
         for (int c=counter;c>0 && frame<0;--c)
@@ -925,7 +984,7 @@ bool prepareHandModel(HandModelSample &sample)
         if (frame<0) frame=std::max(0,md3_getframeindex(sample.context.modelid,"rest"));
     }
     if (frame<0 && counter==0 && sample.presentation.family==XRWeaponFamily::StockPistol) frame=0; // Legacy stock idle only.
-    if (frame<0) return false; // Positive counters never silently substitute rest.
+    if (frame<0) { heldReject("prepareHandModel#5"); return false; } // Positive counters never silently substitute rest.
     sample.context.cframe=sample.context.nframe=frame;
     if (std::getenv("EDUKE32_XR_TEST_HELD"))
     {
@@ -938,19 +997,28 @@ bool prepareHandModel(HandModelSample &sample)
     }
     if (!md3_gettagposition(sample.context.modelid,"tag_muzzle",&sample.pivot)
         || (!md3_gettagposition(sample.context.modelid,"tag_grip",&sample.grip)
-            && sample.presentation.family!=XRWeaponFamily::StockHeld)) return false;
+            && sample.presentation.family!=XRWeaponFamily::StockHeld
+            && sample.presentation.family!=XRWeaponFamily::HudMapped)) { heldReject("prepareHandModel#6"); return false; }
     sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
-    if (!md3_preflightcontext(&sample.context)) return false;
+    if (!md3_preflightcontext(&sample.context))
+    {
+        static int reportedModel=-2;
+        if (std::getenv("EDUKE32_XR_TEST_HELD") && reportedModel!=sample.context.modelid)
+            LOG_F(INFO,"OpenXR held model rejected: model=%d frame=%d skin=%d (preflight).",
+                  sample.context.modelid,frame,sample.context.skinnum);
+        reportedModel=sample.context.modelid;
+        { heldReject("prepareHandModel#7"); return false; }
+    }
     if (visual.selected)
     {
-        if (visual.model!=sample.context.modelid) return false;
+        if (visual.model!=sample.context.modelid) { heldReject("prepareHandModel#8"); return false; }
         for (unsigned axis=0;axis<3;++axis) sample.basis[axis]=visual.basis[axis];
         return true;
     }
 
     XrVector3f forward={float(sample.shot.direction[0]),float(sample.shot.direction[1]),-float(sample.shot.direction[2])};
     float length=std::sqrt(dot(forward,forward));
-    if (!(length>0.f)) return false;
+    if (!(length>0.f)) { heldReject("prepareHandModel#9"); return false; }
     forward={forward.x/length,forward.y/length,forward.z/length};
     // Legacy aim-point presentation retains its existing orientation policy.
     auto const p=g_player[myconnectindex].ps;
@@ -961,7 +1029,7 @@ bool prepareHandModel(HandModelSample &sample)
     float const along=dot(right,forward);
     right={right.x-forward.x*along,right.y-forward.y*along,right.z-forward.z*along};
     length=std::sqrt(dot(right,right));
-    if (!(length>1e-4f)) return false;
+    if (!(length>1e-4f)) { heldReject("prepareHandModel#10"); return false; }
     right={right.x/length,right.y/length,right.z/length};
     auto const up=cross(forward,right);
     XrVector3f const axes[3]={forward,right,up};
@@ -1039,6 +1107,28 @@ bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
 }
 
 static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int32_t palette,
+                                int32_t flags,int32_t angle,int32_t alpha,int32_t blend);
+// Every rotatesprite during the native weapon display segment: remember the
+// mapped HUD tile, and hide the segment while its HUD-mapped model is shown.
+static bool weaponSegmentTile(int32_t tile,int32_t uniqueID,int32_t shade,int32_t palette,
+                              int32_t flags,int32_t angle,int32_t alpha,int32_t blend)
+{
+    auto &receipt=handModelReceipt;
+    if (aaWeaponFamily(receipt.presentation.family) && receipt.runtime)
+        return consumeAAWeaponTile(tile,uniqueID,shade,palette,flags,angle,alpha,blend);
+    if (!receipt.weaponSegment) return false;
+    hudSegmentObserved=true;
+    if ((unsigned)tile<hudModelMap.size() && hudModelMap[tile]>=0 && hudObservedModel<0)
+        hudObservedModel=hudModelMap[tile];
+    if (receipt.presentation.family==XRWeaponFamily::HudMapped && receipt.runtime && weaponReceiptOwned())
+    {
+        receipt.seen|=1;
+        return true;
+    }
+    return false;
+}
+
+static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int32_t palette,
                                 int32_t flags,int32_t angle,int32_t alpha,int32_t blend)
 {
     auto &receipt=handModelReceipt;
@@ -1086,7 +1176,8 @@ static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int3
 static bool weaponReceiptComplete()
 {
     auto const &saved=handModelReceipt.presentation;
-    if (saved.family==XRWeaponFamily::StockHeld) return true; // Some counters draw no ART at all.
+    if (saved.family==XRWeaponFamily::StockHeld || saved.family==XRWeaponFamily::HudMapped)
+        return true; // Some counters draw no ART at all.
     unsigned const required=saved.family==XRWeaponFamily::AAPistol && saved.counter>=10 && saved.counter<20 ? 3 : 1;
     return (handModelReceipt.seen&required)==required;
 }
@@ -1099,6 +1190,8 @@ void G_XRResetAim(int playerNum)
     aimPoseWasValid=false;
     recentered=trackingRebase=lastHeadValid=false;
 }
+
+bool G_XRTrackedPitchOwner() { return localAimCamera() && !stickPitchAllowed(); }
 
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
 {
@@ -1190,7 +1283,13 @@ void G_XRUpdateShotInput()
                 input.direction[i]=int16_t(std::lround(std::max(-1.f,std::min(1.f,direction[i]))*32767.f));
             }
             input.flags|=VRShotValid;
-            if (!bounded || !G_VRValidateShot(input)) { input={}; input.flags=VRShotEnabled; }
+            if (!bounded || !G_VRValidateShot(input))
+            {
+                char why[96];
+                Bsnprintf(why,sizeof(why),"shotInput calibrated=%d bounded=%d family=%d",calibrated,bounded,int(family));
+                heldReject(why);
+                input={}; input.flags=VRShotEnabled;
+            }
             else
             {
                 bool const weaponDiagnostic=std::getenv("EDUKE32_XR_TEST_WEAPON_MOUNT")!=nullptr;
@@ -1210,7 +1309,15 @@ void G_XRUpdateShotInput()
                 }
             }
         }
-        else if (!Net_VRShotAvailable())
+        else if (std::getenv("EDUKE32_XR_TEST_HELD"))
+        {
+            char why[128];
+            Bsnprintf(why,sizeof(why),"shotInput hand=%d local=%d pose=%d recentered=%d look=%d invalidated=%d blocked=%u net=%d",
+                      hand,localAimCamera(),aimPoseUsable(),recentered,shotLookAllowed,shotReferenceInvalidated,
+                      blockedInputButtons[1],Net_VRShotAvailable());
+            heldReject(why);
+        }
+        if (!(input.flags&VRShotValid) && !Net_VRShotAvailable())
         {
             static bool reported;
             if (!reported) { reported=true; LOG_F(WARNING,"VR hand shots waiting for server capability; firing is suppressed until supported."); }
@@ -1396,12 +1503,25 @@ bool G_XRBeginWeapon()
             { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
         }
     handModelReceipt.weaponSegment=true;
+    if (loadHudModelMap())
+    {
+        hudObservedModel=-1; hudSegmentObserved=false;
+        polymost_xrWeaponTileConsumer=weaponSegmentTile;
+    }
     return true;
 }
 
 void G_XREndWeapon(bool captured)
 {
     handModelReceipt.weaponSegment=false;
+    if (!hudModelMap.empty() && hudSegmentObserved)
+    {
+        // A newly seen mapped tile (or a weapon change) updates the prediction.
+        int const weapon=g_player[myconnectindex].ps->curr_weapon;
+        if (hudObservedModel>=0) { hudPredictedModel=hudObservedModel; hudPredictedWeapon=weapon; }
+        else if (weapon!=hudPredictedWeapon) hudPredictedModel=-1;
+        hudSegmentObserved=false;
+    }
     if (captured)
         if (auto test=std::getenv("EDUKE32_XR_TEST_WEAPON_NESTED"))
         {
@@ -1770,6 +1890,18 @@ static void runConsoleRequest()
     for (auto const &command:commands)
     {
         LOG_F(INFO,"OpenXR console request: %s",command.c_str());
+        if (command=="xr_weapons")
+        {
+            // Deterministic test inventory (the deferred native cheat slot
+            // is shared with other console cheats).
+            auto const p=g_player[myconnectindex].ps;
+            for (int weapon=PISTOL_WEAPON;weapon<MAX_WEAPONS;++weapon)
+            {
+                p->gotweapon|=1<<weapon;
+                P_AddAmmo(p,weapon,p->max_ammo_amount[weapon]);
+            }
+            continue;
+        }
         OSD_Dispatch(command.c_str());
     }
 }
