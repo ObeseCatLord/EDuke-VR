@@ -1081,10 +1081,50 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
             if (h.first==heldTile) { hold=rig->pose(hand,h.second.c_str()); break; }
     if (hold && hold->weaponFrame)
     {
+        // Trigger pull: while this hand's trigger is held the index finger curls a little at each
+        // joint (eased over ~80 ms; the trigger action is digital). Rotations act in the hold's
+        // right-handed W frame (W = MD3 +Y, +Z, -X) about each joint's own flexion (+X) axis.
+        auto joints=hold->joints;
+        {
+            static float pull[2];
+            static double last[2];
+            double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+            float const step=last[hand]>0. ? float(std::min(now-last[hand],.1)/.08) : 1.f;
+            last[hand]=now;
+            float const target=(input.buttons & input.activeButtons & eduke_xr::ButtonSelect) ? 1.f : 0.f;
+            pull[hand]+=std::max(-step,std::min(step,target-pull[hand]));
+            if (pull[hand]>0.f)
+            {
+                auto const toW=[](XrVector3f m) { return XrVector3f{m.y,m.z,-m.x}; };
+                auto const toM=[](XrVector3f w) { return XrVector3f{-w.z,w.x,w.y}; };
+                // Joint indices in XR_HAND_JOINT order: index proximal 7, intermediate 8, distal 9, tip 10.
+                static constexpr unsigned chain[]={7,8,9,10};
+                static constexpr float degrees[]={8.f,16.f,12.f};
+                for (unsigned link=0;link<3;++link)
+                {
+                    auto const &pivot=joints[chain[link]];
+                    auto const axis=rotate(pivot.orientation,{1,0,0});
+                    float const half=-degrees[link]*pull[hand]*Pi/360.f, sh=std::sin(half);
+                    XrQuaternionf const turn={axis.x*sh,axis.y*sh,axis.z*sh,std::cos(half)};
+                    auto const origin=toW(pivot.position);
+                    for (unsigned k=link;k<4;++k)
+                    {
+                        auto &j=joints[chain[k]];
+                        if (k>link)
+                        {
+                            auto const w=toW(j.position);
+                            auto const r=rotate(turn,{w.x-origin.x,w.y-origin.y,w.z-origin.z});
+                            j.position=toM({origin.x+r.x,origin.y+r.y,origin.z+r.z});
+                        }
+                        j.orientation=multiply(turn,j.orientation);
+                    }
+                }
+            }
+        }
         // Weapon model frame (metres) -> model units -> Build through the held model's own transform.
         for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint)
         {
-            auto const &j=hold->joints[joint];
+            auto const &j=joints[joint];
             float const m[3]={j.position.x*64.f-heldModel->pivot.x,j.position.y*64.f-heldModel->pivot.y,j.position.z*64.f-heldModel->pivot.z};
             float pos[3]={float(heldModel->root.x),float(heldModel->root.y),float(heldModel->root.z)};
             for (unsigned k=0;k<3;++k)
