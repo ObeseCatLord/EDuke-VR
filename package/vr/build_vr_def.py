@@ -85,6 +85,41 @@ def main():
     if chosen:
         model(*chosen, 30040, 'vr_body')
 
+    # Third-person Duke for other players: native APLAYER (1405) action tiles,
+    # from the stock GAME.CON actions (start, frames, 5 view angles each).
+    duke_md3, duke_png = v6 / 'vr_duke.md3', v6 / 'vr_duke.png'
+    if duke_md3.is_file() and duke_png.is_file() and not aa:
+        actions = [  # (first tile offset, frame names) — later entries win on shared art
+            (0, ['stand']), (40, ['stand', 'stand']), (20, ['walk_01', 'walk_02', 'walk_03', 'walk_04']),
+            (45, ['walk_04', 'walk_03', 'walk_02', 'walk_01']), (50, ['jump'] * 4), (15, ['jump']), (65, ['fall']),
+            (86, ['crouch', 'crouch_walk_01', 'crouch_walk_02']), (375, ['swim_01', 'swim_02', 'swim_03', 'swim_04']),
+            (395, ['swim_01', 'swim_02'])]
+        tiles = {}
+        for start, names in actions:
+            for frame, name in enumerate(names):
+                for angle in range(5):
+                    tiles[1405 + start + frame * 5 + angle] = name
+        for frame, name in enumerate(['die_01', 'die_02', 'die_03', 'die_04', 'die_05']):
+            tiles[1405 + 106 + frame] = name
+        tiles[1405 + 113] = 'dead'
+        link(duke_md3, 'vr_duke.md3')
+        link(duke_png, 'vr_duke.png')
+        frames = set()
+        data_md3 = duke_md3.read_bytes()
+        count, offset = struct.unpack_from('<i', data_md3, 76)[0], struct.unpack_from('<i', data_md3, 92)[0]
+        for index in range(count):
+            frames.add(data_md3[offset + index * 56 + 40:offset + index * 56 + 56].split(b'\0')[0].decode())
+        surfaces = struct.unpack_from('<i', data_md3, 84)[0]
+        # Native world sprites draw models with the DEF scale; 1.0 is calibrated
+        # against Duke's 42x36 sprite repeat in-engine (see PLAYING.md).
+        out.append('model "vr_duke.md3" {\n scale 1.0')
+        for surface in range(surfaces):
+            out.append(f' skin {{ pal 0 surface {surface} file "vr_duke.png" }}')
+        for tile, name in sorted(tiles.items()):
+            out.append(f' frame {{ name "{name if name in frames else "stand"}" tile {tile} smoothduration 0.1 }}')
+        out.append('}')
+        notes.append(f'player model: {duke_md3} ({len(tiles)} tiles)')
+
     holds = []
     if aa:
         out.insert(0, 'include "duke3d.def"')
