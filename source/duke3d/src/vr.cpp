@@ -101,6 +101,8 @@ static bool aaWeaponFamily(XRWeaponFamily family)
 }
 static int weaponModelTile(XRWeaponFamily family)
 {
+    if (family==XRWeaponFamily::StockHeld)
+        return XRHeldModelTileBase+g_player[myconnectindex].ps->curr_weapon;
     return family==XRWeaponFamily::AARpg ? RPGSPRITE
         : family==XRWeaponFamily::StockPistol || family==XRWeaponFamily::AAPistol ? FIRSTGUNSPRITE : -1;
 }
@@ -563,8 +565,9 @@ bool weaponMuzzle(XRWeaponFamily family, int hand, int &model, vec3f_t &muzzle, 
     auto const &input=rawInput.hands[hand];
     model=md_tilehasmodel(weaponModelTile(family),0);
     if (!input.gripValid || !validPose(input.gripPose) || !input.aimValid || !validPose(input.aimPose)
-        || !md3_gettagposition(model,"tag_muzzle",&muzzle)
-        || !md3_gettagposition(model,hand ? "tag_palm_right" : "tag_palm_left",&palm)) return false;
+        || !md3_gettagposition(model,"tag_muzzle",&muzzle)) return false;
+    if (!md3_gettagposition(model,hand ? "tag_palm_right" : "tag_palm_left",&palm)
+        && (family!=XRWeaponFamily::StockHeld || !md3_gettagposition(model,"tag_grip",&palm))) return false;
     auto const d=rotate(input.aimPose.orientation,{(muzzle.y-palm.y)/64.f,
                                                  (muzzle.z-palm.z)/64.f,-(muzzle.x-palm.x)/64.f});
     position={input.gripPose.position.x+d.x,input.gripPose.position.y+d.y,input.gripPose.position.z+d.z};
@@ -814,11 +817,33 @@ bool prepareHandModel(HandModelSample &sample)
         || counter<(sample.presentation.family==XRWeaponFamily::AAPistol ? 6 : 5) ? "fire_%02d" : "reload_%02d",counter);
     else Bstrcpy(name,"rest");
     int frame=md3_getframeindex(sample.context.modelid,name);
+    // Counter-keyed stock sets name the whole native cycle fire_NN and may
+    // author only key counters: hold the nearest earlier authored frame.
+    if (frame<0 && (sample.presentation.family==XRWeaponFamily::StockHeld
+                    || (sample.presentation.family==XRWeaponFamily::StockPistol && md3_gettagposition(sample.context.modelid,"tag_support",&sample.grip))))
+    {
+        for (int c=counter;c>0 && frame<0;--c)
+        {
+            Bsprintf(name,"fire_%02d",c);
+            frame=md3_getframeindex(sample.context.modelid,name);
+        }
+        if (frame<0) frame=std::max(0,md3_getframeindex(sample.context.modelid,"rest"));
+    }
     if (frame<0 && counter==0 && sample.presentation.family==XRWeaponFamily::StockPistol) frame=0; // Legacy stock idle only.
     if (frame<0) return false; // Positive counters never silently substitute rest.
     sample.context.cframe=sample.context.nframe=frame;
+    if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static int lastWeapon=-1, lastFrame=-1;
+        int const weapon=g_player[myconnectindex].ps->curr_weapon;
+        if (weapon!=lastWeapon || frame!=lastFrame)
+            LOG_F(INFO,"OpenXR held model: weapon=%d family=%d model=%d frame=%d counter=%d.",weapon,
+                  int(sample.presentation.family),sample.context.modelid,frame,counter);
+        lastWeapon=weapon; lastFrame=frame;
+    }
     if (!md3_gettagposition(sample.context.modelid,"tag_muzzle",&sample.pivot)
-        || !md3_gettagposition(sample.context.modelid,"tag_grip",&sample.grip)) return false;
+        || (!md3_gettagposition(sample.context.modelid,"tag_grip",&sample.grip)
+            && sample.presentation.family!=XRWeaponFamily::StockHeld)) return false;
     sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
     if (!md3_preflightcontext(&sample.context)) return false;
     if (visual.selected)
@@ -895,6 +920,15 @@ static bool weaponReceiptMatches()
 
 bool G_XRSuppressWeaponTile(int32_t tile, int32_t uniqueID)
 {
+    // A generic held model replaces the whole native weapon display segment,
+    // including its hands; native animation and CON state still run.
+    if (handModelReceipt.presentation.family==XRWeaponFamily::StockHeld)
+    {
+        if (!handModelReceipt.runtime || !handModelReceipt.weaponSegment) return false;
+        if (!weaponReceiptOwned()) { handModelReceipt.mismatch=true; return false; }
+        handModelReceipt.seen|=1;
+        return true;
+    }
     if (handModelReceipt.presentation.family!=XRWeaponFamily::StockPistol) return false;
     int const role=uniqueID==W_PISTOL ? 1 : uniqueID==W_PISTOL_CLIP ? 2 : uniqueID==W_PISTOL_HAND ? 4 : 0;
     if (!handModelReceipt.runtime || !role) return false;
@@ -957,6 +991,7 @@ static bool consumeAAWeaponTile(int32_t tile,int32_t uniqueID,int32_t shade,int3
 static bool weaponReceiptComplete()
 {
     auto const &saved=handModelReceipt.presentation;
+    if (saved.family==XRWeaponFamily::StockHeld) return true; // Some counters draw no ART at all.
     unsigned const required=saved.family==XRWeaponFamily::AAPistol && saved.counter>=10 && saved.counter<20 ? 3 : 1;
     return (handModelReceipt.seen&required)==required;
 }
@@ -1620,8 +1655,33 @@ static void updateHaptics(eduke_xr::Runtime *runtime)
     lastWeapon=weapon; lastAmmo=ammo; lastHealth=health; lastCounter=p->kickback_pic;
 }
 
+// Test hook: run native console commands written into the request file
+// (one per line), then remove it. Used by harnesses to give/switch weapons.
+static void runConsoleRequest()
+{
+    auto const request=std::getenv("EDUKE32_XR_CONSOLE_REQUEST");
+    if (!request) return;
+    FILE *file=std::fopen(request,"r");
+    if (!file) return;
+    std::vector<std::string> commands;
+    char line[512];
+    while (std::fgets(line,sizeof(line),file))
+    {
+        line[strcspn(line,"\r\n")]=0;
+        if (line[0]) commands.emplace_back(line);
+    }
+    std::fclose(file);
+    std::remove(request);
+    for (auto const &command:commands)
+    {
+        LOG_F(INFO,"OpenXR console request: %s",command.c_str());
+        OSD_Dispatch(command.c_str());
+    }
+}
+
 void G_XRBeginFrame()
 {
+    runConsoleRequest();
     crosshairViews={};
     modelAnimationCapture.clear(); weaponAnimationCapture.clear();
     // Credit only the exact completed projection, never a rendered image that

@@ -2567,6 +2567,14 @@ XRWeaponFamily P_XRWeaponFamily()
     auto const p=g_player[myconnectindex].ps;
     if (FURY || NAM_WW2GI || !p || unsigned(p->i)>=MAXSPRITES) return XRWeaponFamily::Unsupported;
     int const weapon=p->curr_weapon;
+    bool const stockDisplay=DUKE && !VM_HaveEvent(EVENT_DISPLAYROOMSEND) && !VM_HaveEvent(EVENT_DISPLAYREST)
+        && !VM_HaveEvent(EVENT_DISPLAYWEAPON) && !VM_HaveEvent(EVENT_DRAWWEAPON);
+    // Generic held models: unmodified stock weapon display, one MD3 on the
+    // reserved VR tile for this weapon. The calibrated pistol keeps its family.
+    if (stockDisplay && weapon!=PISTOL_WEAPON && weapon!=KNEE_WEAPON && (unsigned)weapon<MAX_WEAPONS
+        && PWEAPON(myconnectindex,weapon,WorksLike)==weapon && usemodels
+        && md_tilehasmodel(XRHeldModelTileBase+weapon,0)>=0)
+        return XRWeaponFamily::StockHeld;
     if (weapon!=PISTOL_WEAPON && weapon!=RPG_WEAPON) return XRWeaponFamily::Unsupported;
     if (PWEAPON(myconnectindex,weapon,WorksLike)!=weapon
         || G_VRHandShotFeature(myconnectindex)!=(weapon==PISTOL_WEAPON ? VRShotFeatureHitscan : VRShotFeatureRPG))
@@ -2603,6 +2611,18 @@ static bool P_XRAAWeaponReady()
     return value("startmode")==1 && value("newhud")>=-1;
 }
 #endif
+
+static bool P_XRHeldPresentation(XRWeaponPresentation &sample)
+{
+#ifndef EDUKE32_STANDALONE
+    auto const p=g_player[myconnectindex].ps;
+    if (!P_XRWeaponBaseReady(p->curr_weapon,UINT16_MAX,G_VRHandShotFeature(myconnectindex))) return false;
+    sample={P_GetHudPal(p),min<int32_t>(sprite[p->i].shade,24),p->kickback_pic,p->reloading,XRWeaponFamily::StockHeld};
+    return sample.palette==0; // Tinted HUD palettes (water, nightvision) keep native ART.
+#else
+    return false;
+#endif
+}
 
 static bool P_XRPistolPresentation(XRWeaponPresentation &sample)
 {
@@ -2691,6 +2711,7 @@ bool P_XRWeaponPresentation(XRWeaponPresentation &sample)
     switch (P_XRWeaponFamily())
     {
         case XRWeaponFamily::StockPistol: return P_XRPistolPresentation(sample);
+        case XRWeaponFamily::StockHeld: return P_XRHeldPresentation(sample);
         case XRWeaponFamily::AAPistol: return P_XRAAPistolPresentation(sample);
         case XRWeaponFamily::AARpg: return P_XRAARpgPresentation(sample);
         default: return false;

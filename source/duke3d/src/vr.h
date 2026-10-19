@@ -11,7 +11,10 @@ void G_XRClearInput();
 void G_XRResetAim(int playerNum);
 bool G_XRBeginWeapon();
 void G_XREndWeapon(bool captured);
-enum class XRWeaponFamily { Unsupported, StockPistol, AAPistol, AARpg };
+enum class XRWeaponFamily { Unsupported, StockPistol, AAPistol, AARpg, StockHeld };
+// Stock weapons other than the calibrated pistol use one generic held MD3 per
+// weapon on reserved tile XRHeldModelTileBase+weapon (no world ART exists).
+constexpr int32_t XRHeldModelTileBase=30020;
 struct XRWeaponPresentation
 {
     int32_t palette=0, shade=0, counter=0, reloading=0;

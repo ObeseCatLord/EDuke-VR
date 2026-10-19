@@ -44,12 +44,16 @@ def="$data/eduke32-vr-models.def"
 
 link() { ln -sfn "$1" "$data/$2"; }
 surfaces() { python3 -c 'import struct,sys;print(struct.unpack_from("<i",open(sys.argv[1],"rb").read(),84)[0])' "$1"; }
-model() { # file skin tile scale
-    local n; n=$(surfaces "$data/$1")
+model() { # file skin tile scale; an optional <skin>_glow.png adds a glow map
+    local n glow=""; n=$(surfaces "$data/$1")
+    [[ -e "$data/${2%.png}_glow.png" ]] && glow="${2%.png}_glow.png"
     {
         echo "model \"$1\" {"
         echo " scale $4"
-        for ((i = 0; i < n; i++)); do echo " skin { pal 0 surface $i file \"$2\" }"; done
+        for ((i = 0; i < n; i++)); do
+            echo " skin { pal 0 surface $i file \"$2\" }"
+            [[ -n $glow ]] && echo " glow { pal 0 surface $i file \"$glow\" }"
+        done
         echo " frame { name \"rest\" tile $3 smoothduration 0 }"
         echo "}"
     } >> "$def"
@@ -70,9 +74,28 @@ if ((models)) && [[ -d $assets ]]; then
         model vr_pistol.md3 vr_pistol.png 21 0.5859375
         model vr_rpg.md3 vr_rpg.png 23 1.0
     else
-        pistol="$assets/pistol-palm-mount/stock/exports/eduke32/duke_assets"
-        link "$pistol/pistol.md3" vr_pistol.md3; link "$pistol/pistol.png" vr_pistol.png
+        pistol="$assets/pistol-palm-mount/stock/exports/eduke32/duke_assets/pistol"
+        [[ -f $assets/v5-vanilla/exports/eduke32/vr_pistol.md3 ]] && pistol="$assets/v5-vanilla/exports/eduke32/vr_pistol"
+        link "$pistol.md3" vr_pistol.md3; link "$pistol.png" vr_pistol.png
+        rm -f "$data/vr_pistol_glow.png"; [[ -f ${pistol}_glow.png ]] && link "${pistol}_glow.png" vr_pistol_glow.png
         model vr_pistol.md3 vr_pistol.png 21 0.5859375
+        # Generic held models on reserved tiles 30020+weapon index. Prefer the
+        # reference-built v5 set; fall back to the older v3 set per weapon.
+        held=(2:shotgun 3:chaingun 4:rpg 5:pipebomb 6:shrinker 7:devastator 8:tripmine:tripbomb
+              9:freezer:freezethrower 10:detonator 11:expander 12:flamethrower)
+        for entry in "${held[@]}"; do
+            IFS=: read -r index v3name v5name <<< "$entry"
+            v5name=${v5name:-$v3name}
+            v5="$assets/v5-vanilla/exports/eduke32/vr_$v5name"
+            v3="$assets/v3/exports/eduke32/duke_assets/$v3name"
+            if [[ -f $v5.md3 && -f $v5.png ]]; then src=$v5
+            elif [[ -f $v3.md3 && -f $v3.png ]]; then src=$v3
+            else continue; fi
+            link "$src.md3" "vr_held_$index.md3"; link "$src.png" "vr_held_$index.png"
+            rm -f "$data/vr_held_${index}_glow.png"
+            [[ -f ${src}_glow.png ]] && link "${src}_glow.png" "vr_held_${index}_glow.png"
+            model "vr_held_$index.md3" "vr_held_$index.png" $((30020 + index)) 1.0
+        done
     fi
 fi
 

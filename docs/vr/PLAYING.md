@@ -89,3 +89,17 @@ menu = crouch, right pad click = jump), WMR, and the KHR simple controller.
   room-over-room and mirror frames use the per-eye path (about 2x draw calls).
 - The flat desktop mirror pass is skipped in XR; mirrors are drawn per eye.
 - Lower `EDUKE32_XR_RENDER_SCALE` first if the headset drops frames.
+
+## Held weapon models
+
+Every stock weapon can be held as a 3D model. The pistol keeps its calibrated
+family on its pickup tile (21); the others use reserved tiles `30020 + weapon
+index` (2 shotgun … 12 flamethrower), so world pickups keep their sprites. The
+launcher maps the reference-built `duke-vr-assets/v5-vanilla` set when present,
+falling back to the older v3 set. Models need `tag_muzzle` and
+`tag_palm_left`/`tag_palm_right` (or `tag_grip`); frames are chosen from the
+native weapon counter as `fire_NN`, holding the nearest earlier authored frame,
+else `rest`. An optional `<skin>_glow.png` becomes a DEF glow map (muzzle
+flash). While a held model is shown the native 2D weapon/hand ART for that
+weapon is suppressed; tinted HUD palettes (underwater, night vision) fall back
+to the 2D card. Verified with `tools/vr/smoke_xr_weapons.py` (10 weapons).
