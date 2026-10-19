@@ -870,10 +870,12 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
     if (!md3_preflightcontext(&sample.context)) return false;
 
-    // The neck sits 0.12 m behind and at least 0.18 m below the eyes.
+    // The neck sits behind and well below the eyes so looking down shows the
+    // chest, belt and legs rather than the inside of the shoulders.
+    constexpr float NeckBehind=.24f, NeckBelow=.32f;
     float const neckMetres=neck.z/64.f;
-    float const sink=std::max(0.f,neckMetres-(eyeHeight-.18f));
-    sample.root={int32_t(std::lround(eyeX-fx*.12f*UnitsPerMetre)),int32_t(std::lround(eyeY-fy*.12f*UnitsPerMetre)),
+    float const sink=std::max(0.f,neckMetres-(eyeHeight-NeckBelow));
+    sample.root={int32_t(std::lround(eyeX-fx*NeckBehind*UnitsPerMetre)),int32_t(std::lround(eyeY-fy*NeckBehind*UnitsPerMetre)),
                  int32_t(std::lround(feetZ+sink*ZUnitsPerMetre))};
     sample.pivot={0,0,0};
     sample.sector=body.sector;
