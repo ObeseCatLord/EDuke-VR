@@ -1407,7 +1407,124 @@ polymost_xr_collect_result polymost_xrReplayCollection()
         xrOpaque.stats.depthOnlyCalls += !packet.colorWrite;
         xrOpaque.stats.depthWriteOffCalls += !packet.depthWrite;
     };
-    while (!skipReplay && !xrOpaque.injectedFault && (left < xrOpaque.packets[0].size() || right < xrOpaque.packets[1].size()))
+    // Batched replay: one vertex upload for the whole collection, material state uploaded only when
+    // it changes, and consecutive draws with identical state merged into one call. The packet order,
+    // pairing and per-eye selection are those of the per-packet path below (kept for fault tests).
+    static bool const legacyReplay = Bgetenv("EDUKE32_XR_TEST_FAIL") || Bgetenv("EDUKE32_XR_TEST_MASK_ARMED")
+        || Bgetenv("EDUKE32_XR_TEST_MODELS_ARMED") || Bgetenv("EDUKE32_XR_TEST_MASK_PROBE_ARMED") || Bgetenv("EDUKE32_XR_LEGACY_REPLAY");
+    if (!skipReplay && !legacyReplay)
+    {
+        struct item_t { xr_opaque_packet_t const *left, *right; uint32_t eye, first, count; };
+        static std::vector<xr_opaque_vertex_t> stream;
+        static std::vector<item_t> items;
+        stream.clear(); items.clear();
+        auto const append = [](xr_opaque_packet_t const &packet, uint32_t eye, xr_opaque_packet_t const *pair, uint32_t &first, uint32_t &count)
+        {
+            first = uint32_t(stream.size());
+            auto const &source = xrOpaque.vertices[eye];
+            stream.insert(stream.end(), source.begin() + packet.first, source.begin() + packet.first + packet.count);
+            bool shared = pair && packet.phase == POLYMOST_XR_MODELS && packet.count == pair->count;
+            if (shared)
+                for (uint32_t i = 0; i < packet.count; ++i)
+                    if (Bmemcmp(&stream[first + i].x, &xrOpaque.vertices[1][pair->first + i].x, 5*sizeof(float)))
+                    { shared = false; break; }
+            if (shared)
+            {
+                for (uint32_t i = 0; i < packet.count; ++i) stream[first + i].eye = -1.f;
+                ++xrOpaque.stats.sharedModelCalls; xrOpaque.stats.sharedModelVertices += packet.count;
+            }
+            else if (pair)
+                stream.insert(stream.end(), xrOpaque.vertices[1].begin() + pair->first, xrOpaque.vertices[1].begin() + pair->first + pair->count);
+            count = uint32_t(stream.size()) - first;
+        };
+        while (left < xrOpaque.packets[0].size() || right < xrOpaque.packets[1].size())
+        {
+            item_t item{};
+            if (left < xrOpaque.packets[0].size() && right < xrOpaque.packets[1].size() && polymost_xrCompatibleOpaque(xrOpaque.packets[0][left], xrOpaque.packets[1][right]))
+            {
+                auto const &a = xrOpaque.packets[0][left], &b = xrOpaque.packets[1][right];
+                item = { &a, &b, 0, 0, 0 };
+                if (!a.voxel) append(a, 0, &b, item.first, item.count);
+                xrOpaque.stats.flatSkyCalls += a.skyKind == 1; xrOpaque.stats.skyDepthCalls += a.skyKind == 2;
+                xrOpaque.stats.skyboxCalls += a.skyKind == XR_SKYBOX_COLOR; xrOpaque.stats.skyboxPairedCalls += a.skyKind == XR_SKYBOX_COLOR;
+                xrOpaque.stats.voxelCalls += a.voxel; xrOpaque.stats.voxelPairedCalls += a.voxel;
+                xrOpaque.stats.npotCalls += a.npot.z != 0.f;
+                recordPacket(a);
+                ++xrOpaque.stats.pairedCalls; xrOpaque.stats.pairedVertices += a.count + b.count; ++left; ++right;
+            }
+            else
+            {
+                uint32_t const eye = left < xrOpaque.packets[0].size() ? 0 : 1;
+                size_t &cursor = eye ? right : left;
+                auto const &packet = xrOpaque.packets[eye][cursor++];
+                item = { &packet, nullptr, eye, 0, 0 };
+                if (!packet.voxel) append(packet, eye, nullptr, item.first, item.count);
+                xrOpaque.stats.flatSkyCalls += packet.skyKind == 1; xrOpaque.stats.skyDepthCalls += packet.skyKind == 2;
+                xrOpaque.stats.skyboxCalls += packet.skyKind == XR_SKYBOX_COLOR; xrOpaque.stats.voxelCalls += packet.voxel;
+                xrOpaque.stats.npotCalls += packet.npot.z != 0.f;
+                recordPacket(packet);
+                ++xrOpaque.stats.eyeOnlyCalls; xrOpaque.stats.eyeOnlyVertices += packet.count;
+            }
+            items.push_back(item);
+        }
+        size_t const stateOffset = offsetof(xr_opaque_packet_t, texture);
+        auto const sameState = [stateOffset](xr_opaque_packet_t const *a, xr_opaque_packet_t const *b)
+        {
+            if (!a || !b) return a == b;
+            return !Bmemcmp((char const *)a + stateOffset, (char const *)b + stateOffset, sizeof(xr_opaque_packet_t) - stateOffset);
+        };
+        auto const bindStream = []
+        {
+            glBindBuffer(GL_ARRAY_BUFFER, xrOpaque.vbo);
+            glVertexPointer(3, GL_FLOAT, sizeof(xr_opaque_vertex_t), 0);
+            glTexCoordPointer(2, GL_FLOAT, sizeof(xr_opaque_vertex_t), (GLvoid *)(3 * sizeof(float)));
+            glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, sizeof(xr_opaque_vertex_t), (GLvoid *)(5 * sizeof(float)));
+            glEnableClientState(GL_VERTEX_ARRAY); glEnableClientState(GL_TEXTURE_COORD_ARRAY); glEnableVertexAttribArray(7);
+        };
+        glBindBuffer(GL_ARRAY_BUFFER, xrOpaque.vbo);
+        glBufferData(GL_ARRAY_BUFFER, stream.size() * sizeof(xr_opaque_vertex_t), stream.data(), GL_STREAM_DRAW);
+        bindStream();
+        xr_opaque_packet_t const *stateLeft = nullptr, *stateRight = nullptr;
+        bool haveState = false;
+        uint32_t replayDraws = 0;
+        for (size_t i = 0; i < items.size(); ++i)
+        {
+            auto const &item = items[i];
+            if (item.left->voxel)
+            {
+                polymost_xrReplayOpaqueDraw(*item.left, item.eye, item.right);
+                bindStream();
+                haveState = false;
+                continue;
+            }
+            static bool const alwaysUpload = Bgetenv("EDUKE32_XR_TEST_REPLAY_UPLOAD") != nullptr;
+            static bool const noMerge = Bgetenv("EDUKE32_XR_TEST_REPLAY_NOMERGE") != nullptr;
+            if (alwaysUpload || !haveState || !sameState(stateLeft, item.left) || !sameState(stateRight, item.right))
+            {
+                polymost_xrUploadOpaquePacket(*item.left, item.right);
+                stateLeft = item.left; stateRight = item.right; haveState = true;
+            }
+            uint32_t const first = item.first;
+            uint32_t count = item.count;
+            while (!noMerge && i + 1 < items.size() && !items[i + 1].left->voxel && items[i + 1].first == first + count
+                   && sameState(stateLeft, items[i + 1].left) && sameState(stateRight, items[i + 1].right))
+                count += items[++i].count;
+            xrOpaque.replaySubmitted = true;
+            if (count) { glDrawArrays(GL_TRIANGLES, GLint(first), GLsizei(count)); ++replayDraws; }
+        }
+        static bool const perf = Bgetenv("EDUKE32_XR_PERF") != nullptr;
+        static uint32_t frames, packets, draws;
+        if (perf)
+        {
+            packets += uint32_t(items.size()); draws += replayDraws;
+            if (++frames == 360)
+            {
+                LOG_F(INFO, "OpenXR replay: %.0f packets -> %.0f draw calls per collection.", packets/360., draws/360.);
+                frames = packets = draws = 0;
+            }
+        }
+    }
+    while (!skipReplay && legacyReplay && !xrOpaque.injectedFault && (left < xrOpaque.packets[0].size() || right < xrOpaque.packets[1].size()))
     {
         if (left < xrOpaque.packets[0].size() && right < xrOpaque.packets[1].size() && polymost_xrCompatibleOpaque(xrOpaque.packets[0][left], xrOpaque.packets[1][right]))
         {
@@ -2481,7 +2598,8 @@ static void resizeglcheck(bool clearDebugBuffers = true)
 #ifdef USE_OPENXR
     // Hands and held weapons come within a few centimetres of the eyes: a far near plane
     // slices them open (interior faces, fingers seen through the palm).
-    if (xrProjection.active) nearclip *= 1.f/16.f;
+    static bool const nativeDepthFixture = Bgetenv("EDUKE32_XR_TEST_ZERO_IPD") != nullptr;   // compares depth with native
+    if (xrProjection.active && !nativeDepthFixture) nearclip *= 1.f/16.f;
 #endif
 
 #ifdef USE_OPENXR

@@ -4050,6 +4050,9 @@ static void G_XRFlatFrame()
 {
     auto *runtime=sdlayer_xr_worldRuntime();
     if (!runtime || g_networkMode==NET_DEDICATED_SERVER || videoGetRenderMode()!=REND_POLYMOST) return;
+    // Synthetic stereo fixtures end their XR frames empty on purpose.
+    static bool const fixture=std::getenv("EDUKE32_XR_TEST_ZERO_IPD") || std::getenv("EDUKE32_XR_TEST_STEREO_POSE");
+    if (fixture) return;
     static uint64_t lastSerial;
     static unsigned idleSwaps;
     uint64_t const serial=runtime->lastSubmittedSerial();
