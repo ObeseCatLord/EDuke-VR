@@ -4946,11 +4946,13 @@ void polymost_xrCollectModelSurface(md3surf_t const *surface, vec3f_t const *pos
     packet.sampler=samplerObjectIDs[sampler]; packet.phase=POLYMOST_XR_MODELS;
     packet.depthWrite=packet.colorWrite=packet.cull=true; packet.cullMode=cullMode; packet.frontFace=frontFace;
     packet.first=xrOpaque.vertices[eye].size(); packet.count=surface->numtris*3;
+    xrOpaque.vertices[eye].resize(packet.first+packet.count);
+    auto *out=xrOpaque.vertices[eye].data()+packet.first;
     for (int i=surface->numtris-1;i>=0;--i)
         for (int j=0;j<3;++j)
         {
             int const k=surface->tris[i].i[j]; auto const &v=positions[k]; auto const &uv=surface->uv[k];
-            xrOpaque.vertices[eye].push_back({v.x,v.y,v.z,uv.u,uv.v,float(eye)});
+            *out++={v.x,v.y,v.z,uv.u,uv.v,float(eye)};
         }
     xrOpaque.packets[eye].push_back(packet);
 }

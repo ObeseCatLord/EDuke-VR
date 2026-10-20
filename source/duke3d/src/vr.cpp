@@ -2461,6 +2461,16 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
     // the head for mirrors.
     auto &deformed=ikDeformed[0], &withHead=ikDeformed[1];
     deformed.resize(ik.vertices.size()); withHead.resize(ik.vertices.size());
+    // Bone rotations as 3x3 matrices once, rather than two quaternion products per vertex weight.
+    std::vector<std::array<float,9>> boneMatrix(count);
+    for (size_t b=0;b<count;++b)
+    {
+        auto const q=ikNormalize(worldRot[b]);
+        float const xx=q.x*q.x, yy=q.y*q.y, zz=q.z*q.z, xy=q.x*q.y, xz=q.x*q.z, yz=q.y*q.z, wx=q.w*q.x, wy=q.w*q.y, wz=q.w*q.z;
+        boneMatrix[b]={1.f-2.f*(yy+zz),2.f*(xy-wz),2.f*(xz+wy),
+                       2.f*(xy+wz),1.f-2.f*(xx+zz),2.f*(yz-wx),
+                       2.f*(xz-wy),2.f*(yz+wx),1.f-2.f*(xx+yy)};
+    }
     for (size_t i=0;i<ik.vertices.size();++i)
     {
         auto const &v=ik.vertices[i];
@@ -2472,9 +2482,12 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
         float acc[3]={0,0,0};
         for (unsigned j=0;j<v.count;++j)
         {
-            auto const r=rotate(worldRot[v.bone[j]],v.local[j]);
+            auto const &m=boneMatrix[v.bone[j]];
+            auto const &l=v.local[j];
             auto const &o=worldPos[v.bone[j]];
-            acc[0]+=v.weight[j]*(o.x+r.x); acc[1]+=v.weight[j]*(o.y+r.y); acc[2]+=v.weight[j]*(o.z+r.z);
+            acc[0]+=v.weight[j]*(o.x+m[0]*l.x+m[1]*l.y+m[2]*l.z);
+            acc[1]+=v.weight[j]*(o.y+m[3]*l.x+m[4]*l.y+m[5]*l.z);
+            acc[2]+=v.weight[j]*(o.z+m[6]*l.x+m[7]*l.y+m[8]*l.z);
         }
         withHead[i]={acc[0],acc[1],acc[2]};
         deformed[i]=(hide&1) && !showHead ? vec3f_t{worldPos[neck].x,worldPos[neck].y,worldPos[neck].z} : withHead[i];

@@ -2419,6 +2419,16 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
     float const xpanning = (float)sext->xpanning * (1.f/256.f);
     float const ypanning = (float)sext->ypanning * (1.f/256.f);
 
+#ifdef USE_GLEXT
+#ifdef USE_OPENXR
+    // The stereo collector copies vertlist itself: no per-surface streaming VBO (a map of a buffer
+    // still in flight can stall the driver), nor the native emission that would use it.
+    int32_t const vertexArrays = polymost_xrCollectingModels() ? 0 : r_vertexarrays;
+#else
+    int32_t const vertexArrays = r_vertexarrays;
+#endif
+#endif
+
     char prevClamp = polymost_getClamp();
     polymost_setClamp(0);
     polymost_usePaletteIndexing(false);
@@ -2448,7 +2458,7 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
         v1 = &s->xyzn[nframe*s->numverts];
 
 #ifdef USE_GLEXT
-        if (r_vertexarrays)
+        if (vertexArrays)
         {
             if (++curvbo >= r_vbocount)
                 curvbo = 0;
@@ -2478,7 +2488,7 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
                 }
 
 #ifdef USE_GLEXT
-                if (r_vertexarrays)
+                if (vertexArrays)
                     vertexhandle[i] = fp;
 #endif
 
@@ -2511,7 +2521,7 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
                 fp.y = (fp1.y - a0.z)*m0.z + (fp2.y - a0.z)*m1.z;
 
 #ifdef USE_GLEXT
-                if (r_vertexarrays)
+                if (vertexArrays)
                     vertexhandle[i] = fp;
 #endif
 
@@ -2527,7 +2537,7 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
                 fp.x = v0[i].y*m0.y + v1[i].y*m1.y;
 
 #ifdef USE_GLEXT
-                if (r_vertexarrays)
+                if (vertexArrays)
                     vertexhandle[i] = fp;
 #endif
 
@@ -2536,7 +2546,7 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
         }
 
 #ifdef USE_GLEXT
-        if (r_vertexarrays)
+        if (vertexArrays)
         {
             glUnmapBuffer(GL_ARRAY_BUFFER);
             buildgl_bindBuffer(GL_ARRAY_BUFFER, 0);
