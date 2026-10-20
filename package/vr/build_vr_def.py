@@ -256,6 +256,9 @@ def main():
                 rig_lines.append(f'shellwrist {side_index} {tile} {data / f"vr_hand_{side}_shell_wrist.skin"}')
         # True full body (IK skeleton + skin + head/hand vertex lists).
         ik = {ext: v6 / f'vr_duke_ik{ext}' for ext in ('.md3', '.png', '.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r')}
+        # First person hides .fphide (head and neck, closed by inner caps) when the pack has it.
+        if (v6 / 'vr_duke_ik.fphide').is_file():
+            ik['.headverts'] = v6 / 'vr_duke_ik.fphide'
         if all(path.is_file() for path in ik.values()):
             model(ik['.md3'], ik['.png'], 30067, 'vr_duke_ik', frame='bind')
             for ext in ('.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r'):

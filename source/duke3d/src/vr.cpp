@@ -1335,6 +1335,8 @@ struct HandRig
         std::vector<IkBone> bones;
         std::vector<IkVertex> vertices;
         std::vector<uint8_t> hide;   // 1 head, 2 left hand, 4 right hand
+        // Eyes relative to the head bone in the bind pose (model units, +X forward, +Z up).
+        float eyeForward=.09f*64.f, eyeUp=.06f*64.f;
         int find(char const *name) const
         {
             for (size_t i=0;i<bones.size();++i) if (bones[i].name==name) return int(i);
@@ -1478,6 +1480,27 @@ static HandRig const *handRig()
                 for (char const *name:{"pelvis","spine","chest","neck","head","upperarm_l","forearm_l","hand_l",
                                         "upperarm_r","forearm_r","hand_r","thigh_l","calf_l","foot_l","thigh_r","calf_r","foot_r"})
                     good=good && ik.find(name)>=0;
+                // Eyes from the hidden head's bind shape: 2 cm behind the face, 11.5 cm below the crown.
+                float front=-FLT_MAX, crown=-FLT_MAX;
+                for (size_t i=0;good && i<ik.vertices.size();++i)
+                {
+                    if (!(ik.hide[i]&1)) continue;
+                    auto const &v=ik.vertices[i];
+                    XrVector3f bindPos{0,0,0};
+                    for (unsigned j=0;j<v.count;++j)
+                    {
+                        auto const &b=ik.bones[v.bone[j]];
+                        auto const r=rotate(b.rotation,v.local[j]);
+                        bindPos.x+=v.weight[j]*(b.position.x+r.x); bindPos.z+=v.weight[j]*(b.position.z+r.z);
+                    }
+                    front=std::max(front,bindPos.x); crown=std::max(crown,bindPos.z);
+                }
+                if (good && front>-FLT_MAX)
+                {
+                    auto const &head=ik.bones[ik.find("head")].position;
+                    float const forward=front-.02f*64.f-head.x, up=crown-.115f*64.f-head.z;
+                    if (forward>0.f && forward<.2f*64.f && up>-.05f*64.f && up<.25f*64.f) ik.eyeForward=forward, ik.eyeUp=up;
+                }
             }
             if (good) { ik.tile=tile; rig.ik=std::move(ik); }
             else LOG_F(WARNING,"OpenXR hand rig: unusable IK body %s / %s.",paths[0],paths[1]);
@@ -2271,11 +2294,11 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
     float const eyeHeight=(feetZ-eye[2])/ZUnitsPerMetre;   // metres
     standingHeight=std::max(eyeHeight,standingHeight*.9995f);
     if (!(standingHeight>.5f)) standingHeight=eyeHeight;
-    float const bindEye=bind[head].position.z/64.f+.08f;
+    float const bindEye=(bind[head].position.z+ik.eyeUp)/64.f;
     float const scale=std::max(.8f,std::min(1.25f,standingHeight/std::max(.5f,bindEye)));
     float const unitXY=UnitsPerMetre/64.f*scale, unitZ=ZUnitsPerMetre/64.f*scale;
 
-    // Head bone target and orientation in model space (head bone ~9 cm behind, 6 cm below the eyes).
+    // Head bone target and orientation in model space (the bind eye offset, measured from the head mesh).
     auto const dirToModel=[&](XrVector3f v) {   // tracking-space direction -> model direction
         v=rotate(tracking,v);
         float const bx=-v.z*co-v.x*si, by=-v.z*si+v.x*co;
@@ -2285,18 +2308,21 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
     auto const headUpM=dirToModel(rotate(rawInput.headPose.orientation,{0,1,0}));
     // Root (model origin, between the feet on the floor) under the head bone, by the bind head offset.
     XrVector3f const bindHead=bind[head].position;
-    float const headBack=.09f*64.f/scale, headDown=.06f*64.f/scale;
+    float const headBack=ik.eyeForward, headDown=ik.eyeUp;
+    // The body sits a little further back than the skull alone puts it, so looking down shows the
+    // chest and feet instead of the inside of the collar.
+    float const settle=.04f*64.f;
     // Eye in model axes relative to the root is (bindHead.x + forward offsets...): solve root from the eye.
     XrVector3f const headTargetFromEye={-headFwdM.x*headBack-headUpM.x*headDown,-headFwdM.y*headBack-headUpM.y*headDown,
                                         -headFwdM.z*headBack-headUpM.z*headDown};
-    float const rootX=eye[0]-(fx*(bindHead.x-headTargetFromEye.x)+yx*(bindHead.y-headTargetFromEye.y))*unitXY;
-    float const rootY=eye[1]-(fy*(bindHead.x-headTargetFromEye.x)+yy*(bindHead.y-headTargetFromEye.y))*unitXY;
+    float const rootX=eye[0]-(fx*(bindHead.x+settle-headTargetFromEye.x)+yx*(bindHead.y-headTargetFromEye.y))*unitXY;
+    float const rootY=eye[1]-(fy*(bindHead.x+settle-headTargetFromEye.x)+yy*(bindHead.y-headTargetFromEye.y))*unitXY;
     auto const toModel=[&](float const P[3]) {
         float const dx=(P[0]-rootX)/unitXY, dy=(P[1]-rootY)/unitXY;
         return XrVector3f{dx*fx+dy*fy,dx*yx+dy*yy,(feetZ-P[2])/unitZ};
     };
     auto const eyeM=toModel(eye);
-    XrVector3f const headTarget={eyeM.x+headTargetFromEye.x,eyeM.y+headTargetFromEye.y,eyeM.z+headTargetFromEye.z};
+    XrVector3f const headTarget={eyeM.x+headTargetFromEye.x-settle,eyeM.y+headTargetFromEye.y,eyeM.z+headTargetFromEye.z};
 
     // Bind locals.
     size_t const count=bind.size();
@@ -2474,7 +2500,8 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
     {
         static int logged;
         if (logged++%120==0)
-            LOG_F(INFO,"OpenXR IK body: scale=%.2f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f.",scale,drop,
+            LOG_F(INFO,"OpenXR IK body: scale=%.2f eye=%.1f,%.1f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f.",scale,
+                  ik.eyeForward,ik.eyeUp,drop,
                   headTarget.x,headTarget.y,headTarget.z,int(handJoints[0].valid),int(handJoints[1].valid),kickExtend);
     }
     return true;
