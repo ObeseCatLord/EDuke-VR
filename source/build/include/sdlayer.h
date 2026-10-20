@@ -14,6 +14,8 @@
 #ifdef USE_OPENXR
 namespace eduke_xr { class Runtime; }
 eduke_xr::Runtime *sdlayer_xr_worldRuntime();
+// Called at every swap; the game shows flat frames the headset did not receive (intermissions, logos).
+extern void (*sdlayer_xr_flatFrameHook)(void);
 bool sdlayer_xr_requested();
 // Environment option, or its EDUKE32_XR=play preset default, else nullptr.
 char const *sdlayer_xr_option(char const *name);

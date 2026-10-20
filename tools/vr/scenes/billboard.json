@@ -1,0 +1,5 @@
+[
+ {"pose": {"head": [0, 1.6, 0, 0, -10, 0]}}, {"wait": 2},
+ {"console": "xr_spawn 100"}, {"wait": 3}, {"capture": "atom"},
+ {"pose": {"head": [0, 1.6, 0, 25, -10, 0]}}, {"wait": 2}, {"capture": "atom-yaw"}
+]

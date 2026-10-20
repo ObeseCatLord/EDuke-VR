@@ -1,0 +1,169 @@
+[
+ {
+  "pose": {
+   "head": [
+    0,
+    1.6,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "wait": 2
+ },
+ {
+  "console": "xr_weapons"
+ },
+ {
+  "wait": 2
+ },
+ {
+  "capture": "before"
+ },
+ {
+  "console": "xr_endlevel"
+ },
+ {
+  "until": "flat screen: presented",
+  "timeout": 30
+ },
+ {
+  "wait": 3
+ },
+ {
+  "capture": "bonus"
+ },
+ {
+  "pose": {
+   "head": [
+    0,
+    1.6,
+    0,
+    30,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "wait": 2
+ },
+ {
+  "capture": "bonus-turned"
+ },
+ {
+  "pose": {
+   "head": [
+    0,
+    1.6,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "buttons": {
+   "right": {
+    "trigger_value": 1.0,
+    "trigger_click": 1
+   }
+  }
+ },
+ {
+  "wait": 0.6
+ },
+ {
+  "buttons": {
+   "right": {
+    "trigger_value": 0.0,
+    "trigger_click": 0
+   }
+  }
+ },
+ {
+  "wait": 2.5
+ },
+ {
+  "buttons": {
+   "right": {
+    "trigger_value": 1.0,
+    "trigger_click": 1
+   }
+  }
+ },
+ {
+  "wait": 0.6
+ },
+ {
+  "buttons": {
+   "right": {
+    "trigger_value": 0.0,
+    "trigger_click": 0
+   }
+  }
+ },
+ {
+  "wait": 2.5
+ },
+ {
+  "buttons": {
+   "right": {
+    "trigger_value": 1.0,
+    "trigger_click": 1
+   }
+  }
+ },
+ {
+  "wait": 0.6
+ },
+ {
+  "buttons": {
+   "right": {
+    "trigger_value": 0.0,
+    "trigger_click": 0
+   }
+  }
+ },
+ {
+  "wait": 2.5
+ },
+ {
+  "buttons": {
+   "right": {
+    "trigger_value": 1.0,
+    "trigger_click": 1
+   }
+  }
+ },
+ {
+  "wait": 0.6
+ },
+ {
+  "buttons": {
+   "right": {
+    "trigger_value": 0.0,
+    "trigger_click": 0
+   }
+  }
+ },
+ {
+  "wait": 2.5
+ },
+ {
+  "wait": 6
+ },
+ {
+  "capture": "next-level"
+ },
+ {
+  "wait": 3
+ },
+ {
+  "capture": "next-level-2"
+ }
+]

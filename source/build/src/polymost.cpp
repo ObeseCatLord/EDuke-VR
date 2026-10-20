@@ -7005,6 +7005,11 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
     float const fglobalang = fix16_to_float(qglobalang);
     int32_t dapyscale, dapskybits, dapyoffs, daptileyscale;
     int8_t const * dapskyoff = getpsky(globalpicnum, &dapyscale, &dapskybits, &dapyoffs, &daptileyscale);
+#ifdef USE_OPENXR
+    // Native skies scroll vertically slower than the world (parallax y scale); in a headset that
+    // reads as the sky following the head. Keep it at infinity: move 1:1 with the view.
+    if (xrProjection.active) dapyscale = 65536;
+#endif
 
     ghoriz = (qglobalhoriz*(1.f/65536.f)-float(ydimen>>1))*dapyscale*(1.f/65536.f)+float(ydimen>>1)+ghorizcorrect;
 
@@ -7025,6 +7030,15 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
                         (1.0 / (16384.0 * 65536.0 * 65536.0 * 5.0 * 1024.0));
     ytex.v = vv[1];
     otex.v = r_parallaxskypanning ? vv[0] + dd*(float)global_cf_ypanning*(float)ti*(1.f/256.f) : vv[0];
+#ifdef USE_OPENXR
+    // The back pass of a split full-pitch view (yaw+pi, gchang < 0) only covers the region past
+    // straight up/down, which is above/below the sky band: hold the band's edge row there.
+    if (xrProjection.active && xrProjection.pitchOverride && xrProjection.pitchCos < 0.f)
+    {
+        ytex.v = 0.f;
+        otex.v = xrProjection.pitchSin < 0.f ? dd*0.5f : dd*(float(tilesiz[globalpicnum].y)-0.5f);
+    }
+#endif
 
     float x0 = xys[0].x, x1 = xys[0].x;
 
@@ -7037,7 +7051,13 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
     int const npot = (1<<(picsiz[globalpicnum]&15)) != tilesiz[globalpicnum].x;
     int const xpanning = (r_parallaxskypanning?global_cf_xpanning:0);
 
-    polymost_setClamp((npot || xpanning != 0) ? 0 : 2);
+    int const skyClamp = (npot || xpanning != 0) ? 0 : 2;
+#ifdef USE_OPENXR
+    // A headset can look far above the horizon band: hold the top/bottom rows instead of tiling.
+    polymost_setClamp(xrProjection.active ? (skyClamp | 2) : skyClamp);
+#else
+    polymost_setClamp(skyClamp);
+#endif
 
     int picnumbak = globalpicnum;
     int32_t const ogclipdist = globalclipdist;
@@ -10334,6 +10354,20 @@ void polymost_drawsprite(int32_t snum)
 
     vec2f_t const ftsiz = { (float) tsiz.x, (float) tsiz.y };
 
+#ifdef USE_OPENXR
+    // Headset: a screen-aligned face sprite turns with each eye's view axis, so its depth slant
+    // changes as you look around (it swims in stereo). Draw it as an upright world-space card
+    // turned toward the head's centre instead, the same for both eyes (wall-sprite path).
+    int16_t const xrSavedAng = tspr->ang;
+    bool const xrBillboard = polymost_xrBillboard.active && xrProjection.active
+        && (globalorientation & CSTAT_SPRITE_ALIGNMENT) == CSTAT_SPRITE_ALIGNMENT_FACING;
+    if (xrBillboard)
+    {
+        globalorientation = (globalorientation & ~(CSTAT_SPRITE_ALIGNMENT | CSTAT_SPRITE_ONE_SIDED)) | CSTAT_SPRITE_ALIGNMENT_WALL;
+        tspr->ang = getangle(polymost_xrBillboard.x - tspr->x, polymost_xrBillboard.y - tspr->y);
+    }
+#endif
+
     switch (globalorientation & CSTAT_SPRITE_ALIGNMENT)
     {
         case CSTAT_SPRITE_ALIGNMENT_FACING:  // Face sprite
@@ -10486,6 +10520,9 @@ void polymost_drawsprite(int32_t snum)
             wallspriteinfo_t *ws = ((unsigned)tsprowner >= MAXSPRITES) ? nullptr : &ornament[tsprowner];
 
             polymost_checkornamentedsprite(tspr, &wallnum, ws);
+#ifdef USE_OPENXR
+            if (xrBillboard) wallnum = -1;   // a billboard is never a wall ornament
+#endif
 
             // detect if the sprite is either on the wall line or the wall line and sprite intersect
             if (wallnum != -1 && ((ws != nullptr && !ws->invalid) || polymost_testintersection(pos, { (int)vf.x, (int)vf.y }, wallnum)))
@@ -10941,6 +10978,9 @@ void polymost_drawsprite(int32_t snum)
         bitmap_set(show2dsprite, spritenum);
 
 _drawsprite_return:
+#ifdef USE_OPENXR
+    tspr->ang = xrSavedAng;
+#endif
     polymost_identityrotmat();
     tilesiz[globalpicnum] = oldsiz;
 }
@@ -11195,6 +11235,7 @@ void polymost_dorotatespritemodel(int32_t sx, int32_t sy, int32_t z, int16_t a, 
 
 #ifdef USE_OPENXR
 bool (*polymost_xrWeaponTileConsumer)(int32_t,int32_t,int32_t,int32_t,int32_t,int32_t,int32_t,int32_t)=nullptr;
+polymost_xrbillboard_t polymost_xrBillboard;
 void (*polymost_xrSpriteBounds)(float,float,float,float)=nullptr;
 #endif
 

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 EDuke32 VR contributors
 
 #include "eduke_xr.h"
+#include <chrono>
 #include "../build/include/polymost_color_correction.h"
 
 #define XR_USE_PLATFORM_XLIB
@@ -443,6 +444,11 @@ struct Runtime::Impl
     uint64_t                                actionGeneration = 0;
     uint64_t                                nextMenuOwner = 0, menuOwner = 0;
     uint32_t                                menuWidth = 0, menuHeight = 0;
+    // World-locked virtual screen for full-screen 2D (menus, intermissions, cutscenes): placed in
+    // front of the head (yaw only, upright) and re-centred when you look well away or it was unused.
+    bool                                    screenAnchorValid = false;
+    XrPosef                                 screenAnchor {};
+    std::chrono::steady_clock::time_point   screenAnchorUsed {};
     bool                                    menuActive = false, menuArmed = false, menuOverlay = false;
     struct NativeTarget { GLint readFbo=0, drawFbo=0, readBuffer=GL_BACK, drawBuffer=GL_BACK; } menuNativeState;
 
@@ -1689,6 +1695,66 @@ bool Runtime::flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfH
     return good;
 }
 
+// Virtual screen pose for full-screen 2D: world-locked in front of the head (see Impl::screenAnchor).
+XrPosef Runtime::anchoredScreen(XrPosef const &head)
+{
+    auto &impl=*m_impl;
+    float headMatrix[16]; poseMatrix(head,headMatrix);
+    float fx=-headMatrix[8], fz=-headMatrix[10];
+    float const length=std::sqrt(fx*fx+fz*fz);
+    if (length>1e-3f) { fx/=length; fz/=length; } else { fx=0.f; fz=-1.f; }
+    auto const now=std::chrono::steady_clock::now();
+    bool recentre=!impl.screenAnchorValid || now-impl.screenAnchorUsed>std::chrono::milliseconds(750);
+    if (!recentre)
+    {
+        float const dx=impl.screenAnchor.position.x-head.position.x, dz=impl.screenAnchor.position.z-head.position.z;
+        float const dl=std::sqrt(dx*dx+dz*dz);
+        recentre=dl<1e-3f || (dx*fx+dz*fz)/dl<std::cos(55.f*3.14159265f/180.f);
+    }
+    if (recentre)
+    {
+        float const yaw=std::atan2(-fx,-fz);   // rotation about +Y turning -Z to (fx,fz)
+        impl.screenAnchor.orientation={0.f,std::sin(yaw*.5f),0.f,std::cos(yaw*.5f)};
+        impl.screenAnchor.position={head.position.x+fx*PanelDistance,head.position.y,head.position.z+fz*PanelDistance};
+        impl.screenAnchorValid=true;
+    }
+    impl.screenAnchorUsed=now;
+    return impl.screenAnchor;
+}
+
+bool Runtime::presentNativeFrame(uint32_t width, uint32_t height, std::string &error, char const *capturePrefix)
+{
+    error.clear();
+    if (!m_impl || !m_impl->frameBegun || !m_impl->imageReady || m_impl->menuActive)
+    { error="native frame presentation requires a ready OpenXR frame"; return false; }
+    XrSpaceLocation head { XR_TYPE_SPACE_LOCATION };
+    XrResult result=xrLocateSpace(m_impl->viewSpace,m_impl->space,m_impl->frameState.predictedDisplayTime,&head);
+    bool const located=XR_SUCCEEDED(result) && (head.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT|XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+        == (XR_SPACE_LOCATION_POSITION_VALID_BIT|XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
+    GLState state; state.save();
+    bool good=m_impl->ensureMenuCapture(width,height,error);
+    if (good)
+    {
+        // The flat frame was drawn into the native back buffer: copy it into the UI texture.
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,state.drawFbo);
+        glReadBuffer(state.drawFbo ? GL_COLOR_ATTACHMENT0 : GL_BACK);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,m_impl->menuFbo);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glDisable(GL_SCISSOR_TEST);
+        glBlitFramebuffer(0,0,int(width),int(height),0,0,int(width),int(height),GL_COLOR_BUFFER_BIT,GL_NEAREST);
+        good=glSucceeded("copying the native frame",error);
+    }
+    state.restore();
+    m_impl->menuOverlay=false;   // opaque: black around the screen
+    if (good && located)
+        good=drawMenuCapture(anchoredScreen(head.pose),PanelHalfWidth,PanelHalfWidth*float(height)/width,error);
+    if (good && located && capturePrefix) good=captureFrame(capturePrefix,false,error,false);
+    std::string finishError;
+    bool const submitted=finishFrame(good && located,finishError);
+    if (good && !submitted) error=finishError;
+    return good && submitted;
+}
+
 bool Runtime::completeMenuPresentation(std::string &error, char const *capturePrefix)
 {
     error.clear();
@@ -1726,6 +1792,8 @@ bool Runtime::completeMenuPresentation(std::string &error, char const *capturePr
     panel.position.x-=PanelDistance*headMatrix[8];
     panel.position.y-=PanelDistance*headMatrix[9];
     panel.position.z-=PanelDistance*headMatrix[10];
+    // Full-screen menus sit on the world-locked virtual screen; the in-game HUD stays head-locked.
+    if (!m_impl->menuOverlay) panel=anchoredScreen(head.pose);
     bool rendered=drawMenuCapture(panel,PanelHalfWidth,PanelHalfWidth*float(m_impl->menuHeight)/m_impl->menuWidth,error);
     if (!rendered)
     {

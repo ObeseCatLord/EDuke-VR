@@ -2649,7 +2649,7 @@ static bool P_XRPistolPresentation(XRWeaponPresentation &sample)
             || PWEAPON(myconnectindex,PISTOL_WEAPON,Flags)!=WEAPON_RELOAD_TIMING
             || (p->kickback_pic>=5 && p->reloading!=1))) return false;
     sample={P_GetHudPal(p),min<int32_t>(sprite[p->i].shade,24),p->kickback_pic,p->reloading,XRWeaponFamily::StockPistol};
-    return sample.palette==0; // Qualified opaque diffuse family; tinted cases keep ART.
+    return true; // Sector/HUD palettes tint the model like every other held weapon.
 #else
     return false;
 #endif

@@ -46,6 +46,9 @@ void polymost_completeMirror();
 // Screen rectangle (pixels, after clipping) of every 2D rotatesprite while set; the
 // XR HUD uses it to crop segments (weapon card on the hand, wrist status).
 extern void (*polymost_xrSpriteBounds)(float x0, float y0, float x1, float y1);
+// While active (one stereo frame), face sprites are drawn as upright cards facing this point (Build x/y).
+typedef struct { int32_t x, y; bool active; } polymost_xrbillboard_t;
+extern polymost_xrbillboard_t polymost_xrBillboard;
 extern bool (*polymost_xrWeaponTileConsumer)(int32_t tile, int32_t uniqueID, int32_t shade,
     int32_t palette, int32_t flags, int32_t angle, int32_t alpha, int32_t blend);
 bool polymost_xrBeginTint(uint8_t r, uint8_t g, uint8_t b, uint8_t f);

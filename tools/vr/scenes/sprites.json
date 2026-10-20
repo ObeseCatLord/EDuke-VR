@@ -1,0 +1,7 @@
+[
+ {"pose": {"head": [0, 1.6, 0, 0, 0, 0]}}, {"wait": 2},
+ {"console": "xr_spawn 1680"}, {"wait": 3},
+ {"capture": "trooper"},
+ {"pose": {"head": [0, 1.6, 0, 0, 0, 15]}}, {"wait": 2}, {"capture": "trooper-roll"},
+ {"pose": {"head": [0, 1.6, 0, 0, -20, 0]}}, {"wait": 2}, {"capture": "trooper-down"}
+]

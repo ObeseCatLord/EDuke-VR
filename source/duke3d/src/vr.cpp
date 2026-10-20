@@ -146,8 +146,10 @@ bool G_XRModelsEnabled()
     return vr_models && usemodels && option && !Bstrcmp(option,"1");
 }
 
+static void G_XRFlatFrame();
 void G_XRRegisterCvars()
 {
+    sdlayer_xr_flatFrameHook=G_XRFlatFrame;
     static osdcvardata_t cvars[] = {
         { "vr_models", "VR 3D models (held weapons, hands, body, other players, weapon wheel); 0 = native 2D sprites", (void *)&vr_models, CVAR_BOOL, 0, 1 },
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
@@ -203,6 +205,7 @@ static bool bootModelAvailable() { return G_XRModelsEnabled() && md_tilehasmodel
 // 2D weapon display stays hidden as a whole: Duke's 2D hands, the kick knee, weapon lower/raise
 // animations, fist/tip/access-card hands. Only a weapon without any model falls back to its 2D
 // sprite (RazeXR style).
+static bool heldModelShown; // the held weapon model was drawn in this frame's world pass
 static bool nativeWeaponHidden()
 {
     if (!G_XRModelsEnabled()) return false;
@@ -210,7 +213,12 @@ static bool nativeWeaponHidden()
     if (!p) return false;
     if (p->curr_weapon==KNEE_WEAPON) return bootModelAvailable();
     auto const family=effectiveWeaponFamily();
-    return family!=XRWeaponFamily::Unsupported && md_tilehasmodel(weaponModelTile(family),0)>=0;
+    if (family==XRWeaponFamily::Unsupported || md_tilehasmodel(weaponModelTile(family),0)<0) return false;
+    // Never leave the hand empty: hide the 2D art only when the 3D weapon was drawn, or during the
+    // native switch/kick/hand animations (which the 3D hand replaces).
+    bool const transient=p->weapon_pos || p->last_weapon>=0 || p->holster_weapon || p->knee_incs || p->quick_kick
+        || p->last_quick_kick || p->fist_incs || p->knuckle_incs || p->tipincs || p->access_incs;
+    return heldModelShown || transient;
 }
 static XRWeaponFamily mountedWeaponFamily()
 {
@@ -3380,6 +3388,34 @@ static void runConsoleRequest()
             xrprofile::dump(command.c_str()+11);
             continue;
         }
+        if (!command.compare(0,9,"xr_spawn "))
+        {
+            // Test hook: an actor (tile number) ~3 m in front of the player, facing them, frozen.
+            auto const p=g_player[myconnectindex].ps;
+            int const tile=std::atoi(command.c_str()+9);
+            if ((unsigned)p->i<MAXSPRITES && (unsigned)tile<MAXTILES)
+            {
+                int const spawned=A_Spawn(p->i,tile);
+                if (spawned>=0)
+                {
+                    int const ang=fix16_to_int(p->q16ang);
+                    auto &spr=sprite[spawned];
+                    spr.x=p->pos.x+(sintable[(ang+512)&2047]>>3);
+                    spr.y=p->pos.y+(sintable[ang&2047]>>3);
+                    spr.ang=(ang+1024)&2047;
+                    changespritesect(spawned,p->cursectnum);
+                    spr.z=sector[p->cursectnum].floorz;
+                    LOG_F(INFO,"OpenXR test spawn: tile=%d sprite=%d.",tile,spawned);
+                }
+            }
+            continue;
+        }
+        if (command=="xr_endlevel")
+        {
+            // Test hook: finish the level like the exit switch (intermission follows).
+            for (int TRAVERSE_CONNECT(i)) g_player[i].ps->gm=MODE_EOL;
+            continue;
+        }
         if (command=="xr_items")
         {
             // Test hook: a full inventory (native maxima).
@@ -3541,6 +3577,49 @@ void G_XRBeginFrame()
     }
     publishInput();
     updateHaptics(runtime);
+}
+
+// Flat screens drawn outside the game's display loop (intermission/bonus screens, logos,
+// cutscenes, loading) never reach the headset on their own. After two swaps without an XR
+// submission, show each swapped frame on the world-locked virtual screen (and keep controller
+// input flowing so "press any button" works).
+static void G_XRFlatFrame()
+{
+    auto *runtime=sdlayer_xr_worldRuntime();
+    if (!runtime || g_networkMode==NET_DEDICATED_SERVER || videoGetRenderMode()!=REND_POLYMOST) return;
+    static uint64_t lastSerial;
+    static unsigned idleSwaps;
+    uint64_t const serial=runtime->lastSubmittedSerial();
+    if (serial!=lastSerial) { lastSerial=serial; idleSwaps=0; return; }
+    if (++idleSwaps<2 || runtime->menuPresentationActive()) return;
+    G_XRBeginFrame();
+    auto *ready=pendingRuntime;
+    pendingRuntime=nullptr;
+    if (!ready || ready->generation()!=pendingGeneration) return;
+    // Test hook shared with the world path: capture this frame to the requested prefix.
+    std::string requested;
+    if (char const *request=std::getenv("EDUKE32_XR_CAPTURE_REQUEST"))
+        if (FILE *file=std::fopen(request,"r"))
+        {
+            char prefix[1024]={};
+            if (std::fgets(prefix,sizeof(prefix),file)) requested=prefix;
+            std::fclose(file); std::remove(request);
+            requested.erase(requested.find_last_not_of("\r\n")+1);
+            if (!requested.empty()) LOG_F(INFO,"OpenXR capture request: flat screen prefix=%s.",requested.c_str());
+        }
+    std::string error;
+    if (!ready->presentNativeFrame(xdim,ydim,error,requested.empty() ? nullptr : requested.c_str()))
+    {
+        static bool reported;
+        if (!reported) LOG_F(WARNING,"OpenXR flat screen: %s",error.c_str());
+        reported=true;
+    }
+    else if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static unsigned shown;
+        if (shown++%90==0) LOG_F(INFO,"OpenXR flat screen: presented %u frames.",shown);
+    }
+    lastSerial=ready->lastSubmittedSerial();
 }
 
 static bool testArtClock()
@@ -3809,6 +3888,16 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         LOG_F(INFO,"OpenXR aim eye positions: left=%d,%d,%d right=%d,%d,%d.",left.x,left.y,left.z,right.x,right.y,right.z);
         LOG_F(INFO,"OpenXR aim eye roll: left=%.9f right=%.9f.",eyes[0].camera.roll,eyes[1].camera.roll);
     }
+    // Face sprites become head-facing cards for this stereo frame (see polymost_drawsprite).
+    struct BillboardScope
+    {
+        BillboardScope(vec3_t a, vec3_t b)
+        {
+            auto const option=sdlayer_xr_option("EDUKE32_XR_FACE_BILLBOARD");
+            polymost_xrBillboard={(a.x+b.x)/2,(a.y+b.y)/2,!option || Bstrcmp(option,"0")};
+        }
+        ~BillboardScope() { polymost_xrBillboard.active=false; }
+    } const billboards(eyes[0].camera.pos,eyes[1].camera.pos);
     vec2_t const oldStart=windowxy1, oldEnd=windowxy2;
     int const oldRange=viewingrange, oldAspect=yxaspect;
     int const frozenVisibility=g_visibility, frozenParallax=parallaxvisibility;
@@ -4021,6 +4110,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         WorldModelSample *models[MaxWorldModels]{};
         unsigned modelCount=0, gripMask=0;
         bool const weaponModel=good && !fixtureTest && !wheel.open && prepareHandModel(handModel);
+        heldModelShown=weaponModel;
         if (weaponModel) models[modelCount++]=&handModel;
         // RazeXR-style fallback: a weapon without a 3D model shows its native 2D sprite (which
         // carries Duke's own hand) on the controller, so that hand's 3D model stays hidden.

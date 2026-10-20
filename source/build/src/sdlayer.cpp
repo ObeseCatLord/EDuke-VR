@@ -303,6 +303,8 @@ bool sdlayer_xr_tintWorld(float const *rgba, float const *correction)
     return false;
 }
 
+void (*sdlayer_xr_flatFrameHook)(void) = nullptr;
+
 static void sdlayer_xr_presentMenu()
 {
     // Never acquire or initialize from a swap: only the logical owner can arm
@@ -2464,6 +2466,7 @@ void videoShowFrame(int32_t w)
 #if SDL_MAJOR_VERSION >= 2
 # ifdef USE_OPENXR
             sdlayer_xr_presentMenu();
+            if (sdlayer_xr_flatFrameHook && sdl_xr_worldActive) sdlayer_xr_flatFrameHook();
             sdlayer_xr_diagnostic();
 # endif
             if (!sdl_minimized) SDL_GL_SwapWindow(sdl_window);
