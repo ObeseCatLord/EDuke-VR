@@ -4731,7 +4731,7 @@ static bool polymost_xrPrepareOpaquePacket(xr_opaque_packet_t &packet, pthtyp co
     packet.blendDst = opaque ? 0 : blendDstRgb;
     packet.depthWrite = depthWrite;
     packet.colorWrite = opaque ? !skyDepth : maskColorWrite;
-    packet.translucent = !opaque && (method & DAMETH_MASKPROPS) > DAMETH_MASK;
+    packet.translucent = !opaque && ((method & DAMETH_MASKPROPS) > DAMETH_MASK || (voxel && (color[3] < 1.f || !depthWrite)));
     for (int i=0;i<4;++i) packet.modelview[i*5]=1.f;
     Bmemcpy(packet.projection, xrOpaque.projection[xrOpaque.eye], sizeof(packet.projection));
     Bmemcpy(packet.rotation, polymost1RotMatrix, sizeof(packet.rotation));
@@ -4740,9 +4740,11 @@ static bool polymost_xrPrepareOpaquePacket(xr_opaque_packet_t &packet, pthtyp co
         GLint texture, cullMode, frontFace, matrixMode;
         glActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D,&texture); glActiveTexture(activeTexture);
         glGetIntegerv(GL_CULL_FACE_MODE,&cullMode); glGetIntegerv(GL_FRONT_FACE,&frontFace);
+        // Translucent voxels (drawmasks' second pass: no depth writes, alpha below one) replay
+        // with their captured blend, depth mask and color like translucent ART.
         if (texture!=GLint(voxel->texid8bit) || !glIsEnabled(GL_CULL_FACE)
             || cullMode!=GL_BACK || (frontFace!=GL_CW && frontFace!=GL_CCW)
-            || !depthWrite || !maskColorWrite || color[3]!=1.f)
+            || !maskColorWrite || !std::isfinite(color[3]) || color[3]<0.f || color[3]>1.f)
             return rejectUnsupported("unsupported indexed voxel draw state");
         for (float const value:modelview)
             if (!std::isfinite(value)) return rejectUnsupported("nonfinite voxel modelview");

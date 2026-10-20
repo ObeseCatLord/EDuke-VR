@@ -166,7 +166,8 @@ def main():
         for surface in range(surfaces):
             out.append(f' skin {{ pal 0 surface {surface} file "vr_duke.png" }}')
         for tile, name in sorted(tiles.items()):
-            out.append(f' frame {{ name "{name if name in frames else "stand"}" tile {tile} smoothduration 0.1 }}')
+            # Multi-surface players hide parts by collapsing them: no blending between frames.
+            out.append(f' frame {{ name "{name if name in frames else "stand"}" tile {tile} smoothduration {0 if surfaces > 1 else 0.1} }}')
         out.append('}')
         notes.append(f'player model: {duke_md3} ({len(tiles)} tiles)')
         # First-person body: Duke's torso and legs as their own single shell (same frames).
@@ -178,6 +179,9 @@ def main():
             model(body_md3, body_png, 30066, 'vr_duke_body', frame='stand')
 
     holds = []
+    if autoload and not aa:
+        # The world data a pack autoloads (e.g. voxels and map hacks) comes with its own duke3d.def.
+        out.insert(0, 'include "duke3d.def"')
     if aa:
         out.insert(0, 'include "duke3d.def"')
         # Family ids and AA HUD tile numbers; v6 ships its own copy.

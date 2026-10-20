@@ -1,0 +1,117 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.7,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.25,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.4,
+-0.4,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 3
+},
+{
+"console": "xr_weapons"
+},
+{
+"wait": 2
+},
+{
+"pose": {
+"head": [
+0,
+1.7,
+0,
+0,
+0,
+0
+]
+}
+},
+{
+"capture": "world"
+},
+{
+"pose": {
+"head": [
+0,
+1.7,
+0,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 2
+},
+{
+"pose": {
+"head": [
+0,
+1.68,
+-0.02,
+0,
+-25,
+0
+]
+}
+},
+{
+"console": "xr_select 1"
+},
+{
+"wait": 3
+},
+{
+"capture": "pistol"
+},
+{
+"console": "xr_select 2"
+},
+{
+"wait": 3
+},
+{
+"capture": "shotgun"
+},
+{
+"console": "xr_select 4"
+},
+{
+"wait": 3
+},
+{
+"capture": "rpg"
+},
+{
+"console": "xr_select 7"
+},
+{
+"wait": 3
+},
+{
+"capture": "devastator"
+}
+]
