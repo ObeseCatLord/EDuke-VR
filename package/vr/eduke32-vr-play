@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Launch EDuke32 VR with the qualified gameplay features (EDUKE32_XR=play).
 #
-#   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release] [--glow]
+#   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release] [--glow] [--pack NAME]
 #                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [-- eduke32 args]
 #
 # Stock Duke: pass --grp (or run where DUKE3D.GRP is found natively).
@@ -19,7 +19,10 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 binary="$repo/eduke32-xr"
 assets="$(cd "$repo/.." && pwd)/duke-vr-assets"
-aa="" grp="" models=1 release="" glow=""
+aa="" grp="" models=1 release="" glow="" pack=""
+# Personal defaults (never shipped): ~/.config/eduke32-vr/launcher.conf, e.g. "pack=dnf-private".
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/eduke32-vr/launcher.conf"
+[[ -f $conf ]] && pack=$(sed -n 's/^pack=//p' "$conf" | tail -1)
 args=()
 while (($#)); do
     case "$1" in
@@ -29,6 +32,7 @@ while (($#)); do
         --no-models) models=0; shift ;;
         --release) release=1; shift ;;
         --glow) glow=1; shift ;;
+        --pack) pack=$2; shift 2 ;;
         --assets) assets=$(cd "$2" && pwd); shift 2 ;;
         --binary) binary=$(realpath "$2"); shift 2 ;;
         --) shift; args+=("$@"); break ;;
@@ -38,7 +42,8 @@ while (($#)); do
 done
 [[ -x "$binary" ]] || { echo "eduke32-vr-play: build $binary first (make USE_OPENXR=1 ...)" >&2; exit 1; }
 
-data="${XDG_DATA_HOME:-$HOME/.local/share}/eduke32-vr/$([[ -n $aa ]] && echo aa566 || echo duke3d)"
+[[ $pack == v6-original ]] && pack=""
+data="${XDG_DATA_HOME:-$HOME/.local/share}/eduke32-vr/${pack:+$pack/}$([[ -n $aa ]] && echo aa566 || echo duke3d)"
 mkdir -p "$data"
 def="$data/eduke32-vr-models.def"
 {
@@ -47,7 +52,9 @@ def="$data/eduke32-vr-models.def"
 } > "$def"
 
 if ((models)) && [[ -d $assets ]]; then
-    python3 "$here/build_vr_def.py" "$assets" "$data" ${aa:+--aa} ${release:+--release} ${glow:+--glow} >> "$def"
+    python3 "$here/build_vr_def.py" "$assets" "$data" ${aa:+--aa} ${release:+--release} ${glow:+--glow} ${pack:+--pack=$pack} >> "$def"
+    # A pack may ask for unfiltered (nearest) model textures.
+    [[ $(cat "$data/pack-filter.txt" 2>/dev/null) == nearest ]] && export EDUKE32_XR_MODEL_FILTER="${EDUKE32_XR_MODEL_FILTER:-nearest}"
     export EDUKE32_XR_HAND_RIG="${EDUKE32_XR_HAND_RIG:-$data/hand-rig.txt}"
     [[ -n $aa ]] && export EDUKE32_XR_HUD_MODEL_MAP="${EDUKE32_XR_HUD_MODEL_MAP:-$data/hud-model-map.txt}"
 fi

@@ -222,10 +222,13 @@ eduke_xr::Runtime *sdlayer_xr_worldRuntime()
         char const *pixelated = sdlayer_xr_option("EDUKE32_XR_PIXELATED");
         // World ART stays palette-indexed and unfiltered (it must, for multiview); model skins get
         // nearest texels up close but mipmaps at a distance: crisp without headset sparkle.
-        if (pixelated && !std::strcmp(pixelated, "1") && (gltexfiltermode != TEXFILTER_OFF || glhightilefiltermode != 4))
+        // EDUKE32_XR_MODEL_FILTER=nearest (a pack's choice): model skins fully unfiltered too.
+        char const *modelFilter = sdlayer_xr_option("EDUKE32_XR_MODEL_FILTER");
+        int const skinMode = modelFilter && !std::strcmp(modelFilter, "nearest") ? 0 : 4;
+        if (pixelated && !std::strcmp(pixelated, "1") && (gltexfiltermode != TEXFILTER_OFF || glhightilefiltermode != skinMode))
         {
             gltexfiltermode = TEXFILTER_OFF;
-            glhightilefiltermode = 4; // GL_NEAREST_MIPMAP_LINEAR
+            glhightilefiltermode = skinMode; // GL_NEAREST or GL_NEAREST_MIPMAP_LINEAR
             gltexapplyprops();
         }
         LOG_F(INFO, "OpenXR experimental Polymost world session started (two-pass stereo oracle).");

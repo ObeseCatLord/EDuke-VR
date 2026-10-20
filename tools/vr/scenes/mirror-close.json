@@ -1,0 +1,6 @@
+[
+ {"pose": {"head": [0, 1.6, 0, 0, 0, 0], "left": [-0.25, 1.35, -0.4, 0, 0, 0], "right": [0.25, 1.35, -0.4, 0, 0, 0]}}, {"wait": 3},
+ {"capture": "mirror"},
+ {"console": "xr_weapons"}, {"wait": 2},
+ {"pose": {"right": [0.15, 1.45, -0.45, 0, 10, 0]}}, {"wait": 2}, {"capture": "mirror-gun"}
+]

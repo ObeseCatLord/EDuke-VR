@@ -135,7 +135,7 @@ static bool loadHudModelMap()
 // Runtime switches (console/settings.cfg): vr_models turns every VR model off (held weapons,
 // hands, body, third-person players, 3D weapon wheel) and falls back to native 2D art, like
 // RazeXR; vr_laser draws an aiming beam from the muzzle to the aim point.
-static int32_t vr_models=1, vr_laser=0;
+static int32_t vr_models=1, vr_laser=0, vr_fullbody=1;
 constexpr int32_t VRLaserTile=30060;
 } // namespace
 
@@ -153,6 +153,7 @@ void G_XRRegisterCvars()
     static osdcvardata_t cvars[] = {
         { "vr_models", "VR 3D models (held weapons, hands, body, other players, weapon wheel); 0 = native 2D sprites", (void *)&vr_models, CVAR_BOOL, 0, 1 },
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
+        { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
     };
     for (auto &cv : cvars) OSD_RegisterCvar(&cv, osdcmd_cvar_set);
 }
@@ -1319,6 +1320,24 @@ struct HandRig
     struct ShellVertex { uint8_t joint[2]; float weight; XrVector3f local[2]; };
     std::array<int,2> shellTile{{-1,-1}};
     std::array<std::vector<ShellVertex>,2> shell;
+    // Wrist-cut shells (no forearm) used when the full IK body supplies the arms.
+    std::array<int,2> wristShellTile{{-1,-1}};
+    std::array<std::vector<ShellVertex>,2> wristShell;
+    // Full IK body (vr_duke_ik): skeleton in model space and a skin of up to four bones per vertex.
+    struct IkBone { std::string name; int parent; XrVector3f position; XrQuaternionf rotation; };
+    struct IkVertex { uint8_t count; uint8_t bone[4]; float weight[4]; XrVector3f local[4]; };
+    struct IkBody
+    {
+        int tile=-1;
+        std::vector<IkBone> bones;
+        std::vector<IkVertex> vertices;
+        std::vector<uint8_t> hide;   // 1 head, 2 left hand, 4 right hand
+        int find(char const *name) const
+        {
+            for (size_t i=0;i<bones.size();++i) if (bones[i].name==name) return int(i);
+            return -1;
+        }
+    } ik;
     HandRigPose const *pose(unsigned side,char const *name) const
     {
         for (auto const &p:poses[side]) if (p.first==name) return &p.second;
@@ -1363,7 +1382,7 @@ static HandRig const *handRig()
             int tile;
             if (std::fscanf(file,"%d %127s",&tile,name)==2) rig.holds.emplace_back(tile,name);
         }
-        else if (!Bstrcmp(word,"shell"))
+        else if (!Bstrcmp(word,"shell") || !Bstrcmp(word,"shellwrist"))
         {
             // shell <side> <tile> <skin file>: "skin 1 <n>" then n lines "j0 w0 x0 y0 z0 j1 x1 y1 z1".
             int side,tile;
@@ -1388,19 +1407,95 @@ static HandRig const *handRig()
                 }
                 std::fclose(skin);
             }
-            if (!vertices.empty()) { rig.shellTile[side]=tile; rig.shell[side]=std::move(vertices); }
+            if (!vertices.empty())
+            {
+                if (!Bstrcmp(word,"shellwrist")) { rig.wristShellTile[side]=tile; rig.wristShell[side]=std::move(vertices); }
+                else { rig.shellTile[side]=tile; rig.shell[side]=std::move(vertices); }
+            }
             else LOG_F(WARNING,"OpenXR hand rig: unreadable shell skin %s.",skinPath);
+        }
+        else if (!Bstrcmp(word,"ikbody"))
+        {
+            // ikbody <tile> <skel> <skin> <headverts> <handverts_l> <handverts_r>
+            int tile;
+            char paths[5][1024];
+            if (std::fscanf(file,"%d %1023s %1023s %1023s %1023s %1023s",&tile,paths[0],paths[1],paths[2],paths[3],paths[4])!=6) break;
+            HandRig::IkBody ik;
+            bool good=unsigned(tile)<MAXTILES;
+            if (FILE *skel=good ? std::fopen(paths[0],"r") : nullptr)
+            {
+                int version=0, count=0;
+                good=std::fscanf(skel,"skel %d %d",&version,&count)==2 && version==1 && count>0 && count<256;
+                for (int i=0;good && i<count;++i)
+                {
+                    char bone[64]; HandRig::IkBone b;
+                    good=std::fscanf(skel,"%63s %d %f %f %f %f %f %f %f",bone,&b.parent,&b.position.x,&b.position.y,&b.position.z,
+                                     &b.rotation.x,&b.rotation.y,&b.rotation.z,&b.rotation.w)==9 && b.parent<i;
+                    b.name=bone; ik.bones.push_back(b);
+                }
+                std::fclose(skel);
+            }
+            else good=false;
+            if (FILE *skin=good ? std::fopen(paths[1],"r") : nullptr)
+            {
+                int version=0, count=0;
+                good=std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==2 && count>0 && count<=4096;
+                if (good) ik.vertices.resize(count);
+                for (auto &v:ik.vertices)
+                {
+                    int k=0;
+                    if (!good || std::fscanf(skin,"%d",&k)!=1 || k<1 || k>4) { good=false; break; }
+                    v.count=uint8_t(k);
+                    for (int j=0;j<k && good;++j)
+                    {
+                        int bone;
+                        good=std::fscanf(skin,"%d %f %f %f %f",&bone,&v.weight[j],&v.local[j].x,&v.local[j].y,&v.local[j].z)==5
+                            && unsigned(bone)<ik.bones.size();
+                        v.bone[j]=uint8_t(bone);
+                    }
+                }
+                std::fclose(skin);
+            }
+            else good=false;
+            if (good)
+            {
+                ik.hide.assign(ik.vertices.size(),0);
+                for (int list=0;list<3;++list)
+                    if (FILE *f=std::fopen(paths[2+list],"r"))
+                    {
+                        int index;
+                        while (std::fscanf(f,"%d",&index)==1)
+                            if (unsigned(index)<ik.hide.size()) ik.hide[index]|=uint8_t(1<<list);
+                        std::fclose(f);
+                    }
+                for (char const *name:{"pelvis","spine","chest","neck","head","upperarm_l","forearm_l","hand_l",
+                                        "upperarm_r","forearm_r","hand_r","thigh_l","calf_l","foot_l","thigh_r","calf_r","foot_r"})
+                    good=good && ik.find(name)>=0;
+            }
+            if (good) { ik.tile=tile; rig.ik=std::move(ik); }
+            else LOG_F(WARNING,"OpenXR hand rig: unusable IK body %s / %s.",paths[0],paths[1]);
         }
         else break;
     }
     std::fclose(file);
     usable=!rig.segments[0].empty() || !rig.segments[1].empty();
-    LOG_F(INFO,"OpenXR hand rig: %zu+%zu segments, %zu+%zu poses, %zu holds, shells %zu+%zu vertices.",rig.segments[0].size(),
-          rig.segments[1].size(),rig.poses[0].size(),rig.poses[1].size(),rig.holds.size(),rig.shell[0].size(),rig.shell[1].size());
+    LOG_F(INFO,"OpenXR hand rig: %zu+%zu segments, %zu+%zu poses, %zu holds, shells %zu+%zu vertices, IK body %zu bones %zu vertices.",
+          rig.segments[0].size(),rig.segments[1].size(),rig.poses[0].size(),rig.poses[1].size(),rig.holds.size(),
+          rig.shell[0].size(),rig.shell[1].size(),rig.ik.bones.size(),rig.ik.vertices.size());
     return usable ? &rig : nullptr;
 }
 
 struct HandSegmentSample : WorldModelSample {};
+
+// Joint transforms of each hand from this frame's prepareHandSegments (Build space): the full
+// IK body reaches its arms to the same wrist the floating hand is drawn at.
+static struct HandJointCache
+{
+    bool valid=false;
+    std::array<vec3_t,eduke_xr::HandInput::JointCount> roots{};
+    std::array<std::array<XrVector3f,3>,eduke_xr::HandInput::JointCount> bases{};
+} handJoints[2];
+static bool fullBodyFrame;   // the IK body draws the arms this frame (wrist-cut hand shells)
 
 // Pose one hand's segments. Joint sources in priority order: the weapon hold
 // pose (fingers wrap the held model's grip), tracked XR_EXT_hand_tracking
@@ -1533,12 +1628,18 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         source=name;
     }
     unsigned count=0;
-    // One continuous skinned shell (one draw) when the rig has it; segments otherwise.
-    int const shellModel=rig->shellTile[hand]>=0 ? md_tilehasmodel(rig->shellTile[hand],0) : -1;
+    handJoints[hand].valid=true;
+    handJoints[hand].roots=roots;
+    handJoints[hand].bases=bases;
+    // One continuous skinned shell (one draw) when the rig has it; segments otherwise. With the
+    // full IK body the wrist-cut variant (no forearm) meets the body's own forearm.
+    bool const wristCut=fullBodyFrame && rig->wristShellTile[hand]>=0 && md_tilehasmodel(rig->wristShellTile[hand],0)>=0;
+    int const shellTile=wristCut ? rig->wristShellTile[hand] : rig->shellTile[hand];
+    int const shellModel=shellTile>=0 ? md_tilehasmodel(shellTile,0) : -1;
     if (shellModel>=0)
     {
         static std::vector<vec3f_t> deformed[2];
-        auto const &skin=rig->shell[hand];
+        auto const &skin=wristCut ? rig->wristShell[hand] : rig->shell[hand];
         auto &vertices=deformed[hand];
         vertices.resize(skin.size());
         vec3_t const anchor=roots[1];   // wrist
@@ -1562,7 +1663,7 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         HandSegmentSample sample;
         sample.context.instance=16+hand*32;
         sample.context.modelid=shellModel;
-        sample.context.skinnum=tile2model[Ptile2tile(rig->shellTile[hand],0)].skinnum;
+        sample.context.skinnum=tile2model[Ptile2tile(shellTile,0)].skinnum;
         sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
         sample.context.cframe=sample.context.nframe=0;
         sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
@@ -2049,6 +2150,315 @@ static XrQuaternionf quatFromAxes(XrVector3f x, XrVector3f y, XrVector3f z)
         q={(z.x+x.z)/s,(z.y+y.z)/s,.25f*s,(x.y-y.x)/s};
     }
     return q;
+}
+
+// True full body (vr_fullbody, on by default when the pack has vr_duke_ik): Duke's skinned body under
+// the headset. Facing follows the head with a 45 degree deadzone (and lines up while moving), the
+// spine leans and the pelvis drops toward the head (crouching bends the legs), the arms reach the
+// tracked wrists by two-bone IK (the articulated hand shells attach there), the legs walk with a
+// stride cycle and the right leg performs the mighty foot. The head is hidden in first person and
+// shown in mirrors; the body's own hands are always replaced by the hand shells.
+static XrQuaternionf ikConj(XrQuaternionf q) { return {-q.x,-q.y,-q.z,q.w}; }
+static XrQuaternionf ikNormalize(XrQuaternionf q)
+{
+    float const l=std::sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w);
+    return l>1e-8f ? XrQuaternionf{q.x/l,q.y/l,q.z/l,q.w/l} : XrQuaternionf{0,0,0,1};
+}
+// Shortest rotation taking direction a onto direction b.
+static XrQuaternionf ikBetween(XrVector3f a, XrVector3f b)
+{
+    float const la=std::sqrt(dot(a,a)), lb=std::sqrt(dot(b,b));
+    if (!(la>1e-6f) || !(lb>1e-6f)) return {0,0,0,1};
+    a={a.x/la,a.y/la,a.z/la}; b={b.x/lb,b.y/lb,b.z/lb};
+    float const c=dot(a,b);
+    if (c<-.9999f)
+    {
+        XrVector3f axis=cross(a,{1,0,0});
+        if (dot(axis,axis)<1e-6f) axis=cross(a,{0,1,0});
+        float const l=std::sqrt(dot(axis,axis));
+        return {axis.x/l,axis.y/l,axis.z/l,0.f};
+    }
+    auto const axis=cross(a,b);
+    return ikNormalize({axis.x,axis.y,axis.z,1.f+c});
+}
+static XrQuaternionf ikSlerpIdentity(XrQuaternionf q, float t)   // rotation by t of q's angle
+{
+    q=ikNormalize(q);
+    if (q.w<0.f) q={-q.x,-q.y,-q.z,-q.w};
+    float const angle=2.f*std::acos(std::min(1.f,q.w))*t, s=std::sqrt(std::max(0.f,1.f-q.w*q.w));
+    if (s<1e-6f) return {0,0,0,1};
+    float const h=std::sin(angle*.5f)/s;
+    return {q.x*h,q.y*h,q.z*h,std::cos(angle*.5f)};
+}
+
+static std::vector<vec3f_t> ikDeformed[2];   // first person, with head
+static vec3f_t const *ikMirrorVertices() { return ikDeformed[1].data(); }
+
+static bool fullBodyAvailable()
+{
+    auto const *rig=handRig();
+    return vr_fullbody && G_XRModelsEnabled() && rig && rig->ik.tile>=0 && md_tilehasmodel(rig->ik.tile,0)>=0;
+}
+
+static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_xr::Runtime *runtime, bool showHead)
+{
+    auto const *rig=handRig();
+    auto const p=g_player[myconnectindex].ps;
+    static float bodyYaw, stride, standingHeight;
+    static vec3_t lastPos;
+    static bool yawValid;
+    if (!fullBodyAvailable() || !overlayEnabled() || !recentered || !inputValid() || inputRuntime!=runtime
+        || inputGeneration!=runtime->generation() || !rawInput.headValid || !validPose(rawInput.headPose)
+        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
+        || p->dead_flag || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || unsigned(body.sector)>=unsigned(numsectors))
+    { yawValid=false; return false; }
+    auto const &ik=rig->ik;
+    auto const bone=[&](char const *name) { return ik.find(name); };
+    int const pelvis=bone("pelvis"), spine=bone("spine"), chest=bone("chest"), neck=bone("neck"), head=bone("head");
+    int const upper[2]={bone("upperarm_l"),bone("upperarm_r")}, fore[2]={bone("forearm_l"),bone("forearm_r")},
+              handB[2]={bone("hand_l"),bone("hand_r")};
+    int const thigh[2]={bone("thigh_l"),bone("thigh_r")}, calf[2]={bone("calf_l"),bone("calf_r")}, foot[2]={bone("foot_l"),bone("foot_r")};
+    auto const &bind=ik.bones;
+
+    // Facing: head yaw with a 45 degree deadzone; lines up with the head while moving.
+    auto const headForward=rotate(multiply(inverseYaw,rawInput.headPose.orientation),{0,0,-1});
+    if (std::hypot(headForward.x,headForward.z)<1e-3f) return false;
+    float const headYaw=std::atan2(headForward.x,-headForward.z);
+    float const moved=std::hypot(float(p->pos.x-lastPos.x),float(p->pos.y-lastPos.y));
+    lastPos=p->pos;
+    if (!yawValid) { bodyYaw=headYaw; stride=0.f; yawValid=true; }
+    float const lag=wrapRadians(headYaw-bodyYaw), limit=Pi/4.f;
+    if (lag>limit) bodyYaw=headYaw-limit; else if (lag<-limit) bodyYaw=headYaw+limit;
+    if (moved>1.f) bodyYaw+=wrapRadians(headYaw-bodyYaw)*.2f;
+    stride+=moved/(1.4f*UnitsPerMetre);
+    stride-=std::floor(stride);
+
+    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+    auto const toBuild=[&](XrVector3f v) {
+        v=rotate(tracking,v);
+        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+    };
+    float const facing=yaw+bodyYaw, fx=std::cos(facing), fy=std::sin(facing);
+    // Model +Y is left or right depending on the asset: tell from the shoulders.
+    bool const yLeft=bind[upper[0]].position.y>bind[upper[1]].position.y;
+    float const yx=yLeft ? fy : -fy, yy=yLeft ? -fx : fx;   // Build direction of model +Y
+
+    // Uniform scale to the player's standing eye height (remembered, slowly relaxing).
+    auto const eyeOffset=toBuild({rawInput.headPose.position.x-origin.x,rawInput.headPose.position.y-origin.y,rawInput.headPose.position.z-origin.z});
+    float const eye[3]={body.pos.x+eyeOffset.x,body.pos.y+eyeOffset.y,body.pos.z+eyeOffset.z};
+    float const feetZ=float(sprite[p->i].z);
+    float const eyeHeight=(feetZ-eye[2])/ZUnitsPerMetre;   // metres
+    standingHeight=std::max(eyeHeight,standingHeight*.9995f);
+    if (!(standingHeight>.5f)) standingHeight=eyeHeight;
+    float const bindEye=bind[head].position.z/64.f+.08f;
+    float const scale=std::max(.8f,std::min(1.25f,standingHeight/std::max(.5f,bindEye)));
+    float const unitXY=UnitsPerMetre/64.f*scale, unitZ=ZUnitsPerMetre/64.f*scale;
+
+    // Head bone target and orientation in model space (head bone ~9 cm behind, 6 cm below the eyes).
+    auto const dirToModel=[&](XrVector3f v) {   // tracking-space direction -> model direction
+        v=rotate(tracking,v);
+        float const bx=-v.z*co-v.x*si, by=-v.z*si+v.x*co;
+        return XrVector3f{bx*fx+by*fy,bx*yx+by*yy,v.y};
+    };
+    auto const headFwdM=dirToModel(rotate(rawInput.headPose.orientation,{0,0,-1}));
+    auto const headUpM=dirToModel(rotate(rawInput.headPose.orientation,{0,1,0}));
+    // Root (model origin, between the feet on the floor) under the head bone, by the bind head offset.
+    XrVector3f const bindHead=bind[head].position;
+    float const headBack=.09f*64.f/scale, headDown=.06f*64.f/scale;
+    // Eye in model axes relative to the root is (bindHead.x + forward offsets...): solve root from the eye.
+    XrVector3f const headTargetFromEye={-headFwdM.x*headBack-headUpM.x*headDown,-headFwdM.y*headBack-headUpM.y*headDown,
+                                        -headFwdM.z*headBack-headUpM.z*headDown};
+    float const rootX=eye[0]-(fx*(bindHead.x-headTargetFromEye.x)+yx*(bindHead.y-headTargetFromEye.y))*unitXY;
+    float const rootY=eye[1]-(fy*(bindHead.x-headTargetFromEye.x)+yy*(bindHead.y-headTargetFromEye.y))*unitXY;
+    auto const toModel=[&](float const P[3]) {
+        float const dx=(P[0]-rootX)/unitXY, dy=(P[1]-rootY)/unitXY;
+        return XrVector3f{dx*fx+dy*fy,dx*yx+dy*yy,(feetZ-P[2])/unitZ};
+    };
+    auto const eyeM=toModel(eye);
+    XrVector3f const headTarget={eyeM.x+headTargetFromEye.x,eyeM.y+headTargetFromEye.y,eyeM.z+headTargetFromEye.z};
+
+    // Bind locals.
+    size_t const count=bind.size();
+    std::vector<XrQuaternionf> localRot(count), worldRot(count);
+    std::vector<XrVector3f> localPos(count), worldPos(count);
+    std::vector<int8_t> overridden(count,0), placed(count,0);   // rotation / position set explicitly
+    for (size_t b=0;b<count;++b)
+    {
+        int const parent=bind[b].parent;
+        if (parent<0) { localRot[b]=bind[b].rotation; localPos[b]=bind[b].position; continue; }
+        auto const inv=ikConj(bind[parent].rotation);
+        localRot[b]=multiply(inv,bind[b].rotation);
+        auto const d=XrVector3f{bind[b].position.x-bind[parent].position.x,bind[b].position.y-bind[parent].position.y,
+                                bind[b].position.z-bind[parent].position.z};
+        localPos[b]=rotate(inv,d);
+    }
+    auto const fk=[&](size_t from) {
+        for (size_t b=from;b<count;++b)
+        {
+            int const parent=bind[b].parent;
+            if (parent<0) { if (!overridden[b]) worldRot[b]=localRot[b]; if (!placed[b]) worldPos[b]=localPos[b]; continue; }
+            if (!overridden[b]) worldRot[b]=multiply(worldRot[parent],localRot[b]);
+            if (placed[b]) continue;
+            auto const o=rotate(worldRot[parent],localPos[b]);
+            worldPos[b]={worldPos[parent].x+o.x,worldPos[parent].y+o.y,worldPos[parent].z+o.z};
+        }
+    };
+    // Pelvis: drops when the head is lower than standing (legs bend), leans toward the head.
+    float const drop=std::max(0.f,bindHead.z-headTarget.z);
+    worldPos[pelvis]={bind[pelvis].position.x+(headTarget.x-bindHead.x)*.35f,bind[pelvis].position.y+(headTarget.y-bindHead.y)*.35f,
+                      bind[pelvis].position.z-drop*.9f};
+    worldRot[pelvis]=bind[pelvis].rotation; overridden[pelvis]=placed[pelvis]=1;
+    fk(0);
+    // Spine and chest bend so the neck heads for the head target.
+    {
+        auto const s0=worldPos[spine];
+        XrVector3f const current={worldPos[neck].x-s0.x,worldPos[neck].y-s0.y,worldPos[neck].z-s0.z};
+        XrVector3f const wanted={headTarget.x-s0.x,headTarget.y-s0.y,headTarget.z-s0.z-(bindHead.z-bind[neck].position.z)};
+        auto const bend=ikSlerpIdentity(ikBetween(current,wanted),.5f);
+        worldRot[spine]=multiply(bend,worldRot[spine]); overridden[spine]=1; fk(size_t(spine)+1);
+        worldRot[chest]=multiply(bend,worldRot[chest]); overridden[chest]=1; fk(size_t(chest)+1);
+    }
+    // Head and neck follow the headset (relative to the model's forward/up).
+    {
+        // Rotation taking the model's forward/up onto the head's (as coordinates: proper either way).
+        auto const target=quatFromAxes(headFwdM,cross(headUpM,headFwdM),headUpM);
+        auto const chestDelta=multiply(worldRot[chest],ikConj(bind[chest].rotation));
+        auto const relative=multiply(target,ikConj(chestDelta));
+        worldRot[neck]=multiply(ikSlerpIdentity(relative,.4f),multiply(chestDelta,bind[neck].rotation)); overridden[neck]=1;
+        fk(size_t(neck)+1);
+        worldRot[head]=multiply(target,bind[head].rotation); overridden[head]=1;
+        fk(size_t(head)+1);
+    }
+    // Two-bone IK: root bone b0 at a, mid bone b1, end bone b2 reaching t with the bend toward pole.
+    auto const twoBone=[&](int b0, int b1, int b2, XrVector3f t, XrVector3f pole) {
+        auto const a=worldPos[b0];
+        float const L1=std::sqrt(dot(localPos[b1],localPos[b1])), L2=std::sqrt(dot(localPos[b2],localPos[b2]));
+        XrVector3f d={t.x-a.x,t.y-a.y,t.z-a.z};
+        float dist=std::sqrt(dot(d,d));
+        if (!(dist>1e-4f) || !(L1>1e-4f) || !(L2>1e-4f)) return;
+        XrVector3f const dir={d.x/dist,d.y/dist,d.z/dist};
+        dist=std::max(std::fabs(L1-L2)+1e-3f,std::min(L1+L2-1e-3f,dist));
+        float const cosA=std::max(-1.f,std::min(1.f,(L1*L1+dist*dist-L2*L2)/(2.f*L1*dist))), sinA=std::sqrt(1.f-cosA*cosA);
+        float const pd=dot(pole,dir);
+        XrVector3f perp={pole.x-dir.x*pd,pole.y-dir.y*pd,pole.z-dir.z*pd};
+        float const pl=std::sqrt(dot(perp,perp));
+        if (pl<1e-5f) perp=std::fabs(dir.z)<.9f ? cross(dir,{0,0,1}) : cross(dir,{1,0,0});
+        else perp={perp.x/pl,perp.y/pl,perp.z/pl};
+        XrVector3f const elbow={a.x+dir.x*L1*cosA+perp.x*L1*sinA,a.y+dir.y*L1*cosA+perp.y*L1*sinA,a.z+dir.z*L1*cosA+perp.z*L1*sinA};
+        XrVector3f const end={a.x+dir.x*dist,a.y+dir.y*dist,a.z+dir.z*dist};
+        // Swing each bone from its current direction (parent-carried bind) onto the solved one.
+        auto const cur1=rotate(worldRot[b0],localPos[b1]);
+        worldRot[b0]=multiply(ikBetween(cur1,{elbow.x-a.x,elbow.y-a.y,elbow.z-a.z}),worldRot[b0]); overridden[b0]=1;
+        fk(size_t(b0)+1);
+        auto const cur2=rotate(worldRot[b1],localPos[b2]);
+        worldRot[b1]=multiply(ikBetween(cur2,{end.x-elbow.x,end.y-elbow.y,end.z-elbow.z}),worldRot[b1]); overridden[b1]=1;
+        fk(size_t(b1)+1);
+    };
+    // Arms to the tracked wrists (the hand shell's wrist joint), hanging when untracked.
+    for (unsigned side=0;side<2;++side)
+    {
+        float const out=bind[upper[side]].position.y>0.f ? 1.f : -1.f;
+        XrVector3f target;
+        if (handJoints[side].valid)
+        {
+            auto const &w=handJoints[side].roots[1];
+            float const P[3]={float(w.x),float(w.y),float(w.z)};
+            target=toModel(P);
+        }
+        else target={worldPos[upper[side]].x+4.f,worldPos[upper[side]].y+out*6.f,worldPos[upper[side]].z-40.f};
+        twoBone(upper[side],fore[side],handB[side],target,{-.4f,out*.8f,-1.f});
+        if (handJoints[side].valid)
+        {
+            // Hand bone along the wrist joint frame (XR: -Z toward the fingers, +Y back of the hand).
+            auto const &bs=handJoints[side].bases[1];
+            auto const axis=[&](XrVector3f b) {
+                XrVector3f const m={(b.x*fx+b.y*fy)/unitXY,(b.x*yx+b.y*yy)/unitXY,-b.z/unitZ};
+                float const l=std::sqrt(dot(m,m));
+                return l>1e-6f ? XrVector3f{m.x/l,m.y/l,m.z/l} : XrVector3f{1,0,0};
+            };
+            worldRot[handB[side]]=quatFromAxes(axis(bs[0]),axis(bs[1]),axis(bs[2])); overridden[handB[side]]=1;
+            fk(size_t(handB[side])+1);
+        }
+    }
+    // Legs: feet planted (stride cycle while moving), right leg kicks for the mighty foot.
+    float kickExtend=0.f;
+    {
+        static double kickStart=-1.;
+        static int lastCounter=-1;
+        int const counter=p->quick_kick>0 ? 14-p->quick_kick
+            : p->curr_weapon==KNEE_WEAPON && p->kickback_pic>0 ? std::min<int>(p->kickback_pic,14) : -1;
+        double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+        if (counter>=0 && (lastCounter<0 || counter<lastCounter)) kickStart=now-counter/30.;
+        lastCounter=counter;
+        if (counter>=0 && kickStart>=0.) kickExtend=std::sin(Pi*float(std::min(1.,(now-kickStart)/(14./30.))));
+    }
+    for (unsigned side=0;side<2;++side)
+    {
+        float const phase=(stride+(side ? .5f : 0.f))*2.f*Pi;
+        float const amount=std::min(1.f,moved/4.f);
+        XrVector3f target=bind[foot[side]].position;
+        target.x+=std::sin(phase)*.18f*64.f*amount;
+        target.z+=std::max(0.f,std::cos(phase))*.08f*64.f*amount;
+        if (side==1 && kickExtend>0.f)
+        {
+            float const gaze=std::max(-10.f,std::min(50.f,std::atan2(headFwdM.z,std::hypot(headFwdM.x,headFwdM.y))*180.f/Pi+15.f))*Pi/180.f;
+            auto const hip=worldPos[thigh[side]];
+            float const reach=(std::sqrt(dot(localPos[calf[side]],localPos[calf[side]]))+std::sqrt(dot(localPos[foot[side]],localPos[foot[side]])))*.95f;
+            XrVector3f const kick={hip.x+std::cos(gaze)*reach,hip.y,hip.z+std::sin(gaze)*reach};
+            target={target.x+(kick.x-target.x)*kickExtend,target.y+(kick.y-target.y)*kickExtend,target.z+(kick.z-target.z)*kickExtend};
+        }
+        twoBone(thigh[side],calf[side],foot[side],target,{1.f,0.f,.2f});
+    }
+
+    // Skin on the CPU (model units, model space): first person without the head, and a copy with
+    // the head for mirrors.
+    auto &deformed=ikDeformed[0], &withHead=ikDeformed[1];
+    deformed.resize(ik.vertices.size()); withHead.resize(ik.vertices.size());
+    for (size_t i=0;i<ik.vertices.size();++i)
+    {
+        auto const &v=ik.vertices[i];
+        uint8_t const hide=ik.hide[i];
+        int collapse=-1;
+        if (hide&2) collapse=handB[0];
+        else if (hide&4) collapse=handB[1];
+        if (collapse>=0) { deformed[i]=withHead[i]={worldPos[collapse].x,worldPos[collapse].y,worldPos[collapse].z}; continue; }
+        float acc[3]={0,0,0};
+        for (unsigned j=0;j<v.count;++j)
+        {
+            auto const r=rotate(worldRot[v.bone[j]],v.local[j]);
+            auto const &o=worldPos[v.bone[j]];
+            acc[0]+=v.weight[j]*(o.x+r.x); acc[1]+=v.weight[j]*(o.y+r.y); acc[2]+=v.weight[j]*(o.z+r.z);
+        }
+        withHead[i]={acc[0],acc[1],acc[2]};
+        deformed[i]=(hide&1) && !showHead ? vec3f_t{worldPos[neck].x,worldPos[neck].y,worldPos[neck].z} : withHead[i];
+    }
+    sample.context.instance=4;
+    sample.context.modelid=md_tilehasmodel(ik.tile,0);
+    sample.context.skinnum=tile2model[Ptile2tile(ik.tile,0)].skinnum;
+    sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+    sample.context.cframe=sample.context.nframe=0;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    sample.context.vertices=deformed.data();
+    sample.context.vertexCount=int32_t(deformed.size());
+    if (!md3_preflightcontext(&sample.context)) return false;
+    sample.root={int32_t(std::lround(rootX)),int32_t(std::lround(rootY)),int32_t(std::lround(feetZ))};
+    sample.pivot={0,0,0};
+    sample.basis[0]={fx*unitXY,fy*unitXY,0};
+    sample.basis[1]={yx*unitXY,yy*unitXY,0};
+    sample.basis[2]={0,0,-unitZ};
+    sample.sector=body.sector;
+    updatesector(sample.root.x,sample.root.y,&sample.sector);
+    if (sample.sector<0) sample.sector=body.sector;
+    if (std::getenv("EDUKE32_XR_TEST_HANDS"))
+    {
+        static int logged;
+        if (logged++%120==0)
+            LOG_F(INFO,"OpenXR IK body: scale=%.2f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f.",scale,drop,
+                  headTarget.x,headTarget.y,headTarget.z,int(handJoints[0].valid),int(handJoints[1].valid),kickExtend);
+    }
+    return true;
 }
 
 static SpriteBounds wheelPanelBounds;
@@ -3761,8 +4171,58 @@ static bool mirrorSeen;
 // G_HandleMirror's mirror choice and draw order from one eye's camera, into
 // that eye's target (stencil marks the mirror region). Script DISPLAYROOMS /
 // RESETGOTPICS events stay with the native once-per-frame call.
-static void drawEyeMirror(Camera const &cam, int32_t smoothRatio)
+// Last frame's VR models (body, hands, held weapon, ...), drawn reflected inside mirrors: you see your
+// own full body in a mirror. One frame old, which a reflection never shows.
+static std::vector<WorldModelSample> mirrorModels;
+static bool mirrorHasBody;
+
+static void drawMirrorModels(Eye const &eye, int mirrorWall)
 {
+    // Only with the full body: otherwise the native third-person Duke stays in the reflection and
+    // floating hands next to it would be doubles.
+    if (mirrorModels.empty() || !mirrorHasBody) return;
+    auto const &a=wall[mirrorWall], &b=wall[a.point2];
+    float dx=float(b.x-a.x), dy=float(b.y-a.y);
+    float const l=std::sqrt(dx*dx+dy*dy);
+    if (!(l>0.f)) return;
+    dx/=l; dy/=l;
+    float const nx=-dy, ny=dx;   // unit normal of the mirror line
+    // Real-eye camera for the model matrices (the mirror pass left the reflected camera installed).
+    eyeState(eye);
+    renderPrepareMasksQ16(eye.camera.pos.x,eye.camera.pos.y,eye.camera.pos.z,eye.camera.angle,eye.camera.horizon,eye.camera.sector);
+    for (auto model:mirrorModels)
+    {
+        float const d=(float(model.root.x-a.x)*nx+float(model.root.y-a.y)*ny)*2.f;
+        model.root.x=int32_t(std::lround(model.root.x-d*nx));
+        model.root.y=int32_t(std::lround(model.root.y-d*ny));
+        for (auto &v:model.basis)
+        {
+            float const k=(v.x*nx+v.y*ny)*2.f;
+            v.x-=k*nx; v.y-=k*ny;
+        }
+        worldModelMatrix(model,eye);
+        bool drawn=false;
+        if (polymost_xrBeginModelDraw(model.context.shade,model.context.palette,model.sector))
+        {
+            drawn=polymost_md3drawcontext(&model.context)!=0;
+            polymost_xrEndModelDraw();
+        }
+        if (std::getenv("EDUKE32_XR_TEST_HANDS"))
+        {
+            static int logged;
+            if (logged++<12) LOG_F(INFO,"OpenXR mirror model: instance=%d drawn=%d root=%d,%d,%d eye=%.3f,%.3f,%.3f.",model.context.instance,int(drawn),
+                                   model.root.x,model.root.y,model.root.z,model.context.modelToEye[12],model.context.modelToEye[13],model.context.modelToEye[14]);
+        }
+    }
+}
+
+static void drawEyeMirror(Camera const &cam, int32_t smoothRatio, Eye const *eye=nullptr)
+{
+    if (std::getenv("EDUKE32_XR_TEST_HANDS"))
+    {
+        static int logged;
+        if (logged++<4) LOG_F(INFO,"OpenXR mirror pass: seen=%d count=%d models=%zu eye=%d.",int(mirrorSeen),g_mirrorCount,mirrorModels.size(),eye!=nullptr);
+    }
     if (!mirrorSeen || g_mirrorCount<=0) return;
     int best=-1;
     int32_t distance=INT32_MAX;
@@ -3785,7 +4245,12 @@ static void drawEyeMirror(Camera const &cam, int32_t smoothRatio)
     display_mirror=1;
     G_DoSpriteAnimations(tposx,tposy,cam.pos.z,fix16_to_int(tang),smoothRatio);
     display_mirror=0;
+    // Your VR body replaces your own native player sprite in the reflection.
+    if (eye && mirrorHasBody)
+        for (int k=0;k<spritesortcnt;++k)
+            if (tsprite[k].owner==g_player[myconnectindex].ps->i) tsprite[k].cstat|=CSTAT_SPRITE_INVISIBLE;
     renderDrawMasks();
+    if (eye) drawMirrorModels(*eye,g_mirrorWall[best]);
     renderCompleteMirror();
     g_visibility=visibility;
     spritesortcnt=0;
@@ -3948,7 +4413,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                     glClearColor(0,0,0,1);
                     glClear(GL_COLOR_BUFFER_BIT);
                     // Mirrors use the front pass camera only.
-                    if (!collect) drawEyeMirror(view.camera,smoothRatio);
+                    if (!collect) drawEyeMirror(view.camera,smoothRatio,&eye);
                 }
                 spritesortcnt=0;
                 if (collect) polymost_xrBeginCollection(POLYMOST_XR_OPAQUE,i);
@@ -4144,6 +4609,9 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         auto const cardOption=sdlayer_xr_option("EDUKE32_XR_WEAPON");
         bool const cardHand=!weaponModel && !wheel.open && cardOption && !Bstrcmp(cardOption,"1")
             && g_player[myconnectindex].ps->curr_weapon!=KNEE_WEAPON && !nativeWeaponHidden();
+        // True full body this frame: the IK body draws arms/legs; hands attach as wrist-cut shells.
+        fullBodyFrame=good && !fixtureTest && fullBodyAvailable();
+        handJoints[0].valid=handJoints[1].valid=false;
         HandModelSample detonator;
         unsigned detonatorHand=2;
         if (good && !fixtureTest && !wheel.open && !gadgetWheel.open && prepareDetonator(detonator,body,runtime,detonatorHand))
@@ -4165,10 +4633,12 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         if (good && !fixtureTest) { prepareWheel(wheel,segments,body,runtime); prepareWheel(gadgetWheel,segments,body,runtime); }
         HandSegmentSample laser, boot;
         if (good && !fixtureTest && prepareLaser(laser,body,runtime)) segments.push_back(laser);
-        if (good && !fixtureTest && prepareKickBoot(boot,body,runtime)) segments.push_back(boot);
+        if (good && !fixtureTest && !fullBodyFrame && prepareKickBoot(boot,body,runtime)) segments.push_back(boot);
         for (auto &segment:segments)
             if (modelCount<MaxWorldModels-1) models[modelCount++]=&segment;
-        if (good && !fixtureTest && prepareBodyModel(bodyModel,body,runtime)) models[modelCount++]=&bodyModel;
+        HandSegmentSample ikBody;
+        if (fullBodyFrame && prepareIkBody(ikBody,body,runtime,false)) models[modelCount++]=&ikBody;
+        else if (good && !fixtureTest && prepareBodyModel(bodyModel,body,runtime)) models[modelCount++]=&bodyModel;
         int const gripState=((gripMask&1) ? grips[0].state+1 : 0)+4*((gripMask&2) ? grips[1].state+1 : 0);
         std::string gripPrefix;
         bool gripLog=false;
@@ -4459,6 +4929,22 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                         }
                     }
                 }
+            }
+        }
+        // Keep this frame's models for next frame's mirrors (the body with its head shown).
+        mirrorModels.clear(); mirrorHasBody=false;
+        for (unsigned index=0;index<modelCount;++index)
+        {
+            mirrorModels.push_back(*models[index]);
+            if (models[index]==&ikBody)
+            {
+                mirrorModels.back().context.vertices=ikMirrorVertices();
+                mirrorHasBody=true;
+            }
+            else if (models[index]==&bodyModel)
+            {
+                mirrorModels.back().context.hiddenSurfaces=0;
+                mirrorHasBody=true;
             }
         }
         lap(xrTiming.models);

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Assemble the EDuke32 VR model DEF, hand rig and HUD-tile map.
 
-Usage: build_vr_def.py ASSETS DATA [--aa] [--release] [--glow]
+Usage: build_vr_def.py ASSETS DATA [--aa] [--release] [--glow] [--pack=NAME]
 
 ASSETS is the duke-vr-assets checkout, DATA the private output directory (the
 game's -j search path). Prints the DEF to stdout and writes DATA/hand-rig.txt
@@ -14,7 +14,7 @@ Sources in priority order:
                     game data (Duke Nukem Forever); local use only, never with
                     --release
 Tiles: 21 stock pistol, 30020+weapon held weapons, 30010/30011 single-mesh
-hands, 30020 mighty foot boot, 30060 aiming laser, 30061-30064 wheel parts, 30066 first-person body (torso/legs), APLAYER (1405+) Duke for both third and first person (torso/legs),
+hands, 30020 mighty foot boot, 30060 aiming laser, 30061-30064 wheel parts, 30066 first-person body (torso/legs), 30067 full IK body, 30266+side wrist-cut hands, APLAYER (1405+) Duke for both third and first person (torso/legs),
 30100+family AA held weapons,
 30200+side*32+segment finger-tracking hand segments, 30264+side single-shell hands.
 """
@@ -39,7 +39,27 @@ def main():
     # (multiview); the parts that must glow (laser, wheel pointer and beam) are drawn fullbright.
     glow_maps = '--glow' in sys.argv
     assets, data = Path(args[0]), Path(args[1])
-    v6 = assets / 'v6-original/exports/eduke32'
+    # --pack NAME: a model pack beside v6-original (e.g. a private one); any file it lacks comes
+    # from v6-original, so a pack may replace only some models.
+    pack_name = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--pack=')), 'v6-original')
+    pack_root = assets / pack_name
+    if pack_name != 'v6-original' and not pack_root.is_dir():
+        sys.exit(f'build_vr_def: no model pack {pack_root}')
+    pack_info = json.loads((pack_root / 'pack.json').read_text()) if (pack_root / 'pack.json').is_file() else {}
+    if release and pack_info.get('redistributable') is False:
+        sys.exit(f'build_vr_def: pack {pack_name} is not redistributable')
+
+    class PackDir(type(Path())):
+        """exports/eduke32 of the chosen pack, falling back file by file to v6-original."""
+        def __truediv__(self, rel):
+            chosen = pack_root / 'exports/eduke32' / rel
+            return chosen if chosen.exists() else assets / 'v6-original/exports/eduke32' / rel
+
+    v6 = PackDir(pack_root / 'exports/eduke32')
+    if pack_name != 'v6-original':
+        notes.append(f'model pack: {pack_name}' + (' (PRIVATE, not redistributable)' if pack_info.get('redistributable') is False else ''))
+    # Pack-wide texture filter (e.g. "nearest": no filtering at all) for the launcher.
+    (data / 'pack-filter.txt').write_text(pack_info.get('texture_filter', '') + '\n')
     out, notes = [], []
     private_used = []
 
@@ -152,7 +172,9 @@ def main():
     if aa:
         out.insert(0, 'include "duke3d.def"')
         # Family ids and AA HUD tile numbers; v6 ships its own copy.
-        inventory = v6.parent.parent / 'metadata/aa_inventory.json'
+        inventory = pack_root / 'metadata/aa_inventory.json'
+        if not inventory.is_file():
+            inventory = assets / 'v6-original/metadata/aa_inventory.json'
         if not inventory.is_file():
             inventory = assets / 'aa-v1/metadata/arsenal_inventory.json'
         families = json.loads(inventory.read_text())['families'] if inventory.is_file() else []
@@ -186,7 +208,9 @@ def main():
 
     # Finger-tracking hand rig (original assets only).
     rig_lines = []
-    flat = v6.parent.parent / 'metadata/hand_poses_flat.json'
+    flat = pack_root / 'metadata/hand_poses_flat.json'
+    if not flat.is_file():
+        flat = assets / 'v6-original/metadata/hand_poses_flat.json'
     if flat.is_file():
         rig = json.loads(flat.read_text())
         order = [name.lower().replace('xr_hand_joint_', '').replace('_ext', '') for name in rig.get('joint_order', JOINTS)]
@@ -209,12 +233,27 @@ def main():
                 rig_lines.append(f'pose {side_index} {pose} {frame}')
                 rig_lines += [' '.join(f'{x:.6f}' for x in joint) for joint in joints]
             # Single-shell hand (one skinned mesh, drawn instead of the segments when present).
-            shell = v6 / f'hands/vr_hand_{side}_shell'
-            if all(shell.with_suffix(ext).is_file() for ext in ('.md3', '.png', '.skin')):
+            shell = {ext: v6 / f'hands/vr_hand_{side}_shell{ext}' for ext in ('.md3', '.png', '.skin')}
+            if all(path.is_file() for path in shell.values()):
                 tile = 30264 + side_index
-                model(shell.with_suffix('.md3'), shell.with_suffix('.png'), tile, f'vr_hand_{side}_shell', frame='bind')
-                link(shell.with_suffix('.skin'), f'vr_hand_{side}_shell.skin')
+                model(shell['.md3'], shell['.png'], tile, f'vr_hand_{side}_shell', frame='bind')
+                link(shell['.skin'], f'vr_hand_{side}_shell.skin')
                 rig_lines.append(f'shell {side_index} {tile} {data / f"vr_hand_{side}_shell.skin"}')
+            wrist = {ext: v6 / f'hands/vr_hand_{side}_shell_wrist{ext}' for ext in ('.md3', '.png', '.skin')}
+            if all(path.is_file() for path in wrist.values()):
+                tile = 30266 + side_index
+                model(wrist['.md3'], wrist['.png'], tile, f'vr_hand_{side}_shell_wrist', frame='bind')
+                link(wrist['.skin'], f'vr_hand_{side}_shell_wrist.skin')
+                rig_lines.append(f'shellwrist {side_index} {tile} {data / f"vr_hand_{side}_shell_wrist.skin"}')
+        # True full body (IK skeleton + skin + head/hand vertex lists).
+        ik = {ext: v6 / f'vr_duke_ik{ext}' for ext in ('.md3', '.png', '.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r')}
+        if all(path.is_file() for path in ik.values()) and not aa:
+            model(ik['.md3'], ik['.png'], 30067, 'vr_duke_ik', frame='bind')
+            for ext in ('.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r'):
+                link(ik[ext], 'vr_duke_ik' + ext)
+            rig_lines.append('ikbody 30067 ' + ' '.join(str(data / ('vr_duke_ik' + ext))
+                                                        for ext in ('.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r')))
+            notes.append(f'full body: {ik[".md3"]}')
         rig_lines += [f'hold {tile} {name}' for tile, name in holds]
     (data / 'hand-rig.txt').write_text('\n'.join(rig_lines) + '\n')
 
