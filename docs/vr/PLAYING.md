@@ -26,8 +26,12 @@ picked up), skips the setup window (`-- -setup` brings it back) and uses an X11
 (XWayland) window, which OpenXR's GL binding needs. Options:
 `--left` (left-handed weapon), `--no-models`, `--assets DIR`, `--binary FILE`,
 `--glow` (model glow maps: brighter emissive bits, but every VR model is then
-drawn once per eye instead of once for both); anything after `--` goes to
-EDuke32 (e.g. `-- -map E2L1.MAP`).
+drawn once per eye instead of once for both), `--pack NAME` (a model pack folder
+beside `v6-original` in `duke-vr-assets`; files it lacks come from
+`v6-original`; a pack can ask for unfiltered textures in its `pack.json`);
+anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`). A personal default
+pack can be set in `~/.config/eduke32-vr/launcher.conf` (`pack=NAME`); `--release`
+refuses packs marked not redistributable.
 
 ### What `EDUKE32_XR=play` enables
 
@@ -88,11 +92,25 @@ and the KHR simple controller.
 
 ## Body, hands, kicks and pipebombs
 
-- **Hands**: one continuous skinned mesh per hand (Duke's gloved, muscular
-  hands), deformed on the CPU from the tracked joints or the weapon's hold
-  pose; the older 16-part segmented hands are only a fallback.
-- **First-person body**: off by default (`EDUKE32_XR_BODY_TILE=1405` shows the
-  third-person Duke model under you).
+- **True full body** (`vr_fullbody 1`, the default when the model pack has it):
+  look down and you see Duke's whole body. It stands under the headset, turns
+  with you (45 degree deadzone, lines up while you move), leans and crouches with
+  your head, its arms reach your tracked hands by IK and its legs walk; the
+  mighty foot is its own right leg. Your hands (cut from the same body, fully
+  articulated) attach at its wrists. `vr_fullbody 0` switches to floating hands
+  and the floating boot. In Alien Armageddon the body is used only while playing
+  Duke; the other characters have their own floating hands.
+- **Mirrors** show your VR body (head included) with your hands and weapon,
+  instead of the native player sprite; no black frame around mirrors.
+- **Hands**: one continuous skinned mesh per hand, deformed on the CPU from the
+  tracked joints or the weapon's hold pose; the older 16-part segmented hands are
+  only a fallback. Close to your face they are no longer sliced open (near plane
+  16x closer).
+- **Other players and third person**: Duke players use the third-person Duke
+  model; characters without a model (e.g. Alien Armageddon's Bombshell) keep
+  their sprites, in multiplayer and in mirrors.
+- **Old first-person body**: `EDUKE32_XR_BODY_TILE=1405` (only without the full
+  body) shows the torso/legs model under you.
 - **Mighty Foot**: kicks (selected foot or quick kick) leave your body and go
   where you **look**, not where your hand points, and Duke's 3D boot (with a
   jeans cuff) swings out in front of you. No 2D foot or hand ever appears on
@@ -102,6 +120,16 @@ and the KHR simple controller.
 - **Pipebombs**: hold the trigger, swing and let go; the bomb flies with your
   swing (a firm 4 m/s throw reaches about 8 m, a hard one 20+ m). In remote
   mode your off hand holds Duke's detonator; its trigger sets the bombs off.
+
+## Sky, sprites and flat screens
+
+- The sky stays put: it no longer drifts with your head when you look up/down.
+- Enemies and other sprites are upright cards that face your head, the same for
+  both eyes, instead of turning with each eye's view (`EDUKE32_XR_FACE_BILLBOARD=0`
+  restores the old screen-aligned sprites).
+- Intermission/bonus screens, loading screens, logos and cutscenes, and the
+  menus, appear on a virtual screen fixed in the world in front of you (it
+  re-centres when you look well away); controller buttons advance them.
 
 ## Wrist HUD
 
