@@ -28,6 +28,7 @@ def main():
     parser.add_argument('--remote-port', type=int, default=49777)
     parser.add_argument('--timeout', default=580, type=int)
     parser.add_argument('--switches', type=int, default=24)
+    parser.add_argument('--pack', default='v6-original', help='model pack (launcher --pack)')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='aa-weapons-', dir=args.work_dir.resolve()))
@@ -45,7 +46,7 @@ def main():
                EDUKE32_XR_CAPTURE_REQUEST=str(capture), EDUKE32_XR_CONSOLE_REQUEST=str(console),
                XDG_DATA_HOME=str(lab / 'data'))
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
-    command = [str(launcher), '--binary', str(args.binary.resolve()), '--aa', str(args.aa_root.resolve()), '--',
+    command = [str(launcher), '--binary', str(args.binary.resolve()), '--aa', str(args.aa_root.resolve()), '--pack', args.pack, '--',
                '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
                '-mx', 'aa_controller_observer.con', '-v1', '-l2', '-s1']
     log_path = lab / 'game.log'
