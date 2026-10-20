@@ -14,7 +14,7 @@ Sources in priority order:
                     game data (Duke Nukem Forever); local use only, never with
                     --release
 Tiles: 21 stock pistol, 30020+weapon held weapons, 30010/30011 single-mesh
-hands, 30020 mighty foot boot, 30060 aiming laser, 30061-30064 wheel parts, 30066 first-person body (torso/legs), 30067 full IK body, 30266+side wrist-cut hands, APLAYER (1405+) Duke for both third and first person (torso/legs),
+hands, 30020 mighty foot boot, 30060 aiming laser, 30061-30064 wheel parts, 30066 first-person body (torso/legs), 30067 full IK body, 30266+side wrist-cut hands, 30270+pchar*2+side character hands, APLAYER (1405+) Duke for both third and first person (torso/legs),
 30100+family AA held weapons,
 30200+side*32+segment finger-tracking hand segments, 30264+side single-shell hands.
 """
@@ -126,7 +126,9 @@ def main():
     # Third-person Duke for other players: native APLAYER (1405) action tiles,
     # from the stock GAME.CON actions (start, frames, 5 view angles each).
     duke_md3, duke_png = v6 / 'vr_duke.md3', v6 / 'vr_duke.png'
-    if duke_md3.is_file() and duke_png.is_file() and not aa:
+    # Duke-character players only: other characters (e.g. Alien Armageddon's Bombshell) use their own
+    # player tiles and keep their native sprites in multiplayer and mirrors.
+    if duke_md3.is_file() and duke_png.is_file():
         actions = [  # (first tile offset, frame names) — later entries win on shared art
             (0, ['stand']), (40, ['stand', 'stand']), (20, ['walk_01', 'walk_02', 'walk_03', 'walk_04']),
             (45, ['walk_04', 'walk_03', 'walk_02', 'walk_01']), (50, ['jump'] * 4), (15, ['jump']), (65, ['fall']),
@@ -247,13 +249,31 @@ def main():
                 rig_lines.append(f'shellwrist {side_index} {tile} {data / f"vr_hand_{side}_shell_wrist.skin"}')
         # True full body (IK skeleton + skin + head/hand vertex lists).
         ik = {ext: v6 / f'vr_duke_ik{ext}' for ext in ('.md3', '.png', '.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r')}
-        if all(path.is_file() for path in ik.values()) and not aa:
+        if all(path.is_file() for path in ik.values()):
             model(ik['.md3'], ik['.png'], 30067, 'vr_duke_ik', frame='bind')
             for ext in ('.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r'):
                 link(ik[ext], 'vr_duke_ik' + ext)
             rig_lines.append('ikbody 30067 ' + ' '.join(str(data / ('vr_duke_ik' + ext))
                                                         for ext in ('.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r')))
             notes.append(f'full body: {ik[".md3"]}')
+        # Per-character hands (Alien Armageddon's pchar 1..4) from the pack's characters.json.
+        chars = pack_root / 'metadata/characters.json'
+        if aa and chars.is_file():
+            for name, info in json.loads(chars.read_text()).items():
+                pchar = int(info.get('pchar', 0))
+                if not 0 < pchar < 8:
+                    continue
+                for side_index, side in enumerate(('left', 'right')):
+                    stem = pack_root / 'exports/eduke32/characters' / name / 'hands' / f'vr_hand_{side}_shell'
+                    files = {ext: stem.with_name(stem.name + ext) for ext in ('.md3', '.png', '.skin')}
+                    if not all(path.is_file() for path in files.values()):
+                        continue
+                    tile = 30270 + pchar * 2 + side_index
+                    label = f'vr_hand_{side}_{name}'
+                    model(files['.md3'], files['.png'], tile, label, frame='bind')
+                    link(files['.skin'], label + '.skin')
+                    rig_lines.append(f'charshell {pchar} {side_index} {tile} {data / (label + ".skin")}')
+                notes.append(f'character hands: {name} (pchar {pchar})')
         rig_lines += [f'hold {tile} {name}' for tile, name in holds]
     (data / 'hand-rig.txt').write_text('\n'.join(rig_lines) + '\n')
 

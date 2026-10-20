@@ -1323,6 +1323,9 @@ struct HandRig
     // Wrist-cut shells (no forearm) used when the full IK body supplies the arms.
     std::array<int,2> wristShellTile{{-1,-1}};
     std::array<std::vector<ShellVertex>,2> wristShell;
+    // Per-character hands (Alien Armageddon pchar 1..7).
+    std::array<std::array<int,2>,8> charShellTile{};
+    std::array<std::array<std::vector<ShellVertex>,2>,8> charShell;
     // Full IK body (vr_duke_ik): skeleton in model space and a skin of up to four bones per vertex.
     struct IkBone { std::string name; int parent; XrVector3f position; XrQuaternionf rotation; };
     struct IkVertex { uint8_t count; uint8_t bone[4]; float weight[4]; XrVector3f local[4]; };
@@ -1351,6 +1354,7 @@ static HandRig const *handRig()
     static bool usable;
     if (loaded) return usable ? &rig : nullptr;
     loaded=true;
+    for (auto &tiles:rig.charShellTile) tiles={{-1,-1}};
     auto path=sdlayer_xr_option("EDUKE32_XR_HAND_RIG");
     FILE *file=path ? std::fopen(path,"r") : nullptr;
     if (!file) return nullptr;
@@ -1382,11 +1386,13 @@ static HandRig const *handRig()
             int tile;
             if (std::fscanf(file,"%d %127s",&tile,name)==2) rig.holds.emplace_back(tile,name);
         }
-        else if (!Bstrcmp(word,"shell") || !Bstrcmp(word,"shellwrist"))
+        else if (!Bstrcmp(word,"shell") || !Bstrcmp(word,"shellwrist") || !Bstrcmp(word,"charshell"))
         {
             // shell <side> <tile> <skin file>: "skin 1 <n>" then n lines "j0 w0 x0 y0 z0 j1 x1 y1 z1".
-            int side,tile;
+            // charshell <pchar> <side> <tile> <skin file>
+            int side,tile,character=0;
             char skinPath[1024];
+            if (!Bstrcmp(word,"charshell") && (std::fscanf(file,"%d",&character)!=1 || character<=0 || character>=8)) break;
             if (std::fscanf(file,"%d %d %1023s",&side,&tile,skinPath)!=3 || unsigned(side)>=2 || unsigned(tile)>=MAXTILES) break;
             std::vector<HandRig::ShellVertex> vertices;
             if (FILE *skin=std::fopen(skinPath,"r"))
@@ -1409,7 +1415,8 @@ static HandRig const *handRig()
             }
             if (!vertices.empty())
             {
-                if (!Bstrcmp(word,"shellwrist")) { rig.wristShellTile[side]=tile; rig.wristShell[side]=std::move(vertices); }
+                if (character) { rig.charShellTile[character][side]=tile; rig.charShell[character][side]=std::move(vertices); }
+                else if (!Bstrcmp(word,"shellwrist")) { rig.wristShellTile[side]=tile; rig.wristShell[side]=std::move(vertices); }
                 else { rig.shellTile[side]=tile; rig.shell[side]=std::move(vertices); }
             }
             else LOG_F(WARNING,"OpenXR hand rig: unreadable shell skin %s.",skinPath);
@@ -1496,6 +1503,13 @@ static struct HandJointCache
     std::array<std::array<XrVector3f,3>,eduke_xr::HandInput::JointCount> bases{};
 } handJoints[2];
 static bool fullBodyFrame;   // the IK body draws the arms this frame (wrist-cut hand shells)
+// Alien Armageddon's playable character (gamevar pchar; 0 Duke). Other mods: always Duke.
+static int playerCharacter()
+{
+    static int const missing=INT32_MIN;
+    int const value=Gv_GetVarByLabel("pchar",missing,g_player[myconnectindex].ps->i,myconnectindex);
+    return value==missing ? 0 : value;
+}
 
 // Pose one hand's segments. Joint sources in priority order: the weapon hold
 // pose (fingers wrap the held model's grip), tracked XR_EXT_hand_tracking
@@ -1634,12 +1648,15 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
     // One continuous skinned shell (one draw) when the rig has it; segments otherwise. With the
     // full IK body the wrist-cut variant (no forearm) meets the body's own forearm.
     bool const wristCut=fullBodyFrame && rig->wristShellTile[hand]>=0 && md_tilehasmodel(rig->wristShellTile[hand],0)>=0;
-    int const shellTile=wristCut ? rig->wristShellTile[hand] : rig->shellTile[hand];
+    int const character=playerCharacter();
+    bool const ownHands=character>0 && character<8 && rig->charShellTile[character][hand]>=0
+        && md_tilehasmodel(rig->charShellTile[character][hand],0)>=0;
+    int const shellTile=ownHands ? rig->charShellTile[character][hand] : wristCut ? rig->wristShellTile[hand] : rig->shellTile[hand];
     int const shellModel=shellTile>=0 ? md_tilehasmodel(shellTile,0) : -1;
     if (shellModel>=0)
     {
         static std::vector<vec3f_t> deformed[2];
-        auto const &skin=wristCut ? rig->wristShell[hand] : rig->shell[hand];
+        auto const &skin=ownHands ? rig->charShell[character][hand] : wristCut ? rig->wristShell[hand] : rig->shell[hand];
         auto &vertices=deformed[hand];
         vertices.resize(skin.size());
         vec3_t const anchor=roots[1];   // wrist
@@ -2197,7 +2214,9 @@ static vec3f_t const *ikMirrorVertices() { return ikDeformed[1].data(); }
 static bool fullBodyAvailable()
 {
     auto const *rig=handRig();
-    return vr_fullbody && G_XRModelsEnabled() && rig && rig->ik.tile>=0 && md_tilehasmodel(rig->ik.tile,0)>=0;
+    // Duke's body: only while playing Duke (AA's other characters keep floating hands).
+    return vr_fullbody && G_XRModelsEnabled() && rig && rig->ik.tile>=0 && md_tilehasmodel(rig->ik.tile,0)>=0
+        && playerCharacter()==0;
 }
 
 static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_xr::Runtime *runtime, bool showHead)
