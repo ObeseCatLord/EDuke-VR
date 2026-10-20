@@ -31,7 +31,12 @@ beside `v6-original` in `duke-vr-assets`; files it lacks come from
 `v6-original`; a pack can ask for unfiltered textures in its `pack.json`);
 anything after `--` goes to EDuke32 (e.g. `-- -map E2L1.MAP`). A personal default
 pack can be set in `~/.config/eduke32-vr/launcher.conf` (`pack=NAME`); `--release`
-refuses packs marked not redistributable.
+refuses packs marked not redistributable. A pack's `pack.json` may also list game data
+to autoload (`autoload`, for the games in `games`); its `duke3d.def` is then included,
+e.g. a voxel world. Personal packs seen so far: `dnf-private` (Duke, hands, body, foot
+and all weapons incl. AA and Caribbean variants) and `voxel-private` (voxel world plus
+voxel weapons, foot and player model, base game only; hands and the full body come from
+v6). Neither may ever be redistributed.
 
 ### What `EDUKE32_XR=play` enables
 
