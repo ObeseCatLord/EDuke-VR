@@ -61,6 +61,10 @@ def main():
                XDG_DATA_HOME=str(lab / 'data'))
     env.update(kv.split('=', 1) for kv in args.env)
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
+    if args.map and Path(args.map).is_file():
+        # EDuke32 resolves user maps against its search path: copy into the lab directory.
+        (lab / Path(args.map).name).write_bytes(Path(args.map).read_bytes())
+        args.map = Path(args.map).name
     level = ['-map', args.map] if args.map else ['-v1', '-l1']
     command = [str(launcher), '--binary', str(args.binary.resolve()), '--',
                '-usecwd', '-noautoload', '-nologo', *level, '-s1', *args.args.split()]

@@ -2475,8 +2475,13 @@ static void resizeglcheck(bool clearDebugBuffers = true)
 
     float m[4][4];
     Bmemset(m,0,sizeof(m));
-    float const nearclip = 4.f / (gxyaspect * gyxscale * 512.f);
+    float nearclip = 4.f / (gxyaspect * gyxscale * 512.f);
     float const farclip = 8.f;
+#ifdef USE_OPENXR
+    // Hands and held weapons come within a few centimetres of the eyes: a far near plane
+    // slices them open (interior faces, fingers seen through the palm).
+    if (xrProjection.active) nearclip *= 1.f/16.f;
+#endif
 
 #ifdef USE_OPENXR
     if (xrProjection.active)
@@ -9423,6 +9428,21 @@ void polymost_prepareMirror(int32_t dax, int32_t day, int32_t daz, fix16_t daang
 {
     buildgl_outputDebugMessage(3, "polymost_prepareMirror(%u)", mirrorWall);
 
+#ifdef USE_OPENXR
+    if (xrProjection.active)
+    {
+        // Same camera setup as the eye's own pass (asymmetric XR frustum, explicit pitch): the
+        // stencil hole must match the mirror wall exactly, or the reflection gets a black frame.
+        set_globalpos(dax, day, daz);
+        set_globalang(daang);
+        globalhoriz = mulscale16(fix16_to_int(dahoriz)-100,divscale16(xdimenscale,viewingrange))+(ydimen>>1);
+        qglobalhoriz = mulscale16(dahoriz-F16(100), divscale16(xdimenscale, viewingrange))+fix16_from_int(ydimen>>1);
+        polymost_prepareCamera(false);
+        grhalfxdown10x = grhalfxdown10;
+    }
+    else
+#endif
+    {
     //POGO: prepare necessary globals for drawing, as we intend to call this outside of drawrooms
     gvrcorrection = viewingrange*(1.f/65536.f);
     if (glprojectionhacks == 2)
@@ -9476,6 +9496,7 @@ void polymost_prepareMirror(int32_t dax, int32_t day, int32_t daz, fix16_t daang
         gctang = (gctang > 0.f) ? 1.f : -1.f;
     }
     grhalfxdown10x = grhalfxdown10;
+    }
 
     //POGO: write the mirror region to the stencil buffer to allow showing mirrors & skyboxes at the same time
     buildgl_setEnabled(GL_STENCIL_TEST);
