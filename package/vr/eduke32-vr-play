@@ -77,6 +77,11 @@ fi
 # The headset needs an X11 (XWayland) GL window, and the setup dialog would
 # wait on the desktop; -setup in the EDuke32 arguments still shows it.
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
+# The headset paces frames: the desktop mirror must never wait on the monitor (a vsync forced
+# in nvidia-settings), and the stereo collector reads GL state back per draw, which a threaded
+# GL driver turns into a queue drain each time.
+export __GL_SYNC_TO_VBLANK="${__GL_SYNC_TO_VBLANK:-0}" __GL_THREADED_OPTIMIZATIONS="${__GL_THREADED_OPTIMIZATIONS:-0}"
+export mesa_glthread="${mesa_glthread:-false}"
 # Game data a model pack asks for (e.g. a voxel world), loaded after the main GRP.
 if [[ -f $data/pack-autoload.txt ]]; then
     while IFS= read -r extra; do [[ -n $extra ]] && cmd+=(-g "$extra"); done < "$data/pack-autoload.txt"
