@@ -56,6 +56,7 @@ def main():
             return chosen if chosen.exists() else assets / 'v6-original/exports/eduke32' / rel
 
     v6 = PackDir(pack_root / 'exports/eduke32')
+    out, notes = [], []
     if pack_name != 'v6-original':
         notes.append(f'model pack: {pack_name}' + (' (PRIVATE, not redistributable)' if pack_info.get('redistributable') is False else ''))
     # Pack-wide texture filter (e.g. "nearest": no filtering at all) for the launcher.
@@ -67,7 +68,6 @@ def main():
     (data / 'pack-autoload.txt').write_text(''.join(path + '\n' for path in autoload))
     if autoload:
         notes.append('pack autoload: ' + ', '.join(Path(a).name for a in autoload))
-    out, notes = [], []
     private_used = []
 
     def link(source, name):
@@ -249,6 +249,11 @@ def main():
                 link(shell['.skin'], f'vr_hand_{side}_shell.skin')
                 rig_lines.append(f'shell {side_index} {tile} {data / f"vr_hand_{side}_shell.skin"}')
             wrist = {ext: v6 / f'hands/vr_hand_{side}_shell_wrist{ext}' for ext in ('.md3', '.png', '.skin')}
+            # A pack whose own shell is cut from its body at the wrist (and has no separate wrist
+            # cut) uses that shell for the full body, never another pack's wrist cut.
+            own = pack_root / 'exports/eduke32/hands'
+            if (own / f'vr_hand_{side}_shell.md3').is_file() and not (own / f'vr_hand_{side}_shell_wrist.md3').is_file():
+                wrist = shell
             if all(path.is_file() for path in wrist.values()):
                 tile = 30266 + side_index
                 model(wrist['.md3'], wrist['.png'], tile, f'vr_hand_{side}_shell_wrist', frame='bind')

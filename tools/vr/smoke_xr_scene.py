@@ -48,6 +48,7 @@ def main():
     parser.add_argument('--map', default='', help='user map instead of E1L1')
     parser.add_argument('--env', action='append', default=[], help='extra KEY=VALUE for the game')
     parser.add_argument('--args', default='', help='extra EDuke32 arguments (space separated)')
+    parser.add_argument('--pack', default='v6-original', help='model pack (launcher --pack)')
     args = parser.parse_args()
     steps = json.loads(args.script.read_text())
     args.work_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +67,7 @@ def main():
         (lab / Path(args.map).name).write_bytes(Path(args.map).read_bytes())
         args.map = Path(args.map).name
     level = ['-map', args.map] if args.map else ['-v1', '-l1']
-    command = [str(launcher), '--binary', str(args.binary.resolve()), '--',
+    command = [str(launcher), '--binary', str(args.binary.resolve()), '--pack', args.pack, '--',
                '-usecwd', '-noautoload', '-nologo', *level, '-s1', *args.args.split()]
     log_path = lab / 'game.log'
     text = lambda: log_path.read_text(errors='replace')

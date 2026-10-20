@@ -4308,9 +4308,10 @@ static void drawEyeMirror(Camera const &cam, int32_t smoothRatio, Eye const *eye
     G_DoSpriteAnimations(tposx,tposy,cam.pos.z,fix16_to_int(tang),smoothRatio);
     display_mirror=0;
     // Your VR body replaces your own native player sprite in the reflection.
+    // (Removed from the list: drawmasks does not look at CSTAT_SPRITE_INVISIBLE.)
     if (eye && mirrorHasBody)
-        for (int k=0;k<spritesortcnt;++k)
-            if (tsprite[k].owner==g_player[myconnectindex].ps->i) tsprite[k].cstat|=CSTAT_SPRITE_INVISIBLE;
+        for (int k=spritesortcnt-1;k>=0;--k)
+            if (tsprite[k].owner==g_player[myconnectindex].ps->i) tsprite[k]=tsprite[--spritesortcnt];
     renderDrawMasks();
     if (eye) drawMirrorModels(*eye,g_mirrorWall[best]);
     renderCompleteMirror();
