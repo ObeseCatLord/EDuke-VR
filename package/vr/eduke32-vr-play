@@ -57,10 +57,16 @@ cmd=("$binary" -j "$data")
 if [[ -n $aa ]]; then
     cmd+=(-j "$aa" -j "$here/aa566" -g "$aa/AA.grp" -x eduke32_vr_aa566.con)
 fi
-# EDuke32 matches -gamegrp against the scanned GRP names, so pass the GRP's
-# directory as a search path and its bare name (a full path never matches and
-# silently falls back to the first GRP found, e.g. an add-on like vacation.grp).
-[[ -n $grp ]] && cmd+=(-j "$(dirname "$grp")" -gamegrp "$(basename "$grp")")
+# EDuke32 matches -gamegrp against the scanned GRP names, so pass a bare name
+# (a full path never matches and silently falls back to the first GRP found,
+# e.g. an add-on like vacation.grp). Expose only the GRP itself through a
+# private directory: install folders such as World Tour's hold loose GAME.CON
+# and maps/ that would otherwise override the GRP's own.
+if [[ -n $grp ]]; then
+    mkdir -p "$data/grp"
+    ln -sfn "$grp" "$data/grp/$(basename "$grp")"
+    cmd+=(-j "$data/grp" -gamegrp "$(basename "$grp")")
+fi
 # The headset needs an X11 (XWayland) GL window, and the setup dialog would
 # wait on the desktop; -setup in the EDuke32 arguments still shows it.
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
