@@ -1584,6 +1584,8 @@ extern int32_t glusetexcompr;
 extern int32_t gltexfiltermode;
 // Filter for hightile/model textures when >= 0 (index into glfiltermodes), independent of gltexfiltermode.
 extern int32_t glhightilefiltermode;
+// XR: count of 2D draws, so empty UI overlay segments are not composited (polymost.cpp).
+extern uint32_t polymost_xr2DDraws;
 
 enum {
     TEXFILTER_OFF = 0, // GL_NEAREST

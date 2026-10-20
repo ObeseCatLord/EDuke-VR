@@ -3,6 +3,7 @@
 
 #include "eduke_xr.h"
 #include <chrono>
+extern uint32_t polymost_xr2DDraws;
 #include "../build/include/polymost_color_correction.h"
 
 #define XR_USE_PLATFORM_XLIB
@@ -446,6 +447,15 @@ struct Runtime::Impl
     uint32_t                                menuWidth = 0, menuHeight = 0;
     // World-locked virtual screen for full-screen 2D (menus, intermissions, cutscenes): placed in
     // front of the head (yaw only, upright) and re-centred when you look well away or it was unused.
+    // EDUKE32_XR_PERF accumulators (see Runtime::takePerf).
+    PerfStats                               perf {};
+    std::chrono::steady_clock::time_point   renderStart {};
+    GLuint                                  gpuQueries[4] {};
+    bool                                    gpuPending[4] {};
+    unsigned                                gpuNext = 0;
+    bool                                    gpuActive = false;
+    uint32_t                                lastFlushDraws = 0;
+    bool                                    overlayKept = false;
     bool                                    screenAnchorValid = false;
     XrPosef                                 screenAnchor {};
     std::chrono::steady_clock::time_point   screenAnchorUsed {};
@@ -1341,7 +1351,9 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
     XrFrameWaitInfo waitInfo { XR_TYPE_FRAME_WAIT_INFO };
     m_impl->frameState  = { XR_TYPE_FRAME_STATE };
     auto    &frameState = m_impl->frameState;
+    auto const waitStart = std::chrono::steady_clock::now();
     XrResult result     = xrWaitFrame(m_impl->session, &waitInfo, &frameState);
+    m_impl->perf.waitMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
     if (XR_FAILED(result))
     {
         error = xrError(m_impl->instance, result, "xrWaitFrame");
@@ -1405,6 +1417,33 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
         return FrameResult::Error;
     }
     m_impl->imageReady = true;
+    m_impl->renderStart = std::chrono::steady_clock::now();
+    if (m_impl->perf.enabled)
+    {
+        // GPU time of this frame's rendering, read back frames later without stalling.
+        if (!m_impl->gpuQueries[0]) glGenQueries(4, m_impl->gpuQueries);
+        for (unsigned i = 0; i < 4; ++i)
+            if (m_impl->gpuPending[i])
+            {
+                GLint available = 0;
+                glGetQueryObjectiv(m_impl->gpuQueries[i], GL_QUERY_RESULT_AVAILABLE, &available);
+                if (available)
+                {
+                    GLuint64 ns = 0;
+                    glGetQueryObjectui64v(m_impl->gpuQueries[i], GL_QUERY_RESULT, &ns);
+                    m_impl->perf.gpuMs += double(ns) * 1e-6;
+                    ++m_impl->perf.gpuFrames;
+                    m_impl->gpuPending[i] = false;
+                }
+            }
+        unsigned const slot = m_impl->gpuNext++ % 4;
+        if (!m_impl->gpuPending[slot])
+        {
+            glBeginQuery(GL_TIME_ELAPSED, m_impl->gpuQueries[slot]);
+            m_impl->gpuActive = true;
+            m_impl->gpuPending[slot] = true;
+        }
+    }
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &m_impl->previousReadFbo);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &m_impl->previousDrawFbo);
     frame.width                = m_impl->width;
@@ -1669,6 +1708,15 @@ bool Runtime::flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfH
 {
     error.clear();
     if (!menuOverlayTargetBound()) { error="overlay flush requires the active UI target"; return false; }
+    // Nothing drawn into the UI layer since the last flush: no composite, mirror or clear needed
+    // (a kept segment that drew is still shown by its later flushes).
+    if (polymost_xr2DDraws==m_impl->lastFlushDraws && !capturePrefix && !m_impl->overlayKept) return true;
+    m_impl->lastFlushDraws=polymost_xr2DDraws;
+    m_impl->overlayKept=keep;
+    auto const flushStart=std::chrono::steady_clock::now();
+    struct FlushTimer { PerfStats &perf; std::chrono::steady_clock::time_point start;
+        ~FlushTimer() { perf.flushMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count(); ++perf.flushes; } }
+        const flushTimer{m_impl->perf,flushStart};
     bool good=!visible || drawMenuCapture(pose,halfWidth,halfHeight,error,worldClipMatrices,uvRect);
     // A segment shown in several places (one crop per wrist) is mirrored and cleared once, by its last flush.
     if (good && keep && !capturePrefix) return true;
@@ -1962,6 +2010,9 @@ bool Runtime::finishFrame(bool submit, std::string &error)
         // only the framebuffer bindings owned by this adapter are restored.
         glBindFramebuffer(GL_READ_FRAMEBUFFER, m_impl->previousReadFbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_impl->previousDrawFbo);
+        if (m_impl->gpuActive) { glEndQuery(GL_TIME_ELAPSED); m_impl->gpuActive = false; }
+        m_impl->perf.renderMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - m_impl->renderStart).count();
+        ++m_impl->perf.frames;
         XrSwapchainImageReleaseInfo release { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
         XrResult                    result = xrReleaseSwapchainImage(m_impl->color, &release);
         if (XR_FAILED(result))
@@ -2258,6 +2309,15 @@ Runtime::TickResult Runtime::diagnosticFrame(bool verifyPixels, char const *outp
 }
 
 uint64_t Runtime::lastSubmittedSerial() const { return m_impl ? m_impl->submittedSerial : 0; }
+void Runtime::enablePerf(bool on) { if (m_impl) m_impl->perf.enabled = on; }
+PerfStats Runtime::takePerf()
+{
+    if (!m_impl) return {};
+    PerfStats const taken = m_impl->perf;
+    m_impl->perf = {};
+    m_impl->perf.enabled = taken.enabled;
+    return taken;
+}
 
 uint64_t Runtime::submittedFrames() const
 { return m_impl ? m_impl->submitted : 0; }

@@ -13951,6 +13951,9 @@ void rotatesprite_(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
 //
 void videoClearViewableArea(int32_t dacol)
 {
+#ifdef USE_OPENXR
+    ++polymost_xr2DDraws;
+#endif
     if (!in3dmode() && dacol != -1) return;
 
     if (dacol == -1) dacol = 0;
@@ -13994,6 +13997,9 @@ void videoClearViewableArea(int32_t dacol)
 //
 void videoClearScreen(int32_t dacol)
 {
+#ifdef USE_OPENXR
+    ++polymost_xr2DDraws;
+#endif
     if (!in3dmode()) return;
     //dacol += (dacol<<8); dacol += (dacol<<16);
 

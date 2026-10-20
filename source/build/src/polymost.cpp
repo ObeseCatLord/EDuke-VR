@@ -146,6 +146,7 @@ struct glfiltermodes glfiltermodes[NUMGLFILTERMODES] = { { "GL_NEAREST",        
 int32_t glanisotropy = 16;
 int32_t gltexfiltermode = TEXFILTER_OFF;
 int32_t glhightilefiltermode = -1;
+uint32_t polymost_xr2DDraws;
 
 #ifdef EDUKE32_GLES
 int32_t glusetexcompr = 2;
@@ -11265,6 +11266,9 @@ void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16
                              int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2, int32_t uniqid)
 {
 #ifdef USE_OPENXR
+    ++polymost_xr2DDraws;
+#endif
+#ifdef USE_OPENXR
     if (polymost_xrWeaponTileConsumer
         && polymost_xrWeaponTileConsumer(picnum,uniqid,dashade,uint8_t(dapalnum),dastat,a,daalpha,dablend)) return;
 #endif
@@ -11727,6 +11731,9 @@ static void tessectrap(const float *px, const float *py, const int32_t *point2, 
 
 void polymost_fillpolygon(int32_t npoints)
 {
+#ifdef USE_OPENXR
+    ++polymost_xr2DDraws;
+#endif
     buildgl_outputDebugMessage(3, "polymost_fillpolygon(npoints:%d)", npoints);
 
     globvis2 = 0;

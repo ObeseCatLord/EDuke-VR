@@ -41,6 +41,14 @@ struct HandInput
     bool       jointsValid = false;
 };
 
+// EDUKE32_XR_PERF: per-interval sums (ms) measured by the runtime.
+struct PerfStats
+{
+    bool     enabled = false;
+    double   waitMs = 0, renderMs = 0, flushMs = 0, gpuMs = 0;
+    unsigned frames = 0, flushes = 0, gpuFrames = 0;
+};
+
 struct ActionInput
 {
     bool      focused = false;
@@ -134,6 +142,8 @@ class Runtime
     bool        vibrate(uint32_t hand, float amplitude, float seconds);
     uint64_t    submittedFrames() const;
     uint64_t    lastSubmittedSerial() const;
+    void        enablePerf(bool on);
+    PerfStats   takePerf();   // returns and resets the accumulated perf sums
     uint64_t    generation() const;
     bool        sessionRunning() const;
 

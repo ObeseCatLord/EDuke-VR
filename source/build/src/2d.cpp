@@ -253,6 +253,9 @@ static void drawlinepixels(int32_t x1, int32_t y1, int32_t x2, int32_t y2, char 
 
 void drawlinergb(int32_t x1, int32_t y1, int32_t x2, int32_t y2, palette_t p)
 {
+#ifdef USE_OPENXR
+    ++polymost_xr2DDraws;
+#endif
 #ifdef USE_OPENGL
     if (videoGetRenderMode() >= REND_POLYMOST)
     {
@@ -267,6 +270,9 @@ void drawlinergb(int32_t x1, int32_t y1, int32_t x2, int32_t y2, palette_t p)
 
 void renderDrawLine(int32_t x1, int32_t y1, int32_t x2, int32_t y2, char col)
 {
+#ifdef USE_OPENXR
+    ++polymost_xr2DDraws;
+#endif
     col = palookup[0][col];
 
 #ifdef USE_OPENGL

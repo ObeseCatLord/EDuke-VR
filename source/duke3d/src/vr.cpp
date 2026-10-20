@@ -3474,6 +3474,39 @@ static void precacheVRModels()
     LOG_F(INFO,"OpenXR precached %u VR models in %.0f ms.",count,(double(timerGetNanoTicks())/double(timerGetNanoTickRate())-start)*1000.);
 }
 
+// Opt-in CPU phase timing (EDUKE32_XR_TEST_TIMING=1): averages every 120 frames.
+static struct
+{
+    double opaque=0, animate=0, models=0, masks=0, total=0;
+    unsigned frames=0;
+} xrTiming;
+static double xrNowMs() { return double(timerGetNanoTicks())*1000.0/double(timerGetNanoTickRate()); }
+
+// EDUKE32_XR_PERF=1: one line every ~2 s with where the frame time goes (CPU per phase, time
+// blocked in xrWaitFrame, overlay flushes, GPU time from timer queries).
+static void logPerf(eduke_xr::Runtime *runtime)
+{
+    static bool const enabled=std::getenv("EDUKE32_XR_PERF")!=nullptr;
+    if (!enabled || !runtime) return;
+    runtime->enablePerf(true);
+    static double windowStart=-1., lastFrame=-1., frameSum=0., frameMax=0.;
+    static unsigned frameCount=0;
+    double const now=xrNowMs();
+    if (lastFrame>=0.) { double const dt=now-lastFrame; frameSum+=dt; frameMax=std::max(frameMax,dt); ++frameCount; }
+    lastFrame=now;
+    if (windowStart<0.) windowStart=now;
+    if (now-windowStart<2000.) return;
+    auto const p=runtime->takePerf();
+    double const n=std::max(1u,frameCount), world=std::max(1u,xrTiming.frames);
+    double const gpu=p.gpuFrames ? p.gpuMs/p.gpuFrames : -1.;
+    LOG_F(INFO,"OpenXR perf: fps=%.1f frame=%.2f (max %.2f) ms; wait=%.2f render-cpu=%.2f [world=%.2f: opaque=%.2f anim=%.2f models=%.2f masks=%.2f; flushes=%.2f x%.1f] gpu=%.2f ms.",
+          frameCount*1000./(now-windowStart),frameSum/n,frameMax,p.waitMs/std::max(1u,p.frames),p.renderMs/std::max(1u,p.frames),
+          xrTiming.total/world,xrTiming.opaque/world,xrTiming.animate/world,xrTiming.models/world,xrTiming.masks/world,
+          p.flushMs/std::max(1u,p.frames),double(p.flushes)/std::max(1u,p.frames),gpu);
+    xrTiming={};
+    windowStart=now; frameSum=frameMax=0.; frameCount=0;
+}
+
 void G_XRBeginFrame()
 {
     runConsoleRequest();
@@ -3504,6 +3537,7 @@ void G_XRBeginFrame()
     { neutral(); return; }
     auto *runtime=sdlayer_xr_worldRuntime();
     if (!runtime) { neutral(); return; }
+    logPerf(runtime);
     std::string error;
     auto const status=runtime->beginFrame(pendingFrame,error);
     if (status == eduke_xr::Runtime::FrameResult::Error || status == eduke_xr::Runtime::FrameResult::Exit)
@@ -3758,19 +3792,12 @@ static void drawEyeMirror(Camera const &cam, int32_t smoothRatio)
     maskwallcnt=0;
 }
 
-// Opt-in CPU phase timing (EDUKE32_XR_TEST_TIMING=1): averages every 120 frames.
-static struct
-{
-    double opaque=0, animate=0, models=0, masks=0, total=0;
-    unsigned frames=0;
-} xrTiming;
-static double xrNowMs() { return double(timerGetNanoTicks())*1000.0/double(timerGetNanoTickRate()); }
 
 bool G_XRDrawRooms(int32_t smoothRatio)
 {
     double const timingStart=xrNowMs();
     double timingMark=timingStart;
-    bool const timing=std::getenv("EDUKE32_XR_TEST_TIMING")!=nullptr;
+    static bool const timing=std::getenv("EDUKE32_XR_TEST_TIMING")!=nullptr || std::getenv("EDUKE32_XR_PERF")!=nullptr;
     auto const lap=[&](double &slot) { if (!timing) return; double const now=xrNowMs(); slot+=now-timingMark; timingMark=now; };
     // Initial renderer oracle deliberately excludes multi-view sector effects.
     // Further camera/draw families and tracked weapon origins remain required.
@@ -4648,7 +4675,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     if (timing)
     {
         xrTiming.total+=xrNowMs()-timingStart;
-        if (++xrTiming.frames==120)
+        if (++xrTiming.frames==120 && std::getenv("EDUKE32_XR_TEST_TIMING"))
         {
             double const n=xrTiming.frames;
             LOG_F(INFO,"OpenXR CPU ms/frame: opaque=%.2f animate=%.2f models=%.2f masks=%.2f world total=%.2f.",
