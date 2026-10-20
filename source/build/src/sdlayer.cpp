@@ -2472,7 +2472,20 @@ void videoShowFrame(int32_t w)
             if (sdlayer_xr_flatFrameHook && sdl_xr_worldActive) sdlayer_xr_flatFrameHook();
             sdlayer_xr_diagnostic();
 # endif
-            if (!sdl_minimized) SDL_GL_SwapWindow(sdl_window);
+            // While the headset shows the game, the desktop window is only a mirror: present it at
+            // EDUKE32_XR_DESKTOP_FPS (default 30, 0 = every frame) instead of at headset rate.
+            bool desktopSwap = !sdl_minimized;
+#ifdef USE_OPENXR
+            if (desktopSwap && headsetActive)
+            {
+                static int const desktopFps = []() { char const *v = sdlayer_xr_option("EDUKE32_XR_DESKTOP_FPS"); return v ? Batoi(v) : 30; }();
+                static uint64_t lastSwap;
+                uint64_t const now = timerGetNanoTicks(), rate = timerGetNanoTickRate();
+                if (desktopFps > 0 && now - lastSwap < rate / uint64_t(desktopFps)) desktopSwap = false;
+                else lastSwap = now;
+            }
+#endif
+            if (desktopSwap) SDL_GL_SwapWindow(sdl_window);
 #else
             SDL_GL_SwapBuffers();
 #endif

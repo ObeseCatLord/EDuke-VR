@@ -959,8 +959,43 @@ static bool polymost_xrInitOpaqueReplay()
     if (xrOpaque.vbo) glDeleteBuffers(1, &xrOpaque.vbo);
     xrOpaque.program = xrOpaque.vbo = 0;
 
+    // Replay variant of the native fragment shader: the replay never enables detail/glow maps (their
+    // samplers are skipped) and fetches the next shade's palette entries only when shade
+    // interpolation is on. Same result for the replay's uniforms, fewer texture fetches per pixel.
+    static std::string const replayFragment = []
+    {
+        std::string code(polymost1FragmentSource());
+        auto const erase = [&code](char const *text)
+        {
+            auto const at = code.find(text);
+            if (at != std::string::npos) code.erase(at, Bstrlen(text));
+        };
+        erase(" #define POLYMOST1_EXTENDED\n");
+        std::string const fetchNext =
+            "    float colorIndexNext = texture2D(s_palswap, u_palswapSize*vec2(color.r, (floor(shade)+c_one)*u_numShades.y)+u_palswapPos).r * c_basepalScale + c_basepalOffset;\n";
+        std::string const lookupNext = "    vec4 palettedColorNext = texture2D(s_palette, vec2(colorIndexNext, c_zero));\n";
+        auto a = code.find(fetchNext), b = code.find(lookupNext);
+        if (a != std::string::npos && b != std::string::npos && b > a)
+        {
+            code.erase(b, lookupNext.size());
+            code.replace(a, fetchNext.size(),
+                "    vec4 palettedColorNext = vec4(c_zero);\n"
+                "    if (u_shadeInterpolate > c_zero)\n    {\n"
+                "        float colorIndexNext = texture2D(s_palswap, u_palswapSize*vec2(color.r, (floor(shade)+c_one)*u_numShades.y)+u_palswapPos).r * c_basepalScale + c_basepalOffset;\n"
+                "        palettedColorNext = texture2D(s_palette, vec2(colorIndexNext, c_zero));\n    }\n");
+            // palettedColorNext is used after the current palette lookup; move the guarded block there.
+            auto const blockStart = code.find("    vec4 palettedColorNext = vec4(c_zero);");
+            auto const blockEnd = code.find("    }\n", blockStart) + 6;
+            std::string const block = code.substr(blockStart, blockEnd - blockStart);
+            code.erase(blockStart, blockEnd - blockStart);
+            auto const after = code.find("    vec4 palettedColor = texture2D(s_palette, vec2(colorIndex, c_zero));\n");
+            if (after != std::string::npos)
+                code.insert(after + Bstrlen("    vec4 palettedColor = texture2D(s_palette, vec2(colorIndex, c_zero));\n"), block);
+        }
+        return code;
+    }();
     char const * const vertexSource[] = { polymost1VertXR };
-    char const * const fragmentSource[] = { polymost1FragmentSource() };
+    char const * const fragmentSource[] = { replayFragment.c_str() };
     GLuint const vertex = polymost_xrCompileShader(GL_VERTEX_SHADER, vertexSource, nullptr, "opaque replay vertex");
     GLuint const fragment = polymost_xrCompileShader(GL_FRAGMENT_SHADER, fragmentSource, nullptr, "opaque replay fragment");
     if (!vertex || !fragment)

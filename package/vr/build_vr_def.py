@@ -60,6 +60,13 @@ def main():
         notes.append(f'model pack: {pack_name}' + (' (PRIVATE, not redistributable)' if pack_info.get('redistributable') is False else ''))
     # Pack-wide texture filter (e.g. "nearest": no filtering at all) for the launcher.
     (data / 'pack-filter.txt').write_text(pack_info.get('texture_filter', '') + '\n')
+    # Extra game data the pack wants loaded (e.g. a voxel world mod), only for the games it lists.
+    games = pack_info.get('games', ['duke3d', 'aa566'])
+    autoload = [str((pack_root / rel).resolve()) for rel in pack_info.get('autoload', [])
+                if (pack_root / rel).is_file() and ('aa566' if aa else 'duke3d') in games]
+    (data / 'pack-autoload.txt').write_text(''.join(path + '\n' for path in autoload))
+    if autoload:
+        notes.append('pack autoload: ' + ', '.join(Path(a).name for a in autoload))
     out, notes = [], []
     private_used = []
 

@@ -77,5 +77,9 @@ fi
 # The headset needs an X11 (XWayland) GL window, and the setup dialog would
 # wait on the desktop; -setup in the EDuke32 arguments still shows it.
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
+# Game data a model pack asks for (e.g. a voxel world), loaded after the main GRP.
+if [[ -f $data/pack-autoload.txt ]]; then
+    while IFS= read -r extra; do [[ -n $extra ]] && cmd+=(-g "$extra"); done < "$data/pack-autoload.txt"
+fi
 cmd+=(-nosetup -h eduke32-vr-models.def "${args[@]}")
 exec "${cmd[@]}"
