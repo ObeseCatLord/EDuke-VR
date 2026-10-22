@@ -2376,13 +2376,32 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
         worldRot[head]=multiply(target,bind[head].rotation); overridden[head]=1;
         fk(size_t(head)+1);
     }
+    // Per-bone stretch along the bone (toward its child): arms lengthen to reach the hands.
+    std::vector<float> stretch(count,1.f);
+    std::vector<XrVector3f> stretchAxis(count,XrVector3f{0,0,0});
     // Two-bone IK: root bone b0 at a, mid bone b1, end bone b2 reaching t with the bend toward pole.
-    auto const twoBone=[&](int b0, int b1, int b2, XrVector3f t, XrVector3f pole) {
+    // With canStretch both bones lengthen equally when t is out of reach (up to MaxArmStretch).
+    auto const twoBone=[&](int b0, int b1, int b2, XrVector3f t, XrVector3f pole, bool canStretch) {
         auto const a=worldPos[b0];
-        float const L1=std::sqrt(dot(localPos[b1],localPos[b1])), L2=std::sqrt(dot(localPos[b2],localPos[b2]));
+        float L1=std::sqrt(dot(localPos[b1],localPos[b1])), L2=std::sqrt(dot(localPos[b2],localPos[b2]));
         XrVector3f d={t.x-a.x,t.y-a.y,t.z-a.z};
         float dist=std::sqrt(dot(d,d));
         if (!(dist>1e-4f) || !(L1>1e-4f) || !(L2>1e-4f)) return;
+        float constexpr MaxArmStretch=1.6f;
+        float const reach=(L1+L2)*.995f;
+        if (canStretch && dist>reach)
+        {
+            float const k=std::min(MaxArmStretch,dist/reach);
+            for (int b:{b0,b1})
+            {
+                int const child=b==b0 ? b1 : b2;
+                float const l=std::sqrt(dot(localPos[child],localPos[child]));
+                stretch[b]=k; stretchAxis[b]={localPos[child].x/l,localPos[child].y/l,localPos[child].z/l};
+                localPos[child]={localPos[child].x*k,localPos[child].y*k,localPos[child].z*k};
+            }
+            L1*=k; L2*=k;
+            fk(size_t(b0)+1);
+        }
         XrVector3f const dir={d.x/dist,d.y/dist,d.z/dist};
         dist=std::max(std::fabs(L1-L2)+1e-3f,std::min(L1+L2-1e-3f,dist));
         float const cosA=std::max(-1.f,std::min(1.f,(L1*L1+dist*dist-L2*L2)/(2.f*L1*dist))), sinA=std::sqrt(1.f-cosA*cosA);
@@ -2413,7 +2432,7 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
             target=toModel(P);
         }
         else target={worldPos[upper[side]].x+4.f,worldPos[upper[side]].y+out*6.f,worldPos[upper[side]].z-40.f};
-        twoBone(upper[side],fore[side],handB[side],target,{-.4f,out*.8f,-1.f});
+        twoBone(upper[side],fore[side],handB[side],target,{-.4f,out*.8f,-1.f},handJoints[side].valid);
         if (handJoints[side].valid)
         {
             // Hand bone along the wrist joint frame (XR: -Z toward the fingers, +Y back of the hand).
@@ -2454,7 +2473,7 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
             XrVector3f const kick={hip.x+std::cos(gaze)*reach,hip.y,hip.z+std::sin(gaze)*reach};
             target={target.x+(kick.x-target.x)*kickExtend,target.y+(kick.y-target.y)*kickExtend,target.z+(kick.z-target.z)*kickExtend};
         }
-        twoBone(thigh[side],calf[side],foot[side],target,{1.f,0.f,.2f});
+        twoBone(thigh[side],calf[side],foot[side],target,{1.f,0.f,.2f},false);
     }
 
     // Skin on the CPU (model units, model space): first person without the head, and a copy with
@@ -2483,7 +2502,13 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
         for (unsigned j=0;j<v.count;++j)
         {
             auto const &m=boneMatrix[v.bone[j]];
-            auto const &l=v.local[j];
+            XrVector3f l=v.local[j];
+            if (stretch[v.bone[j]]!=1.f)
+            {
+                auto const &axis=stretchAxis[v.bone[j]];
+                float const along=dot(l,axis)*(stretch[v.bone[j]]-1.f);
+                l={l.x+axis.x*along,l.y+axis.y*along,l.z+axis.z*along};
+            }
             auto const &o=worldPos[v.bone[j]];
             acc[0]+=v.weight[j]*(o.x+m[0]*l.x+m[1]*l.y+m[2]*l.z);
             acc[1]+=v.weight[j]*(o.y+m[3]*l.x+m[4]*l.y+m[5]*l.z);
