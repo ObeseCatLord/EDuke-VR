@@ -5131,14 +5131,9 @@ static void P_ProcessWeapon(int playerNum)
             else if ((*weaponFrame) > PWEAPON(playerNum, pPlayer->curr_weapon, TotalTime))
             {
                 (*weaponFrame) = 0;
-                // Physical throwing keeps the next bomb in hand; the off hand
-                // detonates (VRShotDetonate). Without ammo the detonator remains.
-                if (PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE && G_VRShotPhysicalThrow(playerNum)
-                    && pPlayer->ammo_amount[HANDBOMB_WEAPON] > 0)
-                {
-                    pPlayer->weapon_pos = WEAPON_POS_RAISE;
-                }
-                else if (PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE)
+                // Remote bombs: the detonator comes up in the same hand (native, also for
+                // physical throwing); firing it detonates and brings the next bomb back.
+                if (PIPEBOMB_CONTROL(playerNum) == PIPEBOMB_REMOTE)
                 {
                     pPlayer->weapon_pos = WEAPON_POS_RAISE;
                     pPlayer->curr_weapon = HANDREMOTE_WEAPON;

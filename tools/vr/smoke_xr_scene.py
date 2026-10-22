@@ -111,6 +111,9 @@ def main():
                         for field, value in fields.items():
                             if field in ('thumbstick', 'trackpad'):
                                 setattr(hand, field, Vec2(*value))
+                            elif field in ('linear_velocity', 'angular_velocity'):
+                                vector = getattr(hand, field)
+                                vector.x, vector.y, vector.z = value
                             else:
                                 setattr(hand, field, type(getattr(hand, field))(value))
                     remote.send()

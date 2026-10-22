@@ -135,7 +135,7 @@ static bool loadHudModelMap()
 // Runtime switches (console/settings.cfg): vr_models turns every VR model off (held weapons,
 // hands, body, third-person players, 3D weapon wheel) and falls back to native 2D art, like
 // RazeXR; vr_laser draws an aiming beam from the muzzle to the aim point.
-static int32_t vr_models=1, vr_laser=0, vr_fullbody=1;
+static int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0;
 constexpr int32_t VRLaserTile=30060;
 } // namespace
 
@@ -154,6 +154,7 @@ void G_XRRegisterCvars()
         { "vr_models", "VR 3D models (held weapons, hands, body, other players, weapon wheel); 0 = native 2D sprites", (void *)&vr_models, CVAR_BOOL, 0, 1 },
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
         { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
+        { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
     };
     for (auto &cv : cvars) OSD_RegisterCvar(&cv, osdcmd_cvar_set);
 }
@@ -669,15 +670,18 @@ static void publishInput()
     }
     uint64_t buttons=wheelButtons;
     auto const button=[&](bool pressed, unsigned gamefunc) { if (pressed) buttons |= uint64_t(1)<<gamefunc; };
-    // Right trigger fires, left trigger is alt fire (mods such as Alien Armageddon use it; it also
-    // detonates live remote pipebombs, below), left grip is use/interact, right grip runs.
-    button(down[1]&ButtonSelect,gamefunc_Fire); button(down[0]&ButtonSelect,gamefunc_Alt_Fire);
+    // Right trigger fires (remote pipebombs: the detonator in the same hand), left trigger is the
+    // mighty foot and the right stick click alt fire (vr_lefttrigger 1 swaps them; mods such as
+    // Alien Armageddon use alt fire), left grip is use/interact, right grip runs.
+    button(down[1]&ButtonSelect,gamefunc_Fire);
+    button(down[0]&ButtonSelect,vr_lefttrigger ? gamefunc_Alt_Fire : gamefunc_Quick_Kick);
+    button(down[1]&ButtonStickClick,vr_lefttrigger ? gamefunc_Quick_Kick : gamefunc_Alt_Fire);
     button(down[0]&ButtonGrip,gamefunc_Open);
     button(down[1]&ButtonPrimary,gamefunc_Jump); button(down[1]&ButtonSecondary,gamefunc_Crouch);
-    // Quick kick: right stick click where it isn't the wheel (Index), or a right-stick-down flick.
+    // Quick kick also on a right-stick-down flick.
     bool const kickFlick=!stickPitchAllowed() && !wheelOwnsStick && rawInput.hands[1].stickActive
         && rawInput.hands[1].stick.y<-.7f && std::fabs(rawInput.hands[1].stick.x)<.6f;
-    button((down[1]&ButtonStickClick) || kickFlick,gamefunc_Quick_Kick);
+    button(kickFlick,gamefunc_Quick_Kick);
     // Left Y (Index: left B) is next weapon, or the voice push-to-talk button in push-to-talk mode.
     bool const talkButton=Voice_PushToTalkMode();
     button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(!talkButton && (down[0]&ButtonSecondary),gamefunc_Next_Weapon);
@@ -692,7 +696,7 @@ static void publishInput()
     Voice_SetPushToTalk(talkButton && (down[0]&ButtonSecondary));
     if (physicalThrowEnabled() && aimHand()>=0)
     {
-        int const hand=aimHand(), off=1-hand;
+        int const hand=aimHand();
         auto const p=g_player[myconnectindex].ps;
         bool const bomb=(unsigned)p->curr_weapon<MAX_WEAPONS && PWEAPON(myconnectindex,p->curr_weapon,WorksLike)==HANDBOMB_WEAPON
             && p->ammo_amount[HANDBOMB_WEAPON]>0;
@@ -724,14 +728,6 @@ static void publishInput()
             buttons&=~(uint64_t(1)<<gamefunc_Fire);
             if (xrThrow.pending) buttons|=uint64_t(1)<<gamefunc_Fire;
         }
-        bool const live=p->hbomb_on && Gv_GetVarByLabel("PIPEBOMB_CONTROL",PIPEBOMB_REMOTE,-1,myconnectindex)==PIPEBOMB_REMOTE;
-        bool const offTrigger=down[off]&ButtonSelect;
-        if (live)
-        {
-            if (offTrigger && !xrThrow.detonateHeld) xrThrow.detonatePending=true;
-            if (off==0) buttons&=~(uint64_t(1)<<gamefunc_Alt_Fire); // off-hand trigger means "detonate" now
-        }
-        xrThrow.detonateHeld=offTrigger;
     }
     UserInput menu{false,false,false,dir_None};
     menu.b_advance=(down[0]|down[1])&(ButtonSelect|ButtonPrimary);
@@ -1965,102 +1961,6 @@ static bool prepareLaser(HandSegmentSample &sample, Camera const &body, eduke_xr
     {
         static int logged;
         if (logged++%120==0) LOG_F(INFO,"OpenXR laser: length=%.2fm origin=%s.",length,visual.selected && visual.valid ? "muzzle" : "hand");
-    }
-    return true;
-}
-
-// Immersive pipebombs (remote control): the off hand holds Duke's detonator; its trigger sets the
-// bombs off. The detonator sits in the hand by its hold pose: the hold's rigid hand joints (palm,
-// wrist, knuckles, thumb base; MD3 metres) are fitted onto the relaxed pose's in the controller
-// grip. Positions only, so the fit carries the MD3 frame's handedness with it.
-static bool prepareDetonator(HandModelSample &sample, Camera const &body, eduke_xr::Runtime *runtime, unsigned &hand)
-{
-    auto const p=g_player[myconnectindex].ps;
-    int const tile=XRHeldModelTileBase+HANDREMOTE_WEAPON;
-    if (!physicalThrowEnabled() || aimHand()<0 || !G_XRModelsEnabled() || md_tilehasmodel(tile,0)<0
-        || !overlayEnabled() || !recentered || !inputValid() || inputRuntime!=runtime || inputGeneration!=runtime->generation()
-        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
-        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on || p->dead_flag
-        || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || unsigned(body.sector)>=unsigned(numsectors)
-        || unsigned(p->curr_weapon)>=MAX_WEAPONS || PWEAPON(myconnectindex,p->curr_weapon,WorksLike)!=HANDBOMB_WEAPON
-        || Gv_GetVarByLabel("PIPEBOMB_CONTROL",PIPEBOMB_REMOTE,-1,myconnectindex)!=PIPEBOMB_REMOTE) return false;
-    hand=unsigned(1-aimHand());
-    auto const *rig=handRig();
-    auto const &input=rawInput.hands[hand];
-    if (!rig || !input.gripValid || !validPose(input.gripPose)) return false;
-    HandRigPose const *hold=nullptr, *relaxed=rig->pose(hand,"relaxed");
-    for (auto const &h:rig->holds)
-        if (h.first==tile) { hold=rig->pose(hand,h.second.c_str()); break; }
-    if (!hold || !hold->weaponFrame || !relaxed || relaxed->weaponFrame) return false;
-    auto const &g=input.gripPose;
-    // Fit onto the hand as it is drawn: tracked joints when finger tracking drives the hands,
-    // else the relaxed pose in the controller grip.
-    auto const fingers=sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING");
-    bool const tracked=input.jointsValid && fingers && !Bstrcmp(fingers,"1");
-    auto const world=[&](unsigned joint) {
-        if (tracked) return input.joints[joint].position;
-        auto const r=rotate(g.orientation,relaxed->joints[joint].position);
-        return XrVector3f{g.position.x+r.x,g.position.y+r.y,g.position.z+r.z};
-    };
-    auto const model=[&](unsigned joint) { return hold->joints[joint].position; };
-    // Orthonormal frames from three hand directions (Gram-Schmidt): along the hand, across the
-    // knuckles, toward the thumb base. World = M * model with M = Fw * Fm^T.
-    auto const frameOf=[](auto const &at, XrVector3f f[3]) {
-        auto const sub=[](XrVector3f a, XrVector3f b) { return XrVector3f{a.x-b.x,a.y-b.y,a.z-b.z}; };
-        XrVector3f v[3]={sub(at(12),at(1)),sub(at(7),at(22)),sub(at(2),at(0))};
-        for (unsigned k=0;k<3;++k)
-        {
-            for (unsigned j=0;j<k;++j)
-            {
-                float const d=dot(v[k],f[j]);
-                v[k]={v[k].x-f[j].x*d,v[k].y-f[j].y*d,v[k].z-f[j].z*d};
-            }
-            float const l=std::sqrt(dot(v[k],v[k]));
-            if (!(l>1e-5f)) return false;
-            f[k]={v[k].x/l,v[k].y/l,v[k].z/l};
-        }
-        return true;
-    };
-    XrVector3f fw[3], fm[3];
-    if (!frameOf(world,fw) || !frameOf(model,fm)) return false;
-    auto const toWorld=[&](XrVector3f m) {
-        XrVector3f out{};
-        for (unsigned k=0;k<3;++k)
-        {
-            float const c=dot(m,fm[k]);
-            out.x+=fw[k].x*c; out.y+=fw[k].y*c; out.z+=fw[k].z*c;
-        }
-        return out;
-    };
-    auto const palmModel=toWorld(model(0)), palmWorld=world(0);
-    XrVector3f const weaponOrigin={palmWorld.x-palmModel.x,palmWorld.y-palmModel.y,palmWorld.z-palmModel.z};
-
-    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
-    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
-    auto const toBuild=[&](XrVector3f v) {
-        v=rotate(tracking,v);
-        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
-    };
-    sample.context.instance=123;
-    sample.context.modelid=md_tilehasmodel(tile,0);
-    sample.context.skinnum=tile2model[Ptile2tile(tile,0)].skinnum;
-    sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
-    // Pressing the off-hand trigger shows the detonator's first fire frame (button down).
-    int frame=-1;
-    if (input.buttons & input.activeButtons & eduke_xr::ButtonSelect) frame=md3_getframeindex(sample.context.modelid,"fire_01");
-    if (frame<0) frame=std::max(0,md3_getframeindex(sample.context.modelid,"rest"));
-    sample.context.cframe=sample.context.nframe=frame;
-    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
-    if (!md3_preflightcontext(&sample.context)) return false;
-    auto const d=toBuild({weaponOrigin.x-origin.x,weaponOrigin.y-origin.y,weaponOrigin.z-origin.z});
-    sample.root={body.pos.x+int32_t(std::lround(d.x)),body.pos.y+int32_t(std::lround(d.y)),body.pos.z+int32_t(std::lround(d.z))};
-    sample.sector=body.sector;
-    sample.pivot={0,0,0};
-    XrVector3f const md3[3]={{1,0,0},{0,1,0},{0,0,1}};
-    for (unsigned axis=0;axis<3;++axis)
-    {
-        auto const b=toBuild(toWorld(md3[axis]));
-        sample.basis[axis]={b.x/64.f,b.y/64.f,b.z/64.f};
     }
     return true;
 }
@@ -4702,8 +4602,6 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         handJoints[0].valid=handJoints[1].valid=false;
         HandModelSample detonator;
         unsigned detonatorHand=2;
-        if (good && !fixtureTest && !wheel.open && !gadgetWheel.open && prepareDetonator(detonator,body,runtime,detonatorHand))
-            models[modelCount++]=&detonator;
         for (unsigned hand=0;hand<2 && good && !fixtureTest;++hand)
         {
             if (cardHand && int(hand)==aimHand()) continue;
