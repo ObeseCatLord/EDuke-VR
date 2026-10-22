@@ -56,7 +56,7 @@ v6). Neither may ever be redistributed.
 | `EDUKE32_XR_HAPTICS` | `1` | weapon-hand pulse when firing, both hands when damaged |
 | `EDUKE32_XR_RESOLUTION` | `auto` | game/eye render size from OpenXR's recommended per-eye size (`WxH` to force, `window` to keep the config) |
 | `EDUKE32_XR_RENDER_SCALE` | unset (1.0) | multiplies the OpenXR size, 0.25–2.0 (e.g. `0.8` for speed, `1.4` to supersample) |
-| `EDUKE32_XR_PHYSICAL_THROW` | `1` | pipebombs: hold trigger, swing, release to throw with your hand's real speed/direction; off-hand trigger detonates live remote bombs |
+| `EDUKE32_XR_PHYSICAL_THROW` | `1` | pipebombs: hold trigger, swing, release to throw with your hand's real speed/direction; the detonator then comes up in the same hand |
 | `EDUKE32_XR_FINGER_TRACKING` | `1` | OpenXR hand tracking drives the hands when available |
 | `EDUKE32_XR_PIXELATED` | `1` | unfiltered world ART; model skins nearest up close, mipmapped at a distance |
 | `EDUKE32_XR_WEAPON_WHEEL` | `1` | weapon wheel and gadget wheel |
@@ -79,10 +79,10 @@ controller aim pose instead of being suppressed.
 | Right stick click (Index: rest your thumb on the right trackpad) | hold: weapon wheel |
 | Left stick click (Index: rest your thumb on the left trackpad) | hold: gadget wheel |
 | Right trigger | fire |
-| Left trigger | alt fire (mods that have it, e.g. Alien Armageddon; stock Duke has none); with remote pipebombs out: detonate |
+| Left trigger | mighty foot (quick kick); `vr_lefttrigger 1` makes it alt fire instead |
 | Left grip | use / interact (doors, switches) |
 | Right A / B | jump / crouch |
-| Right stick click on Index | quick kick |
+| Right stick click (Index: trackpad click) | alt fire (mods that have it, e.g. Alien Armageddon); quick kick with `vr_lefttrigger 1` |
 | Left X / Y (Index: left A / B) | previous / next weapon; Y is voice push-to-talk when `voice_mode 1` |
 | Right grip | walk (you always run; `EDUKE32_XR_ALWAYS_RUN=0` makes the grip run instead) |
 | Menu button | menu |
@@ -124,7 +124,10 @@ and the KHR simple controller.
   switching) stays hidden.
 - **Pipebombs**: hold the trigger, swing and let go; the bomb flies with your
   swing (a firm 4 m/s throw reaches about 8 m, a hard one 20+ m). In remote
-  mode your off hand holds Duke's detonator; its trigger sets the bombs off.
+  mode Duke's detonator then comes up in the same hand: pull the right trigger
+  to set the bombs off, and the next bomb returns.
+- **Tipping** ("shake it baby"): use on a dancer and your off hand holds a wad
+  of bills, made at launch from the game's own MONEY art in your GRP.
 
 ## Sky, sprites and flat screens
 
@@ -313,6 +316,6 @@ last 120 ms; releases under 1 m/s don't throw). The native pipebomb actor,
 bounce, fuse, damage and multiplayer replication are unchanged: the swing
 speed (0.75 m/s steps up to ~11 m/s) and direction travel in spare bits of
 the existing hand-shot sample, and the host releases the bomb on that tick.
-In remote-detonation mode the next bomb stays in your hand; while bombs are
-live the off-hand trigger detonates them (instead of Open/Use). Verified with
+In remote-detonation mode the detonator replaces the bomb in the throwing hand
+(native flow); its trigger detonates. Verified with
 `tools/vr/smoke_xr_throw.py`.
