@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import IO, Iterable
 
 
-EXPECTED_SHA256 = "c099e085f778b3183b22a3ab81b7200dd013855c4bcbc7bb5c5189ed045311bf"
-EXPECTED_VERSION = "1:26.2.3-1"
+EXPECTED_SHA256 = "e14837dfe51c29d8bdb29422b40daaafc2291908c4a6349a0e63addd09fa546b"
+EXPECTED_VERSION = "1:26.2.5-1"
 DISPLAY = ":105"
 XDG_RUNTIME = Path("/tmp/xr")  # Monado IPC paths reject longer runtime roots.
 
@@ -81,7 +81,7 @@ def verify_dependencies(deps: Path) -> Path:
     except (OSError, json.JSONDecodeError) as exc:
         raise LabError(f"cannot read dependency manifest {manifest}: {exc}") from exc
     if package.get("sha256") != EXPECTED_SHA256 or package.get("version") != EXPECTED_VERSION:
-        raise LabError("dependency manifest is not the verified vulkan-swrast 1:26.2.3-1 package")
+        raise LabError(f"dependency manifest is not the verified vulkan-swrast {EXPECTED_VERSION} package")
     pkginfo = deps / ".PKGINFO"
     if not pkginfo.is_file() or f"pkgver = {EXPECTED_VERSION}" not in pkginfo.read_text(errors="replace"):
         raise LabError("extracted dependency version does not match its verified manifest")

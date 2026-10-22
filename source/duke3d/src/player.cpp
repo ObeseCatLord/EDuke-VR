@@ -2547,7 +2547,8 @@ static bool P_XRWeaponBaseReady(int weapon, unsigned maxCounter, uint8_t feature
         || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
         || p->dead_flag || (unsigned)p->i>=MAXSPRITES || sprite[p->i].extra<=0
         || sprite[p->i].xrepeat<40 || sprite[p->i].pal==1
-        || p->curr_weapon!=weapon || p->last_weapon>=0 || p->weapon_pos || p->holster_weapon
+        // Weapon switches (lowering/raising) keep the 3D model of the current weapon in the hand.
+        || p->curr_weapon!=weapon || p->holster_weapon
         || (unsigned)p->kickback_pic>maxCounter || p->fist_incs || p->knuckle_incs || p->tipincs || p->access_incs
         || p->knee_incs // quick kicks keep the held weapon (the 3D boot kicks below it)
         || PWEAPON(myconnectindex,weapon,WorksLike)!=weapon
@@ -2616,7 +2617,7 @@ static bool P_XRHeldPresentation(XRWeaponPresentation &sample)
     auto const p=g_player[myconnectindex].ps;
     if (!P_XRWeaponBaseReady(p->curr_weapon,UINT16_MAX,G_VRHandShotFeature(myconnectindex))) return false;
     sample={P_GetHudPal(p),min<int32_t>(sprite[p->i].shade,24),p->kickback_pic,p->reloading,XRWeaponFamily::StockHeld};
-    return sample.palette==0; // Tinted HUD palettes (water, nightvision) keep native ART.
+    return true; // Sector/HUD palettes (water, nightvision) tint the model, as for the pistol.
 #else
     return false;
 #endif
@@ -2629,7 +2630,7 @@ bool P_XRMappedPresentation(XRWeaponPresentation &sample)
     if (!p || (unsigned)p->curr_weapon>=MAX_WEAPONS
         || !P_XRWeaponBaseReady(p->curr_weapon,UINT16_MAX,G_VRHandShotFeature(myconnectindex))) return false;
     sample={P_GetHudPal(p),min<int32_t>(sprite[p->i].shade,24),p->kickback_pic,p->reloading,XRWeaponFamily::HudMapped};
-    return sample.palette==0;
+    return true;
 #else
     return false;
 #endif
