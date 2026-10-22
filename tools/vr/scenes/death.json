@@ -1,0 +1,7 @@
+[
+ {"pose": {"head": [0, 1.65, 0, 0, 0, 0]}}, {"wait": 3},
+ {"console": "xr_kill"}, {"wait": 4}, {"capture": "dead"},
+ {"buttons": {"left": {"squeeze_value": 1.0}, "right": {"trigger_value": 1.0, "trigger_click": 1}}}, {"wait": 0.3},
+ {"buttons": {"left": {"squeeze_value": 0.0}, "right": {"trigger_value": 0.0, "trigger_click": 0}}},
+ {"capture": "load1"}, {"capture": "load2"}, {"wait": 0.5}, {"capture": "load3"}, {"wait": 4}, {"capture": "after"}
+]

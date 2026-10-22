@@ -98,6 +98,7 @@ def main():
                 hand.pose.orientation = quat()
             remote.send()
             time.sleep(4)
+            console_mark = None
             for step in steps:
                 if 'pose' in step:
                     for name, value in step['pose'].items():
@@ -118,6 +119,8 @@ def main():
                                 setattr(hand, field, type(getattr(hand, field))(value))
                     remote.send()
                 if 'console' in step:
+                    # A following 'until' also sees what the command logged at once.
+                    console_mark = len(text())
                     console.write_text(step['console'] + '\n'); wait(lambda: not console.exists(), 30)
                 if 'wait' in step:
                     end = time.monotonic() + step['wait']
@@ -126,7 +129,8 @@ def main():
                             raise RuntimeError('game exited')
                         remote.send(); time.sleep(.05)
                 if 'until' in step:
-                    start = step.get('from_start') and 0 or len(text())
+                    start = 0 if step.get('from_start') else min(len(text()), console_mark if console_mark is not None else len(text()))
+                    console_mark = None
                     ok = wait(lambda: re.search(step['until'], text()[start:]) is not None, step.get('timeout', 20))
                     result.setdefault('until', []).append({step['until']: ok})
                 if 'capture' in step:

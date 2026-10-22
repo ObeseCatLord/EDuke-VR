@@ -238,8 +238,9 @@
 },
 {
 "buttons": {
-"right": {
-"thumbstick_click": 1
+"left": {
+"trigger_value": 1.0,
+"trigger_click": 1
 }
 }
 },
@@ -251,8 +252,9 @@
 },
 {
 "buttons": {
-"right": {
-"thumbstick_click": 0
+"left": {
+"trigger_value": 0.0,
+"trigger_click": 0
 }
 }
 },

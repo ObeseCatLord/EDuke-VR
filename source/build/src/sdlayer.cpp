@@ -126,6 +126,75 @@ static void sdlayer_xr_desktopSync(bool xrPaced)
         SDL_GL_SetSwapInterval(xrPaced ? 0 : sdlayer_getswapinterval(vsync_renderlayer));
 }
 
+// The headset sets the video mode to its per-eye size (e.g. 2544x2544), which a desktop window
+// cannot always hold (a 1440-line monitor): rows past the window are never stored, which cut off
+// the top of loading/intermission screens copied to the headset. When the window is smaller than
+// the mode, the game draws into an offscreen target of the full mode, scaled into the window at
+// each desktop swap.
+static struct { GLuint fbo, color, depth; int width, height; bool bound; } sdl_xr_desktop;
+static void sdlayer_xr_desktopTarget()
+{
+    if (!sdl_window || !sdl_context || nogl || !glBlitFramebuffer || xdim <= 0 || ydim <= 0) return;
+    int dw = 0, dh = 0;
+    SDL_GL_GetDrawableSize(sdl_window, &dw, &dh);
+    static bool const forced = Bgetenv("EDUKE32_XR_TEST_DESKTOP_TARGET") != nullptr;   // lab: no window manager clamps
+    bool const need = sdlayer_xr_option("EDUKE32_XR") && dw > 0 && dh > 0 && (forced || dw < xdim || dh < ydim);
+    if (!need)
+    {
+        if (sdl_xr_desktop.bound) { glBindFramebuffer(GL_FRAMEBUFFER, 0); glDrawBuffer(GL_BACK); glReadBuffer(GL_BACK); }
+        sdl_xr_desktop.bound = false;
+        return;
+    }
+    if (!sdl_xr_desktop.fbo || sdl_xr_desktop.width != xdim || sdl_xr_desktop.height != ydim)
+    {
+        if (!sdl_xr_desktop.fbo) glGenFramebuffers(1, &sdl_xr_desktop.fbo);
+        if (!sdl_xr_desktop.color) glGenTextures(1, &sdl_xr_desktop.color);
+        if (!sdl_xr_desktop.depth) glGenRenderbuffers(1, &sdl_xr_desktop.depth);
+        GLint texture = 0, renderbuffer = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture); glGetIntegerv(GL_RENDERBUFFER_BINDING, &renderbuffer);
+        glBindTexture(GL_TEXTURE_2D, sdl_xr_desktop.color);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, xdim, ydim, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindRenderbuffer(GL_RENDERBUFFER, sdl_xr_desktop.depth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, xdim, ydim);
+        glBindFramebuffer(GL_FRAMEBUFFER, sdl_xr_desktop.fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sdl_xr_desktop.color, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, sdl_xr_desktop.depth);
+        glBindTexture(GL_TEXTURE_2D, texture); glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        {
+            LOG_F(WARNING, "OpenXR desktop target %dx%d incomplete; drawing to the window.", xdim, ydim);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            sdl_xr_desktop.bound = false;
+            return;
+        }
+        sdl_xr_desktop.width = xdim; sdl_xr_desktop.height = ydim;
+        LOG_F(INFO, "OpenXR desktop target: %dx%d offscreen (window %dx%d).", xdim, ydim, dw, dh);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, sdl_xr_desktop.fbo);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0); glReadBuffer(GL_COLOR_ATTACHMENT0);
+    sdl_xr_desktop.bound = true;
+}
+// Scale the offscreen frame into the window (aspect kept, black bars) before a desktop swap.
+static void sdlayer_xr_desktopPresent()
+{
+    if (!sdl_xr_desktop.bound) return;
+    int dw = 0, dh = 0;
+    SDL_GL_GetDrawableSize(sdl_window, &dw, &dh);
+    float const scale = std::min(float(dw)/xdim, float(dh)/ydim);
+    int const w = int(xdim*scale), h = int(ydim*scale), x = (dw-w)/2, y = (dh-h)/2;
+    GLboolean const scissor = glIsEnabled(GL_SCISSOR_TEST);
+    GLfloat clear[4]; glGetFloatv(GL_COLOR_CLEAR_VALUE, clear);
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); glDrawBuffer(GL_BACK);
+    glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, sdl_xr_desktop.fbo); glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBlitFramebuffer(0, 0, xdim, ydim, x, y, x+w, y+h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    glClearColor(clear[0], clear[1], clear[2], clear[3]);
+    if (scissor) glEnable(GL_SCISSOR_TEST);
+}
+
 // Play mode retries a stopped world session with backoff (ms tick, attempts).
 static uint64_t sdl_xr_retryAt;
 static unsigned sdl_xr_retries;
@@ -2266,6 +2335,9 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
     }
 
     setvideomode_sdlcommonpost(x, y, c, fs, regrab);
+#ifdef USE_OPENXR
+    sdlayer_xr_desktopTarget();
+#endif
 
 #if MICROPROFILE_ENABLED != 0
     if (!nogl)
@@ -2485,7 +2557,13 @@ void videoShowFrame(int32_t w)
                 else lastSwap = now;
             }
 #endif
+#ifdef USE_OPENXR
+            if (desktopSwap) sdlayer_xr_desktopPresent();
+#endif
             if (desktopSwap) SDL_GL_SwapWindow(sdl_window);
+#ifdef USE_OPENXR
+            sdlayer_xr_desktopTarget();   // draw the next frame offscreen again (or not, if it fits)
+#endif
 #else
             SDL_GL_SwapBuffers();
 #endif

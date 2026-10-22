@@ -3851,6 +3851,13 @@ static void runConsoleRequest()
             }
             continue;
         }
+        if (command=="xr_kill")
+        {
+            // Test hook: the local player dies (as from damage).
+            auto const p=g_player[myconnectindex].ps;
+            if ((unsigned)p->i<MAXSPRITES) { sprite[p->i].extra=0; p->dead_flag=0; }
+            continue;
+        }
         if (command=="xr_endlevel")
         {
             // Test hook: finish the level like the exit switch (intermission follows).
