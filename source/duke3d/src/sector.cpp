@@ -241,8 +241,13 @@ int __fastcall A_FindPlayer(const spritetype *pSprite, int32_t *dist)
     int     closestPlayer     = 0;
     int32_t closestPlayerDist = INT32_MAX;
 
+    bool const dedicated = g_networkMode == NET_DEDICATED_SERVER || g_networkMode == NET_DEDICATED_CLIENT;
+
     for (bssize_t TRAVERSE_CONNECT(j))
     {
+        if (j == 0 && dedicated)  // the dedicated server's own player is not in the game
+            continue;
+
         auto const pPlayer    = g_player[j].ps;
         int32_t             playerDist = A_FP_ManhattanDist(pPlayer, pSprite);
 

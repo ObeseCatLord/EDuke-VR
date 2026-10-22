@@ -48,3 +48,38 @@ void G_VRFilterShotInput(int player, input_t &input);
 // Revalidated on both client and authoritative server. Never move player state.
 // An optional native muzzle point is constrained from the same body anchor.
 bool G_VRResolveShot(int player, vec3_t &position, int16_t &sector, bool &clamped, vec3_t const *muzzlePosition=nullptr);
+
+// Tracked body pose that other players need to draw this player's VR body: head, both hands with
+// their finger pose and the held 3D weapon. Presentation only (it never changes game state): sent
+// unreliably with every client update and relayed by the server to everyone else.
+// Offsets are Build units from the sender's view position; frame axes are three columns of Build
+// units per metre, divided by (384, 384, 6144) and stored *VRBodyAxisScale.
+struct VRBodyFrame { int16_t root[3] {}; int16_t axes[9] {}; };
+struct VRBodyPose
+{
+    uint16_t sequence=0;
+    uint8_t flags=0;
+    uint8_t hand[2] {};     // VRHand* finger pose source
+    uint8_t pull[2] {};     // index finger trigger curl of a hold pose, 0..255
+    uint8_t kick=0;         // mighty foot leg extension, 0..255
+    int16_t bodyAngle=0;    // the body's facing relative to the player's native angle, Build angle units * 16
+    int16_t eye[3] {};      // Build offset of the eye
+    int16_t headForward[3] {}, headUp[3] {};   // unit*32767: Build x, y and up (isotropic)
+    VRBodyFrame handFrame[2] {};   // grip frame for named poses, weapon frame for a hold
+    int16_t weaponTile=-1, weaponFrame=0, weaponNextFrame=0;
+    uint8_t weaponLerp=0;
+    VRBodyFrame weapon {};  // held model frame (MD3 axes, pivot applied)
+};
+constexpr uint8_t VRBodyHead=1, VRBodyWeapon=2;
+enum : uint8_t { VRHandNone, VRHandRelaxed, VRHandTrigger, VRHandPoint, VRHandFist, VRHandHold, VRHandKinds };
+constexpr size_t VRBodyWireSize=108;
+constexpr float VRBodyAxisScale=8192.f;
+bool G_VRDecodeBodyPose(uint8_t const *bytes, size_t size, VRBodyPose &pose);
+void G_VREncodeBodyPose(VRBodyPose const &pose, uint8_t *bytes);
+// XR peers publish their pose each frame; the network sends each new one once.
+void G_VRPublishBodyPose(VRBodyPose const &pose);
+bool G_VRTakeBodyPose(uint8_t *bytes);
+// Received poses (newest sequence wins), and the latest one no older than maxAge seconds.
+void G_VRStoreBodyPose(int player, VRBodyPose const &pose);
+bool G_VRGetBodyPose(int player, VRBodyPose &pose, double maxAge);
+void G_VRResetBodyPoses();

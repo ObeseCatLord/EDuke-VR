@@ -213,12 +213,31 @@ Opus 24 kbps (~3 kB/s per talker) on its own unreliable channel, relayed by
 the server to every other client. Opus is BSD-licensed (system library). Verified with
 `tools/vr/smoke_voice.py` (test tone, relay, 440 Hz decode, head-tracked pan).
 
+## VR bodies in multiplayer
+
+Each VR player sends its raw tracking about 30 times a second (about 3 kB/s):
+- head pose;
+- each hand's grip or weapon frame and finger pose (relaxed, trigger, point, fist or the weapon's hold, with the trigger curl);
+- the held 3D model and its animation frame;
+- the mighty foot leg extension.
+
+This is presentation only. It rides its own unreliable channel and the server relays it like voice.
+
+Every client solves the other players' full IK bodies locally, using the same rig as its own body:
+- arms reach the tracked wrists (stretching when needed);
+- the head follows the headset;
+- legs step and kick;
+- hand shells grip the weapon each player is holding.
+
+Players without a fresh pose (flat players, the dead, a stalled connection) keep the native Duke sprite. Remote bodies need a pack with the IK body (the DNF pack). Other packs show the native sprite.
+
+On a dedicated server, the server's own player 0 is not in the game: it is invisible, never blocks, never takes shots and is never targeted.
+
+Verified across a real network with `tools/vr/smoke_xr_remote_coop.py`. That test uses two independent simulated headsets (`software_xr_lab.py --share-net --second-runtime`) against a dedicated aarch64 server on another machine.
+
 ## Multiplayer compatibility
 
-Only identical, current builds play together: the network protocol (NETVERSION
-8) always carries the VR shot sample (hand ray and head direction) in every
-input update (flat clients send it inactive) and has a voice channel, with no negotiation and no support
-for older clients or servers, which are refused at connect.
+Only identical, current builds play together. The network protocol (NETVERSION 9) always carries the VR shot sample (hand ray and head direction) in every input update; flat clients send it inactive. It also has voice and VR body pose channels. There is no negotiation and no support for older clients or servers, which are refused at connect.
 
 ## Known limits
 

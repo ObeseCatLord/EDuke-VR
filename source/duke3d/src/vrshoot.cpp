@@ -223,3 +223,101 @@ bool G_VRResolveShot(int player, vec3_t &position, int16_t &sect, bool &clamped,
     clamped=clamped || position.x!=before.x || position.y!=before.y || position.z!=before.z;
     return cansee(anchor.x,anchor.y,anchor.z,bodySector,position.x,position.y,position.z,sect);
 }
+
+namespace
+{
+struct BodyPoseState { VRBodyPose pose; double at=-1.; bool valid=false; };
+BodyPoseState bodyPoses[MAXPLAYERS];
+VRBodyPose publishedPose;
+bool posePending;
+uint16_t poseSequence;
+double poseNow() { return double(timerGetNanoTicks())/double(timerGetNanoTickRate()); }
+
+// Field order on the wire after the version byte (all little endian).
+template <typename Visit> void visitBodyPose(VRBodyPose &p, Visit &&visit)
+{
+    visit.u16(p.sequence); visit.u8(p.flags);
+    for (auto &v:p.hand) visit.u8(v);
+    for (auto &v:p.pull) visit.u8(v);
+    visit.u8(p.kick);
+    visit.s16(p.bodyAngle);
+    for (auto &v:p.eye) visit.s16(v);
+    for (auto &v:p.headForward) visit.s16(v);
+    for (auto &v:p.headUp) visit.s16(v);
+    auto frame=[&](VRBodyFrame &f) { for (auto &v:f.root) visit.s16(v); for (auto &v:f.axes) visit.s16(v); };
+    frame(p.handFrame[0]); frame(p.handFrame[1]);
+    visit.s16(p.weaponTile); visit.s16(p.weaponFrame); visit.s16(p.weaponNextFrame); visit.u8(p.weaponLerp);
+    frame(p.weapon);
+}
+struct PoseWriter
+{
+    uint8_t *at;
+    void u8(uint8_t v) { *at++=v; }
+    void u16(uint16_t v) { *at++=uint8_t(v); *at++=uint8_t(v>>8); }
+    void s16(int16_t v) { u16(uint16_t(v)); }
+};
+struct PoseReader
+{
+    uint8_t const *at;
+    void u8(uint8_t &v) { v=*at++; }
+    void u16(uint16_t &v) { v=uint16_t(at[0]|(at[1]<<8)); at+=2; }
+    void s16(int16_t &v) { uint16_t w; u16(w); v=int16_t(w); }
+};
+bool unitVector(int16_t const *v)
+{
+    int64_t const length=int64_t(v[0])*v[0]+int64_t(v[1])*v[1]+int64_t(v[2])*v[2];
+    return length>=int64_t(31000)*31000 && length<=int64_t(34000)*34000;
+}
+}
+
+bool G_VRDecodeBodyPose(uint8_t const *bytes, size_t size, VRBodyPose &pose)
+{
+    if (size!=VRBodyWireSize || bytes[0]!=1) return false;
+    VRBodyPose decoded;
+    visitBodyPose(decoded,PoseReader{bytes+1});
+    if (decoded.flags & ~(VRBodyHead|VRBodyWeapon)) return false;
+    if (decoded.hand[0]>=VRHandKinds || decoded.hand[1]>=VRHandKinds) return false;
+    if ((decoded.flags & VRBodyHead) && (!unitVector(decoded.headForward) || !unitVector(decoded.headUp))) return false;
+    if ((decoded.flags & VRBodyWeapon) && (decoded.weaponTile<0 || decoded.weaponTile>=MAXTILES
+        || decoded.weaponFrame<0 || decoded.weaponNextFrame<0)) return false;
+    pose=decoded; return true;
+}
+
+void G_VREncodeBodyPose(VRBodyPose const &pose, uint8_t *bytes)
+{
+    bytes[0]=1;
+    auto copy=pose;
+    visitBodyPose(copy,PoseWriter{bytes+1});
+}
+
+void G_VRPublishBodyPose(VRBodyPose const &pose)
+{
+    publishedPose=pose; publishedPose.sequence=++poseSequence; posePending=true;
+}
+
+bool G_VRTakeBodyPose(uint8_t *bytes)
+{
+    if (!posePending) return false;
+    posePending=false;
+    G_VREncodeBodyPose(publishedPose,bytes);
+    return true;
+}
+
+void G_VRStoreBodyPose(int player, VRBodyPose const &pose)
+{
+    if (unsigned(player)>=MAXPLAYERS) return;
+    auto &state=bodyPoses[player];
+    double const now=poseNow();
+    // Unsequenced packets: drop older ones, unless the stream restarted (a second of silence).
+    if (state.valid && now-state.at<1. && int16_t(uint16_t(pose.sequence-state.pose.sequence))<=0) return;
+    state.pose=pose; state.at=now; state.valid=true;
+}
+
+bool G_VRGetBodyPose(int player, VRBodyPose &pose, double maxAge)
+{
+    if (unsigned(player)>=MAXPLAYERS || !bodyPoses[player].valid || poseNow()-bodyPoses[player].at>maxAge) return false;
+    pose=bodyPoses[player].pose;
+    return true;
+}
+
+void G_VRResetBodyPoses() { for (auto &state:bodyPoses) state={}; posePending=false; }

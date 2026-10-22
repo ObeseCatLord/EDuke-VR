@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
 // net packet specification/compatibility version
-#define NETVERSION    8  // VR shot sample (hand + head) in every update, voice channel; no older peers
+#define NETVERSION    9  // VR shot sample (hand + head) in every update, voice and VR body pose channels; no older peers
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;
@@ -56,6 +56,7 @@ enum netchan_t
     CHAN_CHAT,      // chat and RTS
     CHAN_MISC,      // whatever else
     CHAN_VOICE,     // unreliable voice chat
+    CHAN_VRPOSE,    // unreliable VR body poses (presentation only)
     CHAN_MAX
 };
 
@@ -93,6 +94,7 @@ enum DukePacket_t
     PACKET_MAP_VOTE_INITIATE,
     PACKET_MAP_VOTE_CANCEL,
     PACKET_VOICE=202,              // CHAN_VOICE: client->server body, server->client [source][body]
+    PACKET_VR_POSE=203,            // CHAN_VRPOSE: client->server pose, server->client [source][pose]
 };
 
 
@@ -264,6 +266,7 @@ void    Net_DeleteSprite(int32_t spritenum);
 void    Net_SendServerUpdates(void);
 
 void    Net_SendClientUpdate(void);
+void    Net_SendVRBodyPose(void);
 
 void    Net_SendMessage(void);
 
@@ -318,6 +321,7 @@ void Net_WaitForInitialSnapshot();
 #define Net_SendServerUpdates(...) ((void)0)
 
 #define Net_SendClientUpdate(...) ((void)0)
+#define Net_SendVRBodyPose(...) ((void)0)
 
 #define Net_SendMessage(...) ((void)0)
 

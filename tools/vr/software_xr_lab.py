@@ -32,6 +32,7 @@ EXPECTED_SHA256 = "e14837dfe51c29d8bdb29422b40daaafc2291908c4a6349a0e63addd09fa5
 EXPECTED_VERSION = "1:26.2.5-1"
 DISPLAY = ":105"
 XDG_RUNTIME = Path("/tmp/xr")  # Monado IPC paths reject longer runtime roots.
+RUNTIME2 = Path("/tmp/xr2")
 
 
 class LabError(RuntimeError):
@@ -57,6 +58,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deps", required=True, help="absolute extracted vulkan-swrast dependency directory")
     parser.add_argument("--work-dir", required=True, help="absolute, owned lab output directory")
     parser.add_argument("--remote-port", type=int, default=49777)
+    parser.add_argument("--share-net", action="store_true",
+                        help="keep the host network (multiplayer against a real server); default is a private one")
+    parser.add_argument("--second-runtime", action="store_true",
+                        help="also run a second private Monado (its remote driver on --remote-port + 1); the child "
+                             "gets SOFTWARE_XR_LAB_RUNTIME2/_CONFIG2/_REMOTE_PORT2 to point a second app at it")
     parser.add_argument("--child-timeout", type=int, default=60,
                         help="bounded child runtime in seconds, including asset precache (default: 60)")
     parser.add_argument("--_in-lab", action="store_true", help=argparse.SUPPRESS)
@@ -67,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     args.child = args.child[1:]
     if not args.child:
         parser.error("a child command is required after --")
-    if not 1 <= args.remote_port <= 65535:
+    if not 1 <= args.remote_port <= 65534:
         parser.error("--remote-port must be in 1..65535")
     if not 1 <= args.child_timeout <= 600:
         parser.error("--child-timeout must be in 1..600 seconds")
@@ -114,7 +120,7 @@ def reexec_sandbox(args: argparse.Namespace, script: Path) -> None:
     # The re-exec keeps all repository inputs read-only from the initial bind.
     command_line = [
         "bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-        "--unshare-pid", "--unshare-net", "--die-with-parent",
+        "--unshare-pid", *(() if args.share_net else ("--unshare-net",)), "--die-with-parent",
         "--bind", str(work_dir), str(work_dir), "--tmpfs", "/tmp", "--tmpfs", "/run/user",
         "--chdir", str(work_dir), "--clearenv",
     ]
@@ -123,7 +129,9 @@ def reexec_sandbox(args: argparse.Namespace, script: Path) -> None:
             command_line.extend(("--setenv", name, os.environ[name]))
     command_line.extend((sys.executable, str(script), "--_in-lab", "--deps", str(deps),
                          "--work-dir", str(work_dir), "--remote-port", str(args.remote_port),
-                         "--child-timeout", str(args.child_timeout), "--", str(command)))
+                         "--child-timeout", str(args.child_timeout),
+                         *(("--share-net",) if args.share_net else ()),
+                         *(("--second-runtime",) if args.second_runtime else ()), "--", str(command)))
     command_line.extend(args.child[1:])
     os.execvp("bwrap", command_line)
 
@@ -249,6 +257,13 @@ def run_lab(args: argparse.Namespace) -> int:
         (config / "monado/config_v0.json").write_text(json.dumps({
             "active": "remote", "remote": {"version": 0, "port": args.remote_port, "view_count": 2},
         }) + "\n")
+        runtime2, config2 = RUNTIME2, work_dir / "config2"
+        if args.second_runtime:
+            for directory in (runtime2, config2, config2 / "monado"):
+                directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            (config2 / "monado/config_v0.json").write_text(json.dumps({
+                "active": "remote", "remote": {"version": 0, "port": args.remote_port + 1, "view_count": 2},
+            }) + "\n")
         layer = Path("/usr/share/openxr/1/api_layers/explicit.d/XrApiLayer_core_validation.json")
         layer_available = layer.is_file()
         result["core_validation"] = {"available": layer_available, "requested": layer_available,
@@ -273,10 +288,14 @@ def run_lab(args: argparse.Namespace) -> int:
         if layer_available:
             env.update({"XR_API_LAYER_PATH": str(layer.parent), "XR_ENABLE_API_LAYERS": "XR_APILAYER_LUNARG_core_validation"})
 
-        def launch(name: str, command: list[str], stdin: object = None) -> OwnedProcess:
+        if args.second_runtime:
+            env.update({"SOFTWARE_XR_LAB_RUNTIME2": str(runtime2), "SOFTWARE_XR_LAB_CONFIG2": str(config2),
+                        "SOFTWARE_XR_LAB_REMOTE_PORT2": str(args.remote_port + 1)})
+
+        def launch(name: str, command: list[str], stdin: object = None, extra: dict | None = None) -> OwnedProcess:
             log = (work_dir / f"{name}.log").open("w", encoding="utf-8")
             owned = OwnedProcess(name, subprocess.Popen(["nice", "-n", "10", *command], cwd=work_dir,
-                                 stdin=stdin, stdout=log, stderr=subprocess.STDOUT, env=env,
+                                 stdin=stdin, stdout=log, stderr=subprocess.STDOUT, env={**env, **(extra or {})},
                                  start_new_session=True), log)
             processes.append(owned)
             return owned
@@ -297,6 +316,14 @@ def run_lab(args: argparse.Namespace) -> int:
         monado = launch("monado", ["monado-service"], monado_stdin)
         wait_for(monado, lambda: any(stat.S_ISSOCK(path.stat().st_mode) for path in runtime.iterdir()), 15,
                  processes, "Monado")
+        if args.second_runtime:
+            stage = "second private Monado"
+            master2, slave2 = pty.openpty()
+            pty_fds.extend((master2, slave2))
+            monado2 = launch("monado2", ["monado-service"], slave2,
+                             {"XDG_RUNTIME_DIR": str(runtime2), "XDG_CONFIG_HOME": str(config2)})
+            wait_for(monado2, lambda: any(stat.S_ISSOCK(path.stat().st_mode) for path in runtime2.iterdir()), 15,
+                     processes, "second Monado")
 
         stage = "child diagnostic"
         smoke = launch("child", child)
@@ -311,7 +338,7 @@ def run_lab(args: argparse.Namespace) -> int:
         # Harnesses write game logs in child directories. A fresh work directory
         # prevents old validation output from being mistaken for this run.
         child_logs = [(path, path.read_text(errors="replace")) for path in work_dir.rglob("*.log")
-                      if path not in (work_dir / "monado.log", work_dir / "xvfb.log")]
+                      if path not in (work_dir / "monado.log", work_dir / "monado2.log", work_dir / "xvfb.log")]
         findings = [f"{path.relative_to(work_dir)}: {line}" for path, contents in child_logs
                     for line in find_validation_lines(contents)]
         layer_observed = any("VUID-CoreValidation-Initialize" in contents
@@ -337,7 +364,8 @@ def run_lab(args: argparse.Namespace) -> int:
             result["monado_teardown_nonexistent_space_warning"] = "destroy non-existent space" in (
                 work_dir / "monado.log").read_text(errors="replace")
         result["process_codes"] = {owned.name: owned.process.returncode for owned in processes}
-        result["qualification"] = ("private PID/network/device namespace; Xvfb and Monado are owned; "
+        result["qualification"] = (("private PID/device namespace, host network (--share-net); " if args.share_net
+                                    else "private PID/network/device namespace; ") + "Xvfb and Monado are owned; "
                                     "Mesa llvmpipe plus the verified extracted LVP ICD only")
         result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result, indent=2, sort_keys=True))

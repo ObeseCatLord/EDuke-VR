@@ -1531,6 +1531,150 @@ static int playerCharacter()
     return value==missing ? 0 : value;
 }
 
+// Tracking-space vectors to Build for this frame's body camera (directions keep metres, z up).
+struct TrackingToBuild
+{
+    XrQuaternionf tracking;
+    float co, si;
+    explicit TrackingToBuild(Camera const &body)
+        : tracking(multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw)),
+          co(std::cos(fix16_to_float(body.angle)*Pi/1024.f)), si(std::sin(fix16_to_float(body.angle)*Pi/1024.f)) {}
+    XrVector3f offset(XrVector3f v) const   // Build units (z down)
+    {
+        v=rotate(tracking,v);
+        return {(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+    }
+    XrVector3f direction(XrVector3f v) const   // isotropic, z up
+    {
+        v=rotate(tracking,v);
+        return {-v.z*co-v.x*si,-v.z*si+v.x*co,v.y};
+    }
+};
+
+using HandRoots=std::array<vec3_t,eduke_xr::HandInput::JointCount>;
+using HandBases=std::array<std::array<XrVector3f,3>,eduke_xr::HandInput::JointCount>;
+using HandJoints=std::array<XrPosef,eduke_xr::HandInput::JointCount>;
+
+// A hand pose's frame in Build space: a joint at p metres sits at root + axes*p (axes are Build units
+// per metre): the controller grip for named poses, the held model (pivot applied) for holds.
+struct HandFrame { float root[3]{}; XrVector3f axes[3]{}; };
+
+// What this frame's hands showed, for other players' views (VRBodyPose).
+static struct HandWire { uint8_t kind=VRHandNone; float pull=0.f; HandFrame frame; } handWire[2];
+
+// Trigger pull: the index finger curls a little at each joint (pull 0..1). Rotations act in the
+// hold's right-handed W frame (W = MD3 +Y, +Z, -X) about each joint's own flexion (+X) axis.
+static void curlIndexFinger(HandJoints &joints, float pull)
+{
+    if (!(pull>0.f)) return;
+    auto const toW=[](XrVector3f m) { return XrVector3f{m.y,m.z,-m.x}; };
+    auto const toM=[](XrVector3f w) { return XrVector3f{-w.z,w.x,w.y}; };
+    // Joint indices in XR_HAND_JOINT order: index proximal 7, intermediate 8, distal 9, tip 10.
+    static constexpr unsigned chain[]={7,8,9,10};
+    static constexpr float degrees[]={8.f,16.f,12.f};
+    for (unsigned link=0;link<3;++link)
+    {
+        auto const &pivot=joints[chain[link]];
+        auto const axis=rotate(pivot.orientation,{1,0,0});
+        float const half=-degrees[link]*pull*Pi/360.f, sh=std::sin(half);
+        XrQuaternionf const turn={axis.x*sh,axis.y*sh,axis.z*sh,std::cos(half)};
+        auto const origin=toW(pivot.position);
+        for (unsigned k=link;k<4;++k)
+        {
+            auto &j=joints[chain[k]];
+            if (k>link)
+            {
+                auto const w=toW(j.position);
+                auto const r=rotate(turn,{w.x-origin.x,w.y-origin.y,w.z-origin.z});
+                j.position=toM({origin.x+r.x,origin.y+r.y,origin.z+r.z});
+            }
+            j.orientation=multiply(turn,j.orientation);
+        }
+    }
+}
+
+// Joint roots and axes (Build units per model unit) of a pose placed in its frame. Weapon-frame
+// (hold) rotations use the weapon's right-handed aim frame W=(MD3 +Y, MD3 +Z, MD3 -X).
+static void placeHandJoints(HandJoints const &joints, bool weaponFrame, HandFrame const &frame, HandRoots &roots, HandBases &bases)
+{
+    XrVector3f const axes[3]={{1,0,0},{0,1,0},{0,0,1}};
+    for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint)
+    {
+        auto const &j=joints[joint];
+        float const m[3]={j.position.x,j.position.y,j.position.z};
+        float pos[3]={frame.root[0],frame.root[1],frame.root[2]};
+        for (unsigned k=0;k<3;++k)
+        { pos[0]+=frame.axes[k].x*m[k]; pos[1]+=frame.axes[k].y*m[k]; pos[2]+=frame.axes[k].z*m[k]; }
+        roots[joint]={int32_t(std::lround(pos[0])),int32_t(std::lround(pos[1])),int32_t(std::lround(pos[2]))};
+        for (unsigned axis=0;axis<3;++axis)
+        {
+            auto const r=rotate(j.orientation,axes[axis]);
+            float const c[3]={weaponFrame ? -r.z : r.x,weaponFrame ? r.x : r.y,weaponFrame ? r.y : r.z};
+            XrVector3f b{};
+            for (unsigned k=0;k<3;++k)
+            { b.x+=frame.axes[k].x*c[k]/64.f; b.y+=frame.axes[k].y*c[k]/64.f; b.z+=frame.axes[k].z*c[k]/64.f; }
+            bases[joint][axis]=b;
+        }
+    }
+}
+
+// One continuous skinned hand shell, as Build offsets from the wrist.
+static bool skinHandShell(HandSegmentSample &sample, std::vector<vec3f_t> &vertices, std::vector<HandRig::ShellVertex> const &skin,
+                          int shellTile, HandRoots const &roots, HandBases const &bases, int32_t shade, int instance, int16_t sector)
+{
+    int const shellModel=shellTile>=0 ? md_tilehasmodel(shellTile,0) : -1;
+    if (shellModel<0 || skin.empty()) return false;
+    vertices.resize(skin.size());
+    vec3_t const anchor=roots[1];   // wrist
+    for (size_t i=0;i<skin.size();++i)
+    {
+        auto const &v=skin[i];
+        float acc[3]={0,0,0};
+        for (unsigned k=0;k<2;++k)
+        {
+            float const w=k ? 1.f-v.weight : v.weight;
+            if (w<=0.f) continue;
+            unsigned const j=v.joint[k];
+            auto const &l=v.local[k];
+            auto const &b=bases[j];
+            acc[0]+=w*(float(roots[j].x-anchor.x)+b[0].x*l.x+b[1].x*l.y+b[2].x*l.z);
+            acc[1]+=w*(float(roots[j].y-anchor.y)+b[0].y*l.x+b[1].y*l.y+b[2].y*l.z);
+            acc[2]+=w*(float(roots[j].z-anchor.z)+b[0].z*l.x+b[1].z*l.y+b[2].z*l.z);
+        }
+        vertices[i]={acc[0],acc[1],acc[2]};
+    }
+    sample.context.instance=instance;
+    sample.context.modelid=shellModel;
+    sample.context.skinnum=tile2model[Ptile2tile(shellTile,0)].skinnum;
+    sample.context.shade=shade;
+    sample.context.cframe=sample.context.nframe=0;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    sample.context.vertices=vertices.data();
+    sample.context.vertexCount=int32_t(vertices.size());
+    if (!md3_preflightcontext(&sample.context)) return false;
+    // Vertices are already Build offsets from the wrist: identity basis.
+    sample.root=anchor;
+    sample.pivot={0,0,0};
+    sample.basis[0]={1,0,0}; sample.basis[1]={0,1,0}; sample.basis[2]={0,0,1};
+    sample.sector=sector;
+    updatesector(sample.root.x,sample.root.y,&sample.sector);
+    if (sample.sector<0) sample.sector=sector;
+    return true;
+}
+
+static HandFrame heldModelFrame(WorldModelSample const &model)
+{
+    HandFrame frame;
+    frame.root[0]=float(model.root.x); frame.root[1]=float(model.root.y); frame.root[2]=float(model.root.z);
+    float const pivot[3]={model.pivot.x,model.pivot.y,model.pivot.z};
+    for (unsigned k=0;k<3;++k)
+    {
+        frame.root[0]-=model.basis[k].x*pivot[k]; frame.root[1]-=model.basis[k].y*pivot[k]; frame.root[2]-=model.basis[k].z*pivot[k];
+        frame.axes[k]={model.basis[k].x*64.f,model.basis[k].y*64.f,model.basis[k].z*64.f};
+    }
+    return frame;
+}
+
 // Pose one hand's segments. Joint sources in priority order: the weapon hold
 // pose (fingers wrap the held model's grip), tracked XR_EXT_hand_tracking
 // joints, then a controller-button pose in the grip frame.
@@ -1547,22 +1691,24 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         || p->dead_flag || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0
         || unsigned(body.sector)>=unsigned(numsectors)) return 0;
 
-    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
-    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
-    auto const toBuild=[&](XrVector3f v) {
-        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
-    };
+    TrackingToBuild const build(body);
     XrVector3f const axes[3]={{1,0,0},{0,1,0},{0,0,1}};
-    // Joint pose -> Build root/basis for a segment.
-    std::array<vec3_t,eduke_xr::HandInput::JointCount> roots;
-    std::array<std::array<XrVector3f,3>,eduke_xr::HandInput::JointCount> bases;
+    // The controller grip as a pose frame (Build root, Build units per metre).
+    auto const gripFrame=[&](XrPosef const &g) {
+        HandFrame frame;
+        auto const d=build.offset({g.position.x-origin.x,g.position.y-origin.y,g.position.z-origin.z});
+        frame.root[0]=float(body.pos.x)+d.x; frame.root[1]=float(body.pos.y)+d.y; frame.root[2]=float(body.pos.z)+d.z;
+        for (unsigned axis=0;axis<3;++axis) frame.axes[axis]=build.offset(rotate(g.orientation,axes[axis]));
+        return frame;
+    };
+    HandRoots roots;
+    HandBases bases;
     auto fromLocal=[&](unsigned joint,XrPosef const &pose) {
-        auto const d=toBuild(rotate(tracking,{pose.position.x-origin.x,pose.position.y-origin.y,pose.position.z-origin.z}));
+        auto const d=build.offset({pose.position.x-origin.x,pose.position.y-origin.y,pose.position.z-origin.z});
         roots[joint]={body.pos.x+int32_t(std::lround(d.x)),body.pos.y+int32_t(std::lround(d.y)),body.pos.z+int32_t(std::lround(d.z))};
-        auto const q=multiply(tracking,pose.orientation);
         for (unsigned axis=0;axis<3;++axis)
         {
-            auto const b=toBuild(rotate(q,axes[axis]));
+            auto const b=build.offset(rotate(pose.orientation,axes[axis]));
             bases[joint][axis]={b.x/64.f,b.y/64.f,b.z/64.f};
         }
     };
@@ -1571,76 +1717,30 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
     if (heldModel && heldTile>=0)
         for (auto const &h:rig->holds)
             if (h.first==heldTile) { hold=rig->pose(hand,h.second.c_str()); break; }
+    auto &wire=handWire[hand];
     if (hold && hold->weaponFrame)
     {
-        // Trigger pull: while this hand's trigger is held the index finger curls a little at each
-        // joint (eased over ~80 ms; the trigger action is digital). Rotations act in the hold's
-        // right-handed W frame (W = MD3 +Y, +Z, -X) about each joint's own flexion (+X) axis.
+        // While this hand's trigger is held the index finger curls (eased over ~80 ms; the trigger
+        // action is digital).
+        static float pull[2];
+        static double last[2];
+        double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+        float const step=last[hand]>0. ? float(std::min(now-last[hand],.1)/.08) : 1.f;
+        last[hand]=now;
+        float const target=(input.buttons & input.activeButtons & eduke_xr::ButtonSelect) ? 1.f : 0.f;
+        pull[hand]+=std::max(-step,std::min(step,target-pull[hand]));
         auto joints=hold->joints;
-        {
-            static float pull[2];
-            static double last[2];
-            double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
-            float const step=last[hand]>0. ? float(std::min(now-last[hand],.1)/.08) : 1.f;
-            last[hand]=now;
-            float const target=(input.buttons & input.activeButtons & eduke_xr::ButtonSelect) ? 1.f : 0.f;
-            pull[hand]+=std::max(-step,std::min(step,target-pull[hand]));
-            if (pull[hand]>0.f)
-            {
-                auto const toW=[](XrVector3f m) { return XrVector3f{m.y,m.z,-m.x}; };
-                auto const toM=[](XrVector3f w) { return XrVector3f{-w.z,w.x,w.y}; };
-                // Joint indices in XR_HAND_JOINT order: index proximal 7, intermediate 8, distal 9, tip 10.
-                static constexpr unsigned chain[]={7,8,9,10};
-                static constexpr float degrees[]={8.f,16.f,12.f};
-                for (unsigned link=0;link<3;++link)
-                {
-                    auto const &pivot=joints[chain[link]];
-                    auto const axis=rotate(pivot.orientation,{1,0,0});
-                    float const half=-degrees[link]*pull[hand]*Pi/360.f, sh=std::sin(half);
-                    XrQuaternionf const turn={axis.x*sh,axis.y*sh,axis.z*sh,std::cos(half)};
-                    auto const origin=toW(pivot.position);
-                    for (unsigned k=link;k<4;++k)
-                    {
-                        auto &j=joints[chain[k]];
-                        if (k>link)
-                        {
-                            auto const w=toW(j.position);
-                            auto const r=rotate(turn,{w.x-origin.x,w.y-origin.y,w.z-origin.z});
-                            j.position=toM({origin.x+r.x,origin.y+r.y,origin.z+r.z});
-                        }
-                        j.orientation=multiply(turn,j.orientation);
-                    }
-                }
-            }
-        }
+        curlIndexFinger(joints,pull[hand]);
         // Weapon model frame (metres) -> model units -> Build through the held model's own transform.
-        for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint)
-        {
-            auto const &j=joints[joint];
-            float const m[3]={j.position.x*64.f-heldModel->pivot.x,j.position.y*64.f-heldModel->pivot.y,j.position.z*64.f-heldModel->pivot.z};
-            float pos[3]={float(heldModel->root.x),float(heldModel->root.y),float(heldModel->root.z)};
-            for (unsigned k=0;k<3;++k)
-            {
-                pos[0]+=heldModel->basis[k].x*m[k]; pos[1]+=heldModel->basis[k].y*m[k]; pos[2]+=heldModel->basis[k].z*m[k];
-            }
-            roots[joint]={int32_t(std::lround(pos[0])),int32_t(std::lround(pos[1])),int32_t(std::lround(pos[2]))};
-            for (unsigned axis=0;axis<3;++axis)
-            {
-                // Hold-pose rotations use the weapon's right-handed aim frame
-                // W=(MD3 +Y, MD3 +Z, MD3 -X); convert back to MD3 components.
-                auto const r=rotate(j.orientation,axes[axis]);
-                float const c[3]={-r.z,r.x,r.y};
-                XrVector3f b{};
-                for (unsigned k=0;k<3;++k)
-                { b.x+=heldModel->basis[k].x*c[k]; b.y+=heldModel->basis[k].y*c[k]; b.z+=heldModel->basis[k].z*c[k]; }
-                bases[joint][axis]=b;
-            }
-        }
+        wire={VRHandHold,pull[hand],heldModelFrame(*heldModel)};
+        placeHandJoints(joints,true,wire.frame,roots,bases);
         source="hold";
     }
     else if (input.jointsValid && sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING") && !Bstrcmp(sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING"),"1"))
     {
         for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint) fromLocal(joint,input.joints[joint]);
+        // Others see tracked fingers as the relaxed pose on the grip.
+        if (input.gripValid && validPose(input.gripPose)) wire={VRHandRelaxed,0.f,gripFrame(input.gripPose)};
         source="tracked";
     }
     else
@@ -1650,15 +1750,11 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         bool const trigger=buttons & eduke_xr::ButtonSelect, grip=buttons & eduke_xr::ButtonGrip;
         char const *name=grip && trigger ? "fist" : grip ? "point" : trigger ? "trigger" : "relaxed";
         auto const *pose=rig->pose(hand,name);
-        if (!pose) pose=rig->pose(hand,"relaxed");
+        if (!pose) { pose=rig->pose(hand,"relaxed"); name="relaxed"; }
         if (!pose || pose->weaponFrame) return 0;
-        for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint)
-        {
-            auto const &j=pose->joints[joint];
-            auto const g=input.gripPose;
-            auto const r=rotate(g.orientation,j.position);
-            fromLocal(joint,{multiply(g.orientation,j.orientation),{g.position.x+r.x,g.position.y+r.y,g.position.z+r.z}});
-        }
+        wire={uint8_t(!Bstrcmp(name,"fist") ? VRHandFist : !Bstrcmp(name,"point") ? VRHandPoint
+                      : !Bstrcmp(name,"trigger") ? VRHandTrigger : VRHandRelaxed),0.f,gripFrame(input.gripPose)};
+        placeHandJoints(pose->joints,false,wire.frame,roots,bases);
         source=name;
     }
     unsigned count=0;
@@ -1672,55 +1768,18 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
     bool const ownHands=character>0 && character<8 && rig->charShellTile[character][hand]>=0
         && md_tilehasmodel(rig->charShellTile[character][hand],0)>=0;
     int const shellTile=ownHands ? rig->charShellTile[character][hand] : wristCut ? rig->wristShellTile[hand] : rig->shellTile[hand];
-    int const shellModel=shellTile>=0 ? md_tilehasmodel(shellTile,0) : -1;
-    if (shellModel>=0)
     {
         static std::vector<vec3f_t> deformed[2];
         auto const &skin=ownHands ? rig->charShell[character][hand] : wristCut ? rig->wristShell[hand] : rig->shell[hand];
-        auto &vertices=deformed[hand];
-        vertices.resize(skin.size());
-        vec3_t const anchor=roots[1];   // wrist
-        for (size_t i=0;i<skin.size();++i)
-        {
-            auto const &v=skin[i];
-            float acc[3]={0,0,0};
-            for (unsigned k=0;k<2;++k)
-            {
-                float const w=k ? 1.f-v.weight : v.weight;
-                if (w<=0.f) continue;
-                unsigned const j=v.joint[k];
-                auto const &l=v.local[k];
-                auto const &b=bases[j];
-                acc[0]+=w*(float(roots[j].x-anchor.x)+b[0].x*l.x+b[1].x*l.y+b[2].x*l.z);
-                acc[1]+=w*(float(roots[j].y-anchor.y)+b[0].y*l.x+b[1].y*l.y+b[2].y*l.z);
-                acc[2]+=w*(float(roots[j].z-anchor.z)+b[0].z*l.x+b[1].z*l.y+b[2].z*l.z);
-            }
-            vertices[i]={acc[0],acc[1],acc[2]};
-        }
         HandSegmentSample sample;
-        sample.context.instance=16+hand*32;
-        sample.context.modelid=shellModel;
-        sample.context.skinnum=tile2model[Ptile2tile(shellTile,0)].skinnum;
-        sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
-        sample.context.cframe=sample.context.nframe=0;
-        sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
-        sample.context.vertices=vertices.data();
-        sample.context.vertexCount=int32_t(vertices.size());
-        if (md3_preflightcontext(&sample.context))
+        if (skinHandShell(sample,deformed[hand],skin,shellTile,roots,bases,min<int32_t>(sprite[p->i].shade,24),16+hand*32,body.sector))
         {
-            // Vertices are already Build offsets from the wrist: identity basis.
-            sample.root=anchor;
-            sample.pivot={0,0,0};
-            sample.basis[0]={1,0,0}; sample.basis[1]={0,1,0}; sample.basis[2]={0,0,1};
-            sample.sector=body.sector;
-            updatesector(sample.root.x,sample.root.y,&sample.sector);
-            if (sample.sector<0) sample.sector=body.sector;
             out.push_back(sample);
             if (std::getenv("EDUKE32_XR_TEST_HANDS"))
             {
                 static std::string last[2];
                 if (last[hand]!=source)
-                    LOG_F(INFO,"OpenXR shell hand: hand=%u source=%s vertices=%zu.",hand,source,vertices.size());
+                    LOG_F(INFO,"OpenXR shell hand: hand=%u source=%s vertices=%zu.",hand,source,deformed[hand].size());
                 last[hand]=source;
             }
             return 1;
@@ -2143,19 +2202,28 @@ static bool fullBodyAvailable()
         && playerCharacter()==0;
 }
 
-static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_xr::Runtime *runtime, bool showHead)
+// What the IK body follows: the local headset, or another player's received pose.
+struct IkInput
+{
+    float eye[3]{};                        // Build
+    XrVector3f headForward{}, headUp{};    // unit, Build x and y and up
+    float angle=0.f;                       // player yaw (radians): the body's facing turns with it
+    bool hand[2]{};
+    vec3_t wrist[2]{};                     // hand shell wrist joint (Build)
+    std::array<XrVector3f,3> wristBasis[2]{};   // its axes, Build units per model unit
+    float feetZ=0.f;
+    vec3_t pos{};                          // player position, for the stride
+    float kick=0.f;                        // mighty foot leg extension 0..1
+    int16_t sector=-1;
+    int32_t shade=0, instance=4;
+};
+struct IkState { float bodyYaw=0.f, stride=0.f, standingHeight=0.f; vec3_t lastPos{}; bool yawValid=false; };
+
+// Skins the IK body to the input into buffers (0: as drawn, 1: always with the head, for mirrors).
+static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &state, bool showHead,
+                        std::vector<vec3f_t> (&buffers)[2])
 {
     auto const *rig=handRig();
-    auto const p=g_player[myconnectindex].ps;
-    static float bodyYaw, stride, standingHeight;
-    static vec3_t lastPos;
-    static bool yawValid;
-    if (!fullBodyAvailable() || !overlayEnabled() || !recentered || !inputValid() || inputRuntime!=runtime
-        || inputGeneration!=runtime->generation() || !rawInput.headValid || !validPose(rawInput.headPose)
-        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
-        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
-        || p->dead_flag || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || unsigned(body.sector)>=unsigned(numsectors))
-    { yawValid=false; return false; }
     auto const &ik=rig->ik;
     auto const bone=[&](char const *name) { return ik.find(name); };
     int const pelvis=bone("pelvis"), spine=bone("spine"), chest=bone("chest"), neck=bone("neck"), head=bone("head");
@@ -2163,35 +2231,28 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
               handB[2]={bone("hand_l"),bone("hand_r")};
     int const thigh[2]={bone("thigh_l"),bone("thigh_r")}, calf[2]={bone("calf_l"),bone("calf_r")}, foot[2]={bone("foot_l"),bone("foot_r")};
     auto const &bind=ik.bones;
+    float &bodyYaw=state.bodyYaw, &stride=state.stride, &standingHeight=state.standingHeight;
 
     // Facing: head yaw with a 45 degree deadzone; lines up with the head while moving.
-    auto const headForward=rotate(multiply(inverseYaw,rawInput.headPose.orientation),{0,0,-1});
-    if (std::hypot(headForward.x,headForward.z)<1e-3f) return false;
-    float const headYaw=std::atan2(headForward.x,-headForward.z);
-    float const moved=std::hypot(float(p->pos.x-lastPos.x),float(p->pos.y-lastPos.y));
-    lastPos=p->pos;
-    if (!yawValid) { bodyYaw=headYaw; stride=0.f; yawValid=true; }
+    if (std::hypot(in.headForward.x,in.headForward.y)<1e-3f) return false;
+    float const headYaw=wrapRadians(std::atan2(in.headForward.y,in.headForward.x)-in.angle);
+    float const moved=state.yawValid ? std::hypot(float(in.pos.x-state.lastPos.x),float(in.pos.y-state.lastPos.y)) : 0.f;
+    state.lastPos=in.pos;
+    if (!state.yawValid) { bodyYaw=headYaw; stride=0.f; state.yawValid=true; }
     float const lag=wrapRadians(headYaw-bodyYaw), limit=Pi/4.f;
     if (lag>limit) bodyYaw=headYaw-limit; else if (lag<-limit) bodyYaw=headYaw+limit;
     if (moved>1.f) bodyYaw+=wrapRadians(headYaw-bodyYaw)*.2f;
     stride+=moved/(1.4f*UnitsPerMetre);
     stride-=std::floor(stride);
 
-    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
-    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
-    auto const toBuild=[&](XrVector3f v) {
-        v=rotate(tracking,v);
-        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
-    };
-    float const facing=yaw+bodyYaw, fx=std::cos(facing), fy=std::sin(facing);
+    float const facing=in.angle+bodyYaw, fx=std::cos(facing), fy=std::sin(facing);
     // Model +Y is left or right depending on the asset: tell from the shoulders.
     bool const yLeft=bind[upper[0]].position.y>bind[upper[1]].position.y;
     float const yx=yLeft ? fy : -fy, yy=yLeft ? -fx : fx;   // Build direction of model +Y
 
     // Uniform scale to the player's standing eye height (remembered, slowly relaxing).
-    auto const eyeOffset=toBuild({rawInput.headPose.position.x-origin.x,rawInput.headPose.position.y-origin.y,rawInput.headPose.position.z-origin.z});
-    float const eye[3]={body.pos.x+eyeOffset.x,body.pos.y+eyeOffset.y,body.pos.z+eyeOffset.z};
-    float const feetZ=float(sprite[p->i].z);
+    float const *const eye=in.eye;
+    float const feetZ=in.feetZ;
     float const eyeHeight=(feetZ-eye[2])/ZUnitsPerMetre;   // metres
     standingHeight=std::max(eyeHeight,standingHeight*.9995f);
     if (!(standingHeight>.5f)) standingHeight=eyeHeight;
@@ -2200,13 +2261,9 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
     float const unitXY=UnitsPerMetre/64.f*scale, unitZ=ZUnitsPerMetre/64.f*scale;
 
     // Head bone target and orientation in model space (the bind eye offset, measured from the head mesh).
-    auto const dirToModel=[&](XrVector3f v) {   // tracking-space direction -> model direction
-        v=rotate(tracking,v);
-        float const bx=-v.z*co-v.x*si, by=-v.z*si+v.x*co;
-        return XrVector3f{bx*fx+by*fy,bx*yx+by*yy,v.y};
-    };
-    auto const headFwdM=dirToModel(rotate(rawInput.headPose.orientation,{0,0,-1}));
-    auto const headUpM=dirToModel(rotate(rawInput.headPose.orientation,{0,1,0}));
+    auto const dirToModel=[&](XrVector3f v) { return XrVector3f{v.x*fx+v.y*fy,v.x*yx+v.y*yy,v.z}; };
+    auto const headFwdM=dirToModel(in.headForward);
+    auto const headUpM=dirToModel(in.headUp);
     // Root (model origin, between the feet on the floor) under the head bone, by the bind head offset.
     XrVector3f const bindHead=bind[head].position;
     float const headBack=ik.eyeForward, headDown=ik.eyeUp;
@@ -2326,18 +2383,18 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
     {
         float const out=bind[upper[side]].position.y>0.f ? 1.f : -1.f;
         XrVector3f target;
-        if (handJoints[side].valid)
+        if (in.hand[side])
         {
-            auto const &w=handJoints[side].roots[1];
+            auto const &w=in.wrist[side];
             float const P[3]={float(w.x),float(w.y),float(w.z)};
             target=toModel(P);
         }
         else target={worldPos[upper[side]].x+4.f,worldPos[upper[side]].y+out*6.f,worldPos[upper[side]].z-40.f};
-        twoBone(upper[side],fore[side],handB[side],target,{-.4f,out*.8f,-1.f},handJoints[side].valid);
-        if (handJoints[side].valid)
+        twoBone(upper[side],fore[side],handB[side],target,{-.4f,out*.8f,-1.f},in.hand[side]);
+        if (in.hand[side])
         {
             // Hand bone along the wrist joint frame (XR: -Z toward the fingers, +Y back of the hand).
-            auto const &bs=handJoints[side].bases[1];
+            auto const &bs=in.wristBasis[side];
             auto const axis=[&](XrVector3f b) {
                 XrVector3f const m={(b.x*fx+b.y*fy)/unitXY,(b.x*yx+b.y*yy)/unitXY,-b.z/unitZ};
                 float const l=std::sqrt(dot(m,m));
@@ -2348,17 +2405,7 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
         }
     }
     // Legs: feet planted (stride cycle while moving), right leg kicks for the mighty foot.
-    float kickExtend=0.f;
-    {
-        static double kickStart=-1.;
-        static int lastCounter=-1;
-        int const counter=p->quick_kick>0 ? 14-p->quick_kick
-            : p->curr_weapon==KNEE_WEAPON && p->kickback_pic>0 ? std::min<int>(p->kickback_pic,14) : -1;
-        double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
-        if (counter>=0 && (lastCounter<0 || counter<lastCounter)) kickStart=now-counter/30.;
-        lastCounter=counter;
-        if (counter>=0 && kickStart>=0.) kickExtend=std::sin(Pi*float(std::min(1.,(now-kickStart)/(14./30.))));
-    }
+    float const kickExtend=in.kick;
     for (unsigned side=0;side<2;++side)
     {
         float const phase=(stride+(side ? .5f : 0.f))*2.f*Pi;
@@ -2379,7 +2426,7 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
 
     // Skin on the CPU (model units, model space): first person without the head, and a copy with
     // the head for mirrors.
-    auto &deformed=ikDeformed[0], &withHead=ikDeformed[1];
+    auto &deformed=buffers[0], &withHead=buffers[1];
     deformed.resize(ik.vertices.size()); withHead.resize(ik.vertices.size());
     // Bone rotations as 3x3 matrices once, rather than two quaternion products per vertex weight.
     std::vector<std::array<float,9>> boneMatrix(count);
@@ -2418,10 +2465,10 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
         withHead[i]={acc[0],acc[1],acc[2]};
         deformed[i]=(hide&1) && !showHead ? vec3f_t{worldPos[neck].x,worldPos[neck].y,worldPos[neck].z} : withHead[i];
     }
-    sample.context.instance=4;
+    sample.context.instance=in.instance;
     sample.context.modelid=md_tilehasmodel(ik.tile,0);
     sample.context.skinnum=tile2model[Ptile2tile(ik.tile,0)].skinnum;
-    sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+    sample.context.shade=in.shade;
     sample.context.cframe=sample.context.nframe=0;
     sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
     sample.context.vertices=deformed.data();
@@ -2432,18 +2479,273 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
     sample.basis[0]={fx*unitXY,fy*unitXY,0};
     sample.basis[1]={yx*unitXY,yy*unitXY,0};
     sample.basis[2]={0,0,-unitZ};
-    sample.sector=body.sector;
+    sample.sector=in.sector;
     updatesector(sample.root.x,sample.root.y,&sample.sector);
-    if (sample.sector<0) sample.sector=body.sector;
-    if (std::getenv("EDUKE32_XR_TEST_HANDS"))
+    if (sample.sector<0) sample.sector=in.sector;
+    if (std::getenv("EDUKE32_XR_TEST_HANDS") && in.instance==4)
     {
         static int logged;
         if (logged++%120==0)
             LOG_F(INFO,"OpenXR IK body: scale=%.2f eye=%.1f,%.1f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f.",scale,
                   ik.eyeForward,ik.eyeUp,drop,
-                  headTarget.x,headTarget.y,headTarget.z,int(handJoints[0].valid),int(handJoints[1].valid),kickExtend);
+                  headTarget.x,headTarget.y,headTarget.z,int(in.hand[0]),int(in.hand[1]),kickExtend);
     }
     return true;
+}
+
+
+// The mighty foot's leg extension (0..1) from the local player's kick counters.
+static float localKickExtend()
+{
+    auto const p=g_player[myconnectindex].ps;
+    static double kickStart=-1.;
+    static int lastCounter=-1;
+    int const counter=p->quick_kick>0 ? 14-p->quick_kick
+        : p->curr_weapon==KNEE_WEAPON && p->kickback_pic>0 ? std::min<int>(p->kickback_pic,14) : -1;
+    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    if (counter>=0 && (lastCounter<0 || counter<lastCounter)) kickStart=now-counter/30.;
+    lastCounter=counter;
+    return counter>=0 && kickStart>=0. ? std::sin(Pi*float(std::min(1.,(now-kickStart)/(14./30.)))) : 0.f;
+}
+
+static bool localIkInput(IkInput &in, Camera const &body, eduke_xr::Runtime *runtime)
+{
+    auto const p=g_player[myconnectindex].ps;
+    if (!overlayEnabled() || !recentered || !inputValid() || inputRuntime!=runtime
+        || inputGeneration!=runtime->generation() || !rawInput.headValid || !validPose(rawInput.headPose)
+        || screenpeek!=myconnectindex || ud.recstat || ud.overhead_on || ud.camerasprite>=0
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
+        || p->dead_flag || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || unsigned(body.sector)>=unsigned(numsectors))
+        return false;
+    TrackingToBuild const build(body);
+    auto const eyeOffset=build.offset({rawInput.headPose.position.x-origin.x,rawInput.headPose.position.y-origin.y,
+                                       rawInput.headPose.position.z-origin.z});
+    in.eye[0]=body.pos.x+eyeOffset.x; in.eye[1]=body.pos.y+eyeOffset.y; in.eye[2]=body.pos.z+eyeOffset.z;
+    in.headForward=build.direction(rotate(rawInput.headPose.orientation,{0,0,-1}));
+    in.headUp=build.direction(rotate(rawInput.headPose.orientation,{0,1,0}));
+    in.angle=fix16_to_float(body.angle)*Pi/1024.f;
+    for (unsigned side=0;side<2;++side)
+    {
+        in.hand[side]=handJoints[side].valid;
+        in.wrist[side]=handJoints[side].roots[1];
+        in.wristBasis[side]=handJoints[side].bases[1];
+    }
+    in.feetZ=float(sprite[p->i].z);
+    in.pos=p->pos;
+    in.kick=localKickExtend();
+    in.sector=body.sector;
+    in.shade=min<int32_t>(sprite[p->i].shade,24);
+    in.instance=4;
+    return true;
+}
+
+static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_xr::Runtime *runtime, bool showHead)
+{
+    static IkState state;
+    IkInput in;
+    if (!fullBodyAvailable() || !localIkInput(in,body,runtime)) { state.yawValid=false; return false; }
+    return solveIkBody(sample,in,state,showHead,ikDeformed);
+}
+
+// ---- Other players' VR bodies. Peers send their raw tracking (head, each hand's grip or weapon
+// frame with its finger pose, the held model and frame: VRBodyPose); every client solves their
+// IK bodies and hands locally with the same rig as its own.
+
+static int16_t clampShort(float v) { return int16_t(std::max(-32767.f,std::min(32767.f,std::round(v)))); }
+
+static VRBodyFrame encodeFrame(HandFrame const &frame, vec3_t const &ref)
+{
+    VRBodyFrame wire;
+    for (unsigned k=0;k<3;++k) wire.root[k]=clampShort(frame.root[k]-float(k==0 ? ref.x : k==1 ? ref.y : ref.z));
+    for (unsigned k=0;k<3;++k)
+    {
+        wire.axes[k*3]=clampShort(frame.axes[k].x/UnitsPerMetre*VRBodyAxisScale);
+        wire.axes[k*3+1]=clampShort(frame.axes[k].y/UnitsPerMetre*VRBodyAxisScale);
+        wire.axes[k*3+2]=clampShort(frame.axes[k].z/ZUnitsPerMetre*VRBodyAxisScale);
+    }
+    return wire;
+}
+
+static HandFrame decodeFrame(VRBodyFrame const &wire, float const ref[3])
+{
+    HandFrame frame;
+    for (unsigned k=0;k<3;++k) frame.root[k]=ref[k]+wire.root[k];
+    for (unsigned k=0;k<3;++k)
+        frame.axes[k]={wire.axes[k*3]*UnitsPerMetre/VRBodyAxisScale,wire.axes[k*3+1]*UnitsPerMetre/VRBodyAxisScale,
+                       wire.axes[k*3+2]*ZUnitsPerMetre/VRBodyAxisScale};
+    return frame;
+}
+
+static void encodeUnit(XrVector3f v, int16_t out[3])
+{
+    float const l=std::sqrt(dot(v,v));
+    if (!(l>1e-6f)) { out[0]=32767; out[1]=out[2]=0; return; }
+    out[0]=clampShort(v.x/l*32767.f); out[1]=clampShort(v.y/l*32767.f); out[2]=clampShort(v.z/l*32767.f);
+}
+
+// Each world frame in multiplayer: what this player's body shows, for everyone else to solve.
+static void publishBodyPose(Camera const &body, eduke_xr::Runtime *runtime, HandModelSample const *held, int heldTile)
+{
+    if (!g_netServer && !g_netClient) return;
+    VRBodyPose pose;
+    IkInput in;
+    if (localIkInput(in,body,runtime))
+    {
+        pose.flags|=VRBodyHead;
+        pose.eye[0]=clampShort(in.eye[0]-body.pos.x); pose.eye[1]=clampShort(in.eye[1]-body.pos.y);
+        pose.eye[2]=clampShort(in.eye[2]-body.pos.z);
+        encodeUnit(in.headForward,pose.headForward); encodeUnit(in.headUp,pose.headUp);
+        pose.kick=uint8_t(std::lround(std::max(0.f,std::min(1.f,in.kick))*255.f));
+        {
+            // The body camera removes the head's share of the native angle (head aiming).
+            auto const p=g_player[myconnectindex].ps;
+            float const native=fix16_to_float(p->q16ang), turn=std::remainder(fix16_to_float(body.angle)-native,2048.f);
+            pose.bodyAngle=clampShort(turn*16.f);
+        }
+        for (unsigned side=0;side<2;++side)
+        {
+            auto const &wire=handWire[side];
+            if (wire.kind==VRHandHold && !held) continue;
+            pose.hand[side]=wire.kind;
+            pose.pull[side]=uint8_t(std::lround(std::max(0.f,std::min(1.f,wire.pull))*255.f));
+            if (wire.kind!=VRHandNone) pose.handFrame[side]=encodeFrame(wire.frame,body.pos);
+        }
+        if (held && heldTile>=0)
+        {
+            pose.flags|=VRBodyWeapon;
+            pose.weaponTile=int16_t(heldTile);
+            pose.weaponFrame=int16_t(held->context.cframe); pose.weaponNextFrame=int16_t(held->context.nframe);
+            pose.weaponLerp=uint8_t(std::lround(std::max(0.f,std::min(1.f,held->context.interpol))*255.f));
+            pose.weapon=encodeFrame(heldModelFrame(*held),body.pos);
+        }
+    }
+    G_VRPublishBodyPose(pose);
+}
+
+static struct RemoteBody { IkState ik; std::vector<vec3f_t> body[2], hands[2]; } remoteBodies[MAXPLAYERS];
+
+// Remote VR players in view: IK body, hand shells and held model from their latest pose, and their
+// native player sprite (with its attached weapon) hidden. Players without a fresh pose stay native.
+static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smoothRatio)
+{
+    auto const *rig=handRig();
+    if ((!g_netServer && !g_netClient) || !fullBodyAvailable()) return;
+    char const *const named[]={nullptr,"relaxed","trigger","point","fist"};
+    float const sr=float(smoothRatio)/65536.f;
+    for (int k=0;k<MAXPLAYERS;++k)
+    {
+        if (k==myconnectindex) continue;
+        auto &remote=remoteBodies[k];
+        auto const ps=g_player[k].ps;
+        VRBodyPose pose;
+        if (!ps || unsigned(ps->i)>=MAXSPRITES || !G_VRGetBodyPose(k,pose,.5) || !(pose.flags & VRBodyHead)
+            || ps->dead_flag || sprite[ps->i].extra<=0)
+        { remote.ik.yawValid=false; continue; }
+        int view=-1;
+        for (int j=0;j<spritesortcnt;++j)
+            if (tsprite[j].owner==ps->i && tsprite[j].statnum!=TSPR_TEMP) { view=j; break; }
+        if (view<0) continue;   // not in view this frame
+        auto const &t=tsprite[view];
+        float const ref[3]={ps->opos.x+(ps->pos.x-ps->opos.x)*sr,ps->opos.y+(ps->pos.y-ps->opos.y)*sr,
+                            ps->opos.z+(ps->pos.z-ps->opos.z)*sr};
+        IkInput in;
+        for (unsigned k3=0;k3<3;++k3) in.eye[k3]=ref[k3]+pose.eye[k3];
+        in.headForward={pose.headForward[0]/32767.f,pose.headForward[1]/32767.f,pose.headForward[2]/32767.f};
+        in.headUp={pose.headUp[0]/32767.f,pose.headUp[1]/32767.f,pose.headUp[2]/32767.f};
+        fix16_t const turn=((ps->q16ang-ps->oq16ang+F16(1024))&0x7FFFFFF)-F16(1024);
+        in.angle=(fix16_to_float(ps->oq16ang)+fix16_to_float(turn)*sr+pose.bodyAngle/16.f)*Pi/1024.f;
+        in.feetZ=float(t.z);
+        in.pos=ps->pos;
+        in.kick=pose.kick/255.f;
+        in.sector=t.sectnum;
+        in.shade=min<int32_t>(t.shade,24);
+        in.instance=1000+k*8;
+        size_t const before=out.size();
+        bool const weapon=(pose.flags & VRBodyWeapon) && md_tilehasmodel(pose.weaponTile,0)>=0;
+        for (unsigned side=0;side<2;++side)
+        {
+            HandRigPose const *hp=nullptr;
+            uint8_t const kind=pose.hand[side];
+            if (kind==VRHandHold && weapon)
+            {
+                for (auto const &h:rig->holds)
+                    if (h.first==pose.weaponTile) { hp=rig->pose(side,h.second.c_str()); break; }
+                if (hp && !hp->weaponFrame) hp=nullptr;
+            }
+            else if (kind>=VRHandRelaxed && kind<=VRHandFist)
+            {
+                hp=rig->pose(side,named[kind]);
+                if (!hp) hp=rig->pose(side,"relaxed");
+                if (hp && hp->weaponFrame) hp=nullptr;
+            }
+            if (!hp) continue;
+            auto joints=hp->joints;
+            if (kind==VRHandHold) curlIndexFinger(joints,pose.pull[side]/255.f);
+            HandRoots roots;
+            HandBases bases;
+            placeHandJoints(joints,hp->weaponFrame,decodeFrame(pose.handFrame[side],ref),roots,bases);
+            in.hand[side]=true; in.wrist[side]=roots[1]; in.wristBasis[side]=bases[1];
+            bool const wristCut=rig->wristShellTile[side]>=0 && md_tilehasmodel(rig->wristShellTile[side],0)>=0;
+            HandSegmentSample sample;
+            if (skinHandShell(sample,remote.hands[side],wristCut ? rig->wristShell[side] : rig->shell[side],
+                              wristCut ? rig->wristShellTile[side] : rig->shellTile[side],roots,bases,in.shade,
+                              in.instance+1+int(side),in.sector))
+                out.push_back(sample);
+        }
+        if (weapon)
+        {
+            HandSegmentSample sample;
+            sample.context.instance=in.instance+3;
+            sample.context.modelid=md_tilehasmodel(pose.weaponTile,0);
+            sample.context.skinnum=tile2model[Ptile2tile(pose.weaponTile,0)].skinnum;
+            sample.context.shade=in.shade;
+            sample.context.cframe=pose.weaponFrame; sample.context.nframe=pose.weaponNextFrame;
+            sample.context.interpol=pose.weaponLerp/255.f;
+            sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+            if (md3_preflightcontext(&sample.context))
+            {
+                auto const frame=decodeFrame(pose.weapon,ref);
+                sample.root={int32_t(std::lround(frame.root[0])),int32_t(std::lround(frame.root[1])),int32_t(std::lround(frame.root[2]))};
+                sample.pivot={0,0,0};
+                for (unsigned a=0;a<3;++a) sample.basis[a]={frame.axes[a].x/64.f,frame.axes[a].y/64.f,frame.axes[a].z/64.f};
+                sample.sector=in.sector;
+                updatesector(sample.root.x,sample.root.y,&sample.sector);
+                if (sample.sector<0) sample.sector=in.sector;
+                out.push_back(sample);
+            }
+        }
+        HandSegmentSample bodySample;
+        if (!solveIkBody(bodySample,in,remote.ik,true,remote.body)) { out.resize(before); continue; }
+        out.push_back(bodySample);
+        for (int j=0;j<spritesortcnt;++j)
+            if (tsprite[j].owner==ps->i) tsprite[j].xrepeat=tsprite[j].yrepeat=0;
+        if (std::getenv("EDUKE32_XR_TEST_BODY_POSES"))
+        {
+            static uint32_t logged[MAXPLAYERS];
+            static uint8_t lastKick[MAXPLAYERS];
+            bool const kickStarted=pose.kick && !lastKick[k];
+            lastKick[k]=pose.kick;
+            if (logged[k]++%30==0 || kickStarted)
+            {
+                // Wrists relative to the eye in the player's own frame (forward, left; Build units), z down.
+                float const c=std::cos(in.angle), sn=std::sin(in.angle);
+                int w[2][3]{};
+                for (unsigned side=0;side<2;++side)
+                    if (in.hand[side])
+                    {
+                        float const dx=in.wrist[side].x-in.eye[0], dy=in.wrist[side].y-in.eye[1];
+                        w[side][0]=int(std::lround(dx*c+dy*sn)); w[side][1]=int(std::lround(dx*sn-dy*c));
+                        w[side][2]=int(std::lround(in.wrist[side].z-in.eye[2]));
+                    }
+                LOG_F(INFO,"VR remote body: player=%d sequence=%u hands=%d,%d kinds=%u,%u weapon=%d models=%zu kick=%u "
+                      "headyaw=%.1f left=%d,%d,%d right=%d,%d,%d.",
+                      k,unsigned(pose.sequence),int(in.hand[0]),int(in.hand[1]),unsigned(pose.hand[0]),unsigned(pose.hand[1]),
+                      weapon ? int(pose.weaponTile) : -1,out.size()-before,unsigned(pose.kick),
+                      wrapRadians(std::atan2(in.headForward.y,in.headForward.x)-in.angle)*180.f/Pi,
+                      w[0][0],w[0][1],w[0][2],w[1][0],w[1][1],w[1][2]);
+            }
+        }
+    }
 }
 
 // Tipping ("shake it baby"): Duke's native tip shows a hand holding money on the HUD; in the
@@ -4674,6 +4976,10 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             good=false;
             error="injected failure after animation, before first masks";
         }
+        // Remote VR bodies replace their native sprites in every eye pass.
+        std::vector<HandSegmentSample> remoteSamples;
+        remoteSamples.reserve(4*MAXPLAYERS);
+        if (good && !fixtureTest) prepareRemoteBodies(remoteSamples,smoothRatio);
         std::vector<tspritetype> pristine(tsprite,tsprite+spritesortcnt);
         // Capture actual native fallback ART too when an optional model lacks
         // a named frame. This diagnostic observes counters without changing them.
@@ -4721,6 +5027,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         // True full body this frame: the IK body draws arms/legs; hands attach as wrist-cut shells.
         fullBodyFrame=good && !fixtureTest && fullBodyAvailable();
         handJoints[0].valid=handJoints[1].valid=false;
+        handWire[0]=handWire[1]=HandWire{};
         HandModelSample detonator;
         unsigned detonatorHand=2;
         for (unsigned hand=0;hand<2 && good && !fixtureTest;++hand)
@@ -4748,6 +5055,10 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         HandSegmentSample ikBody;
         if (fullBodyFrame && prepareIkBody(ikBody,body,runtime,false)) models[modelCount++]=&ikBody;
         else if (good && !fixtureTest && prepareBodyModel(bodyModel,body,runtime)) models[modelCount++]=&bodyModel;
+        if (good && !fixtureTest)
+            publishBodyPose(body,runtime,weaponModel ? &handModel : nullptr,weaponModel ? weaponModelTile(handModel.presentation.family) : -1);
+        for (auto &sample:remoteSamples)
+            if (modelCount<MaxWorldModels-1) models[modelCount++]=&sample;
         int const gripState=((gripMask&1) ? grips[0].state+1 : 0)+4*((gripMask&2) ? grips[1].state+1 : 0);
         std::string gripPrefix;
         bool gripLog=false;

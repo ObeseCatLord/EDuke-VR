@@ -7575,13 +7575,27 @@ int G_DoMoveThings(void)
         }
     }
 
+    // A dedicated server's own player 0 is nobody: never seen, hit, blocked by or targeted.
+    if (g_networkMode == NET_DEDICATED_SERVER || g_networkMode == NET_DEDICATED_CLIENT)
+    {
+        auto const host = g_player[0].ps;
+        if (host && (unsigned)host->i < MAXSPRITES && sprite[host->i].statnum == STAT_PLAYER)
+        {
+            sprite[host->i].cstat = CSTAT_SPRITE_INVISIBLE;
+            sprite[host->i].extra = host->max_player_health;
+        }
+    }
+
     if (ud.pause_on == 0)
         G_MoveWorld();
 
 //    Net_CorrectPrediction();
 
     if (g_netServer)
+    {
         Net_SendServerUpdates();
+        Net_SendVRBodyPose();
+    }
 
     if ((everyothertime&1) == 0)
     {
@@ -7602,7 +7616,10 @@ int G_DoMoveThings(void)
     }
 
     if (g_netClient)   //Slave
+    {
         Net_SendClientUpdate();
+        Net_SendVRBodyPose();
+    }
 
     return 0;
 }

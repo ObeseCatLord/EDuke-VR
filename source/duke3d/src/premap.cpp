@@ -1921,6 +1921,7 @@ static void G_CheckIfStateless()
 int G_EnterLevel(int gameMode)
 {
     G_VRResetShots();
+    G_VRResetBodyPoses();
     vote_map = vote_episode = voting = -1;
 
     ud.respawn_monsters  = ud.m_respawn_monsters;

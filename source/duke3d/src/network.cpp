@@ -1630,6 +1630,7 @@ static void display_betascreen(void)
 static void Net_Disconnect(void)
 {
     G_VRResetShots();
+    G_VRResetBodyPoses();
     if (g_netClient)
     {
         ENetEvent event;
@@ -1895,6 +1896,72 @@ void Net_SendVoice(uint8_t const *body, uint32_t length)
 #endif
 }
 
+
+// ---- VR body poses (vrshoot.cpp encodes them; vr.cpp publishes and draws them).
+
+// Server: forward one player's pose to every other client (and keep it on a listen server).
+static void Net_RelayVRBodyPose(int source, uint8_t const *pose)
+{
+    uint8_t buffer[2+VRBodyWireSize];
+    buffer[0]=PACKET_VR_POSE; buffer[1]=uint8_t(source);
+    Bmemcpy(buffer+2,pose,VRBodyWireSize);
+    for (size_t i=0;i<g_netServer->peerCount;++i)
+    {
+        ENetPeer *const peer=&g_netServer->peers[i];
+        int const player=int(intptr_t(peer->data));
+        if (peer->state!=ENET_PEER_STATE_CONNECTED || player<=0 || player>=MAXPLAYERS || player==source) continue;
+        enet_peer_send(peer,CHAN_VRPOSE,enet_packet_create(buffer,sizeof(buffer),ENET_PACKET_FLAG_UNSEQUENCED));
+    }
+}
+
+static void Net_ReceiveVRBodyPose(ENetEvent *event, bool server)
+{
+    if (event->channelID!=CHAN_VRPOSE) return;
+    auto const data=event->packet->data;
+    size_t const length=event->packet->dataLength;
+    VRBodyPose pose;
+    if (server)
+    {
+        int const player=int(intptr_t(event->peer->data));
+        if (player<=0 || player>=MAXPLAYERS || !g_player[player].playerquitflag || length!=1+VRBodyWireSize
+            || !G_VRDecodeBodyPose(data+1,VRBodyWireSize,pose)) return;
+        // Per-player budget: 90 poses a second (one per client update is 30).
+        static struct { uint32_t window; int packets; } budget[MAXPLAYERS];
+        uint32_t const second=uint32_t(timerGetNanoTicks()/timerGetNanoTickRate());
+        auto &b=budget[player];
+        if (b.window!=second) { b.window=second; b.packets=0; }
+        if (++b.packets>90) return;
+        if (g_networkMode!=NET_DEDICATED_SERVER) G_VRStoreBodyPose(player,pose);
+        Net_RelayVRBodyPose(player,data+1);
+    }
+    else if (event->peer==g_netClientPeer && length==2+VRBodyWireSize && data[1]<MAXPLAYERS && data[1]!=myconnectindex
+             && G_VRDecodeBodyPose(data+2,VRBodyWireSize,pose))
+    {
+        G_VRStoreBodyPose(data[1],pose);
+        if (std::getenv("EDUKE32_XR_TEST_BODY_POSES"))
+        {
+            static uint32_t logged[MAXPLAYERS];
+            if (logged[data[1]]++%150==0)
+                LOG_F(INFO,"VR body pose received: player=%d sequence=%u flags=%u hands=%u,%u weapon=%d.",int(data[1]),
+                      unsigned(pose.sequence),unsigned(pose.flags),unsigned(pose.hand[0]),unsigned(pose.hand[1]),
+                      (pose.flags & VRBodyWeapon) ? int(pose.weaponTile) : -1);
+        }
+    }
+}
+
+// Each game tic: an XR peer's newest pose goes to the server (a listen server relays its own).
+void Net_SendVRBodyPose(void)
+{
+    uint8_t bytes[1+VRBodyWireSize];
+    if (!(g_player[myconnectindex].ps->gm & MODE_GAME) || !G_VRTakeBodyPose(bytes+1)) return;
+    if (g_netClient && g_netClientPeer && myconnectindex>0)
+    {
+        bytes[0]=PACKET_VR_POSE;
+        enet_peer_send(g_netClientPeer,CHAN_VRPOSE,enet_packet_create(bytes,sizeof(bytes),ENET_PACKET_FLAG_UNSEQUENCED));
+    }
+    else if (g_netServer && g_networkMode!=NET_DEDICATED_SERVER)
+        Net_RelayVRBodyPose(myconnectindex,bytes+1);
+}
 
 static void Net_Server_SetupPlayer(int playerindex)
 {
@@ -2243,6 +2310,9 @@ static void Net_ParseClientPacket(ENetEvent *event)
             Net_ReceiveVoice(event,true);
             break;
 #endif
+        case PACKET_VR_POSE:
+            Net_ReceiveVRBodyPose(event,true);
+            break;
         case PACKET_SLAVE_TO_MASTER:  //[1] (receive slave sync buffer)
             Net_ReceiveClientUpdate(event);
             break;
@@ -2598,6 +2668,9 @@ static void Net_ParseServerPacket(ENetEvent *event)
         Net_ReceiveVoice(event,false);
         break;
 #endif
+    case PACKET_VR_POSE:
+        Net_ReceiveVRBodyPose(event,false);
+        break;
     case PACKET_MASTER_TO_SLAVE:
 
         if (!(g_player[myconnectindex].ps->gm & MODE_GAME))
