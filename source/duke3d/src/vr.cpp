@@ -2715,6 +2715,72 @@ bool prepareHandModel(HandModelSample &sample)
     return true;
 }
 
+// A weapon that has a 3D model keeps it: when the exact shot-resolved presentation declines a
+// frame (muzzle inside a wall, an unvalidated shot sample, an animation counter the adapter does
+// not cover, shrunk or tinted HUD states...), the same model sits on the controller's grip/aim
+// pose in its rest frame instead of falling back to the 2D sprite. Shots are unaffected (they
+// keep their own validated path). Only states where Duke shows no weapon at all draw none.
+bool prepareHandModelFallback(HandModelSample &sample, Camera const &body, eduke_xr::Runtime *runtime)
+{
+    auto const p=g_player[myconnectindex].ps;
+    auto const option=sdlayer_xr_option("EDUKE32_XR_WEAPON");
+    if (!G_XRModelsEnabled() || !usemodels || !option || Bstrcmp(option,"1") || aimHand()<0 || !overlayEnabled()
+        || !recentered || !inputValid() || inputRuntime!=runtime || inputGeneration!=runtime->generation()
+        || screenpeek!=myconnectindex || ud.overhead_on || ud.camerasprite>=0 || ud.drawweapon!=1
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on || p->dead_flag
+        || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0 || p->holster_weapon || p->curr_weapon==KNEE_WEAPON
+        // Duke puts the weapon away to tip, use an access card or punch a button.
+        || p->tipincs || p->access_incs || p->fist_incs || p->knuckle_incs
+        || unsigned(body.sector)>=unsigned(numsectors)) return false;
+    auto const family=effectiveWeaponFamily();
+    if (family==XRWeaponFamily::Unsupported) return false;
+    int const modelTile=weaponModelTile(family);
+    if (md_tilehasmodel(modelTile,0)<0) return false;
+    if (!(family==XRWeaponFamily::HudMapped ? P_XRMappedPresentation(sample.presentation) : P_XRWeaponPresentation(sample.presentation)))
+        sample.presentation={0,min<int32_t>(sprite[p->i].shade,24),0,0,family};
+    sample.presentation.family=family;
+    sample.presentation.counter=0;   // rest frame
+    int const hand=aimHand();
+    vec3f_t muzzle{}, palm{}; XrVector3f position; int model;
+    if (!weaponMuzzle(family,hand,model,muzzle,palm,position) || model<0) return false;
+    sample.context.palette=sample.presentation.palette;
+    sample.context.shade=sample.presentation.shade;
+    sample.context.modelid=md_tilehasmodel(modelTile,sample.context.palette);
+    if (sample.context.modelid<0) { sample.context.palette=0; sample.context.modelid=model; }
+    sample.context.skinnum=tile2model[Ptile2tile(modelTile,sample.context.palette)].skinnum;
+    int const frame=std::max(0,md3_getframeindex(sample.context.modelid,"rest"));
+    sample.context.cframe=sample.context.nframe=frame;
+    sample.context.interpol=0.f;
+    sample.pivot=muzzle;
+    if (!md3_gettagposition(sample.context.modelid,"tag_grip",&sample.grip)) sample.grip=palm;
+    auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
+    float const yaw=fix16_to_float(body.angle)*Pi/1024.f, co=std::cos(yaw), si=std::sin(yaw);
+    auto const toBuild=[&](XrVector3f v) {
+        return XrVector3f{(-v.z*co-v.x*si)*UnitsPerMetre,(-v.z*si+v.x*co)*UnitsPerMetre,-v.y*ZUnitsPerMetre};
+    };
+    auto const delta=toBuild(rotate(tracking,{position.x-origin.x,position.y-origin.y,position.z-origin.z}));
+    sample.root={body.pos.x+int32_t(std::lround(delta.x)),body.pos.y+int32_t(std::lround(delta.y)),body.pos.z+int32_t(std::lround(delta.z))};
+    auto const orientation=multiply(tracking,rawInput.hands[hand].aimPose.orientation);
+    XrVector3f const axes[]={{0,0,-1},{1,0,0},{0,1,0}};
+    for (unsigned axis=0;axis<3;++axis)
+    {
+        auto const v=toBuild(rotate(orientation,axes[axis]));
+        sample.basis[axis]={v.x/64.f,v.y/64.f,v.z/64.f};
+    }
+    sample.sector=body.sector;
+    updatesector(sample.root.x,sample.root.y,&sample.sector);
+    if (sample.sector<0) sample.sector=body.sector;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    if (!md3_preflightcontext(&sample.context)) return false;
+    if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static int lastWeapon=-1;
+        if (p->curr_weapon!=lastWeapon) LOG_F(INFO,"OpenXR held model fallback: weapon=%d family=%d model=%d.",p->curr_weapon,int(family),sample.context.modelid);
+        lastWeapon=p->curr_weapon;
+    }
+    return true;
+}
+
 void worldModelMatrix(WorldModelSample &sample, Eye const &eye)
 {
     float toEye[16]; polymost_xrRelativeWorldToEye(toEye);
@@ -4643,7 +4709,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         segments.reserve(MaxWorldModels);
         WorldModelSample *models[MaxWorldModels]{};
         unsigned modelCount=0, gripMask=0;
-        bool const weaponModel=good && !fixtureTest && !wheel.open && prepareHandModel(handModel);
+        bool const exactWeapon=good && !fixtureTest && !wheel.open && prepareHandModel(handModel);
+        bool const weaponModel=exactWeapon || (good && !fixtureTest && !wheel.open && prepareHandModelFallback(handModel,body,runtime));
         heldModelShown=weaponModel;
         if (weaponModel) models[modelCount++]=&handModel;
         // RazeXR-style fallback: a weapon without a 3D model shows its native 2D sprite (which
@@ -4881,7 +4948,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             if (good)
             {
                 usedHandModel=modelCount!=0;
-                if (weaponModel)
+                if (exactWeapon)
                 {
                     handModelReceipt={runtime,runtime->generation(),frame.serial,myconnectindex,handModel.presentation,0,false};
                     if (aaWeaponFamily(handModel.presentation.family)) polymost_xrWeaponTileConsumer=consumeAAWeaponTile;
