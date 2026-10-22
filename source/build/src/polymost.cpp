@@ -7247,8 +7247,16 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
 
         if (fx > x1) { fx = x1; ti = -1; }
 
-        vec3d_t otexbak = otex, xtexbak = xtex, ytexbak = ytex;
+        vec3d_t const otexbak = otex, xtexbak = xtex, ytexbak = ytex;
+        float const columnLeft = o.x, columnRight = fx;
 
+        // One band of this tile column, between level rows yLo and yHi; a constant band repeats
+        // one texture row (vertical edge clamp done geometrically: the shader clamps after NPOT
+        // wrapping, so a 300-texel sky tile would otherwise tile upward).
+        auto const drawBand = [&](float const yLo, float const yHi, bool const constant, float const row)
+        {
+        otex = otexbak, xtex = xtexbak, ytex = ytexbak;
+        if (constant) { ytex.v = 0; otex.v = otex.d*row; }
         // Transform texture mapping factors
         vec2f_t fxy[3] = { { ghalfx * (1.f - 0.25f), ghalfy * (1.f - 0.25f) },
                           { ghalfx, ghalfy * (1.f + 0.25f) },
@@ -7303,39 +7311,61 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
         otex.u = duvt[0].u - fxyt[0].x * xtex.u - fxyt[0].y * ytex.u;
         otex.v = duvt[0].v - fxyt[0].x * xtex.v - fxyt[0].y * ytex.v;
 
-        vec2f_t cxy[8];
-        vec2f_t cxy2[8];
+        vec2f_t cxy[8], cxy2[8];
         int n2 = 0, n3 = 0;
 
-        // Clip to o.x
+        // Clip to the column's left edge
         for (bssize_t i=0; i<n; i++)
         {
             int const j = i < n-1 ? i + 1 : 0;
 
-            if (xys[i].x >= o.x)
+            if (xys[i].x >= columnLeft)
                 cxy[n2++] = xys[i];
 
-            if ((xys[i].x >= o.x) != (xys[j].x >= o.x))
+            if ((xys[i].x >= columnLeft) != (xys[j].x >= columnLeft))
             {
-                float const r = (o.x - xys[i].x) / (xys[j].x - xys[i].x);
-                cxy[n2++] = { o.x, (xys[j].y - xys[i].y) * r + xys[i].y };
+                float const r = (columnLeft - xys[i].x) / (xys[j].x - xys[i].x);
+                cxy[n2++] = { columnLeft, (xys[j].y - xys[i].y) * r + xys[i].y };
             }
         }
 
-        // Clip to fx
+        // Clip to the column's right edge
         for (bssize_t i=0; i<n2; i++)
         {
             int const j = i < n2-1 ? i + 1 : 0;
 
-            if (cxy[i].x <= fx)
+            if (cxy[i].x <= columnRight)
                 cxy2[n3++] = cxy[i];
 
-            if ((cxy[i].x <= fx) != (cxy[j].x <= fx))
+            if ((cxy[i].x <= columnRight) != (cxy[j].x <= columnRight))
             {
-                float const r = (fx - cxy[i].x) / (cxy[j].x - cxy[i].x);
-                cxy2[n3++] = { fx, (cxy[j].y - cxy[i].y) * r + cxy[i].y };
+                float const r = (columnRight - cxy[i].x) / (cxy[j].x - cxy[i].x);
+                cxy2[n3++] = { columnRight, (cxy[j].y - cxy[i].y) * r + cxy[i].y };
             }
         }
+
+        // Clip to the band's rows
+        auto const clipRows = [&](float const limit, bool const below)
+        {
+            vec2f_t in[8];
+            int const count = n3;
+            Bmemcpy(in, cxy2, sizeof(vec2f_t)*count);
+            n3 = 0;
+            for (int i=0; i<count; i++)
+            {
+                int const j = i < count-1 ? i + 1 : 0;
+                bool const inside = below ? in[i].y <= limit : in[i].y >= limit;
+                if (inside && n3 < 8) cxy2[n3++] = in[i];
+                if (inside != (below ? in[j].y <= limit : in[j].y >= limit) && n3 < 8)
+                {
+                    float const r = (limit - in[i].y) / (in[j].y - in[i].y);
+                    cxy2[n3++] = { (in[j].x - in[i].x) * r + in[i].x, limit };
+                }
+            }
+        };
+        if (yLo > -FLT_MAX) clipRows(yLo, false);
+        if (yHi < FLT_MAX && n3 >= 3) clipRows(yHi, true);
+        if (n3 < 3) return;
 
         // Transform back to polymost coordinates
         for (int i = 0; i < n3; i++)
@@ -7350,6 +7380,22 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
         }
 
         polymost_drawpoly(cxy, n3, method|DAMETH_WALL);
+        };
+
+#ifdef USE_OPENXR
+        // Level-space rows where the tile's first and last texel rows fall (v = otex.v + ytex.v*y).
+        if (xrProjection.active && ytexbak.v > 0.0)
+        {
+            float const height = float(tilesiz[globalpicnum].y);
+            float const yTop = float((0.0 - otexbak.v) / ytexbak.v);
+            float const yBottom = float((otexbak.d*height - otexbak.v) / ytexbak.v);
+            drawBand(-FLT_MAX, yTop, true, 0.5f);
+            drawBand(yTop, yBottom, false, 0.f);
+            drawBand(yBottom, FLT_MAX, true, height-0.5f);
+        }
+        else
+#endif
+            drawBand(-FLT_MAX, FLT_MAX, false, 0.f);
 
         otex = otexbak, xtex = xtexbak, ytex = ytexbak;
     }
