@@ -296,6 +296,15 @@ def main():
         rig_lines += [f'hold {tile} {name}' for tile, name in holds]
     (data / 'hand-rig.txt').write_text('\n'.join(rig_lines) + '\n')
 
+    # Tipping: a wad of bills made from the game's own MONEY art in the user's GRP (--grp=PATH).
+    grps = [a.split('=', 1)[1] for a in sys.argv if a.startswith('--grp=')]
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import money_wad
+    if grps and money_wad.build(grps, data):
+        out.append('model "vr_money.md3" {\n scale 1.0\n skin { pal 0 surface 0 file "vr_money.png" }\n'
+                   ' frame { name "rest" tile 30068 smoothduration 0 }\n}')
+        notes.append('money wad: MONEY art from ' + Path(grps[0]).name)
+
     print('\n'.join(out))
     for note in notes:
         print('eduke32-vr-play:', note, file=sys.stderr)

@@ -52,7 +52,12 @@ def="$data/eduke32-vr-models.def"
 } > "$def"
 
 if ((models)) && [[ -d $assets ]]; then
-    python3 "$here/build_vr_def.py" "$assets" "$data" ${aa:+--aa} ${release:+--release} ${glow:+--glow} ${pack:+--pack=$pack} >> "$def"
+    # The money wad for tipping is cut from the game's own art (AA.grp, then the stock GRP, or a
+    # DUKE3D.GRP found in the working directory).
+    art_grp=$grp
+    [[ -z $art_grp ]] && art_grp=$(find . -maxdepth 1 -iname duke3d.grp -print -quit 2>/dev/null)
+    python3 "$here/build_vr_def.py" "$assets" "$data" ${aa:+--aa} ${release:+--release} ${glow:+--glow} ${pack:+--pack=$pack} \
+        ${aa:+--grp="$aa/AA.grp"} ${art_grp:+--grp="$(realpath "$art_grp")"} >> "$def"
     # A pack may ask for unfiltered (nearest) model textures.
     [[ $(cat "$data/pack-filter.txt" 2>/dev/null) == nearest ]] && export EDUKE32_XR_MODEL_FILTER="${EDUKE32_XR_MODEL_FILTER:-nearest}"
     export EDUKE32_XR_HAND_RIG="${EDUKE32_XR_HAND_RIG:-$data/hand-rig.txt}"

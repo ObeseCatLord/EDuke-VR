@@ -137,6 +137,7 @@ static bool loadHudModelMap()
 // RazeXR; vr_laser draws an aiming beam from the muzzle to the aim point.
 static int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0;
 constexpr int32_t VRLaserTile=30060;
+constexpr int32_t VRMoneyTile=30068;   // tipping: wad of bills cut from the GRP's MONEY art
 } // namespace
 
 
@@ -2445,6 +2446,48 @@ static bool prepareIkBody(HandSegmentSample &sample, Camera const &body, eduke_x
     return true;
 }
 
+// Tipping ("shake it baby"): Duke's native tip shows a hand holding money on the HUD; in the
+// headset the off hand holds a wad of bills (vr_money, made from the game's MONEY art) across
+// the palm while the tip plays, and a moment after.
+static bool prepareTipWad(HandSegmentSample &sample, Camera const &body)
+{
+    auto const p=g_player[myconnectindex].ps;
+    static double shownUntil;
+    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    if (p->tipincs>0) shownUntil=now+.6;
+    int const modelid=md_tilehasmodel(VRMoneyTile,0);
+    if (now>shownUntil || modelid<0 || !G_XRModelsEnabled()) return false;
+    unsigned const hand=aimHand()>=0 ? unsigned(1-aimHand()) : 0u;
+    if (!handJoints[hand].valid) return false;
+    auto const &palm=handJoints[hand].roots[0];
+    auto const &b=handJoints[hand].bases[0];   // palm joint axes (Build units per model unit)
+    // XR palm frame: -Z toward the fingers, +Y the back of the hand. The wad lies across the palm,
+    // 2 cm out from it and 1 cm toward the fingers: MD3 X = palm X, Y = -Z, Z = +Y.
+    float const out=-.02f*64.f, toward=-.01f*64.f;
+    sample.root={palm.x+int32_t(std::lround(b[1].x*out+b[2].x*toward)),palm.y+int32_t(std::lround(b[1].y*out+b[2].y*toward)),
+                 palm.z+int32_t(std::lround(b[1].z*out+b[2].z*toward))};
+    sample.pivot={0,0,0};
+    sample.basis[0]=b[0];
+    sample.basis[1]={-b[2].x,-b[2].y,-b[2].z};
+    sample.basis[2]=b[1];
+    sample.context.instance=124;
+    sample.context.modelid=modelid;
+    sample.context.skinnum=tile2model[Ptile2tile(VRMoneyTile,0)].skinnum;
+    sample.context.shade=min<int32_t>(sprite[p->i].shade,24);
+    sample.context.cframe=sample.context.nframe=0;
+    sample.context.modelToEye[0]=sample.context.modelToEye[5]=sample.context.modelToEye[10]=sample.context.modelToEye[15]=1.f;
+    if (!md3_preflightcontext(&sample.context)) return false;
+    sample.sector=body.sector;
+    updatesector(sample.root.x,sample.root.y,&sample.sector);
+    if (sample.sector<0) sample.sector=body.sector;
+    if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    {
+        static int logged;
+        if (logged++%30==0) LOG_F(INFO,"OpenXR tip wad: hand=%u tipincs=%d.",hand,p->tipincs);
+    }
+    return true;
+}
+
 static SpriteBounds wheelPanelBounds;
 static void wheelPanelSprite(float x0,float y0,float x1,float y1) { wheelPanelBounds.add(x0,y0,x1,y1); }
 
@@ -3784,9 +3827,12 @@ static void runConsoleRequest()
         }
         if (!command.compare(0,9,"xr_spawn "))
         {
-            // Test hook: an actor (tile number) ~3 m in front of the player, facing them, frozen.
+            // Test hook: an actor (tile number) in front of the player, facing them; an optional
+            // second number is the distance in Build units (default 2048, ~5 m).
             auto const p=g_player[myconnectindex].ps;
-            int const tile=std::atoi(command.c_str()+9);
+            char *rest=nullptr;
+            int const tile=int(std::strtol(command.c_str()+9,&rest,10));
+            int const distance=rest && *rest ? std::max(64,std::min(16384,std::atoi(rest))) : 2048;
             if ((unsigned)p->i<MAXSPRITES && (unsigned)tile<MAXTILES)
             {
                 int const spawned=A_Spawn(p->i,tile);
@@ -3794,9 +3840,10 @@ static void runConsoleRequest()
                 {
                     int const ang=fix16_to_int(p->q16ang);
                     auto &spr=sprite[spawned];
-                    spr.x=p->pos.x+(sintable[(ang+512)&2047]>>3);
-                    spr.y=p->pos.y+(sintable[ang&2047]>>3);
+                    spr.x=p->pos.x+mulscale14(sintable[(ang+512)&2047],distance);
+                    spr.y=p->pos.y+mulscale14(sintable[ang&2047],distance);
                     spr.ang=(ang+1024)&2047;
+                    if (!spr.xrepeat || !spr.yrepeat) spr.xrepeat=spr.yrepeat=40;   // map actors carry their size
                     changespritesect(spawned,p->cursectnum);
                     spr.z=sector[p->cursectnum].floorz;
                     LOG_F(INFO,"OpenXR test spawn: tile=%d sprite=%d.",tile,spawned);
@@ -4617,6 +4664,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             { models[modelCount++]=&grips[hand]; gripMask|=1u<<hand; }
         }
         if (good && !fixtureTest) { prepareWheel(wheel,segments,body,runtime); prepareWheel(gadgetWheel,segments,body,runtime); }
+        HandSegmentSample tipWad;
+        if (good && !fixtureTest && prepareTipWad(tipWad,body)) segments.push_back(tipWad);
         HandSegmentSample laser, boot;
         if (good && !fixtureTest && prepareLaser(laser,body,runtime)) segments.push_back(laser);
         if (good && !fixtureTest && !fullBodyFrame && prepareKickBoot(boot,body,runtime)) segments.push_back(boot);
