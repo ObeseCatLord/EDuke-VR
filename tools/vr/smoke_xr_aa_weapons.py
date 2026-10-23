@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--remote-port', type=int, default=49777)
     parser.add_argument('--timeout', default=580, type=int)
     parser.add_argument('--switches', type=int, default=24)
-    parser.add_argument('--pack', default='v6-original', help='model pack (launcher --pack)')
+    parser.add_argument('--pack', default='original', help='model pack (launcher --pack)')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='aa-weapons-', dir=args.work_dir.resolve()))

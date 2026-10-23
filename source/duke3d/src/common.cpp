@@ -385,6 +385,78 @@ static int32_t G_LoadGrpDependencyChain(grpfile_t const * const grp)
     return i;
 }
 
+// ---- VR model packs. A pack is an ordinary mod: a folder or zip holding vrpack.def (its models),
+// vrpack/pack.txt (name, title, filter) and the VR rig files under vrpack/. Packs live in
+// "vrpacks/" folders anywhere on the search path; the chosen one (config [Setup] VRModelPack,
+// -vrpack NAME for one run) loads with the game data. A pack added like any other mod (-g, -j,
+// autoload) is used as it is.
+char g_vrModelPack[64], g_vrModelPackOverride[64], g_vrLoadedPack[64];
+
+static void G_ReadVRPackInfo(char const *path, char *name, size_t nameSize, char *filter, size_t filterSize,
+                             char *games, size_t gamesSize)
+{
+    buildvfs_kfd const fd = kopen4load(path, 0);
+    if (fd == buildvfs_kfd_invalid)
+        return;
+    int32_t const length = kfilelength(fd);
+    char *text = (char *)Xcalloc(1, length + 1);
+    kread(fd, text, length);
+    kclose(fd);
+    for (char *line = strtok(text, "\r\n"); line; line = strtok(NULL, "\r\n"))
+    {
+        if (name && !Bstrncmp(line, "name=", 5))
+            Bstrncpyz(name, line + 5, nameSize);
+        else if (filter && !Bstrncmp(line, "filter=", 7))
+            Bstrncpyz(filter, line + 7, filterSize);
+        else if (games && !Bstrncmp(line, "autoload_games=", 15))
+            Bstrncpyz(games, line + 15, gamesSize);
+    }
+    Xfree(text);
+}
+
+static void G_LoadVRPack(void)
+{
+#ifdef USE_OPENXR
+    if (!testkopen("vrpack.def", 0))
+    {
+        char const *const fallback = getenv("EDUKE32_XR_DEFAULT_PACK");
+        char const *name = g_vrModelPackOverride[0] ? g_vrModelPackOverride
+                         : g_vrModelPack[0] ? g_vrModelPack : fallback && *fallback ? fallback : "original";
+        if (!Bstrcasecmp(name, "none"))
+            return;
+        char path[BMAX_PATH];
+        Bsnprintf(path, sizeof(path), "vrpacks/%s.zip", name);
+        if (testkopen(path, 0) && initgroupfile(path) != -1)
+            LOG_F(INFO, "VR model pack: %s", path);
+        else
+        {
+            char *where = nullptr;
+            Bsnprintf(path, sizeof(path), "vrpacks/%s", name);
+            if (findfrompath(path, &where) == 0 && where)
+            {
+                addsearchpath(where);
+                LOG_F(INFO, "VR model pack: %s", where);
+            }
+            else
+                LOG_F(WARNING, "VR model pack \"%s\" not found in vrpacks/.", name);
+            Xfree(where);
+        }
+        if (!testkopen("vrpack.def", 0))
+            return;
+    }
+    char filter[32] = "", games[128] = "";
+    Bstrncpyz(g_vrLoadedPack, "pack", sizeof(g_vrLoadedPack));
+    G_ReadVRPackInfo("vrpack/pack.txt", g_vrLoadedPack, sizeof(g_vrLoadedPack), filter, sizeof(filter), games, sizeof(games));
+    // Game data the pack brings (e.g. a voxel world), like an autoload folder of its own, for the
+    // games it lists (Alien Armageddon runs through the eduke32_vr_aa566 compatibility CON).
+    bool const aa = g_scriptNamePtr && strcasestr(g_scriptNamePtr, "aa566");
+    if (!games[0] || strcasestr(games, aa ? "aa566" : "duke3d"))
+        G_LoadGroupsInDir("vrpack/autoload");
+    if (filter[0])
+        setenv("EDUKE32_XR_MODEL_FILTER", filter, 0);
+#endif
+}
+
 void G_LoadGroups(int32_t autoload)
 {
     if (g_modDir[0] != '/')
@@ -499,6 +571,8 @@ void G_LoadGroups(int32_t autoload)
         CommandGrps = s;
     }
     pathsearchmode = bakpathsearchmode;
+
+    G_LoadVRPack();
 }
 
 static void G_LoadAddon(void)

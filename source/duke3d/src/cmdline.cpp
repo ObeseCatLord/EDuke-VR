@@ -303,6 +303,16 @@ void G_CheckCommandLine(int32_t argc, char const * const * argv)
                     i++;
                     continue;
                 }
+                if (!Bstrcasecmp(c+1, "vrpack"))
+                {
+                    if (argc > i+1)
+                    {
+                        Bstrncpyz(g_vrModelPackOverride, argv[i+1], sizeof(g_vrModelPackOverride));
+                        i++;
+                    }
+                    i++;
+                    continue;
+                }
                 if (!Bstrcasecmp(c+1, "nosetup"))
                 {
                     g_noSetup = 1;

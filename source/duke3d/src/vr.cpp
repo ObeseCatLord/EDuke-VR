@@ -115,6 +115,33 @@ static bool aaWeaponFamily(XRWeaponFamily family)
 // The weapon tiles a frame draws pick the held model for the next frame; the
 // choice sticks through animation tiles until the selected weapon changes.
 static std::vector<int32_t> hudModelMap; // indexed by HUD tile, -1 = none
+// Alien Armageddon (its compatibility CON defines the playable-character gamevar).
+static bool aaGame()
+{
+    return hash_find(&h_gamevars,"pchar")>=0;
+}
+
+// A model pack file, read like any mod's file: through the game filesystem (the loaded pack folder
+// or zip), or an absolute path as given (developer overrides). The caller fcloses it.
+static FILE *openPackFile(char const *name)
+{
+    if (!name || !*name) return nullptr;
+    if (name[0]=='/')
+        if (FILE *file=std::fopen(name,"r")) return file;
+    buildvfs_kfd const fd=kopen4load(name,0);
+    if (fd==buildvfs_kfd_invalid) return nullptr;
+    FILE *file=std::tmpfile();
+    int32_t const length=kfilelength(fd);
+    if (file && length>0)
+    {
+        std::vector<char> data(length);
+        if (kread(fd,data.data(),length)==length) std::fwrite(data.data(),1,length,file);
+        std::rewind(file);
+    }
+    kclose(fd);
+    return file;
+}
+
 static int32_t hudPredictedModel=-1, hudPredictedWeapon=-1, hudObservedModel=-1;
 static bool hudSegmentObserved;
 static bool loadHudModelMap()
@@ -123,8 +150,10 @@ static bool loadHudModelMap()
     if (!loaded)
     {
         loaded=true;
-        if (auto path=sdlayer_xr_option("EDUKE32_XR_HUD_MODEL_MAP"))
-            if (FILE *file=std::fopen(path,"r"))
+        auto path=sdlayer_xr_option("EDUKE32_XR_HUD_MODEL_MAP");
+        if (!path && aaGame()) path="vrpack/hud-model-map-aa.txt";
+        if (path)
+            if (FILE *file=openPackFile(path))
             {
                 hudModelMap.assign(MAXTILES,-1);
                 int hud, model;
@@ -163,30 +192,54 @@ void G_XRRegisterCvars()
     for (auto &cv : cvars) OSD_RegisterCvar(&cv, osdcmd_cvar_set);
 }
 
-// ---- Model sets for the VR settings menu. The launcher lists the installed sets
-// (EDUKE32_XR_MODEL_SETS "name=title;...") and the loaded one; choosing another set records it in
-// the launcher's config and, on a restart, relaunches through the launcher with it.
+// ---- Model sets for the VR settings menu: the packs installed in "vrpacks/" folders on the search
+// path (each an ordinary mod folder or zip; see G_LoadVRPack). Choosing one saves it in the game
+// config; it loads on the next start, and the launcher can restart the game at once.
 namespace
 {
 struct ModelSet { std::string name, title; };
+std::string packTitle(char const *packTxt, std::string fallback)
+{
+    if (FILE *file=openPackFile(packTxt))
+    {
+        char line[256];
+        while (std::fgets(line,sizeof(line),file))
+            if (!std::strncmp(line,"title=",6))
+            {
+                line[std::strcspn(line,"\r\n")]=0;
+                fallback=line+6;
+                break;
+            }
+        std::fclose(file);
+    }
+    return fallback;
+}
 std::vector<ModelSet> const &modelSets()
 {
     static std::vector<ModelSet> sets=[]() {
         std::vector<ModelSet> list;
-        if (char const *env=std::getenv("EDUKE32_XR_MODEL_SETS"))
+        auto add=[&](std::string name, std::string title) {
+            for (auto const &set:list) if (!Bstrcasecmp(set.name.c_str(),name.c_str())) return;
+            list.push_back({name,title});
+        };
+        fnlist_t fnlist=FNLIST_INITIALIZER;
+        fnlist_getnames(&fnlist,"vrpacks","*.zip",0,0);
+        for (auto *r=fnlist.finddirs;r;r=r->next)
+            if (r->name[0]!='.')
+                add(r->name,packTitle((std::string("vrpacks/")+r->name+"/vrpack/pack.txt").c_str(),r->name));
+        for (auto *r=fnlist.findfiles;r;r=r->next)
         {
-            std::string const all=env;
-            size_t start=0;
-            while (start<=all.size())
-            {
-                size_t const end=std::min(all.find(';',start),all.size());
-                std::string const item=all.substr(start,end-start);
-                size_t const eq=item.find('=');
-                if (eq!=std::string::npos && eq>0) list.push_back({item.substr(0,eq),item.substr(eq+1)});
-                start=end+1;
-            }
+            std::string stem=r->name;
+            stem.erase(stem.size()-4);
+            add(stem,stem);
         }
-        if (list.empty()) list.push_back({"","3D models"});   // not started by the launcher
+        fnlist_clearnames(&fnlist);
+        // The loaded pack is always listed (it may have come in as -g/-j like any mod).
+        if (g_vrLoadedPack[0]) add(g_vrLoadedPack,packTitle("vrpack/pack.txt",g_vrLoadedPack));
+        std::stable_sort(list.begin(),list.end(),[](ModelSet const &l, ModelSet const &r) {
+            return (l.name=="original")>(r.name=="original");
+        });
+        if (list.empty()) list.push_back({"","3D models"});
         return list;
     }();
     return sets;
@@ -201,9 +254,8 @@ char const *G_XRModelSetTitle(int index)
 }
 int G_XRLoadedModelSet()
 {
-    char const *loaded=std::getenv("EDUKE32_XR_MODEL_SET");
     for (size_t i=0;i<modelSets().size();++i)
-        if (loaded ? modelSets()[i].name==loaded : modelSets()[i].name.empty()) return int(i);
+        if (!Bstrcasecmp(modelSets()[i].name.c_str(),g_vrLoadedPack)) return int(i);
     return 0;
 }
 int G_XRChosenModelSet() { return pendingModelSet>=0 ? pendingModelSet : G_XRLoadedModelSet(); }
@@ -214,23 +266,11 @@ bool G_XRChooseModelSet(int index)
     vr_models=1;
     pendingModelSet=index==G_XRLoadedModelSet() ? -1 : index;
     auto const &name=modelSets()[index].name;
-    char const *conf=std::getenv("EDUKE32_XR_LAUNCHER_CONF");
-    if (!conf || !*conf || name.empty()) return pendingModelSet>=0;
-    // Keep every other line of the launcher config; replace its pack= choice.
-    std::string kept;
-    if (FILE *in=std::fopen(conf,"r"))
+    if (!name.empty())
     {
-        char line[512];
-        while (std::fgets(line,sizeof(line),in))
-            if (std::strncmp(line,"pack=",5)) kept+=line;
-        std::fclose(in);
+        Bstrncpyz(g_vrModelPack,name.c_str(),sizeof(g_vrModelPack));
+        CONFIG_WriteSetup(0);
     }
-    if (!kept.empty() && kept.back()!='\n') kept+='\n';
-    kept+="pack="+name+"\n";
-    std::string const dir=std::string(conf).substr(0,std::string(conf).rfind('/'));
-    if (!dir.empty()) { Bmkdir(dir.substr(0,dir.rfind('/')).c_str(),0700); Bmkdir(dir.c_str(),0700); }
-    if (FILE *out=std::fopen(conf,"w")) { std::fputs(kept.c_str(),out); std::fclose(out); }
-    else LOG_F(WARNING,"VR model set: cannot write %s.",conf);
     LOG_F(INFO,"VR model set chosen: %s (%s).",name.c_str(),pendingModelSet>=0 ? "restart to load" : "loaded");
     return pendingModelSet>=0;
 }
@@ -1451,8 +1491,10 @@ static HandRig const *handRig()
     if (loaded) return usable ? &rig : nullptr;
     loaded=true;
     for (auto &tiles:rig.charShellTile) tiles={{-1,-1}};
+    // The pack's rig (vrpack/hand-rig.txt; Alien Armageddon: hand-rig-aa.txt), or an override path.
     auto path=sdlayer_xr_option("EDUKE32_XR_HAND_RIG");
-    FILE *file=path ? std::fopen(path,"r") : nullptr;
+    if (!path) path=aaGame() ? "vrpack/hand-rig-aa.txt" : "vrpack/hand-rig.txt";
+    FILE *file=openPackFile(path);
     if (!file) return nullptr;
     char word[64], name[128];
     while (std::fscanf(file,"%63s",word)==1)
@@ -1491,7 +1533,7 @@ static HandRig const *handRig()
             if (!Bstrcmp(word,"charshell") && (std::fscanf(file,"%d",&character)!=1 || character<=0 || character>=8)) break;
             if (std::fscanf(file,"%d %d %1023s",&side,&tile,skinPath)!=3 || unsigned(side)>=2 || unsigned(tile)>=MAXTILES) break;
             std::vector<HandRig::ShellVertex> vertices;
-            if (FILE *skin=std::fopen(skinPath,"r"))
+            if (FILE *skin=openPackFile(skinPath))
             {
                 int version=0, count=0;
                 if (std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==1 && count>0 && count<=4096)
@@ -1525,7 +1567,7 @@ static HandRig const *handRig()
             if (std::fscanf(file,"%d %1023s %1023s %1023s %1023s %1023s",&tile,paths[0],paths[1],paths[2],paths[3],paths[4])!=6) break;
             HandRig::IkBody ik;
             bool good=unsigned(tile)<MAXTILES;
-            if (FILE *skel=good ? std::fopen(paths[0],"r") : nullptr)
+            if (FILE *skel=good ? openPackFile(paths[0]) : nullptr)
             {
                 int version=0, count=0;
                 good=std::fscanf(skel,"skel %d %d",&version,&count)==2 && version==1 && count>0 && count<256;
@@ -1539,7 +1581,7 @@ static HandRig const *handRig()
                 std::fclose(skel);
             }
             else good=false;
-            if (FILE *skin=good ? std::fopen(paths[1],"r") : nullptr)
+            if (FILE *skin=good ? openPackFile(paths[1]) : nullptr)
             {
                 int version=0, count=0;
                 good=std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==2 && count>0 && count<=4096;
@@ -1564,7 +1606,7 @@ static HandRig const *handRig()
             {
                 ik.hide.assign(ik.vertices.size(),0);
                 for (int list=0;list<3;++list)
-                    if (FILE *f=std::fopen(paths[2+list],"r"))
+                    if (FILE *f=openPackFile(paths[2+list]))
                     {
                         int index;
                         while (std::fscanf(f,"%d",&index)==1)

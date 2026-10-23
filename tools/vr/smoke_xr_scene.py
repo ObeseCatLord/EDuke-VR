@@ -49,7 +49,7 @@ def main():
     parser.add_argument('--map', default='', help='user map instead of E1L1')
     parser.add_argument('--env', action='append', default=[], help='extra KEY=VALUE for the game')
     parser.add_argument('--args', default='', help='extra EDuke32 arguments (space separated)')
-    parser.add_argument('--pack', default='v6-original', help='model pack (launcher --pack)')
+    parser.add_argument('--pack', default='original', help='model pack (launcher --pack)')
     args = parser.parse_args()
     steps = json.loads(args.script.read_text())
     args.work_dir.mkdir(parents=True, exist_ok=True)

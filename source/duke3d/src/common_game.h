@@ -132,6 +132,8 @@ extern void G_SetupGlobalPsky(void);
 //////////
 
 extern char g_modDir[BMAX_PATH];
+// VR model pack: saved choice ([Setup] VRModelPack), -vrpack override, and the loaded pack's name.
+extern char g_vrModelPack[64], g_vrModelPackOverride[64], g_vrLoadedPack[64];
 extern buildvfs_kfd kopen4loadfrommod(const char *filename, char searchfirst);
 extern void G_AddSearchPaths(void);
 extern void G_CleanupSearchPaths(void);

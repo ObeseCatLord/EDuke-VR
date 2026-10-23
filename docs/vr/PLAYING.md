@@ -38,11 +38,32 @@ and all weapons incl. AA and Caribbean variants) and `voxel-private` (voxel worl
 voxel weapons, foot and player model, base game only; hands and the full body come from
 v6). Neither may ever be redistributed.
 
-In game, **Options > VR Setup > Models** lists the installed model sets (each pack's
-`pack.json` `title`), plus **2D sprites (no models)** (`vr_models 0`). The 2D choice applies at
-once. Choosing another set saves it as your `pack=` default in `launcher.conf` and offers to
-restart: the game quits and the launcher starts it again with that set. VR Setup also has
-Full body, Laser pointer, Left trigger (mighty foot or alt fire) and a link to Voice Chat Setup.
+### Model packs are mods
+
+A VR model pack is an ordinary EDuke32 mod, a folder or a `.zip`:
+
+| file | content |
+| --- | --- |
+| `vrpack.def` | the models (an EDuke32 DEF) for Duke Nukem 3D and its add-ons |
+| `vrpack_aa.def` | the models for Alien Armageddon (optional) |
+| `vrpack/pack.txt` | `name=`, `title=`, `filter=` (`nearest` = unfiltered skins), `redistributable=`, `autoload_games=` |
+| `vrpack/hand-rig.txt`, `hand-rig-aa.txt` | hand rig, weapon holds, full IK body (names are files in the pack) |
+| `vrpack/hud-model-map-aa.txt` | AA HUD tile → held model |
+| `vrpack/autoload/*.zip` | game data the pack brings (e.g. a voxel world), loaded with it for the listed games |
+| `vr_*.md3`, `.png`, `.skin`, ... | the model files |
+
+Put packs in a `vrpacks/` folder anywhere the game looks for data, e.g. `~/.config/eduke32/vrpacks/`.
+
+- **Options > VR Setup > Models** lists the installed packs (their titles), plus **2D sprites (no models)** (`vr_models 0`), which applies at once.
+- Choosing a pack saves it in the game config (`[Setup] VRModelPack`) and loads it on the next start, like any mod. Launched through `eduke32-vr-play`, the game offers to restart right away.
+- `-vrpack NAME` picks a pack for one run, and `-vrpack none` loads none.
+- A pack added like any other mod (`-g pack.zip`, `-j packdir`, or the `autoload` folder) is used as it is.
+
+`eduke32-vr-play` builds every pack in the sibling `duke-vr-assets` checkout into
+`~/.local/share/eduke32-vr/vrpacks/` (symlinked, so it takes a moment) with
+`package/vr/build_vr_pack.py`; `build_vr_pack.py ASSETS DIR OUT --zip` makes a shareable zip, and
+`make_release.py` ships the original set as `vrpacks/original.zip`. Your `launcher.conf` `pack=`
+is only the default until you choose one in the menu; `--pack NAME` overrides for one run.
 
 ### What `EDUKE32_XR=play` enables
 

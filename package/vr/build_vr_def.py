@@ -24,6 +24,8 @@ import struct
 import sys
 from pathlib import Path
 
+BASE, LEGACY = 'v7-original', 'v6-original'   # the original set, and the older one it replaces part by part
+
 WEAPONS = {1: 'pistol', 2: 'shotgun', 3: 'chaingun', 4: 'rpg', 5: 'pipebomb', 6: 'shrinker', 7: 'devastator',
            8: 'tripbomb', 9: 'freezer', 10: 'detonator', 11: 'expander', 12: 'flamethrower'}
 JOINTS = ['palm', 'wrist', 'thumb_metacarpal', 'thumb_proximal', 'thumb_distal', 'thumb_tip',
@@ -34,17 +36,15 @@ JOINTS = ['palm', 'wrist', 'thumb_metacarpal', 'thumb_proximal', 'thumb_distal',
 
 
 def list_packs(assets, release):
-    """Installed model sets as NAME=TITLE lines: v6-original and every directory with a pack.json
-    (private ones left out with --release)."""
-    for root in sorted((p for p in assets.iterdir() if (p / 'exports/eduke32').is_dir()),
-                       key=lambda p: (p.name != 'v6-original', p.name)):
-        info = json.loads((root / 'pack.json').read_text()) if (root / 'pack.json').is_file() else None
-        if root.name != 'v6-original' and info is None:
+    """Installed model sets as NAME=TITLE=DIRECTORY lines: every directory with a pack.json and
+    exports/eduke32 (private ones left out with --release); the base set first."""
+    for root in sorted((p for p in assets.iterdir() if (p / 'exports/eduke32').is_dir() and (p / 'pack.json').is_file()),
+                       key=lambda p: (p.name != BASE, p.name)):
+        info = json.loads((root / 'pack.json').read_text())
+        if release and info.get('redistributable') is False:
             continue
-        if release and info and info.get('redistributable') is False:
-            continue
-        title = (info or {}).get('title') or ('Original 3D' if root.name == 'v6-original' else root.name)
-        print(f"{root.name}={title.replace(';', ',').replace('=', '-')}")
+        title = (info.get('title') or root.name).replace(';', ',').replace('=', '-')
+        print(f"{info.get('name', root.name)}={title}={root.name}")
 
 
 def main():
@@ -58,23 +58,27 @@ def main():
     assets, data = Path(args[0]), Path(args[1])
     # --pack NAME: a model pack beside v6-original (e.g. a private one); any file it lacks comes
     # from v6-original, so a pack may replace only some models.
-    pack_name = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--pack=')), 'v6-original')
+    pack_name = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--pack=')), BASE)
     pack_root = assets / pack_name
-    if pack_name != 'v6-original' and not pack_root.is_dir():
+    if pack_name not in (BASE, LEGACY) and not pack_root.is_dir():
         sys.exit(f'build_vr_def: no model pack {pack_root}')
     pack_info = json.loads((pack_root / 'pack.json').read_text()) if (pack_root / 'pack.json').is_file() else {}
     if release and pack_info.get('redistributable') is False:
         sys.exit(f'build_vr_def: pack {pack_name} is not redistributable')
 
     class PackDir(type(Path())):
-        """exports/eduke32 of the chosen pack, falling back file by file to v6-original."""
+        """exports/eduke32 of the chosen pack, falling back file by file to v7-original, then to the
+        legacy v6-original for parts not remade yet."""
         def __truediv__(self, rel):
-            chosen = pack_root / 'exports/eduke32' / rel
-            return chosen if chosen.exists() else assets / 'v6-original/exports/eduke32' / rel
+            for root in (pack_root, assets / BASE, assets / LEGACY):
+                chosen = root / 'exports/eduke32' / rel
+                if chosen.exists():
+                    return chosen
+            return chosen
 
     v6 = PackDir(pack_root / 'exports/eduke32')
     out, notes = [], []
-    if pack_name != 'v6-original':
+    if pack_name not in (BASE, LEGACY):
         notes.append(f'model pack: {pack_name}' + (' (PRIVATE, not redistributable)' if pack_info.get('redistributable') is False else ''))
     # Pack-wide texture filter (e.g. "nearest": no filtering at all) for the launcher.
     (data / 'pack-filter.txt').write_text(pack_info.get('texture_filter', '') + '\n')
@@ -238,9 +242,8 @@ def main():
 
     # Finger-tracking hand rig (original assets only).
     rig_lines = []
-    flat = pack_root / 'metadata/hand_poses_flat.json'
-    if not flat.is_file():
-        flat = assets / 'v6-original/metadata/hand_poses_flat.json'
+    flat = next((root / 'metadata/hand_poses_flat.json' for root in (pack_root, assets / BASE, assets / LEGACY)
+                 if (root / 'metadata/hand_poses_flat.json').is_file()), assets / LEGACY / 'metadata/hand_poses_flat.json')
     if flat.is_file():
         rig = json.loads(flat.read_text())
         order = [name.lower().replace('xr_hand_joint_', '').replace('_ext', '') for name in rig.get('joint_order', JOINTS)]
@@ -268,7 +271,7 @@ def main():
                 tile = 30264 + side_index
                 model(shell['.md3'], shell['.png'], tile, f'vr_hand_{side}_shell', frame='bind')
                 link(shell['.skin'], f'vr_hand_{side}_shell.skin')
-                rig_lines.append(f'shell {side_index} {tile} {data / f"vr_hand_{side}_shell.skin"}')
+                rig_lines.append(f'shell {side_index} {tile} vr_hand_{side}_shell.skin')
             wrist = {ext: v6 / f'hands/vr_hand_{side}_shell_wrist{ext}' for ext in ('.md3', '.png', '.skin')}
             # A pack whose own shell is cut from its body at the wrist (and has no separate wrist
             # cut) uses that shell for the full body, never another pack's wrist cut.
@@ -279,7 +282,7 @@ def main():
                 tile = 30266 + side_index
                 model(wrist['.md3'], wrist['.png'], tile, f'vr_hand_{side}_shell_wrist', frame='bind')
                 link(wrist['.skin'], f'vr_hand_{side}_shell_wrist.skin')
-                rig_lines.append(f'shellwrist {side_index} {tile} {data / f"vr_hand_{side}_shell_wrist.skin"}')
+                rig_lines.append(f'shellwrist {side_index} {tile} vr_hand_{side}_shell_wrist.skin')
         # True full body (IK skeleton + skin + head/hand vertex lists).
         ik = {ext: v6 / f'vr_duke_ik{ext}' for ext in ('.md3', '.png', '.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r')}
         # First person hides .fphide (head and neck, closed by inner caps) when the pack has it.
@@ -289,7 +292,7 @@ def main():
             model(ik['.md3'], ik['.png'], 30067, 'vr_duke_ik', frame='bind')
             for ext in ('.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r'):
                 link(ik[ext], 'vr_duke_ik' + ext)
-            rig_lines.append('ikbody 30067 ' + ' '.join(str(data / ('vr_duke_ik' + ext))
+            rig_lines.append('ikbody 30067 ' + ' '.join('vr_duke_ik' + ext
                                                         for ext in ('.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r')))
             notes.append(f'full body: {ik[".md3"]}')
         # Per-character hands (Alien Armageddon's pchar 1..4) from the pack's characters.json.
@@ -308,7 +311,7 @@ def main():
                     label = f'vr_hand_{side}_{name}'
                     model(files['.md3'], files['.png'], tile, label, frame='bind')
                     link(files['.skin'], label + '.skin')
-                    rig_lines.append(f'charshell {pchar} {side_index} {tile} {data / (label + ".skin")}')
+                    rig_lines.append(f'charshell {pchar} {side_index} {tile} {label}.skin')
                 notes.append(f'character hands: {name} (pchar {pchar})')
         rig_lines += [f'hold {tile} {name}' for tile, name in holds]
     (data / 'hand-rig.txt').write_text('\n'.join(rig_lines) + '\n')

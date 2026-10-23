@@ -766,6 +766,8 @@ int CONFIG_ReadSetup(void)
         }
     }
 
+    SCRIPT_GetString(ud.config.scripthandle, "Setup", "VRModelPack", &g_vrModelPack[0]);
+
     if (g_grpNamePtr == NULL && g_addonNum == 0)
     {
         SCRIPT_GetStringPtr(ud.config.scripthandle, "Setup", "SelectedGRP", &g_grpNamePtr);
@@ -934,6 +936,9 @@ void CONFIG_WriteSetup(uint32_t flags)
 
     if (g_grpNamePtr && !g_addonNum)
         SCRIPT_PutString(ud.config.scripthandle, "Setup", "SelectedGRP", g_grpNamePtr);
+
+    if (g_vrModelPack[0])
+        SCRIPT_PutString(ud.config.scripthandle, "Setup", "VRModelPack", g_vrModelPack);
 
 #ifdef STARTUP_SETUP_WINDOW
     if (g_noSetup == 0)

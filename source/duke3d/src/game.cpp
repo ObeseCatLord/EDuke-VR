@@ -7034,6 +7034,13 @@ int app_main(int argc, char const* const* argv)
 
     Anim_Init();
 
+#ifdef USE_OPENXR
+    // The loaded VR model pack's models (Alien Armageddon has its own set: vrpack_aa.def).
+    if (hash_find(&h_gamevars, "pchar") >= 0 && testkopen("vrpack_aa.def", 0))
+        G_AddDefModule("vrpack_aa.def");
+    else if (testkopen("vrpack.def", 0))
+        G_AddDefModule("vrpack.def");
+#endif
     char const * const deffile = G_DefFile();
     uint32_t stime = timerGetTicks();
     if (!loaddefinitionsfile(deffile))

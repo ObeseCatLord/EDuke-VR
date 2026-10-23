@@ -5,15 +5,18 @@
 Usage: make_release.py OUT [--binary eduke32-xr] [--assets DUKE_VR_ASSETS]
 
 OUT receives:
-  eduke32-vr/            launcher, DEF builder, AA compatibility CON, docs,
-                         GPL text, the binary (when given or built) and a
-                         source archive of the current commit (GPL source)
-  duke-vr-assets/v6-original/
+  eduke32-vr/            launcher, DEF and pack builders, AA compatibility CON, docs,
+                         GPL text, the binary (when given or built), a source
+                         archive of the current commit (GPL source) and
+                         vrpacks/original.zip, the original model set as a
+                         ready-to-use mod
+  duke-vr-assets/v7-original/, v6-original/
                          only the original models, skins, hand rig and
-                         metadata the launcher reads, plus README/manifest
+                         metadata the builders read (v6 supplies the parts v7
+                         has not remade yet), plus README/manifest/pack.json
 
-Only v6-original assets are copied. The manifest's release_excludes (private
-reference tiles, comparison sheets) are enforced, and the DEF builder is run
+Only the original sets are copied. The release_excludes (private reference
+tiles and renders, comparison sheets) are enforced, and the DEF builder is run
 with --release against the assembled tree to prove it needs nothing else.
 Game data (GRP/ART) is never included.
 """
@@ -40,10 +43,8 @@ def main():
     out = args.out.resolve()
     if out.exists() and any(out.iterdir()):
         sys.exit(f'make_release: {out} is not empty')
-    game, v6_src = out / 'eduke32-vr', args.assets.resolve() / 'v6-original'
-    v6 = out / 'duke-vr-assets/v6-original'
-    manifest = json.loads((v6_src / 'manifest.json').read_text())
-    excludes = manifest.get('release_excludes', [])
+    game = out / 'eduke32-vr'
+    excludes = ['references/', 'previews/', 'masters/', 'work/']
 
     def excluded(rel):
         return any(rel.startswith(pattern) if pattern.endswith('/') else fnmatch.fnmatch(rel, pattern)
@@ -51,7 +52,7 @@ def main():
 
     # Engine side.
     (game / 'package/vr').mkdir(parents=True)
-    for name in ('eduke32-vr-play', 'build_vr_def.py'):
+    for name in ('eduke32-vr-play', 'build_vr_def.py', 'build_vr_pack.py', 'money_wad.py'):
         shutil.copy2(REPO / 'package/vr' / name, game / 'package/vr' / name)
     shutil.copytree(REPO / 'package/vr/aa566', game / 'package/vr/aa566')
     (game / 'docs/vr').mkdir(parents=True)
@@ -68,22 +69,34 @@ def main():
 
     # Original assets only.
     copied = []
-    for path in sorted((v6_src / 'exports/eduke32').rglob('*')):
-        rel = path.relative_to(v6_src).as_posix()
-        if path.is_file() and path.suffix in ('.md3', '.png', '.skin') and not excluded(rel):
-            target = v6 / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
-            copied.append(rel)
-    (v6 / 'metadata').mkdir(parents=True, exist_ok=True)
-    for name in ASSET_METADATA:
-        if (v6_src / 'metadata' / name).is_file():
-            shutil.copy2(v6_src / 'metadata' / name, v6 / 'metadata' / name)
-            copied.append('metadata/' + name)
-    for name in ('README.md', 'manifest.json'):
-        shutil.copy2(v6_src / name, v6 / name)
+    for set_name in ('v7-original', 'v6-original'):
+        src, dst = args.assets.resolve() / set_name, out / 'duke-vr-assets' / set_name
+        if not src.is_dir():
+            continue
+        if (src / 'manifest.json').is_file():
+            excludes_set = excludes + json.loads((src / 'manifest.json').read_text()).get('release_excludes', [])
+        else:
+            excludes_set = excludes
+        for path in sorted((src / 'exports/eduke32').rglob('*')):
+            rel = path.relative_to(src).as_posix()
+            if path.is_file() and path.suffix in ('.md3', '.png', '.skin', '.skel', '.anim', '.headverts', '.fphide',
+                                                  '.handverts_l', '.handverts_r') \
+                    and not any(rel.startswith(e) if e.endswith('/') else fnmatch.fnmatch(rel, e) for e in excludes_set):
+                target = dst / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                copied.append(f'{set_name}/{rel}')
+        (dst / 'metadata').mkdir(parents=True, exist_ok=True)
+        for name in ASSET_METADATA:
+            if (src / 'metadata' / name).is_file():
+                shutil.copy2(src / 'metadata' / name, dst / 'metadata' / name)
+                copied.append(f'{set_name}/metadata/{name}')
+        for name in ('README.md', 'manifest.json', 'pack.json'):
+            if (src / name).is_file():
+                shutil.copy2(src / name, dst / name)
 
-    leaked = [p.relative_to(v6).as_posix() for p in v6.rglob('*') if p.is_file() and excluded(p.relative_to(v6).as_posix())]
+    leaked = [f'{d.name}/{p.relative_to(d).as_posix()}' for d in (out / 'duke-vr-assets').iterdir()
+              for p in d.rglob('*') if p.is_file() and excluded(p.relative_to(d).as_posix())]
     if leaked:
         sys.exit('make_release: excluded files in release: ' + ', '.join(leaked))
 
@@ -94,7 +107,10 @@ def main():
                                   data, '--release', *aa], capture_output=True, text=True, check=True)
             if 'WARNING' in run.stderr or ': none' in run.stderr:
                 sys.exit('make_release: release DEF build incomplete:\n' + run.stderr)
-    print(json.dumps({'out': str(out), 'asset_files': len(copied),
+    # The original set as a ready-to-use mod (drop into any "vrpacks" folder, or -g it).
+    subprocess.run([sys.executable, str(game / 'package/vr/build_vr_pack.py'), str(out / 'duke-vr-assets'), 'v7-original',
+                    str(game / 'vrpacks'), '--release', '--zip'], check=True, capture_output=True, text=True)
+    print(json.dumps({'out': str(out), 'asset_files': len(copied), 'pack': str(game / 'vrpacks/original.zip'),
                       'binary': (game / 'eduke32-xr').is_file(),
                       'source_archive': (game / 'eduke32-vr-source.tar.gz').is_file()}, indent=1))
 

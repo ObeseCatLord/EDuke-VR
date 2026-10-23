@@ -6,7 +6,7 @@
  {"keys": ["Right"]}, {"until": "VR model set chosen: voxel-private"}, {"keys": ["n"]}, {"wait": 1},
  {"keys": ["Right"]}, {"until": "VR models: 2D sprites"}, {"wait": 1}, {"capture": "sprites2d"},
  {"keys": ["Escape", "Escape", "Escape"]}, {"wait": 2}, {"capture": "world2d"},
- {"console": "cmenu 705"}, {"wait": 1}, {"keys": ["Right"]}, {"until": "VR model set chosen: v6-original \\(loaded\\)"}, {"wait": 1},
+ {"console": "cmenu 705"}, {"wait": 1}, {"keys": ["Right"]}, {"until": "VR model set chosen: original \\(loaded\\)"}, {"wait": 1},
  {"capture": "back3d"},
  {"console": "cmenu 704"}, {"wait": 3}, {"capture": "voice"},
  {"keys": ["Down", "Down", "Down", "Right"]}, {"wait": 1}, {"capture": "voice-ptt"},
