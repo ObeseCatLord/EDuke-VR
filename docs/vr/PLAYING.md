@@ -54,6 +54,15 @@ A VR model pack is an ordinary EDuke32 mod, a folder or a `.zip`:
 
 Put packs in a `vrpacks/` folder anywhere the game looks for data, e.g. `~/.config/eduke32/vrpacks/`.
 
+The packs are:
+- **Original 3D** (`original`, from `duke-vr-assets/v7-original`): the redistributable set.
+  - Duke and the vanilla weapons are remodelled to the proportions and designs of the original
+    sprites and the Voxel Duke voxels.
+  - Single solid shells, low poly, clean painted skins.
+- **Original 3D (low-res)** (`original-lowres`): the same models with Quake-style 8-bit,
+  low-resolution skins.
+- **Personal packs**, never redistributed: Duke Nukem Forever 2001 and Voxel Duke.
+
 - **Options > VR Setup > Models** lists the installed packs (their titles), plus **2D sprites (no models)** (`vr_models 0`), which applies at once.
 - Choosing a pack saves it in the game config (`[Setup] VRModelPack`) and loads it on the next start, like any mod. Launched through `eduke32-vr-play`, the game offers to restart right away.
 - `-vrpack NAME` picks a pack for one run, and `-vrpack none` loads none.
