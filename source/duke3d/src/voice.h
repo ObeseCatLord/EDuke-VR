@@ -29,6 +29,17 @@ void Voice_DrawStatus(void);         // HUD: mic state and who is talking
 // Transport, implemented by network.cpp.
 bool Net_VoiceAvailable(void);
 void Net_SendVoice(uint8_t const *body, uint32_t length);
+
+// Settings (cvars), for the voice chat menu.
+extern int32_t voice_enable, voice_transmit, voice_mode, voice_vad_sensitivity, voice_loopback, voice_hud;
+extern float voice_input_gain, voice_volume, voice_radio_volume;
+extern char voice_device[128];
+int Voice_CaptureDevices(char const ***names);  // recording devices; valid until the next call
+void Voice_RestartCapture(void);                // reopen the recording device (after voice_device changes)
+void Voice_SetMenuMonitor(bool on);             // keep the microphone open for the menu's level meter
+bool Voice_CaptureOpen(void);
+float Voice_InputLevel(void);                   // 0..1 (60 dB scale)
+bool Voice_InputGateOpen(void);                 // voice activation open / push-to-talk held
 #else
 static inline void Voice_Init(void) {}
 static inline void Voice_Shutdown(void) {}

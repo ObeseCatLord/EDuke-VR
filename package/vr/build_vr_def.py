@@ -3,6 +3,7 @@
 """Assemble the EDuke32 VR model DEF, hand rig and HUD-tile map.
 
 Usage: build_vr_def.py ASSETS DATA [--aa] [--release] [--glow] [--pack=NAME]
+       build_vr_def.py ASSETS --list-packs [--release]
 
 ASSETS is the duke-vr-assets checkout, DATA the private output directory (the
 game's -j search path). Prints the DEF to stdout and writes DATA/hand-rig.txt
@@ -32,9 +33,25 @@ JOINTS = ['palm', 'wrist', 'thumb_metacarpal', 'thumb_proximal', 'thumb_distal',
           'little_metacarpal', 'little_proximal', 'little_intermediate', 'little_distal', 'little_tip']
 
 
+def list_packs(assets, release):
+    """Installed model sets as NAME=TITLE lines: v6-original and every directory with a pack.json
+    (private ones left out with --release)."""
+    for root in sorted((p for p in assets.iterdir() if (p / 'exports/eduke32').is_dir()),
+                       key=lambda p: (p.name != 'v6-original', p.name)):
+        info = json.loads((root / 'pack.json').read_text()) if (root / 'pack.json').is_file() else None
+        if root.name != 'v6-original' and info is None:
+            continue
+        if release and info and info.get('redistributable') is False:
+            continue
+        title = (info or {}).get('title') or ('Original 3D' if root.name == 'v6-original' else root.name)
+        print(f"{root.name}={title.replace(';', ',').replace('=', '-')}")
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     aa, release = '--aa' in sys.argv, '--release' in sys.argv
+    if '--list-packs' in sys.argv:
+        return list_packs(Path(args[0]), release)
     # Glow maps make the headset draw every VR model once per eye instead of once for both
     # (multiview); the parts that must glow (laser, wheel pointer and beam) are drawn fullbright.
     glow_maps = '--glow' in sys.argv

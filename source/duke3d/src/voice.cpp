@@ -27,19 +27,12 @@
 #include <string>
 #include <vector>
 
-namespace
-{
-constexpr int Rate = 48000, Frame = 960;               // 20 ms
-constexpr int MaxSpeakers = MAXPLAYERS;
-constexpr int RingSamples = 16384;                     // ~340 ms per talker
-constexpr int JitterPackets = 16;
-
-// ---------------------------------------------------------------- settings
+// ---------------------------------------------------------------- settings (voice.h)
 int32_t voice_enable = 1;          // receive and play voice
 int32_t voice_transmit = 2;        // 0 off, 1 on, 2 auto (on in VR, off on desktop)
 int32_t voice_mode = 0;            // 0 voice activation, 1 push-to-talk
 int32_t voice_vad_sensitivity = 55;
-int32_t voice_ptt_key = 0;         // keyboard scancode for push-to-talk (0 none)
+int32_t voice_ptt_key = 0;         // legacy keyboard scancode for push-to-talk (0 none); see Push_To_Talk
 int32_t voice_loopback = 0;        // hear your own transmission (mic test)
 int32_t voice_hud = 1;
 float voice_input_gain = 1.f;
@@ -47,6 +40,14 @@ float voice_volume = 1.f;
 float voice_radio_volume = .45f;
 int32_t voice_spatial_distance = 9216;  // Build units (~24 m) where a talker becomes "radio"
 char voice_device[128] = "";
+
+namespace
+{
+constexpr int Rate = 48000, Frame = 960;               // 20 ms
+constexpr int MaxSpeakers = MAXPLAYERS;
+constexpr int RingSamples = 16384;                     // ~340 ms per talker
+constexpr int JitterPackets = 16;
+
 float playerVolume[MaxSpeakers];
 
 double nowMs() { return 1000.0 * double(timerGetNanoTicks()) / double(timerGetNanoTickRate()); }
@@ -114,6 +115,9 @@ struct Capture
 OpusEncoder *encoder;
 Vad vad;
 bool pushToTalk, vrPushToTalk, transmitting;
+// The voice settings menu keeps the microphone open for its level meter (nothing is sent).
+bool menuMonitor, gateOpen;
+double menuMonitorUntil;   // refreshed every frame the voice menu shows
 uint32_t statSent, statReceived, statDecoded, statConcealed;
 uint16_t sequence;
 uint32_t timestamp;
@@ -226,13 +230,12 @@ void encodeAndSend(int16_t const *pcm, uint8_t flags)
 
 void processCapture()
 {
+    menuMonitor = nowMs() < menuMonitorUntil;
     bool const session = Net_VoiceAvailable() || voice_loopback;
-    if (!session || !transmitAllowed() || !encoder)
-    {
-        if (transmitting) { sendFrame(nullptr, 0, VoiceFlagEnd); transmitting = false; }
-        if (!session || !transmitAllowed()) { closeCapture(); return; }
-    }
-    if (!openCapture()) return;
+    bool const live = session && transmitAllowed() && encoder;
+    if (!live && transmitting) { sendFrame(nullptr, 0, VoiceFlagEnd); transmitting = false; }
+    if (!(session && transmitAllowed()) && !menuMonitor) { closeCapture(); gateOpen = false; return; }
+    if (!openCapture()) { gateOpen = false; return; }
     int16_t pcm[Frame];
     for (int frames = 0; frames < 10 && nextCaptureFrame(pcm); ++frames)
     {
@@ -241,6 +244,8 @@ void processCapture()
         vad.update(pcm);
         bool const ptt = pushToTalk || vrPushToTalk;
         bool const gate = voice_mode ? ptt : vad.active;
+        gateOpen = gate;
+        if (!live) continue;   // monitoring for the settings menu only
         if (gate && !transmitting)
         {
             transmitting = true;
@@ -480,7 +485,7 @@ void Voice_Init(void)
         { "voice_transmit", "voice chat transmit: 0 off, 1 on, 2 auto (on in VR, off on desktop)", (void *)&voice_transmit, CVAR_INT, 0, 2 },
         { "voice_mode", "voice chat: 0 voice activation, 1 push-to-talk", (void *)&voice_mode, CVAR_INT, 0, 1 },
         { "voice_vad_sensitivity", "voice activation sensitivity (0-100)", (void *)&voice_vad_sensitivity, CVAR_INT, 0, 100 },
-        { "voice_ptt_key", "keyboard scancode held for push-to-talk (0 none; VR: left stick click)", (void *)&voice_ptt_key, CVAR_INT, 0, 255 },
+        { "voice_ptt_key", "extra keyboard scancode held for push-to-talk (0 none; bind Push_To_Talk instead)", (void *)&voice_ptt_key, CVAR_INT, 0, 255 },
         { "voice_loopback", "hear your own voice (microphone test)", (void *)&voice_loopback, CVAR_BOOL|CVAR_NOSAVE, 0, 1 },
         { "voice_hud", "show the microphone state and who is talking", (void *)&voice_hud, CVAR_BOOL, 0, 1 },
         { "voice_input_gain", "microphone gain (0-4)", (void *)&voice_input_gain, CVAR_FLOAT, 0, 4 },
@@ -599,10 +604,53 @@ bool Voice_PushToTalkMode(void) { return voice_enable && voice_mode==1; }
 
 void Voice_SetPushToTalk(bool held) { vrPushToTalk = held; }
 
+int Voice_CaptureDevices(char const ***names)
+{
+    static std::vector<std::string> list;
+    static std::vector<char const *> pointers;
+    if (!SDL_WasInit(SDL_INIT_AUDIO)) SDL_InitSubSystem(SDL_INIT_AUDIO);
+    list.clear();
+    int const n = SDL_GetNumAudioDevices(1);
+    for (int i = 0; i < n; ++i)
+        if (char const *name = SDL_GetAudioDeviceName(i, 1)) list.emplace_back(name);
+    pointers.clear();
+    for (auto const &name : list) pointers.push_back(name.c_str());
+    *names = pointers.data();
+    return int(pointers.size());
+}
+
+void Voice_RestartCapture(void) { closeCapture(); capture.retryAt = 0; gateOpen = false; }
+
+// Refreshed every frame the voice menu shows; lapses half a second after it closes.
+void Voice_SetMenuMonitor(bool on)
+{
+    if (on && nowMs() > menuMonitorUntil) capture.retryAt = 0;
+    menuMonitorUntil = on ? nowMs() + 500.0 : 0.0;
+}
+
+bool Voice_CaptureOpen(void) { return capture.device || capture.toneHz > 0; }
+
+float Voice_InputLevel(void)
+{
+    // Mean absolute amplitude as a 60 dB meter.
+    float const db = 20.f * std::log10(std::max(vad.meter, 1.f) / 32768.f);
+    return clamp((db + 60.f) / 60.f, 0.f, 1.f);
+}
+
+bool Voice_InputGateOpen(void) { return gateOpen; }
+
 void Voice_Frame(void)
 {
     if (g_networkMode == NET_DEDICATED_SERVER) return;
-    pushToTalk = voice_ptt_key > 0 && voice_ptt_key < 256 && KB_KeyPressed(voice_ptt_key);
+    // Push-to-talk: the bound Push_To_Talk keys (or a mouse/controller button), not while typing.
+    {
+        auto const &keys = ud.config.KeyboardKeys[gamefunc_Push_To_Talk];
+        bool const typing = (g_player[myconnectindex].ps->gm & MODE_TYPE) || (osd && (osd->flags & OSD_CAPTURE));
+        bool const key = (keys[0] != 0xff && keys[0] != sc_None && KB_KeyPressed(keys[0]))
+            || (keys[1] != 0xff && keys[1] != sc_None && KB_KeyPressed(keys[1]))
+            || (voice_ptt_key > 0 && voice_ptt_key < 256 && KB_KeyPressed(voice_ptt_key));
+        pushToTalk = !typing && (key || BUTTON(gamefunc_Push_To_Talk));
+    }
     processCapture();
     double const now = nowMs();
     if (std::getenv("EDUKE32_VOICE_TEST_LOG") || std::getenv("EDUKE32_VOICE_TEST_DUMP") || std::getenv("EDUKE32_VOICE_TEST_TONE"))

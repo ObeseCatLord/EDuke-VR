@@ -38,6 +38,12 @@ and all weapons incl. AA and Caribbean variants) and `voxel-private` (voxel worl
 voxel weapons, foot and player model, base game only; hands and the full body come from
 v6). Neither may ever be redistributed.
 
+In game, **Options > VR Setup > Models** lists the installed model sets (each pack's
+`pack.json` `title`), plus **2D sprites (no models)** (`vr_models 0`). The 2D choice applies at
+once. Choosing another set saves it as your `pack=` default in `launcher.conf` and offers to
+restart: the game quits and the launcher starts it again with that set. VR Setup also has
+Full body, Laser pointer, Left trigger (mighty foot or alt fire) and a link to Voice Chat Setup.
+
 ### What `EDUKE32_XR=play` enables
 
 | Variable | Preset | Meaning |
@@ -197,10 +203,22 @@ on in VR, off on desktop); the HUD shows `MIC READY` / `MIC LIVE` and
 are: louder and panned when near, fading to a centred "radio" level beyond
 `voice_spatial_distance` (about 24 m), following your head in VR.
 
+Everything below is in **Options > Sound Setup > Voice Chat Setup** (also linked from VR Setup):
+- voice chat on/off and microphone off/on/auto;
+- **Input device**: system default or any recording device, switched immediately;
+- **Transmit**: voice activation or push-to-talk.
+- **Push-to-talk key**: opens Key Configuration on the new **Push To Talk** action (default `V`; it is also assignable to mouse and controller buttons).
+- **VR push-to-talk button**: left Y / Index left B (instead of next weapon), left X / Index left A (instead of previous weapon), or right B (instead of crouch).
+- activation sensitivity, microphone and voice volumes, distant talkers;
+- **Hear myself** (mic test) and the talker HUD.
+
+A live microphone level meter at the bottom shows whether your voice opens the gate (or push-to-talk is held). It works outside a game too.
+
 | Command / cvar | Default | |
 | --- | --- | --- |
 | `voice_transmit` | 2 | 0 off, 1 on, 2 auto (VR on, desktop off) |
-| `voice_mode` | 0 | 0 voice activation, 1 push-to-talk (VR: hold left Y / Index left B; desktop: `voice_ptt_key` scancode) |
+| `voice_mode` | 0 | 0 voice activation, 1 push-to-talk (the Push_To_Talk binding; VR: `vr_ptt_button`) |
+| `vr_ptt_button` | 0 | VR talk button: 0 left Y (Index left B), 1 left X (Index left A), 2 right B |
 | `voice_vad_sensitivity` | 55 | 0-100 |
 | `voice_input_gain` / `voice_volume` | 1 / 1 | |
 | `voice_radio_volume` | 0.45 | distant talkers |

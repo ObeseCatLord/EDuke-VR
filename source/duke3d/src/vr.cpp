@@ -24,6 +24,9 @@
 #include <cstdlib>
 #include <vector>
 
+// VR settings (cvars; vr.h).
+int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0;
+
 // Engine-private depth-clear latch for Polymost room passes.
 extern int32_t yax_polymostclearzbuffer;
 
@@ -135,7 +138,6 @@ static bool loadHudModelMap()
 // Runtime switches (console/settings.cfg): vr_models turns every VR model off (held weapons,
 // hands, body, third-person players, 3D weapon wheel) and falls back to native 2D art, like
 // RazeXR; vr_laser draws an aiming beam from the muzzle to the aim point.
-static int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0;
 constexpr int32_t VRLaserTile=30060;
 constexpr int32_t VRMoneyTile=30068;   // tipping: wad of bills cut from the GRP's MONEY art
 } // namespace
@@ -155,9 +157,98 @@ void G_XRRegisterCvars()
         { "vr_models", "VR 3D models (held weapons, hands, body, other players, weapon wheel); 0 = native 2D sprites", (void *)&vr_models, CVAR_BOOL, 0, 1 },
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
         { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
+        { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
     };
     for (auto &cv : cvars) OSD_RegisterCvar(&cv, osdcmd_cvar_set);
+}
+
+// ---- Model sets for the VR settings menu. The launcher lists the installed sets
+// (EDUKE32_XR_MODEL_SETS "name=title;...") and the loaded one; choosing another set records it in
+// the launcher's config and, on a restart, relaunches through the launcher with it.
+namespace
+{
+struct ModelSet { std::string name, title; };
+std::vector<ModelSet> const &modelSets()
+{
+    static std::vector<ModelSet> sets=[]() {
+        std::vector<ModelSet> list;
+        if (char const *env=std::getenv("EDUKE32_XR_MODEL_SETS"))
+        {
+            std::string const all=env;
+            size_t start=0;
+            while (start<=all.size())
+            {
+                size_t const end=std::min(all.find(';',start),all.size());
+                std::string const item=all.substr(start,end-start);
+                size_t const eq=item.find('=');
+                if (eq!=std::string::npos && eq>0) list.push_back({item.substr(0,eq),item.substr(eq+1)});
+                start=end+1;
+            }
+        }
+        if (list.empty()) list.push_back({"","3D models"});   // not started by the launcher
+        return list;
+    }();
+    return sets;
+}
+int pendingModelSet=-1;
+}
+
+int G_XRModelSetCount() { return int(modelSets().size()); }
+char const *G_XRModelSetTitle(int index)
+{
+    return unsigned(index)<modelSets().size() ? modelSets()[index].title.c_str() : "";
+}
+int G_XRLoadedModelSet()
+{
+    char const *loaded=std::getenv("EDUKE32_XR_MODEL_SET");
+    for (size_t i=0;i<modelSets().size();++i)
+        if (loaded ? modelSets()[i].name==loaded : modelSets()[i].name.empty()) return int(i);
+    return 0;
+}
+int G_XRChosenModelSet() { return pendingModelSet>=0 ? pendingModelSet : G_XRLoadedModelSet(); }
+
+bool G_XRChooseModelSet(int index)
+{
+    if (unsigned(index)>=modelSets().size()) return false;
+    vr_models=1;
+    pendingModelSet=index==G_XRLoadedModelSet() ? -1 : index;
+    auto const &name=modelSets()[index].name;
+    char const *conf=std::getenv("EDUKE32_XR_LAUNCHER_CONF");
+    if (!conf || !*conf || name.empty()) return pendingModelSet>=0;
+    // Keep every other line of the launcher config; replace its pack= choice.
+    std::string kept;
+    if (FILE *in=std::fopen(conf,"r"))
+    {
+        char line[512];
+        while (std::fgets(line,sizeof(line),in))
+            if (std::strncmp(line,"pack=",5)) kept+=line;
+        std::fclose(in);
+    }
+    if (!kept.empty() && kept.back()!='\n') kept+='\n';
+    kept+="pack="+name+"\n";
+    std::string const dir=std::string(conf).substr(0,std::string(conf).rfind('/'));
+    if (!dir.empty()) { Bmkdir(dir.substr(0,dir.rfind('/')).c_str(),0700); Bmkdir(dir.c_str(),0700); }
+    if (FILE *out=std::fopen(conf,"w")) { std::fputs(kept.c_str(),out); std::fclose(out); }
+    else LOG_F(WARNING,"VR model set: cannot write %s.",conf);
+    LOG_F(INFO,"VR model set chosen: %s (%s).",name.c_str(),pendingModelSet>=0 ? "restart to load" : "loaded");
+    return pendingModelSet>=0;
+}
+
+bool G_XRCanRestartForModelSet()
+{
+    char const *request=std::getenv("EDUKE32_XR_RESTART_REQUEST");
+    return pendingModelSet>=0 && request && *request;
+}
+
+bool G_XRRequestModelSetRestart()
+{
+    if (!G_XRCanRestartForModelSet()) return false;
+    FILE *out=std::fopen(std::getenv("EDUKE32_XR_RESTART_REQUEST"),"w");
+    if (!out) return false;
+    std::fprintf(out,"%s\n",modelSets()[pendingModelSet].name.c_str());
+    std::fclose(out);
+    return true;
 }
 
 // Models the VR pack adds to native world sprites (third-person Duke, the 3D pistol pickup) hide
@@ -678,14 +769,19 @@ static void publishInput()
     button(down[0]&ButtonSelect,vr_lefttrigger ? gamefunc_Alt_Fire : gamefunc_Quick_Kick);
     button(down[1]&ButtonStickClick,vr_lefttrigger ? gamefunc_Quick_Kick : gamefunc_Alt_Fire);
     button(down[0]&ButtonGrip,gamefunc_Open);
-    button(down[1]&ButtonPrimary,gamefunc_Jump); button(down[1]&ButtonSecondary,gamefunc_Crouch);
+    button(down[1]&ButtonPrimary,gamefunc_Jump);
     // Quick kick also on a right-stick-down flick.
     bool const kickFlick=!stickPitchAllowed() && !wheelOwnsStick && rawInput.hands[1].stickActive
         && rawInput.hands[1].stick.y<-.7f && std::fabs(rawInput.hands[1].stick.x)<.6f;
     button(kickFlick,gamefunc_Quick_Kick);
-    // Left Y (Index: left B) is next weapon, or the voice push-to-talk button in push-to-talk mode.
-    bool const talkButton=Voice_PushToTalkMode();
-    button(down[0]&ButtonPrimary,gamefunc_Previous_Weapon); button(!talkButton && (down[0]&ButtonSecondary),gamefunc_Next_Weapon);
+    // In push-to-talk mode the vr_ptt_button button talks instead of its usual function: left Y
+    // (Index: left B, next weapon), left X (Index: left A, previous weapon) or right B (crouch).
+    bool const talkMode=Voice_PushToTalkMode();
+    unsigned const talkHand=vr_ptt_button==2 ? 1 : 0;
+    uint32_t const talkBit=vr_ptt_button==1 ? ButtonPrimary : ButtonSecondary;
+    auto const talkFree=[&](unsigned hand, uint32_t bit) { return !(talkMode && hand==talkHand && bit==talkBit); };
+    button(talkFree(0,ButtonPrimary) && (down[0]&ButtonPrimary),gamefunc_Previous_Weapon);
+    button(talkFree(0,ButtonSecondary) && (down[0]&ButtonSecondary),gamefunc_Next_Weapon);
     {
         // Always run (EDUKE32_XR_ALWAYS_RUN, on in the preset): the right grip walks instead.
         // The native rule combines the Run key with the user's auto-run setting.
@@ -694,7 +790,8 @@ static void publishInput()
         bool const wantRun=always && !Bstrcmp(always,"1") ? !grip : grip;
         button(ud.runkey_mode ? wantRun : (wantRun!=bool(ud.auto_run)),gamefunc_Run);
     }
-    Voice_SetPushToTalk(talkButton && (down[0]&ButtonSecondary));
+    button(talkFree(1,ButtonSecondary) && (down[1]&ButtonSecondary),gamefunc_Crouch);
+    Voice_SetPushToTalk(talkMode && (down[talkHand]&talkBit));
     if (physicalThrowEnabled() && aimHand()>=0)
     {
         int const hand=aimHand();

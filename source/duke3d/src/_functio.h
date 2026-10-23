@@ -112,6 +112,7 @@ char gamefunctions[NUMGAMEFUNCTIONS][MAXGAMEFUNCLEN] =
    "Alt_Weapon",
    "Third_Person_View",
    "Toggle_Crouch",
+   "Push_To_Talk",
    };
 
 // note: internal ordering is important, must not be changed
@@ -180,6 +181,7 @@ const char gamefunc_symbol_names[NUMGAMEFUNCTIONS][MAXGAMEFUNCLEN] =
    "gamefunc_Alt_Weapon",
    "gamefunc_Third_Person_View",
    "gamefunc_Toggle_Crouch",
+   "gamefunc_Push_To_Talk",
    };
 
 
@@ -258,6 +260,7 @@ const int32_t keybind_order_modern[NUMGAMEFUNCTIONS] =
    gamefunc_See_Coop_View,
    gamefunc_Show_Scoreboard,
    gamefunc_Show_Console,
+   gamefunc_Push_To_Talk,
    };
 
 int32_t keybind_order_custom[NUMGAMEFUNCTIONS] = {-1};
@@ -329,6 +332,7 @@ const char keydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
    "", "",
    "F7", "",
    "C", "",
+   "V", "",
    };
 
 const char oldkeydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
@@ -396,6 +400,7 @@ const char oldkeydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
    "", "",
    "F7", "",
    "", "",
+   "V", "",
    };
 
 static const char * mousedefaults[MAXMOUSEBUTTONS] =

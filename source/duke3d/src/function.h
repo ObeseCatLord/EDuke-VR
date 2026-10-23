@@ -101,6 +101,7 @@ enum GameFunction_t
    gamefunc_Alt_Weapon,
    gamefunc_Third_Person_View,
    gamefunc_Toggle_Crouch,
+   gamefunc_Push_To_Talk,
    NUMGAMEFUNCTIONS
    };
 

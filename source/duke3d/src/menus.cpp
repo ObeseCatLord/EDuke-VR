@@ -37,6 +37,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "music.h"
 #include "sbar.h"
 #include "joystick.h"
+#include "voice.h"
+#ifdef USE_OPENXR
+# include "vr.h"
+#endif
 
 #ifndef __ANDROID__
 droidinput_t droidinput;
@@ -508,6 +512,9 @@ static MenuEntry_t *MEL_GAMESETUP[] = {
 MAKE_MENU_TOP_ENTRYLINK( "Game Setup", MEF_OptionsMenu, OPTIONS_GAMESETUP, MENU_GAMESETUP );
 #endif
 MAKE_MENU_TOP_ENTRYLINK( "Sound Setup", MEF_OptionsMenu, OPTIONS_SOUNDSETUP, MENU_SOUND );
+#ifdef USE_OPENXR
+MAKE_MENU_TOP_ENTRYLINK( "VR Setup", MEF_OptionsMenu, OPTIONS_VRSETUP, MENU_VRSETUP );
+#endif
 MAKE_MENU_TOP_ENTRYLINK( "Display Setup", MEF_OptionsMenu, OPTIONS_DISPLAYSETUP, MENU_DISPLAYSETUP );
 MAKE_MENU_TOP_ENTRYLINK( "Player Setup", MEF_OptionsMenu, OPTIONS_PLAYERSETUP, MENU_PLAYER );
 #ifndef EDUKE32_ANDROID_MENU
@@ -773,6 +780,9 @@ static MenuEntry_t *MEL_OPTIONS[] = {
 #endif
     &ME_OPTIONS_DISPLAYSETUP,
     &ME_OPTIONS_SOUNDSETUP,
+#ifdef USE_OPENXR
+    &ME_OPTIONS_VRSETUP,
+#endif
 #ifndef EDUKE32_ANDROID_MENU
 #ifndef EDUKE32_RETAIL_MENU
     &ME_OPTIONS_PLAYERSETUP,
@@ -1335,6 +1345,99 @@ static MenuEntry_t ME_SOUND_SF2 = MAKE_MENUENTRY( sf2bankfile, &MF_Redfont, &MEF
 
 static MenuEntry_t ME_SOUND_RESTART = MAKE_MENUENTRY( "Apply Changes", &MF_Redfont, &MEF_BigOptions_Apply, &MEO_NULL, Link );
 
+#ifdef USE_VOICECHAT
+static MenuLink_t MEO_SOUND_VOICE = { MENU_VOICE, MA_Advance, };
+static MenuEntry_t ME_SOUND_VOICE = MAKE_MENUENTRY( "Voice Chat Setup", &MF_Redfont, &MEF_BigOptionsRt, &MEO_SOUND_VOICE, Link );
+
+static MenuOption_t MEO_VOICE_ENABLE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &voice_enable );
+static MenuEntry_t ME_VOICE_ENABLE = MAKE_MENUENTRY( "Voice chat", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_ENABLE, Option );
+static char const *MEOSN_VOICE_TRANSMIT[] = { "Off", "On", "Auto (on in VR)", };
+static MenuOptionSet_t MEOS_VOICE_TRANSMIT = MAKE_MENUOPTIONSET( MEOSN_VOICE_TRANSMIT, NULL, 0x2 );
+static MenuOption_t MEO_VOICE_TRANSMIT = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VOICE_TRANSMIT, &voice_transmit );
+static MenuEntry_t ME_VOICE_TRANSMIT = MAKE_MENUENTRY( "Microphone", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_TRANSMIT, Option );
+static char const *MEOSN_VOICE_MODE[] = { "Voice activation", "Push-to-talk", };
+static MenuOptionSet_t MEOS_VOICE_MODE = MAKE_MENUOPTIONSET( MEOSN_VOICE_MODE, NULL, 0x2 );
+static MenuOption_t MEO_VOICE_MODE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VOICE_MODE, &voice_mode );
+static MenuEntry_t ME_VOICE_MODE = MAKE_MENUENTRY( "Transmit", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_MODE, Option );
+// Recording devices: "System default" then each SDL capture device (refreshed when the menu opens).
+static int32_t voicedevice, voiceAbsentOption = -1;
+static char const *MEOSN_VOICE_DEVICE[33] = { "System default", };
+static MenuOptionSet_t MEOS_VOICE_DEVICE = MAKE_MENUOPTIONSETDYN( MEOSN_VOICE_DEVICE, NULL, 1, 0x0 );
+static MenuOption_t MEO_VOICE_DEVICE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VOICE_DEVICE, &voicedevice );
+static MenuEntry_t ME_VOICE_DEVICE = MAKE_MENUENTRY( "Input device", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_DEVICE, Option );
+static MenuRangeInt32_t MEO_VOICE_SENSITIVITY = MAKE_MENURANGE( &voice_vad_sensitivity, &MF_Bluefont, 0, 100, 0, 21, DisplayTypeInteger );
+static MenuEntry_t ME_VOICE_SENSITIVITY = MAKE_MENUENTRY( "Activation sensitivity", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_SENSITIVITY, RangeInt32 );
+static MenuRangeFloat_t MEO_VOICE_GAIN = MAKE_MENURANGE( &voice_input_gain, &MF_Bluefont, 0.f, 4.f, 1.f, 17, DisplayTypePercent );
+static MenuEntry_t ME_VOICE_GAIN = MAKE_MENUENTRY( "Microphone volume", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_GAIN, RangeFloat );
+static MenuRangeFloat_t MEO_VOICE_VOLUME = MAKE_MENURANGE( &voice_volume, &MF_Bluefont, 0.f, 2.f, 1.f, 9, DisplayTypePercent );
+static MenuEntry_t ME_VOICE_VOLUME = MAKE_MENUENTRY( "Voice volume", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_VOLUME, RangeFloat );
+static MenuRangeFloat_t MEO_VOICE_RADIO = MAKE_MENURANGE( &voice_radio_volume, &MF_Bluefont, 0.f, 1.f, 1.f, 11, DisplayTypePercent );
+static MenuEntry_t ME_VOICE_RADIO = MAKE_MENUENTRY( "Distant talkers", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_RADIO, RangeFloat );
+// Push-to-talk binding: opens Key Configuration on the Push To Talk action.
+static char voicePttKeyName[64] = "Push-to-talk key";
+static bool s_keyListScrollToCurrent;   // the key list opened on an entry: scroll it into view once laid out
+static MenuLink_t MEO_VOICE_PTTKEY = { MENU_KEYBOARDKEYS, MA_Advance, };
+static MenuEntry_t ME_VOICE_PTTKEY = MAKE_MENUENTRY( voicePttKeyName, &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_PTTKEY, Link );
+#ifdef USE_OPENXR
+static char const *MEOSN_VOICE_VRBUTTON[] = { "Left Y / B", "Left X / A", "Right B", };
+static MenuOptionSet_t MEOS_VOICE_VRBUTTON = MAKE_MENUOPTIONSET( MEOSN_VOICE_VRBUTTON, NULL, 0x2 );
+static MenuOption_t MEO_VOICE_VRBUTTON = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VOICE_VRBUTTON, &vr_ptt_button );
+static MenuEntry_t ME_VOICE_VRBUTTON = MAKE_MENUENTRY( "VR talk button", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_VRBUTTON, Option );
+#endif
+static MenuOption_t MEO_VOICE_LOOPBACK = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &voice_loopback );
+static MenuEntry_t ME_VOICE_LOOPBACK = MAKE_MENUENTRY( "Hear myself (mic test)", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_LOOPBACK, Option );
+static MenuOption_t MEO_VOICE_HUD = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &voice_hud );
+static MenuEntry_t ME_VOICE_HUD = MAKE_MENUENTRY( "Show who is talking", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_HUD, Option );
+
+static MenuEntry_t *MEL_VOICE[] = {
+    &ME_VOICE_ENABLE,
+    &ME_VOICE_TRANSMIT,
+    &ME_VOICE_DEVICE,
+    &ME_VOICE_MODE,
+    &ME_VOICE_PTTKEY,
+#ifdef USE_OPENXR
+    &ME_VOICE_VRBUTTON,
+#endif
+    &ME_VOICE_SENSITIVITY,
+    &ME_VOICE_GAIN,
+    &ME_VOICE_VOLUME,
+    &ME_VOICE_RADIO,
+    &ME_VOICE_LOOPBACK,
+    &ME_VOICE_HUD,
+};
+#endif
+
+#ifdef USE_OPENXR
+// Model set: each installed set (from the launcher), then the native 2D sprites (vr_models 0).
+static int32_t vrmodelset;
+static char const *MEOSN_VR_MODELSET[17] = { "3D models", };
+static MenuOptionSet_t MEOS_VR_MODELSET = MAKE_MENUOPTIONSETDYN( MEOSN_VR_MODELSET, NULL, 1, 0x0 );
+static MenuOption_t MEO_VR_MODELSET = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_MODELSET, &vrmodelset );
+static MenuEntry_t ME_VR_MODELSET = MAKE_MENUENTRY( "Models", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_MODELSET, Option );
+static MenuOption_t MEO_VR_FULLBODY = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_fullbody );
+static MenuEntry_t ME_VR_FULLBODY = MAKE_MENUENTRY( "Full body", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_FULLBODY, Option );
+static MenuOption_t MEO_VR_LASER = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_laser );
+static MenuEntry_t ME_VR_LASER = MAKE_MENUENTRY( "Laser pointer", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_LASER, Option );
+static char const *MEOSN_VR_LEFTTRIGGER[] = { "Mighty foot", "Alt fire", };
+static MenuOptionSet_t MEOS_VR_LEFTTRIGGER = MAKE_MENUOPTIONSET( MEOSN_VR_LEFTTRIGGER, NULL, 0x2 );
+static MenuOption_t MEO_VR_LEFTTRIGGER = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_LEFTTRIGGER, &vr_lefttrigger );
+static MenuEntry_t ME_VR_LEFTTRIGGER = MAKE_MENUENTRY( "Left trigger", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_LEFTTRIGGER, Option );
+#ifdef USE_VOICECHAT
+static MenuLink_t MEO_VR_VOICE = { MENU_VOICE, MA_Advance, };
+static MenuEntry_t ME_VR_VOICE = MAKE_MENUENTRY( "Voice Chat Setup", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_VOICE, Link );
+#endif
+
+static MenuEntry_t *MEL_VRSETUP[] = {
+    &ME_VR_MODELSET,
+    &ME_VR_FULLBODY,
+    &ME_VR_LASER,
+    &ME_VR_LEFTTRIGGER,
+#ifdef USE_VOICECHAT
+    &ME_VR_VOICE,
+#endif
+};
+#endif
+
 static MenuEntry_t *MEL_SOUND[] = {
     &ME_SOUND,
     &ME_SOUND_VOLUME_MASTER,
@@ -1345,6 +1448,9 @@ static MenuEntry_t *MEL_SOUND[] = {
     &ME_SOUND_DUKETALK,
 #ifndef EDUKE32_RETAIL_MENU
     &ME_SOUND_DEVSETUP,
+#endif
+#ifdef USE_VOICECHAT
+    &ME_SOUND_VOICE,
 #endif
 };
 
@@ -1551,6 +1657,12 @@ static MenuMenu_t M_LOAD = MAKE_MENUMENU_CUSTOMSIZE( s_LoadGame, &MMF_LoadSave, 
 static MenuMenu_t M_SAVE = MAKE_MENUMENU_CUSTOMSIZE( s_SaveGame, &MMF_LoadSave, MEL_SAVE );
 static MenuMenu_t M_SOUND = MAKE_MENUMENU( "Sound Setup", &MMF_BigOptions, MEL_SOUND );
 static MenuMenu_t M_SOUND_DEVSETUP = MAKE_MENUMENU( "Device Configuration", &MMF_BigOptions, MEL_SOUND_DEVSETUP );
+#ifdef USE_VOICECHAT
+static MenuMenu_t M_VOICE = MAKE_MENUMENU( "Voice Chat", &MMF_SmallOptions, MEL_VOICE );
+#endif
+#ifdef USE_OPENXR
+static MenuMenu_t M_VRSETUP = MAKE_MENUMENU( "VR Setup", &MMF_SmallOptions, MEL_VRSETUP );
+#endif
 static MenuMenu_t M_SAVESETUP = MAKE_MENUMENU( "Save Setup", &MMF_BigOptions, MEL_SAVESETUP );
 static MenuMenu_t M_NETWORK = MAKE_MENUMENU( "Network Game", &MMF_Top_Joystick_Network, MEL_NETWORK );
 static MenuMenu_t M_PLAYER = MAKE_MENUMENU( "Player Setup", &MMF_SmallOptions, MEL_PLAYER );
@@ -1592,6 +1704,9 @@ static MenuVerify_t M_KEYSRESETVERIFY = { CURSOR_CENTER_2LINE, MENU_KEYBOARDSETU
 static MenuVerify_t M_KEYSCLASSICVERIFY = { CURSOR_CENTER_2LINE, MENU_KEYBOARDSETUP, MA_None, };
 static MenuVerify_t M_JOYSTANDARDVERIFY = { CURSOR_CENTER_2LINE, MENU_JOYSTICKSETUP, MA_None, };
 static MenuVerify_t M_KEYOVERRIDEVERIFY = { CURSOR_BOTTOMRIGHT, MENU_KEYBOARDKEYS, MA_None, };
+#ifdef USE_OPENXR
+static MenuVerify_t M_VRRESTARTVERIFY = { CURSOR_CENTER_2LINE, MENU_VRSETUP, MA_None, };
+#endif
 
 static MenuMessage_t M_NETWAITMASTER = { CURSOR_BOTTOMRIGHT, MENU_NULL, MA_None, };
 static MenuMessage_t M_NETWAITVOTES = { CURSOR_BOTTOMRIGHT, MENU_NULL, MA_None, };
@@ -1667,6 +1782,12 @@ static Menu_t Menus[] = {
     { &M_SOUND_DEVSETUP, MENU_SOUND_DEVSETUP, MENU_SOUND, MA_Return, Menu },
 #ifndef EDUKE32_RETAIL_MENU
     { &M_SOUND_SF2, MENU_SOUND_SF2, MENU_SOUND_DEVSETUP, MA_Return, FileSelect },
+#ifdef USE_VOICECHAT
+    { &M_VOICE, MENU_VOICE, MENU_SOUND, MA_Return, Menu },
+#endif
+#ifdef USE_OPENXR
+    { &M_VRSETUP, MENU_VRSETUP, MENU_OPTIONS, MA_Return, Menu },
+#endif
 #endif
     { &M_SAVESETUP, MENU_SAVESETUP, MENU_OPTIONS, MA_Return, Menu },
     { &M_SAVECLEANVERIFY, MENU_SAVECLEANVERIFY, MENU_SAVESETUP, MA_None, Verify },
@@ -1694,6 +1815,9 @@ static Menu_t Menus[] = {
     { &M_KEYSCLASSICVERIFY, MENU_KEYSCLASSICVERIFY, MENU_KEYBOARDSETUP, MA_None, Verify },
     { &M_JOYSTANDARDVERIFY, MENU_JOYDEFAULTVERIFY, MENU_JOYSTICKSETUP, MA_None, Verify },
     { &M_KEYOVERRIDEVERIFY, MENU_KEYOVERRIDEVERIFY, MENU_KEYBOARDKEYS, MA_None, Verify },
+#ifdef USE_OPENXR
+    { &M_VRRESTARTVERIFY, MENU_VRRESTARTVERIFY, MENU_VRSETUP, MA_None, Verify },
+#endif
     { &M_ADULTPASSWORD, MENU_ADULTPASSWORD, MENU_GAMESETUP, MA_None, TextForm },
     { &M_RESETPLAYER, MENU_RESETPLAYER, MENU_CLOSE, MA_None, Verify },
     { &M_BUYDUKE, MENU_BUYDUKE, MENU_EPISODE, MA_Return, Message },
@@ -2549,6 +2673,56 @@ At present, no true difference is planned between Menu_Pre() and Menu_PreDraw().
 They are separate for purposes of organization.
 */
 
+#ifdef USE_VOICECHAT
+// Voice chat menu: recording devices, the current one selected, and the push-to-talk key label.
+static void Menu_PopulateVoice(void)
+{
+    char const **names;
+    int const count = Voice_CaptureDevices(&names);
+    MEOS_VOICE_DEVICE.numOptions = 1;
+    voicedevice = 0;
+    voiceAbsentOption = -1;
+    for (int i = 0; i < count && MEOS_VOICE_DEVICE.numOptions < ARRAY_SSIZE(MEOSN_VOICE_DEVICE); ++i)
+    {
+        if (voice_device[0] && !Bstrcmp(voice_device, names[i]))
+            voicedevice = MEOS_VOICE_DEVICE.numOptions;
+        MEOSN_VOICE_DEVICE[MEOS_VOICE_DEVICE.numOptions++] = names[i];
+    }
+    // A configured device that is not plugged in stays selected by name.
+    static char missing[sizeof(voice_device) + 16];
+    if (voice_device[0] && !voicedevice && MEOS_VOICE_DEVICE.numOptions < ARRAY_SSIZE(MEOSN_VOICE_DEVICE))
+    {
+        Bsnprintf(missing, sizeof(missing), "%s (absent)", voice_device);
+        voicedevice = voiceAbsentOption = MEOS_VOICE_DEVICE.numOptions;
+        MEOSN_VOICE_DEVICE[MEOS_VOICE_DEVICE.numOptions++] = missing;
+    }
+    MEO_VOICE_DEVICE.currentOption = voicedevice;
+}
+
+static void Menu_UpdateVoicePttKeyName(void)
+{
+    auto const &keys = ud.config.KeyboardKeys[gamefunc_Push_To_Talk];
+    char const *first = keys[0] != 0xff && keys[0] != sc_None ? KB_ScanCodeToString(keys[0]) : nullptr;
+    char const *second = keys[1] != 0xff && keys[1] != sc_None ? KB_ScanCodeToString(keys[1]) : nullptr;
+    if (first && second) Bsnprintf(voicePttKeyName, sizeof(voicePttKeyName), "Push-to-talk key: %s / %s", first, second);
+    else if (first || second) Bsnprintf(voicePttKeyName, sizeof(voicePttKeyName), "Push-to-talk key: %s", first ? first : second);
+    else Bstrcpy(voicePttKeyName, "Push-to-talk key: (none)");
+}
+#endif
+
+#ifdef USE_OPENXR
+static void Menu_PopulateVRSetup(void)
+{
+    int const count = min<int>(G_XRModelSetCount(), ARRAY_SSIZE(MEOSN_VR_MODELSET) - 1);
+    for (int i = 0; i < count; ++i)
+        MEOSN_VR_MODELSET[i] = G_XRModelSetTitle(i);
+    MEOSN_VR_MODELSET[count] = "2D sprites (no models)";
+    MEOS_VR_MODELSET.numOptions = count + 1;
+    vrmodelset = vr_models ? min(G_XRChosenModelSet(), count - 1) : count;
+    MEO_VR_MODELSET.currentOption = vrmodelset;
+}
+#endif
+
 static void Menu_Pre(MenuID_t cm)
 {
     int32_t i;
@@ -2556,6 +2730,23 @@ static void Menu_Pre(MenuID_t cm)
 
     switch (cm)
     {
+#ifdef USE_VOICECHAT
+    case MENU_KEYBOARDKEYS:
+        // Opened from the voice menu on the Push To Talk row: scroll to it once the list is laid out.
+        if (s_keyListScrollToCurrent && M_KEYBOARDKEYS.entrylist[M_KEYBOARDKEYS.currentEntry]
+            && M_KEYBOARDKEYS.entrylist[M_KEYBOARDKEYS.currentEntry]->ybottom > 0)
+        {
+            Menu_AdjustForCurrentEntryAssignment(&M_KEYBOARDKEYS);
+            s_keyListScrollToCurrent = false;
+        }
+        break;
+    case MENU_VOICE:
+        Menu_UpdateVoicePttKeyName();
+        MenuEntry_DisableOnCondition(&ME_VOICE_SENSITIVITY, voice_mode == 1);
+        // Keep the microphone open for the level meter while this menu shows.
+        Voice_SetMenuMonitor(true);
+        break;
+#endif
     case MENU_MAIN_INGAME:
         MenuEntry_DisableOnCondition(&ME_MAIN_SAVEGAME, ud.recstat == 2);
         MenuEntry_DisableOnCondition(&ME_MAIN_QUITTOTITLE, g_netServer || numplayers > 1);
@@ -3018,6 +3209,30 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
     }
 #endif
 
+#ifdef USE_VOICECHAT
+    case MENU_VOICE:
+    {
+        // Live microphone level (also while not in a game), and whether it would transmit now.
+        char meter[64];
+        int const bars = 24, lit = Blrintf(Voice_InputLevel() * bars);
+        char *p = meter;
+        p += Bsprintf(p, "Mic level ");
+        for (int b = 0; b < bars; ++b) *p++ = b < lit ? '|' : '.';
+        *p = 0;
+        char const *state = !Voice_CaptureOpen() ? "^12no microphone"
+            : Voice_InputGateOpen() ? (voice_mode ? "^10talking" : "^10voice detected") : voice_mode ? "push to talk" : "quiet";
+        Bsnprintf(tempbuf, sizeof(tempbuf), "%s  %s", meter, state);
+        mgametextcenter(origin.x, origin.y + (178<<16), tempbuf);
+        break;
+    }
+#endif
+#ifdef USE_OPENXR
+    case MENU_VRSETUP:
+        if (vr_models && G_XRCanRestartForModelSet())
+            mgametextcenter(origin.x, origin.y + (178<<16), "Restart the game to load the chosen models");
+        break;
+#endif
+
     case MENU_NETSETUP:
     case MENU_NETHOST:
         mminitext(origin.x + (90<<16), origin.y + (90<<16), "Game Type", MF_Minifont.pal_deselected);
@@ -3278,6 +3493,12 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
         videoFadeToBlack(1);
         Menu_DrawVerifyPrompt(origin.x, origin.y, "Reset keys to defaults?");
         break;
+#ifdef USE_OPENXR
+    case MENU_VRRESTARTVERIFY:
+        videoFadeToBlack(1);
+        Menu_DrawVerifyPrompt(origin.x, origin.y, "Restart now to load these models?");
+        break;
+#endif
     case MENU_KEYSCLASSICVERIFY:
         videoFadeToBlack(1);
         Menu_DrawVerifyPrompt(origin.x, origin.y, "Reset keys to classic defaults?");
@@ -4264,6 +4485,35 @@ static void Menu_EntryOptionDidModify(MenuEntry_t *entry)
     int domodechange = 0;
 #endif
 
+#ifdef USE_VOICECHAT
+    if (entry == &ME_VOICE_DEVICE)
+    {
+        // 0 is the system default; an absent configured device keeps its name.
+        if (voicedevice == 0)
+            voice_device[0] = 0;
+        else if (voicedevice != voiceAbsentOption)
+            Bstrncpyz(voice_device, MEOSN_VOICE_DEVICE[voicedevice], sizeof(voice_device));
+        Voice_RestartCapture();
+        return;
+    }
+#endif
+#ifdef USE_OPENXR
+    if (entry == &ME_VR_MODELSET)
+    {
+        if (vrmodelset >= MEOS_VR_MODELSET.numOptions - 1)
+        {
+            vr_models = 0;
+            LOG_F(INFO, "VR models: 2D sprites.");
+        }
+        else if (G_XRChooseModelSet(vrmodelset) && G_XRCanRestartForModelSet())
+        {
+            int const refused = Menu_Change(MENU_VRRESTARTVERIFY);
+            LOG_F(INFO, "VR models: restart prompt %s (menu %d).", refused ? "refused" : "shown", int(g_currentMenu));
+        }
+        return;
+    }
+#endif
+
     if (entry == &ME_GAMESETUP_AIM_AUTO ||
         entry == &ME_GAMESETUP_WEAPSWITCH_PICKUP ||
         entry == &ME_PLAYER_NAME ||
@@ -4638,6 +4888,15 @@ static void Menu_Verify(int32_t input)
         else
             g_quitDeadline = 0;
         break;
+
+#ifdef USE_OPENXR
+    case MENU_VRRESTARTVERIFY:
+        // The launcher relaunches with the chosen models once the game has quit.
+        LOG_F(INFO, "VR models: restart %s.", input ? "accepted" : "declined");
+        if (input && G_XRRequestModelSetRestart())
+            G_GameQuit();
+        break;
+#endif
 
     case MENU_QUITTOTITLE:
         if (input)
@@ -5126,6 +5385,27 @@ static void Menu_AboutToStartDisplaying(Menu_t * m)
             ME_MAIN_LOADGAME.name = s_LoadGame;
         break;
 
+#ifdef USE_VOICECHAT
+    case MENU_VOICE:
+        Menu_PopulateVoice();
+        break;
+    case MENU_KEYBOARDKEYS:
+        // From the voice menu: land on the Push To Talk binding.
+        if (m_previousMenu && m_previousMenu->menuID == MENU_VOICE)
+            for (int i = 0; i < M_KEYBOARDKEYS.numEntries; ++i)
+                if (M_KEYBOARDKEYS.entrylist[i] == &ME_KEYBOARDSETUPFUNCS[gamefunc_Push_To_Talk])
+                {
+                    M_KEYBOARDKEYS.currentEntry = i;
+                    s_keyListScrollToCurrent = true;
+                }
+        break;
+#endif
+#ifdef USE_OPENXR
+    case MENU_VRSETUP:
+        Menu_PopulateVRSetup();
+        break;
+#endif
+
     case MENU_NEWGAMECUSTOM:
         Menu_PopulateNewGameCustom();
         break;
@@ -5302,6 +5582,16 @@ static void Menu_ChangingTo(Menu_t * m)
     case MENU_USERMAP:
         // terrible hack
         if (g_previousMenu != MENU_SKILL && g_previousMenu != MENU_USERMAP)
+            m->parentID = g_previousMenu;
+        break;
+    // Voice chat setup opens from Sound Setup (in game too) and VR Setup; key configuration also
+    // from the voice menu's push-to-talk entry. Each returns to where it came from.
+    case MENU_VOICE:
+        if (g_previousMenu == MENU_SOUND || g_previousMenu == MENU_SOUND_INGAME || g_previousMenu == MENU_VRSETUP)
+            m->parentID = g_previousMenu;
+        break;
+    case MENU_KEYBOARDKEYS:
+        if (g_previousMenu == MENU_VOICE || g_previousMenu == MENU_KEYBOARDSETUP)
             m->parentID = g_previousMenu;
         break;
     }
@@ -6656,6 +6946,9 @@ static void Menu_Recurse(MenuID_t cm, const vec2_t origin)
     case MENU_KEYSCLASSICVERIFY:
     case MENU_JOYDEFAULTVERIFY:
     case MENU_KEYOVERRIDEVERIFY:
+#ifdef USE_OPENXR
+    case MENU_VRRESTARTVERIFY:
+#endif
     case MENU_ADULTPASSWORD:
     case MENU_CHEATENTRY:
     case MENU_CHEAT_WARP:

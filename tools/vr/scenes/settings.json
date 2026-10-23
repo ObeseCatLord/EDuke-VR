@@ -1,0 +1,20 @@
+[
+ {"pose": {"head": [0, 1.65, 0, 0, 0, 0]}}, {"wait": 3},
+ {"console": "cmenu 705"}, {"wait": 2}, {"capture": "vrsetup"},
+ {"keys": ["Right"]}, {"until": "VR models: restart prompt shown"}, {"until": "VR model set chosen: dnf-private \\(restart to load\\)", "from_start": true}, {"wait": 1}, {"capture": "verify"},
+ {"keys": ["n"]}, {"wait": 1}, {"capture": "pending"},
+ {"keys": ["Right"]}, {"until": "VR model set chosen: voxel-private"}, {"keys": ["n"]}, {"wait": 1},
+ {"keys": ["Right"]}, {"until": "VR models: 2D sprites"}, {"wait": 1}, {"capture": "sprites2d"},
+ {"keys": ["Escape", "Escape", "Escape"]}, {"wait": 2}, {"capture": "world2d"},
+ {"console": "cmenu 705"}, {"wait": 1}, {"keys": ["Right"]}, {"until": "VR model set chosen: v6-original \\(loaded\\)"}, {"wait": 1},
+ {"capture": "back3d"},
+ {"console": "cmenu 704"}, {"wait": 3}, {"capture": "voice"},
+ {"keys": ["Down", "Down", "Down", "Right"]}, {"wait": 1}, {"capture": "voice-ptt"},
+ {"keys": ["Down", "Return"]}, {"wait": 2}, {"capture": "keys"},
+ {"keys": ["Return"]}, {"wait": 1}, {"keys": ["b"]}, {"wait": 1}, {"capture": "keys-bound"},
+ {"keys": ["Escape"]}, {"wait": 2}, {"capture": "voice-bound"},
+ {"console": "cmenu 705"}, {"wait": 1}, {"keys": ["Up", "Up", "Up", "Up", "Right"]}, {"until": "VR model set chosen: dnf-private"}, {"wait": 1},
+ {"capture": "verify2"}, {"keys": ["y"]}, {"until": "VR models: restart accepted"}, {"until": "restarting with model set dnf-private", "timeout": 60, "from_start": true},
+ {"until": "OpenXR world oracle: 60 frames", "timeout": 300}, {"wait": 4}, {"capture": "restarted"},
+ {"console": "cmenu 705"}, {"wait": 2}, {"capture": "vrsetup-after"}
+]

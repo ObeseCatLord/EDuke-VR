@@ -19,6 +19,7 @@ import argparse, json, math, os, re, subprocess, tempfile, time
 from pathlib import Path
 from monado_remote import Remote, Quat, Vec2
 from smoke_world import CONFIG
+from smoke_multiplayer import X11
 
 
 def quat(yaw=0.0, pitch=0.0, roll=0.0):
@@ -85,6 +86,26 @@ def main():
             time.sleep(.05)
         return True
 
+    x11 = X11(args.display)
+
+    def game_window():
+        # The launcher runs the game as a child (it relaunches it to switch model sets).
+        pids, found = {process.pid}, True
+        while found:
+            found = False
+            for entry in Path('/proc').iterdir():
+                try:
+                    if entry.name.isdigit() and int(entry.name) not in pids and \
+                            int((entry / 'stat').read_text().rsplit(') ', 1)[1].split()[1]) in pids:
+                        pids.add(int(entry.name)); found = True
+                except (OSError, ValueError, IndexError):
+                    pass
+        for pid in pids:
+            window, _ = x11.owned_window(pid)
+            if window:
+                return window
+        return None
+
     with log_path.open('w') as log:
         process = subprocess.Popen(command, cwd=lab, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         try:
@@ -118,6 +139,20 @@ def main():
                             else:
                                 setattr(hand, field, type(getattr(hand, field))(value))
                     remote.send()
+                if 'keys' in step:
+                    # A following 'until' also sees what the keys logged at once.
+                    console_mark = len(text())
+                    # Keyboard input to the game's own window (menus), never the desktop.
+                    window = game_window()
+                    if not window:
+                        raise RuntimeError('no game window for key input')
+                    for key in step['keys']:
+                        try:
+                            x11.press(window, key, .08, True)
+                        except RuntimeError:
+                            # The window went away under the key (e.g. the game quit to relaunch).
+                            break
+                        time.sleep(.35)
                 if 'console' in step:
                     # A following 'until' also sees what the command logged at once.
                     console_mark = len(text())

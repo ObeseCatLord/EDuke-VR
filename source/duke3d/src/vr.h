@@ -43,6 +43,15 @@ bool G_XRTrackedPitchOwner();
 int G_XRListenerAngle(int fallback);
 // VR 3D models on (vr_models cvar, EDUKE32_XR_MODELS, usemodels); off = native 2D sprites.
 bool G_XRModelsEnabled();
+// VR settings (cvars) and model sets for the settings menu.
+extern int32_t vr_models, vr_laser, vr_fullbody, vr_lefttrigger, vr_ptt_button;
+int G_XRModelSetCount();
+char const *G_XRModelSetTitle(int index);
+int G_XRLoadedModelSet();
+int G_XRChosenModelSet();
+bool G_XRChooseModelSet(int index);       // records the choice; true if a restart is needed to load it
+bool G_XRCanRestartForModelSet();         // a different set is chosen and the launcher can relaunch
+bool G_XRRequestModelSetRestart();        // asks the launcher to relaunch with it (then quit the game)
 void G_XRRegisterCvars();
 void G_XRWorldModelToggle(int spriteNum, int picnum);
 void G_XRDrawWheelPanels(); // 2D wheel icons on a panel at the ring (gadgets; weapons without 3D models)
