@@ -8,8 +8,9 @@ OUT receives:
   eduke32-vr/            launcher, DEF and pack builders, AA compatibility CON, docs,
                          GPL text, the binary (when given or built), a source
                          archive of the current commit (GPL source) and
-                         vrpacks/original.zip, the original model set as a
-                         ready-to-use mod
+                         vrpacks/original.zip and original-lowres.zip, the
+                         original model set (and its low-res skins) as
+                         ready-to-use mods
   duke-vr-assets/v7-original/, v6-original/
                          only the original models, skins, hand rig and
                          metadata the builders read (v6 supplies the parts v7
@@ -69,7 +70,7 @@ def main():
 
     # Original assets only.
     copied = []
-    for set_name in ('v7-original', 'v6-original'):
+    for set_name in ('v7-original', 'v7-original-lowres', 'v6-original'):
         src, dst = args.assets.resolve() / set_name, out / 'duke-vr-assets' / set_name
         if not src.is_dir():
             continue
@@ -108,9 +109,11 @@ def main():
             if 'WARNING' in run.stderr or ': none' in run.stderr:
                 sys.exit('make_release: release DEF build incomplete:\n' + run.stderr)
     # The original set as a ready-to-use mod (drop into any "vrpacks" folder, or -g it).
-    subprocess.run([sys.executable, str(game / 'package/vr/build_vr_pack.py'), str(out / 'duke-vr-assets'), 'v7-original',
-                    str(game / 'vrpacks'), '--release', '--zip'], check=True, capture_output=True, text=True)
-    print(json.dumps({'out': str(out), 'asset_files': len(copied), 'pack': str(game / 'vrpacks/original.zip'),
+    for set_name in ('v7-original', 'v7-original-lowres'):
+        if (out / 'duke-vr-assets' / set_name / 'pack.json').is_file():
+            subprocess.run([sys.executable, str(game / 'package/vr/build_vr_pack.py'), str(out / 'duke-vr-assets'), set_name,
+                            str(game / 'vrpacks'), '--release', '--zip'], check=True, capture_output=True, text=True)
+    print(json.dumps({'out': str(out), 'asset_files': len(copied), 'packs': sorted(p.name for p in (game / 'vrpacks').glob('*.zip')),
                       'binary': (game / 'eduke32-xr').is_file(),
                       'source_archive': (game / 'eduke32-vr-source.tar.gz').is_file()}, indent=1))
 
