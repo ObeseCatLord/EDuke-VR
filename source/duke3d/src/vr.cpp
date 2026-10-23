@@ -25,7 +25,7 @@
 #include <vector>
 
 // VR settings (cvars; vr.h).
-int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0;
+int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1;
 
 // Engine-private depth-clear latch for Polymost room passes.
 extern int32_t yax_polymostclearzbuffer;
@@ -187,6 +187,7 @@ void G_XRRegisterCvars()
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
         { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
+        { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
     };
     for (auto &cv : cvars) OSD_RegisterCvar(&cv, osdcmd_cvar_set);
@@ -236,9 +237,9 @@ std::vector<ModelSet> const &modelSets()
         fnlist_clearnames(&fnlist);
         // The loaded pack is always listed (it may have come in as -g/-j like any mod).
         if (g_vrLoadedPack[0]) add(g_vrLoadedPack,packTitle("vrpack/pack.txt",g_vrLoadedPack));
-        std::stable_sort(list.begin(),list.end(),[](ModelSet const &l, ModelSet const &r) {
-            return (l.name=="original")>(r.name=="original");
-        });
+        // The default (low-res original) first, then the full-resolution original.
+        auto const rank=[](ModelSet const &m) { return m.name=="original-lowres" ? 0 : m.name=="original" ? 1 : 2; };
+        std::stable_sort(list.begin(),list.end(),[&](ModelSet const &l, ModelSet const &r) { return rank(l)<rank(r); });
         if (list.empty()) list.push_back({"","3D models"});
         return list;
     }();
@@ -753,6 +754,29 @@ static XrVector2f inputStick(eduke_xr::HandInput const &hand)
     return {hand.stick.x*scale,hand.stick.y*scale};
 }
 
+// ---- Two-handed aiming. Squeezing the off hand's grip at the held weapon's support point (its
+// tag_support: a foregrip, the devastator's second launcher, a pump, a carry handle) puts that hand
+// on the weapon: it is drawn there in its support pose, and the weapon turns about the main hand so
+// its support follows the off hand. The aim pose itself is turned, so the model, muzzle, laser,
+// crosshair and the shot sent to the server all agree. Releasing the grip lets go; every weapon
+// stays fully usable with one hand.
+static struct TwoHand { bool engaged=false, aims=false; int tile=-1; bool lastGrip=false; } twoHand;
+
+static bool twoHandWeapon(int hand, int &tile, vec3f_t &palm, vec3f_t &support)
+{
+    auto const p=g_player[myconnectindex].ps;
+    int const weapon=p->curr_weapon;
+    if (!vr_twohand || !G_XRModelsEnabled() || weapon==KNEE_WEAPON || weapon==HANDBOMB_WEAPON || weapon==TRIPBOMB_WEAPON
+        || weapon==HANDREMOTE_WEAPON || p->dead_flag || sprite[p->i].extra<=0 || (p->gm & MODE_MENU) || p->holster_weapon)
+        return false;
+    tile=weaponModelTile(effectiveWeaponFamily());
+    int const model=tile>=0 ? md_tilehasmodel(tile,0) : -1;
+    return model>=0 && md3_gettagposition(model,"tag_support",&support)
+        && (md3_gettagposition(model,hand ? "tag_palm_right" : "tag_palm_left",&palm) || md3_gettagposition(model,"tag_grip",&palm));
+}
+
+static void updateTwoHand();
+
 static void publishInput()
 {
     using namespace eduke_xr;
@@ -765,6 +789,13 @@ static void publishInput()
         blockedInputButtons[hand] &= held;
         activeInputButtons[hand]=active;
         down[hand]=held & ~blockedInputButtons[hand];
+    }
+    // An off hand holding the weapon does not also use doors or toggle running (until let go).
+    if (twoHand.engaged && aimHand()>=0)
+    {
+        unsigned const off=unsigned(1-aimHand());
+        blockedInputButtons[off] |= rawInput.hands[off].buttons & ButtonGrip;
+        down[off] &= ~ButtonGrip;
     }
     if (aimHand()!=-2)
     {
@@ -1449,6 +1480,7 @@ struct HandRig
     std::array<std::vector<Segment>,2> segments;
     std::array<std::vector<std::pair<std::string,HandRigPose>>,2> poses;
     std::vector<std::pair<int,std::string>> holds;
+    std::vector<std::pair<int,std::string>> supports;   // off-hand support pose per held model (two-handed)
     // Single-shell hand: one skinned MD3 per side; each vertex follows up to two joints, its
     // position given in each joint's local frame (the segment MD3 frames, model units).
     struct ShellVertex { uint8_t joint[2]; float weight; XrVector3f local[2]; };
@@ -1519,10 +1551,10 @@ static HandRig const *handRig()
             if (!good) break;
             rig.poses[side].emplace_back(name,pose);
         }
-        else if (!Bstrcmp(word,"hold"))
+        else if (!Bstrcmp(word,"hold") || !Bstrcmp(word,"support"))
         {
             int tile;
-            if (std::fscanf(file,"%d %127s",&tile,name)==2) rig.holds.emplace_back(tile,name);
+            if (std::fscanf(file,"%d %127s",&tile,name)==2) (word[0]=='h' ? rig.holds : rig.supports).emplace_back(tile,name);
         }
         else if (!Bstrcmp(word,"shell") || !Bstrcmp(word,"shellwrist") || !Bstrcmp(word,"charshell"))
         {
@@ -1818,7 +1850,8 @@ static HandFrame heldModelFrame(WorldModelSample const &model)
 // pose (fingers wrap the held model's grip), tracked XR_EXT_hand_tracking
 // joints, then a controller-button pose in the grip frame.
 static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigned hand, Camera const &body,
-                                    eduke_xr::Runtime *runtime, HandModelSample const *heldModel, int heldTile)
+                                    eduke_xr::Runtime *runtime, HandModelSample const *heldModel, int heldTile,
+                                    bool support=false)
 {
     auto const *rig=handRig();
     auto const p=g_player[myconnectindex].ps;
@@ -1853,8 +1886,9 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
     };
     char const *source=nullptr;
     HandRigPose const *hold=nullptr;
+    // The main hand's hold, or the off hand's support grip on the same model (two-handed).
     if (heldModel && heldTile>=0)
-        for (auto const &h:rig->holds)
+        for (auto const &h:support ? rig->supports : rig->holds)
             if (h.first==heldTile) { hold=rig->pose(hand,h.second.c_str()); break; }
     auto &wire=handWire[hand];
     if (hold && hold->weaponFrame)
@@ -1866,14 +1900,14 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
         float const step=last[hand]>0. ? float(std::min(now-last[hand],.1)/.08) : 1.f;
         last[hand]=now;
-        float const target=(input.buttons & input.activeButtons & eduke_xr::ButtonSelect) ? 1.f : 0.f;
+        float const target=!support && (input.buttons & input.activeButtons & eduke_xr::ButtonSelect) ? 1.f : 0.f;
         pull[hand]+=std::max(-step,std::min(step,target-pull[hand]));
         auto joints=hold->joints;
         curlIndexFinger(joints,pull[hand]);
         // Weapon model frame (metres) -> model units -> Build through the held model's own transform.
-        wire={VRHandHold,pull[hand],heldModelFrame(*heldModel)};
+        wire={support ? VRHandSupport : VRHandHold,pull[hand],heldModelFrame(*heldModel)};
         placeHandJoints(joints,true,wire.frame,roots,bases);
-        source="hold";
+        source=support ? "support" : "hold";
     }
     else if (input.jointsValid && sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING") && !Bstrcmp(sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING"),"1"))
     {
@@ -2744,7 +2778,7 @@ static void publishBodyPose(Camera const &body, eduke_xr::Runtime *runtime, Hand
         for (unsigned side=0;side<2;++side)
         {
             auto const &wire=handWire[side];
-            if (wire.kind==VRHandHold && !held) continue;
+            if ((wire.kind==VRHandHold || wire.kind==VRHandSupport) && !held) continue;
             pose.hand[side]=wire.kind;
             pose.pull[side]=uint8_t(std::lround(std::max(0.f,std::min(1.f,wire.pull))*255.f));
             if (wire.kind!=VRHandNone) pose.handFrame[side]=encodeFrame(wire.frame,body.pos);
@@ -2805,9 +2839,9 @@ static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smo
         {
             HandRigPose const *hp=nullptr;
             uint8_t const kind=pose.hand[side];
-            if (kind==VRHandHold && weapon)
+            if ((kind==VRHandHold || kind==VRHandSupport) && weapon)
             {
-                for (auto const &h:rig->holds)
+                for (auto const &h:kind==VRHandSupport ? rig->supports : rig->holds)
                     if (h.first==pose.weaponTile) { hp=rig->pose(side,h.second.c_str()); break; }
                 if (hp && !hp->weaponFrame) hp=nullptr;
             }
@@ -2819,7 +2853,7 @@ static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smo
             }
             if (!hp) continue;
             auto joints=hp->joints;
-            if (kind==VRHandHold) curlIndexFinger(joints,pose.pull[side]/255.f);
+            if (kind==VRHandHold || kind==VRHandSupport) curlIndexFinger(joints,pose.pull[side]/255.f);
             HandRoots roots;
             HandBases bases;
             placeHandJoints(joints,hp->weaponFrame,decodeFrame(pose.handFrame[side],ref),roots,bases);
@@ -4461,6 +4495,63 @@ static void logPerf(eduke_xr::Runtime *runtime)
     xrTiming={};
     windowStart=now; frameSum=frameMax=0.; frameCount=0;
 }
+namespace
+{
+static void updateTwoHand()
+{
+    int const hand=aimHand();
+    int const off=1-hand;
+    vec3f_t palm{}, support{};
+    int tile=-1;
+    bool const ready=hand>=0 && recentered && inputValid() && rawInput.hands[hand].aimValid && rawInput.hands[hand].gripValid
+        && validPose(rawInput.hands[hand].aimPose) && validPose(rawInput.hands[hand].gripPose)
+        && rawInput.hands[off].gripValid && validPose(rawInput.hands[off].gripPose) && twoHandWeapon(hand,tile,palm,support);
+    auto const &offInput=rawInput.hands[off < 0 ? 0 : off];
+    bool const grip=ready && (offInput.buttons & offInput.activeButtons & eduke_xr::ButtonGrip);
+    if (!ready || !grip || tile!=twoHand.tile) twoHand.engaged=false;
+    if (!ready) { twoHand.lastGrip=false; twoHand.tile=-1; return; }
+    auto &aim=rawInput.hands[hand].aimPose;
+    XrVector3f const G=rawInput.hands[hand].gripPose.position, O=offInput.gripPose.position;
+    // The support point under the one-handed placement (weapon axes: MD3 x forward, y right, z up).
+    XrVector3f const local={(support.y-palm.y)/64.f,(support.z-palm.z)/64.f,-(support.x-palm.x)/64.f};
+    auto const rel=rotate(aim.orientation,local);
+    XrVector3f const S={G.x+rel.x,G.y+rel.y,G.z+rel.z};
+    XrVector3f const toOff={O.x-G.x,O.y-G.y,O.z-G.z};
+    float const reach=std::sqrt(dot(local,local)), offDist=std::sqrt(dot(toOff,toOff));
+    float const gap=std::sqrt((O.x-S.x)*(O.x-S.x)+(O.y-S.y)*(O.y-S.y)+(O.z-S.z)*(O.z-S.z));
+    // Take hold on a fresh squeeze within 15 cm of the support; keep it while squeezed and the
+    // hands stay within arm's length of each other.
+    if (grip && !twoHand.lastGrip && gap<.15f) twoHand.engaged=true;
+    if (twoHand.engaged && offDist>1.f) twoHand.engaged=false;
+    twoHand.lastGrip=grip;
+    twoHand.tile=tile;
+    // Short supports (a pistol's cupping hand) steady the grip without steering it.
+    twoHand.aims=twoHand.engaged && reach>=.08f && offDist>.05f;
+    if (twoHand.aims)
+    {
+        // Minimal turn taking the support direction onto the off hand: pitch and yaw follow both
+        // hands, the roll stays the main hand's.
+        XrVector3f const a={rel.x/reach,rel.y/reach,rel.z/reach}, b={toOff.x/offDist,toOff.y/offDist,toOff.z/offDist};
+        XrVector3f const c=cross(a,b);
+        float const w=1.f+dot(a,b);
+        if (w>1e-4f)
+        {
+            float const n=std::sqrt(c.x*c.x+c.y*c.y+c.z*c.z+w*w);
+            XrQuaternionf const turn={c.x/n,c.y/n,c.z/n,w/n};
+            aim.orientation=multiply(turn,aim.orientation);
+        }
+    }
+    if (std::getenv("EDUKE32_XR_TEST_TWOHAND"))
+    {
+        static bool lastEngaged, lastAims;
+        if (twoHand.engaged!=lastEngaged || twoHand.aims!=lastAims)
+            LOG_F(INFO,"OpenXR two-hand: engaged=%d aims=%d tile=%d gap=%.3f reach=%.3f.",int(twoHand.engaged),int(twoHand.aims),
+                  tile,gap,reach);
+        lastEngaged=twoHand.engaged; lastAims=twoHand.aims;
+    }
+}
+} // namespace
+
 
 void G_XRBeginFrame()
 {
@@ -4564,6 +4655,7 @@ void G_XRBeginFrame()
         if (trackingRebase) setTrackingReference(rawInput.headPose);
         if (recentered) { lastHeadPose=rawInput.headPose; lastHeadValid=true; }
     }
+    updateTwoHand();
     publishInput();
     updateHaptics(runtime);
 }
@@ -5173,11 +5265,13 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         {
             if (cardHand && int(hand)==aimHand()) continue;
             bool const holding=weaponModel && int(hand)==aimHand();
-            HandModelSample const *held=holding ? &handModel : hand==detonatorHand ? &detonator : nullptr;
-            int const heldTile=holding ? weaponModelTile(handModel.presentation.family)
+            // Two-handed: the off hand is drawn on the weapon's support, not at its controller.
+            bool const supporting=weaponModel && twoHand.engaged && aimHand()>=0 && int(hand)==1-aimHand();
+            HandModelSample const *held=holding || supporting ? &handModel : hand==detonatorHand ? &detonator : nullptr;
+            int const heldTile=holding || supporting ? weaponModelTile(handModel.presentation.family)
                 : hand==detonatorHand ? XRHeldModelTileBase+HANDREMOTE_WEAPON : -1;
             size_t const before=segments.size();
-            if (prepareHandSegments(segments,hand,body,runtime,held,heldTile))
+            if (prepareHandSegments(segments,hand,body,runtime,held,heldTile,supporting))
                 continue; // Segmented hand replaces the single-mesh floating hand.
             segments.resize(before);
             if (prepareGripModel(grips[hand],hand,body,runtime))

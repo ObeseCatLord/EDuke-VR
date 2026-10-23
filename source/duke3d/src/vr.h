@@ -44,7 +44,7 @@ int G_XRListenerAngle(int fallback);
 // VR 3D models on (vr_models cvar, EDUKE32_XR_MODELS, usemodels); off = native 2D sprites.
 bool G_XRModelsEnabled();
 // VR settings (cvars) and model sets for the settings menu.
-extern int32_t vr_models, vr_laser, vr_fullbody, vr_lefttrigger, vr_ptt_button;
+extern int32_t vr_models, vr_laser, vr_fullbody, vr_lefttrigger, vr_ptt_button, vr_twohand;
 int G_XRModelSetCount();
 char const *G_XRModelSetTitle(int index);
 int G_XRLoadedModelSet();

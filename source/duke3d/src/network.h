@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
 // net packet specification/compatibility version
-#define NETVERSION    9  // VR shot sample (hand + head) in every update, voice and VR body pose channels; no older peers
+#define NETVERSION    10 // VR shot sample (hand + head) in every update, voice and VR body pose channels; no older peers
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;

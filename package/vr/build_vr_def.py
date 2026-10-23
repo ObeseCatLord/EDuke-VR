@@ -39,7 +39,7 @@ def list_packs(assets, release):
     """Installed model sets as NAME=TITLE=DIRECTORY lines: every directory with a pack.json and
     exports/eduke32 (private ones left out with --release); the base set first."""
     for root in sorted((p for p in assets.iterdir() if (p / 'exports/eduke32').is_dir() and (p / 'pack.json').is_file()),
-                       key=lambda p: (p.name != BASE, p.name)):
+                       key=lambda p: (p.name != BASE + '-lowres', p.name != BASE, p.name)):
         info = json.loads((root / 'pack.json').read_text())
         if release and info.get('redistributable') is False:
             continue
@@ -314,6 +314,10 @@ def main():
                     rig_lines.append(f'charshell {pchar} {side_index} {tile} {label}.skin')
                 notes.append(f'character hands: {name} (pchar {pchar})')
         rig_lines += [f'hold {tile} {name}' for tile, name in holds]
+        # Two-handed aiming: the off hand's support grip on the same model, when the pack solved one.
+        posed = rig.get('poses', {})
+        rig_lines += [f'support {tile} support_{name[5:]}' for tile, name in holds
+                      if all(f'support_{name[5:]}' in posed.get(side, {}) for side in ('left', 'right'))]
     (data / 'hand-rig.txt').write_text('\n'.join(rig_lines) + '\n')
 
     # Tipping: a wad of bills made from the game's own MONEY art in the user's GRP (--grp=PATH).

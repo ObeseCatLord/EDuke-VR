@@ -1416,6 +1416,8 @@ static MenuOption_t MEO_VR_MODELSET = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_MO
 static MenuEntry_t ME_VR_MODELSET = MAKE_MENUENTRY( "Models", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_MODELSET, Option );
 static MenuOption_t MEO_VR_FULLBODY = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_fullbody );
 static MenuEntry_t ME_VR_FULLBODY = MAKE_MENUENTRY( "Full body", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_FULLBODY, Option );
+static MenuOption_t MEO_VR_TWOHAND = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_twohand );
+static MenuEntry_t ME_VR_TWOHAND = MAKE_MENUENTRY( "Two-handed aiming", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_TWOHAND, Option );
 static MenuOption_t MEO_VR_LASER = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_laser );
 static MenuEntry_t ME_VR_LASER = MAKE_MENUENTRY( "Laser pointer", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_LASER, Option );
 static char const *MEOSN_VR_LEFTTRIGGER[] = { "Mighty foot", "Alt fire", };
@@ -1430,6 +1432,7 @@ static MenuEntry_t ME_VR_VOICE = MAKE_MENUENTRY( "Voice Chat Setup", &MF_Bluefon
 static MenuEntry_t *MEL_VRSETUP[] = {
     &ME_VR_MODELSET,
     &ME_VR_FULLBODY,
+    &ME_VR_TWOHAND,
     &ME_VR_LASER,
     &ME_VR_LEFTTRIGGER,
 #ifdef USE_VOICECHAT

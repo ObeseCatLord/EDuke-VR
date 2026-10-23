@@ -1,0 +1,17 @@
+[
+ {"pose": {"head": [0, 1.65, 0, 0, -15, 0], "left": [-0.25, 1.15, -0.25, 0, 0, 0], "right": [0.12, 1.3, -0.32, 0, 0, 0]}}, {"wait": 3},
+ {"console": "xr_weapons"}, {"wait": 2},
+ {"console": "xr_select 2"}, {"wait": 3}, {"capture": "one-hand"},
+ {"pose": {"left": [0.12, 1.27, -0.78, 0, 0, 0]}}, {"wait": 1},
+ {"buttons": {"left": {"squeeze_value": 1.0}}}, {"until": "OpenXR two-hand: engaged=1 aims=1", "timeout": 10, "from_start": true}, {"wait": 1},
+ {"capture": "two-hand"},
+ {"pose": {"left": [0.12, 1.45, -0.74, 0, 0, 0]}}, {"wait": 1.5}, {"capture": "two-hand-up"},
+ {"pose": {"left": [-0.1, 1.27, -0.74, 0, 0, 0]}}, {"wait": 1.5}, {"capture": "two-hand-left"},
+ {"buttons": {"left": {"squeeze_value": 0.0}}}, {"until": "OpenXR two-hand: engaged=0", "timeout": 10, "from_start": true}, {"wait": 1},
+ {"capture": "released"},
+ {"console": "xr_select 7"}, {"wait": 3},
+ {"pose": {"left": [-0.25, 1.15, -0.25, 0, 0, 0]}}, {"wait": 1}, {"capture": "devastator-one-hand"},
+ {"pose": {"left": [-0.17, 1.3, -0.32, 0, 0, 0]}}, {"wait": 1},
+ {"buttons": {"left": {"squeeze_value": 1.0}}}, {"wait": 2}, {"capture": "devastator-two-hand"},
+ {"buttons": {"left": {"squeeze_value": 0.0}}}, {"wait": 1}
+]

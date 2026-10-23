@@ -421,7 +421,7 @@ static void G_LoadVRPack(void)
     {
         char const *const fallback = getenv("EDUKE32_XR_DEFAULT_PACK");
         char const *name = g_vrModelPackOverride[0] ? g_vrModelPackOverride
-                         : g_vrModelPack[0] ? g_vrModelPack : fallback && *fallback ? fallback : "original";
+                         : g_vrModelPack[0] ? g_vrModelPack : fallback && *fallback ? fallback : "original-lowres";
         if (!Bstrcasecmp(name, "none"))
             return;
         char path[BMAX_PATH];

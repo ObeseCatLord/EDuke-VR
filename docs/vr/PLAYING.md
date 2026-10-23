@@ -38,6 +38,21 @@ and all weapons incl. AA and Caribbean variants) and `voxel-private` (voxel worl
 voxel weapons, foot and player model, base game only; hands and the full body come from
 v6). Neither may ever be redistributed.
 
+### Two-handed aiming
+
+Every weapon works one-handed, the devastator included. To use both hands:
+- Put your off hand on the weapon's support point and squeeze its grip. Support points: the
+  shotgun's pump grip, the devastator's second launcher, the ripper's carry handle, the RPG and
+  freezethrower brackets, the shrinker and expander under-grips, a cupped hand under the pistol.
+- The off hand then holds the weapon, and the weapon turns about your main hand so the support
+  follows your off hand: raise it to aim up, swing it to aim sideways. The roll stays your main
+  hand's.
+- Shots, the laser and the crosshair follow, and other players see your off hand on the weapon.
+- While it holds the weapon, that grip does not also use doors (or toggle running for left-handed
+  aim). Release the grip to let go.
+- Thrown and placed items (pipebomb, tripbomb, detonator) and the mighty foot stay one-handed.
+- Options > VR Setup > Two-handed aiming (`vr_twohand`) turns it off.
+
 ### Model packs are mods
 
 A VR model pack is an ordinary EDuke32 mod, a folder or a `.zip`:
@@ -55,12 +70,12 @@ A VR model pack is an ordinary EDuke32 mod, a folder or a `.zip`:
 Put packs in a `vrpacks/` folder anywhere the game looks for data, e.g. `~/.config/eduke32/vrpacks/`.
 
 The packs are:
+- **Original 3D (low-res)** (`original-lowres`, the default): the original set with Quake-style
+  8-bit, low-resolution skins.
 - **Original 3D** (`original`, from `duke-vr-assets/v7-original`): the redistributable set.
   - Duke and the vanilla weapons are remodelled to the proportions and designs of the original
     sprites and the Voxel Duke voxels.
   - Single solid shells, low poly, clean painted skins.
-- **Original 3D (low-res)** (`original-lowres`): the same models with Quake-style 8-bit,
-  low-resolution skins.
 - **Personal packs**, never redistributed: Duke Nukem Forever 2001 and Voxel Duke.
 
 - **Options > VR Setup > Models** lists the installed packs (their titles), plus **2D sprites (no models)** (`vr_models 0`), which applies at once.

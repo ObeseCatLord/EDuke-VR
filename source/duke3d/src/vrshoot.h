@@ -59,7 +59,7 @@ struct VRBodyPose
 {
     uint16_t sequence=0;
     uint8_t flags=0;
-    uint8_t hand[2] {};     // VRHand* finger pose source
+    uint8_t hand[2] {};     // VRHand* finger pose source (support: the off hand on the weapon, two-handed)
     uint8_t pull[2] {};     // index finger trigger curl of a hold pose, 0..255
     uint8_t kick=0;         // mighty foot leg extension, 0..255
     int16_t bodyAngle=0;    // the body's facing relative to the player's native angle, Build angle units * 16
@@ -71,7 +71,7 @@ struct VRBodyPose
     VRBodyFrame weapon {};  // held model frame (MD3 axes, pivot applied)
 };
 constexpr uint8_t VRBodyHead=1, VRBodyWeapon=2;
-enum : uint8_t { VRHandNone, VRHandRelaxed, VRHandTrigger, VRHandPoint, VRHandFist, VRHandHold, VRHandKinds };
+enum : uint8_t { VRHandNone, VRHandRelaxed, VRHandTrigger, VRHandPoint, VRHandFist, VRHandHold, VRHandSupport, VRHandKinds };
 constexpr size_t VRBodyWireSize=108;
 constexpr float VRBodyAxisScale=8192.f;
 bool G_VRDecodeBodyPose(uint8_t const *bytes, size_t size, VRBodyPose &pose);
