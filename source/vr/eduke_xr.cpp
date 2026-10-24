@@ -455,6 +455,11 @@ struct Runtime::Impl
     GLuint                                  menuFbo = 0, menuColor = 0, menuDepth = 0, menuProgram = 0, menuFlatProgram = 0, menuVao = 0, menuVbo = 0;
     PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC multiview = nullptr;
     int64_t                                 colorFormat = 0;
+    // Supersampling: a render size beyond the runtime's limits renders into ssColor at that size;
+    // each submitted frame is filtered down into the swapchain (swapWidth x swapHeight).
+    uint32_t                                swapWidth = 0, swapHeight = 0;
+    GLuint                                  ssColor = 0, ssReadFbo = 0, ssDrawFbo = 0;
+    GLuint targetImage() const { return ssColor ? ssColor : colorImages[imageIndex].image; }
     // Foveated rendering: a 4-layer multiview target (both eyes whole at `foveationScale`, then
     // their full-detail insets) blended into the swapchain by resolveFoveation.
     Foveation                               foveationMode = Foveation::Off;
@@ -466,6 +471,7 @@ struct Runtime::Impl
     bool                                    foveateNow = false, foveationPending = false;
     uint32_t                                boundViews = 2;
     GLuint                                  fovFbo = 0, fovColor = 0, fovDepth = 0, fovProgram = 0;
+    GLuint                                  fovInsetProgram = 0, fovReadFbo = 0, fovDrawFbo = 0;
     uint32_t                                fovWidth = 0, fovHeight = 0, fovLayers = 0;
     // Masked method (radial density masking): the same 2-view target at full size; outside the
     // full-detail circle a depth mask culls 2x2-pixel quads (every other one, then 3 of 4 beyond
@@ -718,6 +724,10 @@ struct Runtime::Impl
         if (fovDepth) glDeleteTextures(1, &fovDepth);
         if (fovProgram) glDeleteProgram(fovProgram);
         if (fovMaskProgram) glDeleteProgram(fovMaskProgram);
+        if (fovInsetProgram) glDeleteProgram(fovInsetProgram);
+        if (fovReadFbo) glDeleteFramebuffers(1, &fovReadFbo);
+        if (fovDrawFbo) glDeleteFramebuffers(1, &fovDrawFbo);
+        fovInsetProgram = fovReadFbo = fovDrawFbo = 0;
         if (fovFillProgram) glDeleteProgram(fovFillProgram);
         fovFbo = fovColor = fovDepth = fovProgram = fovMaskProgram = fovFillProgram = 0;
         fovWidth = fovHeight = fovLayers = 0;
@@ -844,9 +854,43 @@ struct Runtime::Impl
                 return false;
             }
         }
+        if (!fovInsetProgram)
+        {
+            // Inset method's blend: drawn over the inset rectangle only (after the periphery and the
+            // depth were blitted), the full-detail texel weighted by the circle and rectangle feathers.
+            char const *vert = "#version 410 compatibility\nvoid main(){ vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position=vec4(p*2.0-1.0,0.0,1.0); }";
+            char const *frag = "#version 410 compatibility\nuniform sampler2DArray uColor; uniform int uLayer; uniform ivec4 uRect; uniform ivec2 uImage; "
+                               "uniform vec2 uCenter; uniform float uRadius, uFeather; out vec4 outColor; void main(){ "
+                               "ivec2 q=ivec2(gl_FragCoord.xy)-uRect.xy; vec2 lo=vec2(q)+0.5, hi=vec2(uRect.zw-q)-0.5; "
+                               "if(uRect.x==0) lo.x=1e6; if(uRect.y==0) lo.y=1e6; if(uRect.x+uRect.z>=uImage.x) hi.x=1e6; if(uRect.y+uRect.w>=uImage.y) hi.y=1e6; "
+                               "vec2 e=min(lo,hi); float w=clamp(min(min(e.x,e.y)/uFeather,(uRadius-distance(gl_FragCoord.xy,uCenter))/uFeather),0.0,1.0); "
+                               "if(w<=0.0) discard; outColor=vec4(texelFetch(uColor,ivec3(q,uLayer),0).rgb,w); }";
+            std::string shaderError;
+            GLuint vs = compile(GL_VERTEX_SHADER, vert, shaderError), fs = vs ? compile(GL_FRAGMENT_SHADER, frag, shaderError) : 0;
+            if (vs && fs)
+            {
+                fovInsetProgram = glCreateProgram();
+                glAttachShader(fovInsetProgram, vs);
+                glAttachShader(fovInsetProgram, fs);
+                glLinkProgram(fovInsetProgram);
+                GLint linked = 0;
+                glGetProgramiv(fovInsetProgram, GL_LINK_STATUS, &linked);
+                if (!linked) shaderError = "foveation inset blend shader link failed";
+            }
+            if (vs) glDeleteShader(vs);
+            if (fs) glDeleteShader(fs);
+            if (!shaderError.empty())
+            {
+                error = shaderError;
+                destroyFoveation();
+                return false;
+            }
+        }
         GLint previousArray = 0;
         glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &previousArray);
         if (!fovFbo) glGenFramebuffers(1, &fovFbo);
+        if (!fovReadFbo) glGenFramebuffers(1, &fovReadFbo);
+        if (!fovDrawFbo) glGenFramebuffers(1, &fovDrawFbo);
         if (!fovColor) glGenTextures(1, &fovColor);
         if (!fovDepth) glGenTextures(1, &fovDepth);
         glBindTexture(GL_TEXTURE_2D_ARRAY, fovColor);
@@ -922,7 +966,7 @@ struct Runtime::Impl
     bool attachSwapchainMultiview(std::string &error)
     {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, colorImages[imageIndex].image, 0, 0, kViewCount);
+        multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, targetImage(), 0, 0, kViewCount);
         multiview(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, depth, 0, 0, kViewCount);
         glDrawBuffer(GL_COLOR_ATTACHMENT0);
         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -965,6 +1009,52 @@ struct Runtime::Impl
         return good;
     }
 
+    // Inset method: per eye, the whole view is filtered up with a framebuffer blit (colour) and
+    // copied up (depth), the inset's depth is copied 1:1 into its rectangle, and only that
+    // rectangle is shaded: the full-detail texels blended in through the circular feather.
+    bool resolveInsetByBlits(std::string &error)
+    {
+        bool const srgb = colorFormat == GL_SRGB8_ALPHA8;
+        glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE);
+        for (uint32_t eye = 0; eye < kViewCount; ++eye)
+        {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, fovReadFbo);
+            glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, fovColor, 0, eye);
+            glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, fovDepth, 0, eye);
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fovDrawFbo);
+            glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, targetImage(), 0, eye);
+            glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, depth, 0, eye);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            glDisable(GL_FRAMEBUFFER_SRGB);
+            glBlitFramebuffer(0, 0, fovWidth, fovHeight, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glBlitFramebuffer(0, 0, fovWidth, fovHeight, 0, 0, width, height, GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+            int32_t const ox = insetOrigin[eye][0], oy = insetOrigin[eye][1];
+            glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, fovDepth, 0, kViewCount + eye);
+            glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, fovColor, 0, kViewCount + eye);
+            glBlitFramebuffer(0, 0, fovWidth, fovHeight, ox, oy, ox + fovWidth, oy + fovHeight, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            glBindFramebuffer(GL_FRAMEBUFFER, fovDrawFbo);
+            if (srgb) glEnable(GL_FRAMEBUFFER_SRGB);
+            glViewport(ox, oy, fovWidth, fovHeight);
+            glEnable(GL_BLEND); glBlendEquation(GL_FUNC_ADD);
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+            glUseProgram(fovInsetProgram);
+            float const radius = .5f * std::min(fovWidth, fovHeight);
+            glUniform1i(glGetUniformLocation(fovInsetProgram, "uColor"), 0);
+            glUniform1i(glGetUniformLocation(fovInsetProgram, "uLayer"), GLint(kViewCount + eye));
+            glUniform4i(glGetUniformLocation(fovInsetProgram, "uRect"), ox, oy, GLint(fovWidth), GLint(fovHeight));
+            glUniform2i(glGetUniformLocation(fovInsetProgram, "uImage"), GLint(width), GLint(height));
+            glUniform2f(glGetUniformLocation(fovInsetProgram, "uCenter"), insetCenter[eye][0], insetCenter[eye][1]);
+            glUniform1f(glGetUniformLocation(fovInsetProgram, "uRadius"), radius);
+            glUniform1f(glGetUniformLocation(fovInsetProgram, "uFeather"), std::max(4.f, radius * .18f));
+            glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D_ARRAY, fovColor); glBindSampler(0, 0);
+            glBindVertexArray(vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glDisable(GL_BLEND);
+        }
+        return glSucceeded("resolving the foveated frame", error);
+    }
+
     // Blend the foveated target into the swapchain image and depth; closes foveation for this frame.
     bool resolveFoveation(std::string &error)
     {
@@ -1000,6 +1090,11 @@ struct Runtime::Impl
                 glUniform1i(glGetUniformLocation(fovFillProgram, "uDepth"), 1);
                 setMaskUniforms(fovFillProgram);
             }
+            else if (!std::getenv("EDUKE32_XR_FOVEATION_SHADER_RESOLVE"))
+            {
+                good = resolveInsetByBlits(error);
+                goto resolved;
+            }
             else
             {
             glUseProgram(fovProgram);
@@ -1021,6 +1116,7 @@ struct Runtime::Impl
             glDrawArrays(GL_TRIANGLES, 0, 3);
             good = glSucceeded("resolving the foveated frame", error);
         }
+    resolved:
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D_ARRAY, unit1Array);
         glBindSampler(1, unit1Sampler);
@@ -1186,6 +1282,10 @@ struct Runtime::Impl
     {
         destroyMenuGl();
         destroyFoveation();
+        if (ssColor) glDeleteTextures(1, &ssColor);
+        if (ssReadFbo) glDeleteFramebuffers(1, &ssReadFbo);
+        if (ssDrawFbo) glDeleteFramebuffers(1, &ssDrawFbo);
+        ssColor = ssReadFbo = ssDrawFbo = 0;
         if (vbo)
             glDeleteBuffers(1, &vbo);
         if (vao)
@@ -1235,7 +1335,7 @@ struct Runtime::Impl
         aimSpaces = {};
         color    = XR_NULL_HANDLE;
         colorImages.clear();
-        width = height = 0;
+        width = height = swapWidth = swapHeight = 0;
         multiview      = nullptr;
         running = exiting = false;
         sessionState = XR_SESSION_STATE_UNKNOWN;
@@ -1572,29 +1672,45 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
             shutdown();
             return false;
         }
-        if (renderWidth > systemProperties.graphicsProperties.maxSwapchainImageWidth
-            || renderHeight > systemProperties.graphicsProperties.maxSwapchainImageHeight)
+        // Beyond the runtime's limits: supersample. The swapchain takes the largest size of the same
+        // aspect the runtime allows; the game renders at the requested size and is filtered down.
+        uint32_t maxWidth = systemProperties.graphicsProperties.maxSwapchainImageWidth,
+                 maxHeight = systemProperties.graphicsProperties.maxSwapchainImageHeight;
+        for (auto const &view : viewConfig)
         {
-            error = "requested render extent exceeds an OpenXR system limit";
+            maxWidth = std::min(maxWidth, view.maxImageRectWidth);
+            maxHeight = std::min(maxHeight, view.maxImageRectHeight);
+        }
+        GLint maxTexture = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
+        if (renderWidth > uint32_t(maxTexture) || renderHeight > uint32_t(maxTexture))
+        {
+            error = "requested render extent exceeds GL_MAX_TEXTURE_SIZE";
             shutdown();
             return false;
         }
-        for (auto const &view : viewConfig)
-            if (renderWidth > view.maxImageRectWidth || renderHeight > view.maxImageRectHeight)
-            {
-                error = "requested render extent exceeds an OpenXR view limit";
-                shutdown();
-                return false;
-            }
         m_impl->width  = renderWidth;
         m_impl->height = renderHeight;
+        if (renderWidth > maxWidth || renderHeight > maxHeight)
+        {
+            double const fit = std::min(double(maxWidth) / renderWidth, double(maxHeight) / renderHeight);
+            m_impl->swapWidth = std::max(1u, uint32_t(renderWidth * fit));
+            m_impl->swapHeight = std::max(1u, uint32_t(renderHeight * fit));
+            std::fprintf(stderr, "OpenXR: supersampling: rendering %ux%u per eye into a %ux%u swapchain (the runtime's limit).\n",
+                         renderWidth, renderHeight, m_impl->swapWidth, m_impl->swapHeight);
+        }
+    }
+    if (!m_impl->swapWidth)
+    {
+        m_impl->swapWidth = m_impl->width;
+        m_impl->swapHeight = m_impl->height;
     }
     XrSwapchainCreateInfo swapInfo { XR_TYPE_SWAPCHAIN_CREATE_INFO };
     swapInfo.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
     swapInfo.format      = chosen;
     swapInfo.sampleCount = 1;
-    swapInfo.width       = m_impl->width;
-    swapInfo.height      = m_impl->height;
+    swapInfo.width       = m_impl->swapWidth;
+    swapInfo.height      = m_impl->swapHeight;
     swapInfo.faceCount   = 1;
     swapInfo.arraySize   = kViewCount;
     swapInfo.mipCount    = 1;
@@ -1658,6 +1774,17 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
     float vertices[] = { -1, -.75f, -3, .95f, .08f, .05f, 1, -.75f, -3, .1f, .75f, .15f, 1,  .75f, -3, .1f, .25f, .95f,
                          -1, -.75f, -3, .95f, .08f, .05f, 1, .75f,  -3, .1f, .25f, .95f, -1, .75f, -3, .9f, .75f, .05f };
     glGenFramebuffers(1, &m_impl->fbo);
+    if (m_impl->swapWidth != m_impl->width || m_impl->swapHeight != m_impl->height)
+    {
+        glGenTextures(1, &m_impl->ssColor);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, m_impl->ssColor);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GLenum(chosen), m_impl->width, m_impl->height, kViewCount, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, 0);
+        glGenFramebuffers(1, &m_impl->ssReadFbo);
+        glGenFramebuffers(1, &m_impl->ssDrawFbo);
+    }
     glGenTextures(1, &m_impl->depth);
     glBindTexture(GL_TEXTURE_2D_ARRAY, m_impl->depth);
     // Depth plus stencil: native Polymost mirrors mark their region in stencil.
@@ -1940,7 +2067,7 @@ bool Runtime::bindEye(uint32_t eye, std::string &error)
     // drawing resolves first (see the header).
     m_impl->restoreGameViewport();
     glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fbo);
-    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[m_impl->imageIndex].image, 0, eye);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->targetImage(), 0, eye);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, m_impl->depth, 0, eye);
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -2475,7 +2602,7 @@ bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::
         glPixelStorei(GL_PACK_SKIP_ROWS, 0);
         for (uint32_t layer = 0; layer < kViewCount; ++layer)
         {
-            glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[imageIndex].image, 0, layer);
+            glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->targetImage(), 0, layer);
             if (captureDepth)
                 glFramebufferTextureLayer(GL_READ_FRAMEBUFFER,GL_DEPTH_STENCIL_ATTACHMENT,m_impl->depth,0,layer);
             glReadBuffer(GL_COLOR_ATTACHMENT0);
@@ -2595,6 +2722,25 @@ bool Runtime::finishFrame(bool submit, std::string &error)
         error = "acquired OpenXR image never became ready; runtime shutdown is required";
         return false;
     }
+    if (m_impl->imageReady && submit && m_impl->ssColor)
+    {
+        // Supersampling: filter the rendered eyes down into the acquired swapchain image.
+        GLboolean const scissor = glIsEnabled(GL_SCISSOR_TEST), srgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_FRAMEBUFFER_SRGB);
+        for (uint32_t eye = 0; eye < kViewCount; ++eye)
+        {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, m_impl->ssReadFbo);
+            glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->ssColor, 0, eye);
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_impl->ssDrawFbo);
+            glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[m_impl->imageIndex].image, 0, eye);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            glBlitFramebuffer(0, 0, m_impl->width, m_impl->height, 0, 0, m_impl->swapWidth, m_impl->swapHeight, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        }
+        if (scissor) glEnable(GL_SCISSOR_TEST);
+        if (srgb) glEnable(GL_FRAMEBUFFER_SRGB);
+    }
     if (m_impl->imageReady)
     {
         // Rendering belongs to the caller.  Preserve its engine GL state cache:
@@ -2640,7 +2786,7 @@ bool Runtime::finishFrame(bool submit, std::string &error)
         layerViews[i].pose                      = m_impl->views[i].pose;
         layerViews[i].fov                       = m_impl->views[i].fov;
         layerViews[i].subImage.swapchain        = m_impl->color;
-        layerViews[i].subImage.imageRect.extent = { int32_t(m_impl->width), int32_t(m_impl->height) };
+        layerViews[i].subImage.imageRect.extent = { int32_t(m_impl->swapWidth), int32_t(m_impl->swapHeight) };
         layerViews[i].subImage.imageArrayIndex  = i;
     }
     XrCompositionLayerProjection projection { XR_TYPE_COMPOSITION_LAYER_PROJECTION };

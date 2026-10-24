@@ -373,7 +373,12 @@ Foveated rendering is set in **Options > VR Setup**: **Foveated rendering** (`vr
   - Masked also stands in automatically when the GL driver lacks four-view multiview.
   - It saves shading only where the GPU rejects masked pixels before shading them. The game's shaders can discard pixels, which keeps some GPUs from rejecting early.
 
-In the software-rendering lab at 640×480 per eye, neither method was faster than no foveation: about 10 ms off, 12.7 ms inset, 13 ms masked. Both need a GPU limited by pixel shading at headset resolution, which the lab cannot reproduce.
+Measured in the software-rendering lab at 1920×1440 per eye (supersampled; the modes interleaved in one run, 15 samples each): off 62.7 ms per frame, inset 72.2 ms, masked 107.7 ms.
+- The inset method saves about 14 ms of scene shading, but its resolve (upscale blits plus the circular blend over the inset) costs about 24 ms.
+- Polymost's per-pixel shading is cheap, so the fixed full-resolution resolve outweighs the savings there.
+- Whether a real GPU, such as the Steam Frame's, comes out ahead is untested.
+
+`EDUKE32_XR_RESOLUTION=WxH` beyond the runtime's view limit supersamples: the game renders at that size and each frame is filtered down into the largest swapchain the runtime allows.
 
 Foveation trades extra vertex work (four views instead of two) and a blend pass for fewer shaded pixels. It pays off when the GPU is fill-limited, as on a standalone headset at native resolution.
 

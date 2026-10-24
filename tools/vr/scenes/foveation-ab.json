@@ -1,0 +1,132 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.65,
+0,
+0,
+-5,
+0
+],
+"left": [
+-0.25,
+1.15,
+-0.3,
+0,
+0,
+0
+],
+"right": [
+0.18,
+1.3,
+-0.4,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 6
+},
+{
+"console": "vr_foveation 1"
+},
+{
+"console": "echo PHASE off 0"
+},
+{
+"wait": 12
+},
+{
+"console": "vr_foveation_method 0"
+},
+{
+"console": "vr_foveation 2"
+},
+{
+"console": "echo PHASE inset 0"
+},
+{
+"wait": 12
+},
+{
+"console": "vr_foveation_method 1"
+},
+{
+"console": "vr_foveation 2"
+},
+{
+"console": "echo PHASE masked 0"
+},
+{
+"wait": 12
+},
+{
+"console": "vr_foveation 1"
+},
+{
+"console": "echo PHASE off 1"
+},
+{
+"wait": 12
+},
+{
+"console": "vr_foveation_method 0"
+},
+{
+"console": "vr_foveation 2"
+},
+{
+"console": "echo PHASE inset 1"
+},
+{
+"wait": 12
+},
+{
+"console": "vr_foveation_method 1"
+},
+{
+"console": "vr_foveation 2"
+},
+{
+"console": "echo PHASE masked 1"
+},
+{
+"wait": 12
+},
+{
+"console": "vr_foveation 1"
+},
+{
+"console": "echo PHASE off 2"
+},
+{
+"wait": 12
+},
+{
+"console": "vr_foveation_method 0"
+},
+{
+"console": "vr_foveation 2"
+},
+{
+"console": "echo PHASE inset 2"
+},
+{
+"wait": 12
+},
+{
+"console": "vr_foveation_method 1"
+},
+{
+"console": "vr_foveation 2"
+},
+{
+"console": "echo PHASE masked 2"
+},
+{
+"wait": 12
+}
+]
