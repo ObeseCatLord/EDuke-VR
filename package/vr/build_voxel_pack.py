@@ -9,19 +9,23 @@ is a separate download; give this script its zip (voxel_duke3d.zip) and it makes
 
   DUKE_VR_ASSETS/voxel-duke/   the pack's source folder: the held weapons (pistol, shotgun, ripper,
                                RPG, pipe bomb, shrinker, expander, devastator, trip bomb, freezer),
-                               the Mighty Foot boot, the third-person Duke and the first-person body,
-                               all meshed from the mod's voxels, with hand poses solved for every
-                               weapon. The mod's zip is copied in too, so the game world is voxels as well.
+                               the detonator and the World Tour incinerator kitbashed from the mod's
+                               other voxels, the Mighty Foot boot, Duke's voxel hands (floating hands,
+                               shown when the full body is off), the third-person Duke and the
+                               first-person body, all with hand poses solved for every weapon.
+                               The mod's zip is copied in too, so the game world is voxels as well.
+                               Alien Armageddon is not covered yet (its weapons and hands use the
+                               original set).
   VRPACKS/voxel.zip (--zip)    the pack as a mod, or VRPACKS/voxel/ (default; links into the folder).
 
 Duke is one skinned voxel body on v7's skeleton with his own hands (vr_duke_ik, vr_duke, vr_duke_body;
-pack.json "ik_hands"). Anything the voxels do not cover (hands, detonator, flamethrower, laser,
-wheel) falls back to the shipped original set. The launcher (eduke32-vr-play) lists the pack by
+pack.json "ik_hands"). Anything the voxels do not cover (laser, wheel) falls back to the shipped
+original set. The launcher (eduke32-vr-play) lists the pack by
 itself once the folder exists; pick it in VR Setup > Models or with --pack voxel.
 
-Needs Python 3 with numpy, scipy and Pillow; CPU only; about 20 minutes, most of it solving the hand poses. The result is built from
-third-party art: it is for your own use and is never redistributable (its pack.json says so, and
-build_vr_pack.py --release refuses it).
+Needs Python 3 with numpy, scipy and Pillow; CPU only; about 20 minutes, most of it solving the hand poses.
+The result is built from third-party art: it is for your own use and is never redistributable (its
+pack.json says so, and build_vr_pack.py --release refuses it).
 
 DUKE_VR_ASSETS defaults to the duke-vr-assets folder next to this release (it must hold v6-original);
 VRPACKS defaults to ~/.local/share/eduke32-vr/vrpacks.
@@ -40,10 +44,19 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE / 'voxelpack'
 # Voxel Duke Nukem 3D v1.0 (the release the weapon mapping in voxelpack/weapon_specs.py was made for).
 KNOWN_SHA256 = '935a9079c4f3a3c3a2a869e066c5366b0201a856cc6041644f644d22918178aa'
-STEPS = [('meshing the weapons', 'build_weapons.py'), ('meshing the boot', 'build_boot.py'),
-         ('building the skinned voxel Duke (third person, first-person and full IK body)', 'build_duke_skinned.py'), ('solving the hand poses', 'solve_holds.py'),
-         ('checking the result', 'validate.py')]
-NEEDED = ['voxels/weapons/21_PISTOL.kvx', 'voxels/player/1536_BOOT.kvx']
+# (label, script, arguments, only with --aa-experimental)
+STEPS = [('meshing the weapons', 'build_weapons.py', [], False),
+         ('kitbashing the detonator and the flamethrower', 'build_expansion.py', [], False),
+         ('meshing the boot', 'build_boot.py', [], False),
+         ('building the skinned voxel Duke (third person, first-person and full IK body)', 'build_duke_skinned.py', [], False),
+         ('voxelising the hands', 'build_hands.py', ['chars={chars}'], False),
+         ('building the Alien Armageddon weapons (experimental)', 'build_aa.py', [], True),
+         ('solving the hand poses', 'solve_holds.py', ['jobs={jobs}'], False),
+         ('solving the Alien Armageddon hand poses (experimental)', 'solve_holds.py', ['aa=all', 'jobs={jobs}'], True),
+         ('checking the result', 'validate.py', [], False)]
+NEEDED = ['voxels/weapons/21_PISTOL.kvx', 'voxels/player/1536_BOOT.kvx', 'voxels/weapons/27_TRIPBOMB.kvx',
+          'voxels/weapons/24_FREEZE.kvx', 'voxels/weapons/28_SHOTGUN.kvx', 'voxels/props/762_MIC.kvx',
+          'voxels/effects/2270_FIRE.kvx', 'voxels/effects/2274_FIRE.kvx']
 
 
 def extract(archive, target):
@@ -71,6 +84,10 @@ def main():
     parser.add_argument('--folder', default='voxel-duke', help='pack folder name inside the assets folder')
     parser.add_argument('--zip-pack', '--zip', dest='as_zip', action='store_true', help='write VRPACKS/voxel.zip instead of a linked folder')
     parser.add_argument('--any-version', action='store_true', help='try a zip other than v1.0 (the weapon mapping may not fit it)')
+    parser.add_argument('--aa-experimental', dest='aa_experimental', action='store_true',
+                        help='PAUSED, UNFINISHED: also build Alien Armageddon weapons and character hands (needs --aa)')
+    parser.add_argument('--aa', type=Path, help='your Alien Armageddon 5.66 folder, for --aa-experimental')
+    parser.add_argument('--jobs', type=int, default=max(1, min(12, (os.cpu_count() or 4) - 2)), help='parallel hold solvers')
     args = parser.parse_args()
 
     for module in ('numpy', 'scipy', 'PIL'):
@@ -113,16 +130,42 @@ def main():
         'Voxel Duke Nukem 3D by Daniel Peterson ("Cheello"). Third-party art: personal use only, never redistribute.\n')
 
     env = dict(os.environ, EDUKE32_VOXEL_PACK=str(stage), EDUKE32_VR_ASSETS=str(assets), PYTHONDONTWRITEBYTECODE='1')
-    for label, script in STEPS:
+    aa = None
+    if args.aa_experimental:
+        sys.path.insert(0, str(SCRIPTS))
+        import aaart
+        aa = aaart.find_install(args.aa)
+        if not aa:
+            raise SystemExit('build_voxel_pack: --aa-experimental needs --aa PATH (an Alien Armageddon 5.66 folder '
+                             'with tiles000.art and PALETTE.DAT)')
+    if aa:
+        env['EDUKE32_AA_INSTALL'] = str(aa)
+        print(f'build_voxel_pack: Alien Armageddon art from {aa}', flush=True)
+        with open(stage / 'README.txt', 'a') as f:
+            f.write('The Alien Armageddon weapons are built from your own Alien Armageddon 5.66 install (its pickup\n'
+                    'voxels and sprites): also personal use only.\n')
+    for label, script, extra, experimental in STEPS:
+        if experimental and not aa:
+            continue
         print(f'build_voxel_pack: {label}', flush=True)
-        run = subprocess.run([sys.executable, '-I', str(SCRIPTS / script)], cwd=stage, env=env, capture_output=True, text=True)
+        fmt = dict(jobs=args.jobs, chars='all' if aa else 'duke')
+        run = subprocess.run([sys.executable, '-I', str(SCRIPTS / script), *[a.format(**fmt) for a in extra]],
+                             cwd=stage, env=env, capture_output=True, text=True)
         if run.returncode:
             raise SystemExit(f'build_voxel_pack: {script} failed:\n{run.stdout[-3000:]}{run.stderr[-3000:]}')
     report = json.loads((stage / 'metadata/validation.json').read_text())
     hands = report.pop('hand_poses_flat', {})
     problems = {stem: r['errors'] for stem, r in report.items() if r.get('errors')}
-    if len(report) < 13:
-        problems['models'] = f'only {len(report)} of 13 models were built'
+    base = [k for k in report if k.startswith('vr_')]
+    if len(base) < 15:
+        problems['models'] = f'only {len(base)} of 15 models were built'
+    if aa:
+        n_aa = sum(1 for k in report if k.startswith('aa/'))
+        if n_aa < 69:
+            problems['aa models'] = f'only {n_aa} of 69 Alien Armageddon models were built'
+    shells = [k for k in report if k.startswith('hands/') or k.startswith('characters/')]
+    if len(shells) < (10 if aa else 2):
+        problems['hands'] = f'only {len(shells)} hand shells were built'
     if not (hands.get('same_joint_order') and hands.get('same_segments') and hands.get('joints_ok')):
         problems['hand poses'] = hands
     if problems:

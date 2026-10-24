@@ -88,8 +88,11 @@ python3 package/vr/build_voxel_pack.py ~/Downloads/voxel_duke3d.zip
 ```
 
 - **What it builds:** first-person weapons meshed from the mod's voxels, with hand poses solved for each. The weapons are the pistol, shotgun, ripper, RPG, pipe bomb, shrinker, expander, devastator, trip bomb and freezer.
-- **Also built:** the Mighty Foot boot, the third-person Duke and the first-person body. The pack also loads the mod itself, so the world is voxels too.
-- **Not covered by the voxels:** hands, the full-body IK model, detonator, flamethrower, laser and wheel. These come from the original set.
+- **Kitbashed:** the detonator and the World Tour Incinerator have no voxel in the mod, so they are assembled from its other voxels. The detonator uses the trip bomb panel and the microphone; the Incinerator uses the freezer's hull in red and orange with a gauge, the shotgun grip and the fire.
+- **Also built:** Duke's voxel hands, in Voxel Duke's own skin colours, shown when the full body is off; and the Mighty Foot boot. The pack also loads the mod itself, so the world is voxels too.
+- **Alien Armageddon:** not covered yet. AA's weapons and character hands come from the original set. (An unfinished `--aa-experimental` option exists; it is paused.)
+- **Duke himself:** one connected, skinned voxel body on the original set's skeleton, with his own voxel hands, used for the third-person Duke, the first-person body and the full IK body (his fingers follow your hands; first person hides only his head).
+- **Not covered by the voxels:** the laser and wheel. These come from the original set.
 - **Requirements:** Python 3 with numpy, scipy and Pillow. It runs on the CPU only and takes about 20 minutes, most of it solving the hand poses.
 - **Version check:** the zip is checked against v1.0's checksum. `--any-version` tries another release.
 - **Where it goes:** the pack lands in `duke-vr-assets/voxel-duke/`, so the launcher lists it. A ready-made copy goes to `~/.local/share/eduke32-vr/vrpacks/voxel` (or `voxel.zip` with `--zip`).

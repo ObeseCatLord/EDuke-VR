@@ -62,8 +62,8 @@ def exposed_faces(solid, region):
     return np.concatenate(out_c), np.concatenate(out_n)
 
 
-def v6_info(name):
-    m = read_md3(V6 / 'exports/eduke32' / f'vr_{name}.md3')
+def v6_info(name, path=None):
+    m = read_md3(path or V6 / 'exports/eduke32' / f'vr_{name}.md3')
     f0 = m['frames'][0]
     tags = {k: np.array(v['origin']) / 64.0 for k, v in m['tags'][0].items()}
     return dict(frames=[f['name'] for f in m['frames']], tags=tags, tag_order=list(m['tags'][0].keys()),
@@ -109,10 +109,15 @@ def flash_part(muzzle, bore, colours, s_unit):
     return dict(solid=g, rgb=rgb, glow=g.copy(), A=A)
 
 
-def build(name):
-    spec = SPECS[name]
-    v6 = v6_info(name)
-    k = read_kvx(SRC / f"{spec['kvx']}.kvx")
+def build(name, spec=None, k=None, flashes=None, collapsed=None, flash_colours=None, extra=None, source=None,
+          v6_path=None, stem=None, sub='', meta_name=None, body_motion=None, scale_m=None):
+    """Mesh one weapon. The defaults build the stock voxel weapon `name`; the expansion and AA builders pass
+    their own `spec`, voxel grid `k` (a read_kvx-like dict, e.g. a kitbash), flash frames, `extra` shells
+    (a callable receiving the placement and returning [dict(part, show=[frames], hide=xyz m, affine={frame:
+    (3x3, t m)})]) and a `source` record."""
+    spec = spec or SPECS[name]
+    v6 = v6_info(name, v6_path)
+    k = k or read_kvx(SRC / f"{spec['kvx']}.kvx")
     solid, grid = k['solid'], k['grid']
     rgb = k['palette'][np.clip(grid, 0, 255)]
     # fill colour of hidden interior cells with the nearest stored colour (never shown; keeps patches clean)
@@ -125,7 +130,7 @@ def build(name):
     corners = np.concatenate([pts, pts + 1])
     ext_vox = np.ptp(corners @ L.T, axis=0)
     ext_v6 = v6['maxs'] - v6['mins']
-    s = ext_v6[sa] / ext_vox[sa]                     # metres per voxel
+    s = ext_v6[sa] / ext_vox[sa] if scale_m is None else scale_m / ext_vox[sa]   # metres per voxel
     M = L * s                                        # grid coords -> metres (before translation)
 
     def to_md3(p):
@@ -163,7 +168,12 @@ def build(name):
         if name == 'pipebomb' or name == 'tripbomb':
             axis_author = np.array([0.0, 0.0, 1.0])
     # translation: palm_right x,z onto v6 palm_right x,z; grip centre on y = 0
+    if spec.get('palm_grid') is not None:         # worn items: the palm is given (grid coords), e.g. ahead of a gauntlet
+        palm_r = to_md3(np.asarray(spec['palm_grid'], float))
+        palm_l = palm_r.copy()
     ycen = gcent[:, 1].mean() if not spec.get('handlebar') else palm_r[1]
+    if spec.get('palm_grid') is not None:
+        ycen = palm_r[1]
     t = np.array([v6['tags']['tag_palm_right'][0] - palm_r[0], -ycen, v6['tags']['tag_palm_right'][2] - palm_r[2]])
     palm_r, palm_l = palm_r + t, palm_l + t
     if spec.get('handlebar'):
@@ -198,11 +208,13 @@ def build(name):
     # ---- mesh
     A = np.concatenate([M * 64, (t * 64)[:, None]], 1)
     glow = glow_mask(rgb, solid, spec.get('glow'), grid)
+    if spec.get('glow_mask') is not None:
+        glow = spec['glow_mask'] & solid
     parts = [dict(solid=solid, rgb=rgb, glow=glow, A=A)]
-    flashes = FLASH.get(name, {})
+    flashes = FLASH.get(name, {}) if flashes is None else flashes
     flash_names = list(flashes)
     flash_pos = {}
-    cols = FLASH_COLOURS.get(name, ((255, 250, 210), (255, 150, 30)))
+    cols = flash_colours or FLASH_COLOURS.get(name, ((255, 250, 210), (255, 150, 30)))
     for fname in flash_names:
         mz = muzzle.copy()
         if name == 'devastator':
@@ -215,6 +227,8 @@ def build(name):
                 mz = np.array([of + 0.5 * s, os_[:, 1].mean(), os_[:, 2].mean()])
         flash_pos[fname] = mz
         parts.append(flash_part(mz, bore, cols, s))
+    extras = extra(dict(muzzle=muzzle, palm_r=palm_r, palm_l=palm_l, support=support, s=s, t=t, M=M, bore=bore)) if extra else []
+    parts += [e['part'] for e in extras]
     m = mesh_parts(parts)
     pos, nrm, tris, st = m['pos'], m['nrm'], m['tris'], m['st']
     vol = signed_volume(pos, tris)
@@ -224,11 +238,22 @@ def build(name):
     frames_pos, frames_nrm = [], []
     for fr in v6['frames']:
         P = pos.copy()
+        if body_motion and fr in body_motion:          # v6's whole-body motion in this frame (recoil, swing)
+            R_, t_ = body_motion[fr]
+            v0, v1 = ranges[0]
+            P[v0:v1] = P[v0:v1] @ np.asarray(R_, float).T + np.asarray(t_, float) * 64
         for k_, fname in enumerate(flash_names):
             v0, v1 = ranges[k_ + 1]
             if fr not in flashes[fname]:
                 P[v0:v1] = (flash_pos[fname] - np.array([0.012, 0, 0])) * 64     # collapsed inside the barrel
-        if fr in COLLAPSED.get(name, []):
+        for k_, e in enumerate(extras):
+            v0, v1 = ranges[len(flash_names) + 1 + k_]
+            if fr not in e['show']:
+                P[v0:v1] = np.asarray(e['hide'], float) * 64
+            elif fr in e.get('affine', {}):
+                R_, t_ = e['affine'][fr]
+                P[v0:v1] = P[v0:v1] @ np.asarray(R_, float).T + np.asarray(t_, float) * 64
+        if fr in (COLLAPSED.get(name, []) if collapsed is None else collapsed):
             P[:] = palm_r * 64
         frames_pos.append(P / 64.0)
         frames_nrm.append(nrm)
@@ -237,16 +262,17 @@ def build(name):
     for tn in v6['tag_order']:
         tags[tn] = tuple(float(x) for x in tagv[tn])
     tag_frames = [dict((tn, tuple(np.array(tags[tn]) * 64)) for tn in v6['tag_order']) for _ in v6['frames']]
-    stem = f'vr_{name}'
-    OUT.mkdir(parents=True, exist_ok=True)
+    stem = stem or f'vr_{name}'
+    out_dir = OUT / sub
+    out_dir.mkdir(parents=True, exist_ok=True)
     surf = dict(name=stem, shader=f'{stem}.png', tris=tris, st=st,
                 pos=[p * 64 for p in frames_pos], nrm=frames_nrm)
-    size = write_md3(OUT / f'{stem}.md3', stem, v6['frames'], [surf], tag_frames)
-    save_png(m['tex'], OUT / f'{stem}.png')
-    save_png(m['glow'], OUT / f'{stem}_glow.png')
+    size = write_md3(out_dir / f'{stem}.md3', stem, v6['frames'], [surf], tag_frames)
+    save_png(m['tex'], out_dir / f'{stem}.png')
+    save_png(m['glow'], out_dir / f'{stem}_glow.png')
     wc = weld_check(pos, tris)
     lo, hi = frames_pos[0].min(0), frames_pos[0].max(0)     # rest frame (flash collapsed)
-    rec = dict(name=name, stem=stem, source=f"voxels/weapons/{spec['kvx']}.kvx (Voxel Duke Nukem 3D by Cheello, PRIVATE)",
+    rec = dict(name=name, stem=stem, source=source or f"voxels/weapons/{spec['kvx']}.kvx (Voxel Duke Nukem 3D by Cheello, PRIVATE)",
                kvx_size=list(k['size']), kvx_pivot=list(k['pivot']), mapping=dict(fwd=spec['fwd'], left=spec['left'], up=spec['up']),
                metres_per_voxel=round(float(s), 6), scale_axis='xyz'[sa],
                translation_m=[round(float(x), 5) for x in t],
@@ -257,12 +283,15 @@ def build(name):
                grip_axis_author=[round(float(x), 6) for x in axis_author],
                handlebar=bool(spec.get('handlebar')),
                trigger_author=trig_author, hold={'dorsal': [0.0, 0.0, 1.0]} if spec.get('handlebar') else {},
-               frames=v6['frames'], flash={k_: v for k_, v in flashes.items()}, collapsed=COLLAPSED.get(name, []),
+               frames=v6['frames'], flash={k_: v for k_, v in flashes.items()},
+               collapsed=COLLAPSED.get(name, []) if collapsed is None else collapsed,
                verts=int(len(st)), tris=int(len(tris)), atlas=list(m['stats']['atlas']), rects=m['stats']['rects'],
                over_md3_spec_limits=bool(len(st) > MD3_SPEC_MAX_VERTS or len(tris) > MD3_SPEC_MAX_TRIS),
                signed_volume_units3=round(vol, 1), weld=wc, md3_bytes=size)
     META.mkdir(parents=True, exist_ok=True)
-    (META / f'{name}.json').write_text(json.dumps(rec, indent=1))
+    if sub:
+        rec['md3'] = f'exports/eduke32/{sub}/{stem}.md3'
+    (META / f'{meta_name or name}.json').write_text(json.dumps(rec, indent=1))
     print(name, 'verts', rec['verts'], 'tris', rec['tris'], 'm/vox %.4f' % s, 'ratio', rec['size_ratio_vs_v6'], 'weld', wc,
           'atlas', rec['atlas'], flush=True)
     return rec

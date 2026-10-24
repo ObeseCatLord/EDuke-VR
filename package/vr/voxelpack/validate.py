@@ -46,7 +46,7 @@ def check(stem):
     nv = nt = 0
     wt = []
     for s in m['surfaces']:
-        if s['shaders'] != [f'{stem}.png']:
+        if s['shaders'] != [f'{Path(stem).name}.png']:
             E.append(f"shader {s['shaders']}")
         nv += s['num_verts']; nt += s['num_tris']
         if s['num_verts'] > 4096 or s['num_tris'] > 8192:
@@ -84,9 +84,47 @@ def check(stem):
     return res
 
 
+def check_hand(md3):
+    """A skinned hand shell as vr.cpp loads it: one surface, frame `bind`, shader = png beside it, a .skin with
+    one valid entry per vertex (<= 16384, joints < 26, weight 0..1), closed and outward when welded."""
+    m = read(md3)
+    res = dict(file=str(md3.relative_to(ROOT)), bytes=m['size'], errors=[], warnings=[])
+    E = res['errors']
+    if m['version'] != 15 or m['num_surfaces'] != 1:
+        E.append('not a one-surface MD3 v15')
+        return res
+    s = m['surfaces'][0]
+    if [f['name'] for f in m['frames']] != ['bind']:
+        E.append('frames are not [bind]')
+    if s['shaders'] != [f'{md3.stem}.png'] or not md3.with_suffix('.png').is_file():
+        E.append('png missing or shader name')
+    skin = md3.with_suffix('.skin')
+    if not skin.is_file():
+        E.append('skin missing')
+        return res
+    rows = skin.read_text().split('\n')
+    head = rows[0].split()
+    n = int(head[2]) if len(head) == 3 and head[:2] == ['skin', '1'] else -1
+    if n != s['num_verts'] or n > 16384:
+        E.append(f'skin count {n} vs {s["num_verts"]} vertices (max 16384)')
+    else:
+        v = np.array([[float(x) for x in r.split()] for r in rows[1:1 + n]])
+        if v.shape != (n, 9) or (v[:, [0, 5]] < 0).any() or (v[:, [0, 5]] >= 26).any() or (v[:, 1] < 0).any() or (v[:, 1] > 1).any():
+            E.append('bad skin rows')
+    P = s['xyz'][0] * 64
+    vol = signed_volume(P, s['tris'].astype(np.int64))
+    wc = weld_check(P, s['tris'].astype(np.int64))
+    if wc['odd_edges'] or wc['unbalanced_directed'] or wc['components'] != 1:
+        E.append(f'not one closed shell: {wc}')
+    if vol <= 0:
+        E.append('non-positive signed volume')
+    res.update(verts=int(s['num_verts']), tris=int(s['num_tris']), weld=wc, signed_volume_units3=round(vol, 1))
+    return res
+
+
 def main():
     stems = ['vr_pistol', 'vr_shotgun', 'vr_chaingun', 'vr_rpg', 'vr_pipebomb', 'vr_shrinker', 'vr_devastator',
-             'vr_tripbomb', 'vr_freezer', 'vr_expander', 'vr_boot', 'vr_duke', 'vr_duke_body']
+             'vr_tripbomb', 'vr_freezer', 'vr_expander', 'vr_boot', 'vr_duke', 'vr_duke_body', 'vr_detonator', 'vr_flamethrower']
     out = {}
     for st in stems:
         if (EXP / f'{st}.md3').is_file():
@@ -94,6 +132,29 @@ def main():
             r = out[st]
             print(st, 'frames', r['frames'], 'surf', r['surfaces'], 'verts', r['verts'], 'tris', r['tris'],
                   'ratio', r['size_ratio_vs_v6'], 'ERR' if r['errors'] else 'ok', r['errors'][:2], len(r['warnings']), 'warnings')
+    # Alien Armageddon held models (build_aa.py): v6's AA contract
+    for md3 in sorted((EXP / 'aa').glob('*.md3')):
+        st = f'aa/{md3.stem}'
+        if not (V6 / 'exports/eduke32' / f'{st}.md3').is_file():
+            out[st] = dict(file=f'exports/eduke32/{st}.md3', errors=['no v6 counterpart'], warnings=[])
+            continue
+        out[st] = r = check(st)
+        if r['errors']:
+            print(st, 'ERR', r['errors'][:3])
+    print('aa models', sum(1 for k in out if k.startswith('aa/')), 'errors', sum(1 for k in out if k.startswith('aa/') and out[k]['errors']))
+    # skinned hand shells (build_hands.py): the generic hands and every character's
+    shells = sorted((EXP / 'hands').glob('vr_hand_*_shell*.md3')) + sorted((EXP / 'characters').glob('*/hands/vr_hand_*_shell.md3'))
+    for md3 in shells:
+        key = md3.relative_to(EXP).with_suffix('').as_posix()
+        out[key] = r = check_hand(md3)
+        print(key, 'verts', r.get('verts'), 'ERR' if r['errors'] else 'ok', r['errors'][:3])
+    chars = ROOT / 'metadata/characters.json'
+    if chars.is_file():
+        info = json.loads(chars.read_text())
+        bad = [f'{n}: {k} {e}' for n, c in info.items() for k, f in c.get('files', {}).items() for e, rel in f.items()
+               if not (ROOT / rel).is_file()]
+        out['characters.json'] = dict(file='metadata/characters.json', characters=sorted(info),
+                                      pchar={n: c.get('pchar') for n, c in info.items()}, errors=bad, warnings=[])
     import validate_duke                          # the skinned voxel Duke against v7's IK contract
     out.update(validate_duke.check_all(ROOT))
     # hand poses
