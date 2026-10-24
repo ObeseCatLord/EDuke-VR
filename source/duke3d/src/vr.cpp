@@ -1626,7 +1626,7 @@ static HandRig const *handRig()
             if (FILE *skin=good ? openPackFile(paths[1]) : nullptr)
             {
                 int version=0, count=0;
-                good=std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==2 && count>0 && count<=16384;   // voxel bodies are dense
+                good=std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==2 && count>0 && count<=32768;   // voxel bodies are dense (16-bit indices allow 65535)
                 if (good) ik.vertices.resize(count);
                 for (auto &v:ik.vertices)
                 {
@@ -1945,7 +1945,18 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
     handJoints[hand].roots=roots;
     handJoints[hand].bases=bases;
     // A full body with its own hands draws them itself (AA's other characters keep floating hands).
-    if (fullBodyFrame && rig->ik.hands && playerCharacter()==0) return 1;
+    if (fullBodyFrame && rig->ik.hands && playerCharacter()==0)
+    {
+        if (std::getenv("EDUKE32_XR_TEST_HANDS"))
+        {
+            static std::string last[2];
+            if (last[hand]!=source)
+                LOG_F(INFO,"OpenXR body's own hand: hand=%u source=%s buttons=0x%x.",hand,source,
+                      unsigned(input.buttons & input.activeButtons));
+            last[hand]=source;
+        }
+        return 1;
+    }
     // One continuous skinned shell (one draw) when the rig has it; segments otherwise. With the
     // full IK body the wrist-cut variant (no forearm) meets the body's own forearm.
     bool const wristCut=fullBodyFrame && rig->wristShellTile[hand]>=0 && md_tilehasmodel(rig->wristShellTile[hand],0)>=0;
@@ -2690,10 +2701,21 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
     if (std::getenv("EDUKE32_XR_TEST_HANDS") && in.instance==4)
     {
         static int logged;
-        if (logged++%120==0)
-            LOG_F(INFO,"OpenXR IK body: scale=%.2f eye=%.1f,%.1f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f.",scale,
+        if (logged++%30==0)
+        {
+            // How far the left index finger bends from the hand (degrees; 0 = flat bind hand).
+            int const finger=bone("index_intermediate_l");
+            float bend=-1.f;
+            if (finger>=0 && handB[0]>=0)
+            {
+                auto const &a=worldRot[finger], &b=worldRot[handB[0]];
+                float const d=std::fabs(a.x*b.x+a.y*b.y+a.z*b.z+a.w*b.w);
+                bend=2.f*std::acos(std::min(1.f,d))*180.f/Pi;
+            }
+            LOG_F(INFO,"OpenXR IK body: scale=%.2f eye=%.1f,%.1f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f ownHands=%d indexBend=%.0f.",scale,
                   ik.eyeForward,ik.eyeUp,drop,
-                  headTarget.x,headTarget.y,headTarget.z,int(in.hand[0]),int(in.hand[1]),kickExtend);
+                  headTarget.x,headTarget.y,headTarget.z,int(in.hand[0]),int(in.hand[1]),kickExtend,int(ik.hands),bend);
+        }
     }
     return true;
 }

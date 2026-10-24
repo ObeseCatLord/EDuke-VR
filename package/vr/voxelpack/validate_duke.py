@@ -4,7 +4,7 @@
 python3 -I validate_duke.py        (validate.py calls check_all() and merges the result into validation.json)
 
 vr_duke_ik: one MD3 v15 surface, frames [bind, rest], shader = png beside it; .skel = v7's skeleton; "skin 2" with
-one row per MD3 vertex (<= 16384), 1..4 influences, valid bones, weights >= 0 summing to 1; skinning the
+one row per MD3 vertex (<= 32768), 1..4 influences, valid bones, weights >= 0 summing to 1; skinning the
 skeleton's bind pose reproduces the `bind` frame; headverts / fphide / handverts index lists in range (fphide
 contains headverts; handverts empty when pack.json sets ik_hands); the engine's eye estimate from the hidden
 head is in its accepted range; the bind frame is one closed shell with positive volume.
@@ -22,7 +22,7 @@ sys.path.insert(0, str(HERE))
 from md3np import read  # noqa: E402
 from voxmesh import signed_volume, weld_check  # noqa: E402
 
-MAX_VERTS = 16384
+MAX_VERTS = 32768
 
 
 def read_skel(path):

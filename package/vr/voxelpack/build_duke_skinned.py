@@ -22,7 +22,9 @@ blend zone is its own rectangle, so the mesh has a vertex at every voxel corner 
 Skinning (blocky but clean): every voxel belongs to exactly one bone; a vertex takes the bones of the solid
 cells in a box of half-size R around it (count-weighted, at most 4 bones), so a joint blends linearly over R
 voxels on each side and is rigid beyond: R = 2 body voxels at the bend-heavy joints (shoulder, elbow, hip,
-knee, neck), 1 elsewhere on the body (spine, ankle), 2 hand cells at the wrist and 1 at the finger joints.
+knee, neck), 1 elsewhere on the body (spine, ankle), 2 fine cells at the wrist and 1 at the finger joints. The
+arms past the shoulder and the hands are fine cells (half the body voxel), so the elbow's blend is 4 fine cells
+each side.
 """
 import json, os, sys, time
 from pathlib import Path
@@ -41,7 +43,7 @@ from md3np import read as read_md3  # noqa: E402
 
 V7 = ASSETS / 'v7-original' / 'exports' / 'eduke32'
 OUT = ROOT / 'exports' / 'eduke32'
-MAX_VERTS = 16384
+MAX_VERTS = 32768     # the engine's IK skin limit
 BEND = {frozenset(p) for p in (('clavicle', 'upperarm'), ('chest', 'upperarm'), ('upperarm', 'forearm'),
                                ('pelvis', 'thigh'), ('thigh', 'calf'), ('spine', 'upperarm'),
                                # neck: a softer bend, and a one-voxel strip on the head side of the first-person
@@ -70,9 +72,10 @@ def pair_r(sk, a, b, fh):
     return (2 if frozenset((na, nb)) in BEND else 1) * fh
 
 
-def layers(sk, cb, cs, scale):
+def layers(sk, cb, cs, scale, fh):
     """Distance layer (0-based, chessboard cells) of every cell inside some joint's blend zone, else -1: cells
-    nearer than R-1 cells to another bone, where R = the joint's blend half-width in these cells."""
+    nearer than R-1 cells to another bone, where R = the joint's blend half-width in these cells (scale fine
+    cells each)."""
     present = [int(b) for b in np.unique(cb[cs])]
     dist = {b: ndimage.distance_transform_cdt(~(cs & (cb == b)), metric='chessboard') for b in present}
     lay = np.full(cb.shape, -1, np.int64)
@@ -81,7 +84,7 @@ def layers(sk, cb, cs, scale):
         for b in present:
             if b == own:
                 continue
-            R = pair_r(sk, own, b, scale) // scale if scale > 1 else pair_r(sk, own, b, 1)
+            R = pair_r(sk, own, b, fh) // scale
             d = dist[b]
             sel = m & (d <= R - 1)
             lay = np.where(sel & ((lay < 0) | (d < lay)), d, lay)
@@ -97,14 +100,14 @@ def zone_labels(sk, a, fh):
     cb = bone.reshape(X, fh, Y, fh, Z, fh)[:, 0, :, 0, :, 0]
     cf = fine.reshape(X, fh, Y, fh, Z, fh).any((1, 3, 5))
     cs = (cb >= 0) & ~cf
-    cl = layers(sk, cb, cs, fh)
+    cl = layers(sk, cb, cs, fh, fh)
     up = np.repeat(np.repeat(np.repeat(cl, fh, 0), fh, 1), fh, 2)
     sel = (up >= 0) & ~fine & solid
     lab[sel] = 1000 + bone[sel] * 16 + up[sel]
     idx = np.argwhere(fine)
     lo, hi = np.maximum(idx.min(0) - 6, 0), np.minimum(idx.max(0) + 7, solid.shape)
     sub = tuple(slice(l, h) for l, h in zip(lo, hi))
-    fl = layers(sk, bone[sub], solid[sub], 1)
+    fl = layers(sk, bone[sub], solid[sub], 1, fh)
     sel = (fl >= 0) & fine[sub]
     ls = lab[sub]
     ls[sel] = 2000 + bone[sub][sel] * 16 + fl[sel]
@@ -114,7 +117,7 @@ def zone_labels(sk, a, fh):
 
 def corner_weights(sk, a, corners, fh):
     """Bones and weights of every mesh corner (fine-grid corner index) from the solid cells around it."""
-    solid, bone, fine = a['solid'], a['bone'], a['fine']
+    solid, bone = a['solid'], a['bone']
     B = np.where(solid, bone, -1)
     nb = len(sk.names)
     S = np.array(B.shape)
@@ -126,7 +129,6 @@ def corner_weights(sk, a, corners, fh):
         box = B[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]]
         o = c - lo                                        # corner position inside the box
         near = box[max(o[0] - 1, 0):o[0] + 1, max(o[1] - 1, 0):o[1] + 1, max(o[2] - 1, 0):o[2] + 1]
-        nf = fine[max(c[0] - 1, 0):c[0] + 1, max(c[1] - 1, 0):c[1] + 1, max(c[2] - 1, 0):c[2] + 1]
         own = near[near >= 0]
         cnt = np.bincount(box[box >= 0], minlength=nb)
         top = np.argsort(-cnt)[:2]
@@ -138,8 +140,6 @@ def corner_weights(sk, a, corners, fh):
         b0 = int(np.bincount(own).argmax())
         others = [int(b) for b in np.argsort(-cnt) if cnt[b] > 0 and b != b0]
         R = pair_r(sk, b0, others[0], fh) if others else fh
-        if nf.any() and R > WRIST_R:
-            R = WRIST_R
         sub = box[max(o[0] - R, 0):o[0] + R, max(o[1] - R, 0):o[1] + R, max(o[2] - R, 0):o[2] + R]
         cnt = np.bincount(sub[sub >= 0], minlength=nb).astype(float)
         cnt[cnt < 0.04 * cnt.sum()] = 0

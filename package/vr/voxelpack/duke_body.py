@@ -4,7 +4,8 @@ voxels by rigid per-region transforms and re-voxelised into ONE grid, plus v7-sh
 build_body(sk, ...) -> coarse body cells + fine hand cells; assemble(r) -> dict(solid, pal, bone, fine) on one fine
 grid (h = s / fh metres per cell),
 where s = the source voxel size (v7 height / the pain voxel's 84-voxel height = 2.16 cm). The body is coarse
-(fh x fh x fh blocks of fine cells, i.e. one block per source voxel); only the hands are fine.
+(fh x fh x fh blocks of fine cells, i.e. one block per source voxel); the arms past the shoulder and the hands
+are fine.
 
 Regions (all true-handed metres, build pose: arms out along +-Y, legs vertical):
 * torso + legs: the pain voxel 1511 (Duke standing straight, no rifle). Its right half (Duke's right, KVX x <=
@@ -12,15 +13,15 @@ Regions (all true-handed metres, build pose: arms out along +-Y, legs vertical):
   tank top, straps, belt and jetpack symmetric. 1511's own right arm (outside the shoulder) is cut away.
   Cell-aligned copy: one target block per source voxel (no resampling).
 * head: the standing voxel 1405 (Duke's usual face) above the chin, placed on 1511's head position.
-* arms: v7's own arm (upper arm, forearm) from its bind body, carried rigidly into the T-pose, thickened to
-  Voxel Duke's build (radially about the arm line) and voxelised at the body voxel size; coloured with Voxel
-  Duke's skin ramp by the cell's direction around the arm (clean tone bands). Duke's own voxel arms are bent
-  around the rifle in every frame and drawn foreshortened, so they are not reposed; his deltoid caps stay.
-* hands: v7's own open bind hand (vr_duke_ik.md3 bind frame), carried rigidly into the T-pose, fingers and palm
-  thickened about their bones, voxelised at half the body voxel size; each cell belongs to the hand bone or one
-  finger bone (nearest bone segment past its joint plane); fingers that touch are pulled one cell apart;
-  coloured with Voxel Duke's skin ramp (palette 40, 43, 46, 48, 51, by the cell's v7 surface normal against a
-  light over the back of the hand, as the voxel hand shells are).
+* arms and hands: v7's own arm (upper arm, forearm) and open bind hand (vr_duke_ik.md3 bind frame), carried
+  rigidly into the T-pose; the shoulder end at the body voxel size (so the shoulder bends on one grid), the rest
+  of the arm from 7 cm past the shoulder joint and the hand at half of it, so the forearm runs into the hand with
+  one voxel size. The
+  arm is thickened radially about the arm line to Voxel Duke's build, fingers and palm about their bones; each
+  cell belongs to the upper arm, forearm, hand or one finger bone (nearest bone segment past its joint plane);
+  fingers that touch are pulled one cell apart. Arm and hand are shaded as one surface: Voxel Duke's skin ramp
+  (palette 40, 43, 46, 48, 51) in bands of the smoothed voxel shape's normal against one light over the back of
+  the hand. Duke's own voxel arms are bent around the rifle in every frame, so they are not reposed.
 Every region is sampled by inverse mapping (target cell centre -> source voxel), so there are no holes; the
 union is closed (interior filled) and only the largest 6-connected piece is kept.
 """
@@ -130,14 +131,14 @@ def finger_chain(sk, b):
 
 # ---------------------------------------------------------------- v7 arms and hands
 ARM_U0 = -0.04        # the voxelised v7 arm starts 4 cm inside the shoulder joint plane (inward: Duke's own shoulder)
+ARM_FINE_U = 0.07     # body voxels up to here (the shoulder bends on one grid), fine cells from here to the fingertips
 # v7's arm and hand thickened to Voxel Duke's build (the bone positions stay v7's): radial factor about the arm
 # line for the upper arm, the forearm at the elbow and at the wrist; about each finger bone; the palm's thickness
 ARM_FAT = (1.2, 1.15, 1.08)
 FINGER_FAT, THUMB_FAT, PALM_FAT = 1.35, 1.3, 1.25
 ARM_R = 0.13          # the arm lies within 13 cm of its line
-SEAM_BEFORE_WRIST = 0.035   # coarse forearm -> fine hand/wrist region this far before the wrist joint
 BAND = (-0.45, -0.1, 0.3, 0.65)
-LIGHT_ARM = np.array([0.5, 0.0, 1.0])   # T-pose arm light: over the top and front (outer / front side when hanging)
+SHADE_SIGMA = 1.5     # fine cells: smoothing of the voxel shape whose normal shades the arm and hand
 
 
 def lr(sk, b, side):
@@ -147,8 +148,8 @@ def lr(sk, b, side):
 
 
 def v7_arm(sk, v7_exports, G, cidx, C, log):
-    """Left arm (coarse) and left hand (fine) cells from v7's bind mesh, carried to the T-pose; then mirrored."""
-    from scipy.spatial import cKDTree
+    """Left arm (coarse at the shoulder, fine from ARM_FINE_U on) and hand (fine) from v7's bind mesh, carried to
+    the T-pose; then mirrored. The forearm, wrist and hand share one voxel size, and the whole arm one shading."""
     m = read_md3(Path(v7_exports) / 'vr_duke_ik.md3')
     s0 = m['surfaces'][0]
     P = s0['xyz'][0] / 64.0
@@ -158,67 +159,45 @@ def v7_arm(sk, v7_exports, G, cidx, C, log):
     P = P[first]
     T = inv.reshape(-1)[T]
     T = T[(T[:, 0] != T[:, 1]) & (T[:, 1] != T[:, 2]) & (T[:, 0] != T[:, 2])]
-    fn = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
-    N = np.zeros_like(P)
-    for c in range(3):
-        np.add.at(N, T[:, c], fn)
-    N /= np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-12)
     T = T[(P[T][:, :, 1] > 0.15).all(1)]                 # the left arm side (rays never leave y > 0.15)
     R, sh = sk.arm_rot['l']
     Hb = sk.bind[sk.bi['hand_l']]
     wrist_u = float((Hb[:3, 3] - sh) @ (R.T @ np.array([0, 1.0, 0])))
     s, h = G.s, G.h
-    seam_y = sh[1] + wrist_u - SEAM_BEFORE_WRIST
-    jb = math.ceil((seam_y - G.corigin[1]) / s)
-    seam_y = G.corigin[1] + jb * s                       # a coarse cell boundary
+    seam_y = sh[1] + ARM_FINE_U
+    seam_y = G.corigin[1] + math.ceil((seam_y - G.corigin[1]) / s) * s     # a coarse cell boundary
     to_bind = lambda Q: (Q - sh) @ R + sh                # R^T (q - sh) + sh, row vectors
-    tree = cKDTree(P)
     L_up = float(np.linalg.norm(sk.pos('forearm_l') - sk.pos('upperarm_l')))
     arm_fat = lambda uu: np.interp(uu, [L_up - 0.03, L_up + 0.03, wrist_u], [ARM_FAT[0], ARM_FAT[1], ARM_FAT[2]])
-    Lh = LIGHT_H / np.linalg.norm(LIGHT_H)
     Sx = np.array([-1.0, 1, 1])                          # left hand frame -> right-hand convention
-
-    La = LIGHT_ARM / np.linalg.norm(LIGHT_ARM)
-
-    def arm_band(Q):
-        # the arm's own round shape (radial direction from the arm line), so the tones run in clean bands
-        n = np.zeros_like(Q)
-        n[:, 0], n[:, 2] = Q[:, 0] - sh[0], Q[:, 2] - sh[2]
-        n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
-        return np.digitize(n @ La, BAND)
-
-    def shade(Qb):
-        _, nn = tree.query(Qb)
-        nh = (N[nn] @ Hb[:3, :3]) * Sx
-        return np.digitize(nh @ Lh, BAND)
-
-    # ---- coarse: upper arm and forearm
-    u = C[:, 1] - sh[1]
-    rad = np.hypot(C[:, 0] - sh[0], C[:, 2] - sh[2])
-    cand = (C[:, 1] > 0) & (u >= ARM_U0) & (rad < ARM_R) & (C[:, 1] < seam_y)
+    # one light for arm and hand: LIGHT_H (right-hand frame) carried to the left hand's build-pose frame
+    Lb = R @ Hb[:3, :3] @ (LIGHT_H * Sx)
+    Lb /= np.linalg.norm(Lb)
+    # ---- coarse: the upper arm from inside the shoulder to the seam (the shoulder's blend stays on one grid)
+    uc = C[:, 1] - sh[1]
+    radc = np.hypot(C[:, 0] - sh[0], C[:, 2] - sh[2])
+    cand = (C[:, 1] > 0) & (uc >= ARM_U0) & (radc < ARM_R) & (C[:, 1] < seam_y)
     Qt = C[cand].copy()
-    fat = arm_fat(u[cand])
+    fat = arm_fat(uc[cand])
     Qt[:, [0, 2]] = sh[[0, 2]] + (Qt[:, [0, 2]] - sh[[0, 2]]) / fat[:, None]
-    Qb = to_bind(Qt)
-    ins = inside_mesh(Qb, P, T)
-    ci = cidx[cand][ins]
-    uc = u[cand][ins]
-    band = arm_band(C[cand][ins])
-    cpal = np.array(SKIN_RAMP, np.int16)[band]
-    cbone = np.where(uc < L_up, sk.bi['upperarm_l'], sk.bi['forearm_l']).astype(np.int16)
-    log(f'v7 arm: {len(ci)} coarse cells per side, seam at y {seam_y:.3f} (wrist {sh[1] + wrist_u:.3f})')
-    # ---- fine: wrist and hand
+    ci = cidx[cand][inside_mesh(to_bind(Qt), P, T)]
+    cbone = np.full(len(ci), sk.bi['upperarm_l'], np.int16)
+    # ---- fine cells: the rest of the upper arm, forearm, wrist and hand
     hb = sk.build[sk.bi['hand_l']][:3, 3]
-    lo = np.array([hb[0] - 0.16, seam_y, hb[2] - 0.16])
-    hi = np.array([hb[0] + 0.16, hb[1] + 0.27, hb[2] + 0.16])
+    lo = np.array([min(hb[0], sh[0]) - 0.16, sh[1] + ARM_U0 - h, min(hb[2], sh[2]) - 0.16])
+    hi = np.array([max(hb[0], sh[0]) + 0.16, hb[1] + 0.27, max(hb[2], sh[2]) + 0.16])
     box = [(max(0, int(math.floor((lo[a] - G.origin[a]) / h))), min(G.shape[a], int(math.ceil((hi[a] - G.origin[a]) / h))))
            for a in range(3)]
     fidx, F = G.fcentres(box)
-    F_ok = F[:, 1] > seam_y
-    fidx, F = fidx[F_ok], F[F_ok]
+    u = F[:, 1] - sh[1]
+    rad = np.hypot(F[:, 0] - sh[0], F[:, 2] - sh[2])
+    F_ok = (F[:, 1] > seam_y) & ((u > wrist_u - 0.02) | (rad < ARM_R))
+    # room under the arm for it to come down to the bind A-pose (no arm cell where the torso is)
+    F_ok &= ~((u < ARMPIT_ARM_U) & (F[:, 2] < sh[2] - ARMPIT_ARM_DZ))
+    fidx, F, u = fidx[F_ok], F[F_ok], u[F_ok]
     Fb = to_bind(F)
     segs = hand_segments(sk, 'l', P)
-    hand_b, fore_b = sk.bi['hand_l'], sk.bi['forearm_l']
+    hand_b, fore_b, upper_b = sk.bi['hand_l'], sk.bi['forearm_l'], sk.bi['upperarm_l']
     Hi = np.linalg.inv(Hb)
     hl = Fb @ Hi[:3, :3].T + Hi[:3, 3]                  # hand-bone local (z toward the elbow)
     bones = sorted(segs)
@@ -231,14 +210,14 @@ def v7_arm(sk, v7_exports, G, cidx, C, log):
             d = np.where(past, d, np.inf)
         D[:, k] = d
     fbone = np.array(bones)[np.argmin(D, 1)]
-    fbone = np.where(hl[:, 2] > 0, fore_b, fbone).astype(np.int16)
-    # thicken: shrink each cell's offset from its bone before asking whether v7's hand contains it
+    arm = hl[:, 2] > 0
+    fbone = np.where(arm, np.where(u < L_up, upper_b, fore_b), fbone).astype(np.int16)
+    # thicken: shrink each cell's offset from its bone before asking whether v7's arm/hand contains it
     Qb = Fb.copy()
     for b in np.unique(fbone):
         sel = fbone == b
-        if b == fore_b:
-            uu = F[sel, 1] - sh[1]
-            k = arm_fat(uu)
+        if b in (fore_b, upper_b):
+            k = arm_fat(u[sel])
             Qt = F[sel].copy()
             Qt[:, [0, 2]] = sh[[0, 2]] + (Qt[:, [0, 2]] - sh[[0, 2]]) / k[:, None]
             Qb[sel] = to_bind(Qt)
@@ -254,7 +233,7 @@ def v7_arm(sk, v7_exports, G, cidx, C, log):
             k = THUMB_FAT if sk.names[b].startswith('thumb') else FINGER_FAT
             Qb[sel] = a + np.outer(along, d) + (rel - np.outer(along, d)) / k
     ins = inside_mesh(Qb, P, T)
-    fidx, F, Fb, fbone, hl = fidx[ins], F[ins], Qb[ins], fbone[ins], hl[ins]
+    fidx, F, Fb, fbone = fidx[ins], F[ins], Qb[ins], fbone[ins]
     # fingers of different chains that touch: the later chain gives way (so every finger is its own shell)
     sol = np.zeros(G.shape, bool)
     lab = np.full(G.shape, -1, np.int16)
@@ -274,8 +253,23 @@ def v7_arm(sk, v7_exports, G, cidx, C, log):
             break
         ssol &= ~drop
     keep = ssol[tuple((fidx - [b[0] for b in box]).T)]
-    fidx, F, Fb, fbone, hl = fidx[keep], F[keep], Fb[keep], fbone[keep], hl[keep]
-    band = np.where(fbone == fore_b, arm_band(F), shade(Fb))
+    fidx, F, Fb, fbone = fidx[keep], F[keep], Fb[keep], fbone[keep]
+    # shading: the normal of the voxel shape itself (smoothed occupancy of the coarse and fine arm cells), so
+    # arm, wrist and hand shade as one surface; Voxel Duke's skin ramp in clean bands
+    occ = ssol.astype(np.float32)
+    b0 = np.array([b[0] for b in box])
+    kids = (ci[:, None, :] * G.fh + np.indices((G.fh,) * 3).reshape(3, -1).T[None]).reshape(-1, 3) - b0
+    kids = kids[((kids >= 0) & (kids < occ.shape)).all(1)]
+    occ[tuple(kids.T)] = 1
+    g = [ndimage.gaussian_filter(occ, SHADE_SIGMA, order=[int(a == ax) for a in range(3)]) for ax in range(3)]
+
+    def bands(local):
+        local = np.clip(local, 0, np.array(occ.shape) - 1)
+        n = -np.stack([gg[tuple(local.T)] for gg in g], 1)
+        n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+        return np.digitize(n @ Lb, BAND)
+    band = bands(fidx - b0)
+    cpal = np.array(SKIN_RAMP, np.int16)[bands(ci * G.fh + G.fh // 2 - b0)]
     # nails: the back of the distal phalanges, one ramp step lighter
     nail = np.zeros(len(Fb), bool)
     for f in ('index', 'middle', 'ring', 'little', 'thumb'):
@@ -287,8 +281,10 @@ def v7_arm(sk, v7_exports, G, cidx, C, log):
             nail[np.nonzero(sel)[0][(l[:, 1] > 0.002) & (l[:, 2] < -0.012)]] = True
     band = np.where(nail, np.minimum(band + 1, 4), band)
     fpal = np.array(SKIN_RAMP, np.int16)[band]
-    log(f'v7 hand: {len(fidx)} fine cells per side, bones ' +
+    log(f'v7 arm and hand: {len(ci)} coarse and {len(fidx)} fine cells per side (fine from y {seam_y:.3f}, '
+        f'wrist {sh[1] + wrist_u:.3f}), bones ' +
         ', '.join(f'{sk.names[b]}:{int((fbone == b).sum())}' for b in np.unique(fbone)))
+
     # ---- mirror to the right
     def mir_c(ix):
         o = ix.copy()
