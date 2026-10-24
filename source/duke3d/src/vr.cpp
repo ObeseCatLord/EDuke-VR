@@ -1572,7 +1572,8 @@ static HandRig const *handRig()
             if (FILE *skin=openPackFile(skinPath))
             {
                 int version=0, count=0;
-                if (std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==1 && count>0 && count<=4096)
+                // Up to 16384 vertices: voxel-style hands are dense (skinned on the CPU, ~0.1 ms per hand).
+                if (std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==1 && count>0 && count<=16384)
                 {
                     vertices.resize(count);
                     for (auto &v:vertices)
