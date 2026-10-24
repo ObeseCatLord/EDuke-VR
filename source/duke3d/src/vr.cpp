@@ -1621,7 +1621,7 @@ static HandRig const *handRig()
             if (FILE *skin=good ? openPackFile(paths[1]) : nullptr)
             {
                 int version=0, count=0;
-                good=std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==2 && count>0 && count<=4096;
+                good=std::fscanf(skin,"skin %d %d",&version,&count)==2 && version==2 && count>0 && count<=16384;   // voxel bodies are dense
                 if (good) ik.vertices.resize(count);
                 for (auto &v:ik.vertices)
                 {
