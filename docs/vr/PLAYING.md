@@ -347,8 +347,8 @@ Only identical, current builds play together. The network protocol (NETVERSION 9
 Foveated rendering is set in **Options > VR Setup**: **Foveated rendering** (`vr_foveation`) and **Foveation strength** (`vr_foveation_level`).
 
 **Modes:**
-- **Auto** (the default) uses eye-tracked foveation on a Steam Frame and is off on other headsets.
-- **Off**.
+- **Off** (the default). In the lab, foveation cost more than it saved (see the measurements below).
+- **Auto** uses eye-tracked foveation on a Steam Frame and is off on other headsets.
 - **Fixed** keeps full detail around each lens centre.
 - **Eye tracked** keeps full detail where you look, using `XR_EXT_eye_gaze_interaction`. It falls back to fixed when there is no eye tracker, or after half a second without a tracked gaze.
 

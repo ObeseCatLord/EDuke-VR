@@ -26,7 +26,7 @@
 
 // VR settings (cvars; vr.h).
 int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1;
-int32_t vr_foveation=0, vr_foveation_level=1, vr_foveation_method=0;
+int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
 extern int32_t yax_polymostclearzbuffer;
@@ -190,7 +190,7 @@ void G_XRRegisterCvars()
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
-        { "vr_foveation", "VR foveated rendering: 0 = auto (eye-tracked on a Steam Frame, else off), 1 = off, 2 = fixed, 3 = eye-tracked (fixed without an eye tracker)", (void *)&vr_foveation, CVAR_INT, 0, 3 },
+        { "vr_foveation", "VR foveated rendering: 0 = auto (eye-tracked on a Steam Frame, else off), 1 = off (default), 2 = fixed, 3 = eye-tracked (fixed without an eye tracker)", (void *)&vr_foveation, CVAR_INT, 0, 3 },
         { "vr_foveation_method", "VR foveation method: 0 = inset views (each eye wide at low resolution plus a full-detail inset, 4-view multiview), 1 = masked (2x2-pixel quads culled in the periphery and filled in)", (void *)&vr_foveation_method, CVAR_INT, 0, 1 },
         { "vr_foveation_level", "VR foveation strength: 0 = low, 1 = medium, 2 = high (less detail outside the centre/gaze, faster)", (void *)&vr_foveation_level, CVAR_INT, 0, 2 },
     };
