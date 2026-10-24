@@ -64,7 +64,8 @@ struct FoveationStatus
     bool        steamFrame = false;   // a Valve Steam Frame (standalone or streamed)
     bool        gazeTracked = false;  // a tracked gaze located for the current frame
     Foveation   mode = Foveation::Off;  // effective mode (after availability)
-    float       scale = 1;            // periphery resolution per axis (= inset size, in image fractions)
+    float       scale = 1;
+    bool        masked = false;               // radial density masking instead of inset views            // periphery resolution per axis (= inset size, in image fractions)
     uint32_t    width = 0, height = 0;  // per-view size of the foveated target
     std::string systemName, runtimeName;
 };
@@ -137,7 +138,9 @@ class Runtime
     // what it needs) until resolveFoveation() blends it into the swapchain image and depth. Every
     // runtime call that reads or draws the swapchain image resolves first; per-eye native drawing
     // (bindEye) must call resolveFoveation() itself before it draws.
-    void            setFoveation(Foveation mode, float scale);
+    void            setFoveation(Foveation mode, float scale, bool masked = false);
+    // Masked method: call right after clearing the freshly bound foveated target.
+    bool            maskFoveation(std::string &error);
     FoveationStatus foveation() const;
     void            foveateFrame(bool on);
     bool            resolveFoveation(std::string &error);

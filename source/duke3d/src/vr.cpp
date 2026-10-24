@@ -26,7 +26,7 @@
 
 // VR settings (cvars; vr.h).
 int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1;
-int32_t vr_foveation=0, vr_foveation_level=1;
+int32_t vr_foveation=0, vr_foveation_level=1, vr_foveation_method=0;
 
 // Engine-private depth-clear latch for Polymost room passes.
 extern int32_t yax_polymostclearzbuffer;
@@ -191,6 +191,7 @@ void G_XRRegisterCvars()
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
         { "vr_foveation", "VR foveated rendering: 0 = auto (eye-tracked on a Steam Frame, else off), 1 = off, 2 = fixed, 3 = eye-tracked (fixed without an eye tracker)", (void *)&vr_foveation, CVAR_INT, 0, 3 },
+        { "vr_foveation_method", "VR foveation method: 0 = inset views (each eye wide at low resolution plus a full-detail inset, 4-view multiview), 1 = masked (2x2-pixel quads culled in the periphery and filled in)", (void *)&vr_foveation_method, CVAR_INT, 0, 1 },
         { "vr_foveation_level", "VR foveation strength: 0 = low, 1 = medium, 2 = high (less detail outside the centre/gaze, faster)", (void *)&vr_foveation_level, CVAR_INT, 0, 2 },
     };
     for (auto &cv : cvars) OSD_RegisterCvar(&cv, osdcmd_cvar_set);
@@ -4579,16 +4580,18 @@ static void applyFoveation(eduke_xr::Runtime *runtime)
     auto const before=runtime->foveation();
     float scale=FoveationScales[clamp(vr_foveation_level,0,2)];
     if (auto const forced=std::getenv("EDUKE32_XR_FOVEATION_SCALE")) scale=float(Batof(forced));
-    runtime->setFoveation(chosenFoveation(before),scale);
+    bool masked=vr_foveation_method==1;
+    if (auto const forced=std::getenv("EDUKE32_XR_FOVEATION_METHOD")) masked=!Bstrcmp(forced,"mask");
+    runtime->setFoveation(chosenFoveation(before),scale,masked);
     auto const after=runtime->foveation();
-    static int reported=-1; static float reportedScale;
-    if (int(after.mode)!=reported || after.scale!=reportedScale)
+    static int reported=-1; static float reportedScale; static bool reportedMasked;
+    if (int(after.mode)!=reported || after.scale!=reportedScale || after.masked!=reportedMasked)
     {
         static char const *const names[]={"off","fixed","eye-tracked"};
-        LOG_F(INFO,"OpenXR foveation: %s (vr_foveation=%d level=%d scale=%.2f target=%ux%u per view; %s, eye tracker %s, Steam Frame %s).",
-              names[int(after.mode)],vr_foveation,vr_foveation_level,after.scale,after.width,after.height,
+        LOG_F(INFO,"OpenXR foveation: %s %s (vr_foveation=%d level=%d scale=%.2f target=%ux%u per view; %s, eye tracker %s, Steam Frame %s).",
+              names[int(after.mode)],after.masked ? "masked" : "inset",vr_foveation,vr_foveation_level,after.scale,after.width,after.height,
               after.available ? "available" : "unavailable",after.eyeTracking ? "yes" : "no",after.steamFrame ? "yes" : "no");
-        reported=int(after.mode); reportedScale=after.scale;
+        reported=int(after.mode); reportedScale=after.scale; reportedMasked=after.masked;
     }
 }
 
@@ -5178,6 +5181,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 // Collection can execute unsupported native draw families on
                 // the individual eye targets. Commit only the accepted replay.
                 glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+                if (!runtime->maskFoveation(error)) { LOG_F(WARNING,"OpenXR foveation mask: %s",error.c_str()); error.clear(); }
                 committed=polymost_xrReplayCollection() == POLYMOST_XR_COLLECT_OK;
                 if (committed)
                 {

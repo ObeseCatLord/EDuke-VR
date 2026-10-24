@@ -367,6 +367,14 @@ Foveated rendering is set in **Options > VR Setup**: **Foveated rendering** (`vr
 - **Detection:** the Frame is detected from the SteamVR system name, or from SteamVR reporting an eye tracker. This covers standalone and streamed play. `EDUKE32_XR_HEADSET=frame` (or `=other`) overrides the detection.
 - **Streaming:** SteamVR's foveated streaming is separate and automatic. This setting reduces the game's own rendering cost.
 
+**Method** (`vr_foveation_method`, console only):
+- **0, inset views** (the default): as described above.
+- **1, masked**: radial density masking. Each eye renders once at full resolution with the usual two views, so there is no extra geometry. Outside the full-detail circle, a depth mask culls 2×2-pixel blocks before anything is drawn: every other block, then three in four beyond twice the radius. The blend pass fills them from their neighbours.
+  - Masked also stands in automatically when the GL driver lacks four-view multiview.
+  - It saves shading only where the GPU rejects masked pixels before shading them. The game's shaders can discard pixels, which keeps some GPUs from rejecting early.
+
+In the software-rendering lab at 640×480 per eye, neither method was faster than no foveation: about 10 ms off, 12.7 ms inset, 13 ms masked. Both need a GPU limited by pixel shading at headset resolution, which the lab cannot reproduce.
+
 Foveation trades extra vertex work (four views instead of two) and a blend pass for fewer shaded pixels. It pays off when the GPU is fill-limited, as on a standalone headset at native resolution.
 
 ## Held weapon models

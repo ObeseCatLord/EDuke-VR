@@ -63,6 +63,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--second-runtime", action="store_true",
                         help="also run a second private Monado (its remote driver on --remote-port + 1); the child "
                              "gets SOFTWARE_XR_LAB_RUNTIME2/_CONFIG2/_REMOTE_PORT2 to point a second app at it")
+    parser.add_argument("--runtime-env", action="append", default=[], metavar="KEY=VALUE",
+                        help="extra environment for Monado and the child (e.g. XRT_COMPOSITOR_SCALE_PERCENTAGE=400 for "
+                             "larger eye images); only XRT_/OXR_ variables")
     parser.add_argument("--child-timeout", type=int, default=60,
                         help="bounded child runtime in seconds, including asset precache (default: 60)")
     parser.add_argument("--_in-lab", action="store_true", help=argparse.SUPPRESS)
@@ -131,7 +134,8 @@ def reexec_sandbox(args: argparse.Namespace, script: Path) -> None:
                          "--work-dir", str(work_dir), "--remote-port", str(args.remote_port),
                          "--child-timeout", str(args.child_timeout),
                          *(("--share-net",) if args.share_net else ()),
-                         *(("--second-runtime",) if args.second_runtime else ()), "--", str(command)))
+                         *(("--second-runtime",) if args.second_runtime else ()),
+                         *(f"--runtime-env={item}" for item in args.runtime_env), "--", str(command)))
     command_line.extend(args.child[1:])
     os.execvp("bwrap", command_line)
 
@@ -288,6 +292,11 @@ def run_lab(args: argparse.Namespace) -> int:
         if layer_available:
             env.update({"XR_API_LAYER_PATH": str(layer.parent), "XR_ENABLE_API_LAYERS": "XR_APILAYER_LUNARG_core_validation"})
 
+        for item in args.runtime_env:
+            key, _, value = item.partition("=")
+            if not key.startswith(("XRT_", "OXR_")) or not _:
+                raise LabError(f"--runtime-env takes XRT_*/OXR_* KEY=VALUE, not {item!r}")
+            env[key] = value
         if args.second_runtime:
             env.update({"SOFTWARE_XR_LAB_RUNTIME2": str(runtime2), "SOFTWARE_XR_LAB_CONFIG2": str(config2),
                         "SOFTWARE_XR_LAB_REMOTE_PORT2": str(args.remote_port + 1)})

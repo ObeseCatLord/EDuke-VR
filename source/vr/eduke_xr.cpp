@@ -460,10 +460,18 @@ struct Runtime::Impl
     Foveation                               foveationMode = Foveation::Off;
     float                                   foveationScale = 1;
     bool                                    foveationViews = false;   // GL_MAX_VIEWS_OVR >= 4
+    bool                                    maskBroken = false;       // the masked method failed once
+    bool foveationUsable() const { return foveationMasked ? !maskBroken : foveationViews; }
+    void foveationFailed() { if (foveationMasked) maskBroken = true; else foveationViews = false; }
     bool                                    foveateNow = false, foveationPending = false;
     uint32_t                                boundViews = 2;
     GLuint                                  fovFbo = 0, fovColor = 0, fovDepth = 0, fovProgram = 0;
-    uint32_t                                fovWidth = 0, fovHeight = 0;
+    uint32_t                                fovWidth = 0, fovHeight = 0, fovLayers = 0;
+    // Masked method (radial density masking): the same 2-view target at full size; outside the
+    // full-detail circle a depth mask culls 2x2-pixel quads (every other one, then 3 of 4 beyond
+    // twice the radius) before anything is drawn, and the resolve fills them from their neighbours.
+    bool                                    foveationMasked = false;
+    GLuint                                  fovMaskProgram = 0, fovFillProgram = 0;
     std::array<std::array<int32_t, 2>, kViewCount> insetOrigin {};  // inset's lower-left pixel per eye
     std::array<std::array<float, 4>, kViewCount>   insetClip {};    // clip xy scale/offset per eye
     std::array<std::array<float, 2>, kViewCount>   insetCenter {};  // full-detail circle centre (pixels)
@@ -709,14 +717,22 @@ struct Runtime::Impl
         if (fovColor) glDeleteTextures(1, &fovColor);
         if (fovDepth) glDeleteTextures(1, &fovDepth);
         if (fovProgram) glDeleteProgram(fovProgram);
-        fovFbo = fovColor = fovDepth = fovProgram = 0;
-        fovWidth = fovHeight = 0;
+        if (fovMaskProgram) glDeleteProgram(fovMaskProgram);
+        if (fovFillProgram) glDeleteProgram(fovFillProgram);
+        fovFbo = fovColor = fovDepth = fovProgram = fovMaskProgram = fovFillProgram = 0;
+        fovWidth = fovHeight = fovLayers = 0;
         foveateNow = foveationPending = false;
     }
 
     // Target size for the current scale; the inset is the same size, cut from the full image.
     void foveationSize(uint32_t &w, uint32_t &h) const
     {
+        if (foveationMasked)
+        {
+            w = width;
+            h = height;
+            return;
+        }
         w = std::max<uint32_t>(16, std::min(width, uint32_t(std::lround(width * foveationScale))));
         h = std::max<uint32_t>(16, std::min(height, uint32_t(std::lround(height * foveationScale))));
     }
@@ -725,7 +741,60 @@ struct Runtime::Impl
     {
         uint32_t w, h;
         foveationSize(w, h);
-        if (fovFbo && fovWidth == w && fovHeight == h) return true;
+        uint32_t const layers = foveationMasked ? kViewCount : 2 * kViewCount;
+        if (fovFbo && fovWidth == w && fovHeight == h && fovLayers == layers) return true;
+        if (!fovMaskProgram)
+        {
+            // keep(): whether a pixel's 2x2 quad is shaded. Mask: depth 0 on the culled quads.
+            // Fill: culled pixels take the average of the shaded pixels 2 away (axes, else diagonals).
+            std::string const keep = "uniform vec2 uCenter[2]; uniform float uRadius; "
+                                     "bool keep(ivec2 p, int view){ ivec2 q=p>>1; float d=distance(vec2(q*2)+1.0,uCenter[view]); "
+                                     "if(d<uRadius) return true; if(d<2.0*uRadius) return ((q.x+q.y)&1)==0; return ((q.x|q.y)&1)==0; } ";
+            char const *vert = "#version 410 compatibility\n#extension GL_OVR_multiview2 : require\nlayout(num_views=2) in; flat out int view; "
+                               "void main(){ vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position=vec4(p*2.0-1.0,0.0,1.0); view=int(gl_ViewID_OVR); }";
+            std::string const mask = "#version 410 compatibility\nflat in int view; " + keep
+                + "void main(){ if(keep(ivec2(gl_FragCoord.xy),view)) discard; gl_FragDepth=0.0; }";
+            std::string const fill = "#version 410 compatibility\nuniform sampler2DArray uColor; uniform sampler2DArray uDepth; flat in int view; out vec4 outColor; " + keep
+                + "void main(){ ivec2 p=ivec2(gl_FragCoord.xy); ivec2 top=textureSize(uColor,0).xy-1; "
+                  "if(keep(p,view)){ outColor=texelFetch(uColor,ivec3(p,view),0); gl_FragDepth=texelFetch(uDepth,ivec3(p,view),0).r; return; } "
+                  "vec4 sum=vec4(0.0); float n=0.0, depth=1.0; "
+                  "ivec2 o[8]=ivec2[8](ivec2(2,0),ivec2(-2,0),ivec2(0,2),ivec2(0,-2),ivec2(2,2),ivec2(-2,2),ivec2(2,-2),ivec2(-2,-2)); "
+                  "for(int i=0;i<8;++i){ if(i==4&&n>0.0) break; ivec2 q=clamp(p+o[i],ivec2(0),top); if(!keep(q,view)) continue; "
+                  "sum+=texelFetch(uColor,ivec3(q,view),0); depth=min(depth,texelFetch(uDepth,ivec3(q,view),0).r); n+=1.0; } "
+                  "outColor=n>0.0 ? sum/n : texelFetch(uColor,ivec3(p,view),0); gl_FragDepth=n>0.0 ? depth : 1.0; }";
+            std::string shaderError;
+            auto const link = [&](char const *fragment, char const *what) -> GLuint {
+                GLuint vs = compile(GL_VERTEX_SHADER, vert, shaderError), fs = vs ? compile(GL_FRAGMENT_SHADER, fragment, shaderError) : 0, program = 0;
+                if (vs && fs)
+                {
+                    program = glCreateProgram();
+                    glAttachShader(program, vs);
+                    glAttachShader(program, fs);
+                    glLinkProgram(program);
+                    GLint linked = 0;
+                    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+                    if (!linked)
+                    {
+                        char log[2048] = {};
+                        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+                        shaderError = std::string(what) + " shader link failed: " + log;
+                        glDeleteProgram(program);
+                        program = 0;
+                    }
+                }
+                if (vs) glDeleteShader(vs);
+                if (fs) glDeleteShader(fs);
+                return program;
+            };
+            fovMaskProgram = link(mask.c_str(), "foveation mask");
+            fovFillProgram = fovMaskProgram ? link(fill.c_str(), "foveation fill") : 0;
+            if (!fovFillProgram)
+            {
+                error = shaderError;
+                destroyFoveation();
+                return false;
+            }
+        }
         if (!fovProgram)
         {
             char const *vert = "#version 410 compatibility\n#extension GL_OVR_multiview2 : require\nlayout(num_views=2) in; flat out int view; "
@@ -781,14 +850,14 @@ struct Runtime::Impl
         if (!fovColor) glGenTextures(1, &fovColor);
         if (!fovDepth) glGenTextures(1, &fovDepth);
         glBindTexture(GL_TEXTURE_2D_ARRAY, fovColor);
-        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GLenum(colorFormat), w, h, 2 * kViewCount, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GLenum(colorFormat), w, h, layers, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_2D_ARRAY, fovDepth);
-        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH24_STENCIL8, w, h, 2 * kViewCount, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH24_STENCIL8, w, h, layers, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, 0);
@@ -796,6 +865,7 @@ struct Runtime::Impl
         glBindTexture(GL_TEXTURE_2D_ARRAY, previousArray);
         fovWidth = w;
         fovHeight = h;
+        fovLayers = layers;
         insetPlaced[0] = insetPlaced[1] = false;
         if (!glSucceeded("allocating the foveated target", error))
         {
@@ -865,6 +935,36 @@ struct Runtime::Impl
         return true;
     }
 
+    float maskRadius() const { return .5f * foveationScale * std::min(width, height); }
+
+    void setMaskUniforms(GLuint program)
+    {
+        GLfloat const centers[4] = { insetCenter[0][0], insetCenter[0][1], insetCenter[1][0], insetCenter[1][1] };
+        glUniform2fv(glGetUniformLocation(program, "uCenter"), 2, centers);
+        glUniform1f(glGetUniformLocation(program, "uRadius"), maskRadius());
+    }
+
+    // Masked method: cull the periphery's quads in the freshly cleared target (depth 0 fails every
+    // later depth test, so those quads are never shaded).
+    bool maskFoveation(std::string &error)
+    {
+        if (!foveationPending || !foveationMasked) return true;
+        GLState state;
+        state.save();
+        glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glDisable(GL_CULL_FACE); glDisable(GL_ALPHA_TEST);
+        glDisable(GL_STENCIL_TEST); glDisable(GL_RASTERIZER_DISCARD);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glEnable(GL_DEPTH_TEST); glDepthFunc(GL_ALWAYS); glDepthMask(GL_TRUE);
+        glViewport(0, 0, fovWidth, fovHeight);
+        glUseProgram(fovMaskProgram);
+        setMaskUniforms(fovMaskProgram);
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        bool const good = glSucceeded("masking the foveated periphery", error);
+        state.restore();
+        return good;
+    }
+
     // Blend the foveated target into the swapchain image and depth; closes foveation for this frame.
     bool resolveFoveation(std::string &error)
     {
@@ -893,6 +993,15 @@ struct Runtime::Impl
             glClearStencil(0);
             glClear(GL_STENCIL_BUFFER_BIT);
             glEnable(GL_DEPTH_TEST); glDepthFunc(GL_ALWAYS); glDepthMask(GL_TRUE);
+            if (foveationMasked)
+            {
+                glUseProgram(fovFillProgram);
+                glUniform1i(glGetUniformLocation(fovFillProgram, "uColor"), 0);
+                glUniform1i(glGetUniformLocation(fovFillProgram, "uDepth"), 1);
+                setMaskUniforms(fovFillProgram);
+            }
+            else
+            {
             glUseProgram(fovProgram);
             glUniform1i(glGetUniformLocation(fovProgram, "uColor"), 0);
             glUniform1i(glGetUniformLocation(fovProgram, "uDepth"), 1);
@@ -905,6 +1014,7 @@ struct Runtime::Impl
             glUniform2fv(glGetUniformLocation(fovProgram, "uCenter"), 2, centers);
             glUniform1f(glGetUniformLocation(fovProgram, "uRadius"), radius);
             glUniform1f(glGetUniformLocation(fovProgram, "uFeather"), std::max(4.f, radius * .18f));
+            }
             glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D_ARRAY, fovDepth); glBindSampler(1, 0);
             glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D_ARRAY, fovColor); glBindSampler(0, 0);
             glBindVertexArray(vao);
@@ -1849,7 +1959,7 @@ bool Runtime::bindMultiview(std::string &error)
         error = "cannot bind multiview without a ready OpenXR frame";
         return false;
     }
-    if (m_impl->foveateNow && m_impl->foveationMode != Foveation::Off && m_impl->foveationViews)
+    if (m_impl->foveateNow && m_impl->foveationMode != Foveation::Off && m_impl->foveationUsable())
     {
         std::string why;
         bool good = m_impl->ensureFoveation(why);
@@ -1861,8 +1971,8 @@ bool Runtime::bindMultiview(std::string &error)
                 m_impl->gameViewportSaved = true;
             }
             glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fovFbo);
-            m_impl->multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->fovColor, 0, 0, 2 * kViewCount);
-            m_impl->multiview(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, m_impl->fovDepth, 0, 0, 2 * kViewCount);
+            m_impl->multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->fovColor, 0, 0, m_impl->fovLayers);
+            m_impl->multiview(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, m_impl->fovDepth, 0, 0, m_impl->fovLayers);
             glDrawBuffer(GL_COLOR_ATTACHMENT0);
             GLenum const status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
             good = status == GL_FRAMEBUFFER_COMPLETE && glSucceeded("binding the foveated target", why);
@@ -1872,12 +1982,12 @@ bool Runtime::bindMultiview(std::string &error)
         {
             glViewport(0, 0, m_impl->fovWidth, m_impl->fovHeight);
             m_impl->foveationPending = true;
-            m_impl->boundViews = 2 * kViewCount;
+            m_impl->boundViews = m_impl->fovLayers;
             return true;
         }
         // Nothing was drawn into it yet this frame: carry on unfoveated, and stay so.
         std::fprintf(stderr, "OpenXR foveated rendering disabled: %s.\n", why.c_str());
-        m_impl->foveationViews = false;
+        m_impl->foveationFailed();
         m_impl->foveateNow = m_impl->foveationPending = false;
     }
     m_impl->restoreGameViewport();
@@ -1886,11 +1996,14 @@ bool Runtime::bindMultiview(std::string &error)
     return glSucceeded("binding OpenXR multiview", error);
 }
 
-void Runtime::setFoveation(Foveation mode, float scale)
+void Runtime::setFoveation(Foveation mode, float scale, bool masked)
 {
     scale = clampTo(scale, .3f, 1.f);
-    if (mode != m_impl->foveationMode || scale != m_impl->foveationScale)
+    if (mode != m_impl->foveationMode || scale != m_impl->foveationScale || masked != m_impl->foveationMasked)
         m_impl->insetPlaced[0] = m_impl->insetPlaced[1] = false;
+    // The masked method needs no 4-view multiview, so it also stands in where the inset method
+    // cannot run (GL_MAX_VIEWS_OVR < 4, or its target failed).
+    if (!m_impl->foveationPending) m_impl->foveationMasked = masked || !m_impl->foveationViews;
     m_impl->foveationMode = mode == Foveation::EyeTracked && !m_impl->eyeGazeSupported ? Foveation::Fixed : mode;
     m_impl->foveationScale = scale;
 }
@@ -1898,11 +2011,12 @@ void Runtime::setFoveation(Foveation mode, float scale)
 FoveationStatus Runtime::foveation() const
 {
     FoveationStatus status;
-    status.available = m_impl->foveationViews;
+    status.available = m_impl->foveationUsable();
+    status.masked = m_impl->foveationMasked;
     status.eyeTracking = m_impl->eyeGazeSupported;
     status.steamFrame = m_impl->steamFrame;
     status.gazeTracked = m_impl->gazeTracked;
-    status.mode = m_impl->foveationViews ? m_impl->foveationMode : Foveation::Off;
+    status.mode = status.available ? m_impl->foveationMode : Foveation::Off;
     status.scale = m_impl->foveationScale;
     m_impl->foveationSize(status.width, status.height);
     status.systemName = m_impl->systemName;
@@ -1914,8 +2028,10 @@ void Runtime::foveateFrame(bool on)
 {
     // Opting out after foveated drawing began would lose it: resolve instead.
     if (!m_impl->foveationPending)
-        m_impl->foveateNow = on && m_impl->imageReady && m_impl->foveationMode != Foveation::Off && m_impl->foveationViews && m_impl->foveationScale < 1;
+        m_impl->foveateNow = on && m_impl->imageReady && m_impl->foveationMode != Foveation::Off && m_impl->foveationUsable() && m_impl->foveationScale < 1;
 }
+
+bool Runtime::maskFoveation(std::string &error) { return m_impl->maskFoveation(error); }
 
 bool Runtime::resolveFoveation(std::string &error)
 {
@@ -2452,7 +2568,7 @@ bool Runtime::finishFrame(bool submit, std::string &error)
             if (!m_impl->resolveFoveation(why))
             {
                 std::fprintf(stderr, "OpenXR foveated rendering disabled: %s.\n", why.c_str());
-                m_impl->foveationViews = false;
+                m_impl->foveationFailed();
             }
         }
         else
