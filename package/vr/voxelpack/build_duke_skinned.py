@@ -51,6 +51,8 @@ BEND = {frozenset(p) for p in (('clavicle', 'upperarm'), ('chest', 'upperarm'), 
                                ('chest', 'neck'), ('neck', 'head'), ('clavicle', 'neck'), ('chest', 'head'),
                                ('clavicle', 'head'))}
 FINGER_R, WRIST_R = 1, 2
+# the shoulder blends wider (3 body voxels each side), so a raised or reaching arm does not kink at the deltoid
+SHOULDER = {frozenset(p) for p in (('clavicle', 'upperarm'), ('chest', 'upperarm'), ('spine', 'upperarm'))}
 
 
 def log(*a):
@@ -69,7 +71,8 @@ def pair_r(sk, a, b, fh):
         return FINGER_R
     if 'hand' in (na, nb):
         return WRIST_R
-    return (2 if frozenset((na, nb)) in BEND else 1) * fh
+    pair = frozenset((na, nb))
+    return (3 if pair in SHOULDER else 2 if pair in BEND else 1) * fh
 
 
 def layers(sk, cb, cs, scale, fh):
@@ -123,7 +126,7 @@ def corner_weights(sk, a, corners, fh):
     S = np.array(B.shape)
     idx = np.zeros((len(corners), 4), np.int64)
     w = np.zeros((len(corners), 4))
-    Rmax = 2 * fh
+    Rmax = 3 * fh
     for i, c in enumerate(corners):
         lo, hi = np.maximum(c - Rmax, 0), np.minimum(c + Rmax, S)
         box = B[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]]

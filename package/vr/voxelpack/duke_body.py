@@ -193,7 +193,7 @@ def v7_arm(sk, v7_exports, G, cidx, C, log):
     rad = np.hypot(F[:, 0] - sh[0], F[:, 2] - sh[2])
     F_ok = (F[:, 1] > seam_y) & ((u > wrist_u - 0.02) | (rad < ARM_R))
     # room under the arm for it to come down to the bind A-pose (no arm cell where the torso is)
-    F_ok &= ~((u < ARMPIT_ARM_U) & (F[:, 2] < sh[2] - ARMPIT_ARM_DZ))
+    F_ok &= ~armpit_cut(u, F[:, 2] - sh[2])
     fidx, F, u = fidx[F_ok], F[F_ok], u[F_ok]
     Fb = to_bind(F)
     segs = hand_segments(sk, 'l', P)
@@ -398,7 +398,7 @@ def build_body(sk, pack_root, v7_exports, fh=2, log=print):
     y, z = np.abs(C[:, 1]), C[:, 2]
     pit = (y >= ARMPIT_Y) & (z >= ARMPIT_Z[0]) & (z <= ARMPIT_Z[1])
     tor = (creg[tuple(cidx.T)] == 1) & pit
-    under = (creg[tuple(cidx.T)] == 3) & (y - sh[1] < ARMPIT_ARM_U) & (z < sh[2] - ARMPIT_ARM_DZ)
+    under = (creg[tuple(cidx.T)] == 3) & armpit_cut(y - sh[1], z - sh[2])
     for sel in (tor, under):
         ci = tuple(cidx[sel].T)
         cpal[ci], cbone[ci], creg[ci] = -1, -1, 0
@@ -416,7 +416,13 @@ DELT_Y = 0.25                        # Duke's own deltoid caps (outside the shou
 PACK_X = -0.13                       # the jetpack (behind the back) is rigid with the chest
 HIP_Z = 0.886                        # thighs below the hip joints
 ARMPIT_Y, ARMPIT_Z = 0.20, (1.22, 1.35)   # torso cells cleared under the arms (|y| >=, z range)
-ARMPIT_ARM_U, ARMPIT_ARM_DZ = 0.10, 0.05  # arm cells cleared: within 10 cm of the shoulder, 5 cm under its line
+ARMPIT_ARM_DZ, ARMPIT_ARM_SLOPE = 0.05, 0.35   # arm cells cleared under the arm line: 5 cm under it at the shoulder,
+                                                # deeper by 3.5 cm per 10 cm along the arm (no ledge where it ends)
+
+
+def armpit_cut(u, dz):
+    """Arm cells (u along the arm from the shoulder joint, dz above its line; metres) cleared under the arm."""
+    return dz < -(ARMPIT_ARM_DZ + ARMPIT_ARM_SLOPE * np.maximum(u, 0))
 
 
 def label_trunk(sk, C, cidx, creg, cbone):
