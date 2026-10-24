@@ -5,7 +5,9 @@
 Usage: make_release.py OUT [--binary eduke32-xr] [--assets DUKE_VR_ASSETS]
 
 OUT receives:
-  eduke32-vr/            launcher, DEF and pack builders, AA compatibility CON, docs,
+  eduke32-vr/            launcher, DEF and pack builders (and build_voxel_pack.py, which makes
+                         the Voxel Duke pack from the player's own copy of that mod), AA
+                         compatibility CON, docs,
                          GPL text, the binary (when given or built), a source
                          archive of the current commit (GPL source) and
                          vrpacks/original.zip and original-lowres.zip, the
@@ -53,8 +55,10 @@ def main():
 
     # Engine side.
     (game / 'package/vr').mkdir(parents=True)
-    for name in ('eduke32-vr-play', 'build_vr_def.py', 'build_vr_pack.py', 'money_wad.py'):
+    for name in ('eduke32-vr-play', 'build_vr_def.py', 'build_vr_pack.py', 'build_voxel_pack.py', 'money_wad.py'):
         shutil.copy2(REPO / 'package/vr' / name, game / 'package/vr' / name)
+    # Code only: the Voxel Duke pack is built on the player's machine from their own download.
+    shutil.copytree(REPO / 'package/vr/voxelpack', game / 'package/vr/voxelpack', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     shutil.copytree(REPO / 'package/vr/aa566', game / 'package/vr/aa566')
     (game / 'docs/vr').mkdir(parents=True)
     for doc in ('PLAYING.md', 'FULL_PITCH.md'):

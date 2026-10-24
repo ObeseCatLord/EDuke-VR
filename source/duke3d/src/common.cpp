@@ -414,6 +414,78 @@ static void G_ReadVRPackInfo(char const *path, char *name, size_t nameSize, char
     Xfree(text);
 }
 
+#ifdef USE_OPENXR
+// The pack's vrpack/autoload groups. A group can only be mounted from a real file, so one inside a
+// zipped pack is copied once to the user's cache (kept while its size matches) and mounted from there.
+static void G_LoadVRPackAutoload(void)
+{
+    static char const *const extensions[] = { "*.grp", "*.zip", "*.pk3" };
+    for (auto extension : extensions)
+    {
+        fnlist_t fnlist = FNLIST_INITIALIZER;
+        fnlist_getnames(&fnlist, "vrpack/autoload", extension, -1, 0);
+        for (BUILDVFS_FIND_REC *rec = fnlist.findfiles; rec; rec = rec->next)
+        {
+            char path[BMAX_PATH];
+            Bsnprintf(path, sizeof(path), "vrpack/autoload/%s", rec->name);
+            LOG_F(INFO, "Using group file %s", path);
+            if (initgroupfile(path) != -1)
+                continue;
+            char const *base = getenv("XDG_CACHE_HOME");
+            char dir[BMAX_PATH];
+            if (base && *base)
+                Bsnprintf(dir, sizeof(dir), "%s/eduke32-vr", base);
+            else if ((base = getenv("HOME")) || (base = getenv("LOCALAPPDATA")) || (base = getenv("TEMP")))
+                Bsnprintf(dir, sizeof(dir), "%s/%s", base, getenv("HOME") ? ".cache/eduke32-vr" : "eduke32-vr");
+            else
+                continue;
+            char cached[BMAX_PATH];
+            Bsnprintf(cached, sizeof(cached), "%s/vrpack-%s-%s", dir, g_vrLoadedPack, rec->name);
+            buildvfs_kfd const fd = kopen4load(path, 0);
+            if (fd == buildvfs_kfd_invalid)
+                continue;
+            int32_t const length = kfilelength(fd);
+            struct Bstat st;
+            bool fresh = Bstat(cached, &st) != 0 || st.st_size != length;
+            if (fresh)
+            {
+                // Create the cache folder level by level (~/.cache may not exist yet).
+                for (char *slash = Bstrchr(dir + 1, '/'); ; slash = Bstrchr(slash + 1, '/'))
+                {
+                    if (slash) *slash = 0;
+                    Bmkdir(dir, 0755);
+                    if (!slash) break;
+                    *slash = '/';
+                }
+                FILE *out = Bfopen(cached, "wb");
+                char *data = out ? (char *)Xmalloc(length) : nullptr;
+                bool const good = data && kread(fd, data, length) == length && fwrite(data, 1, length, out) == size_t(length);
+                Xfree(data);
+                if (out) Bfclose(out);
+                if (!good)
+                {
+                    LOG_F(WARNING, "VR model pack: could not copy %s to %s.", path, cached);
+                    remove(cached);
+                    kclose(fd);
+                    continue;
+                }
+            }
+            kclose(fd);
+            // An absolute path: the default search mode would look for it under the search paths.
+            int32_t const searchMode = pathsearchmode;
+            pathsearchmode = 1;
+            int const mounted = initgroupfile(cached);
+            pathsearchmode = searchMode;
+            if (mounted == -1)
+                LOG_F(WARNING, "VR model pack: could not load %s.", cached);
+            else
+                LOG_F(INFO, "VR model pack: %s mounted from %s%s.", path, cached, fresh ? " (copied)" : "");
+        }
+        fnlist_clearnames(&fnlist);
+    }
+}
+#endif
+
 static void G_LoadVRPack(void)
 {
 #ifdef USE_OPENXR
@@ -451,7 +523,7 @@ static void G_LoadVRPack(void)
     // games it lists (Alien Armageddon runs through the eduke32_vr_aa566 compatibility CON).
     bool const aa = g_scriptNamePtr && strcasestr(g_scriptNamePtr, "aa566");
     if (!games[0] || strcasestr(games, aa ? "aa566" : "duke3d"))
-        G_LoadGroupsInDir("vrpack/autoload");
+        G_LoadVRPackAutoload();
     if (filter[0])
         setenv("EDUKE32_XR_MODEL_FILTER", filter, 0);
 #endif

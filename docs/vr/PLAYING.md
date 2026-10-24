@@ -78,6 +78,24 @@ The packs are:
   - Single solid shells, low poly, clean painted skins.
 - **Personal packs**, never redistributed: Duke Nukem Forever 2001 and Voxel Duke.
 
+#### Voxel Duke pack (build it yourself)
+
+The release ships no voxel art. With your own copy of **Voxel Duke Nukem 3D v1.0** by Daniel
+Peterson ("Cheello") (`voxel_duke3d.zip`), one command builds the pack on your machine:
+
+```sh
+python3 package/vr/build_voxel_pack.py ~/Downloads/voxel_duke3d.zip
+```
+
+- **What it builds:** first-person weapons meshed from the mod's voxels, with hand poses solved for each. The weapons are the pistol, shotgun, ripper, RPG, pipe bomb, shrinker, expander, devastator, trip bomb and freezer.
+- **Also built:** the Mighty Foot boot, the third-person Duke and the first-person body. The pack also loads the mod itself, so the world is voxels too.
+- **Not covered by the voxels:** hands, the full-body IK model, detonator, flamethrower, laser and wheel. These come from the original set.
+- **Requirements:** Python 3 with numpy, scipy and Pillow. It runs on the CPU only and takes about 20 minutes, most of it solving the hand poses.
+- **Version check:** the zip is checked against v1.0's checksum. `--any-version` tries another release.
+- **Where it goes:** the pack lands in `duke-vr-assets/voxel-duke/`, so the launcher lists it. A ready-made copy goes to `~/.local/share/eduke32-vr/vrpacks/voxel` (or `voxel.zip` with `--zip`).
+- **Choosing it:** pick **Voxel Duke** in VR Setup > Models, or run `eduke32-vr-play --pack voxel`.
+- **Sharing:** the built pack is third-party art. Keep it to yourself. Its `pack.json` marks it non-redistributable, so release builds refuse it.
+
 - **Options > VR Setup > Models** lists the installed packs (their titles), plus **2D sprites (no models)** (`vr_models 0`), which applies at once.
 - Choosing a pack saves it in the game config (`[Setup] VRModelPack`) and loads it on the next start, like any mod. Launched through `eduke32-vr-play`, the game offers to restart right away.
 - `-vrpack NAME` picks a pack for one run, and `-vrpack none` loads none.
@@ -323,6 +341,33 @@ Only identical, current builds play together. The network protocol (NETVERSION 9
   room-over-room and mirror frames use the per-eye path (about 2x draw calls).
 - The flat desktop mirror pass is skipped in XR; mirrors are drawn per eye.
 - Lower `EDUKE32_XR_RENDER_SCALE` first if the headset drops frames.
+
+### Foveated rendering
+
+Foveated rendering is set in **Options > VR Setup**: **Foveated rendering** (`vr_foveation`) and **Foveation strength** (`vr_foveation_level`).
+
+**Modes:**
+- **Auto** (the default) uses eye-tracked foveation on a Steam Frame and is off on other headsets.
+- **Off**.
+- **Fixed** keeps full detail around each lens centre.
+- **Eye tracked** keeps full detail where you look, using `XR_EXT_eye_gaze_interaction`. It falls back to fixed when there is no eye tracker, or after half a second without a tracked gaze.
+
+**How it works:**
+- Single-pass frames render each eye twice in the same multiview pass. One view covers the whole field of view at reduced resolution; the other is a full-resolution inset around the gaze or lens centre.
+- The two are blended into the headset image: a full-detail circle with a soft edge, and the upscaled periphery outside it.
+- Inside the circle, pixels are identical to unfoveated rendering.
+
+**Strength:** Low, Medium and High render the periphery at 60%, 50% or 40% of the resolution per axis. The inset is the same fraction of each view, so about 72%, 50% or 32% of the pixels are rendered.
+
+**When it applies:**
+- Per-eye frames (steep pitch, room over room, mirrors) are drawn unfoveated.
+- HUD and menus are drawn after the blend, at full resolution.
+
+**On the Steam Frame:**
+- **Detection:** the Frame is detected from the SteamVR system name, or from SteamVR reporting an eye tracker. This covers standalone and streamed play. `EDUKE32_XR_HEADSET=frame` (or `=other`) overrides the detection.
+- **Streaming:** SteamVR's foveated streaming is separate and automatic. This setting reduces the game's own rendering cost.
+
+Foveation trades extra vertex work (four views instead of two) and a blend pass for fewer shaded pixels. It pays off when the GPU is fill-limited, as on a standalone headset at native resolution.
 
 ## Held weapon models
 
