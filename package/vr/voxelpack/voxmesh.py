@@ -303,8 +303,29 @@ def weld_check(pos, tris, q=1.0 / 64):
                 unbalanced_directed=int(unbalanced), components=len(roots))
 
 
-def save_png(arr, path):
-    Image.fromarray(arr, 'RGBA').save(path)
+def opaque_skin(arr):
+    """Base skins must be fully opaque: the engine treats any transparent texel as an alpha-blended
+    model, which the stereo replay path rejects. Unused texels take the nearest used texel's colour."""
+    from scipy import ndimage
+    arr = np.asarray(arr)
+    hole = arr[..., 3] < 255
+    if not hole.any():
+        return arr
+    out = arr.copy()
+    if hole.all():
+        out[..., 3] = 255
+        return out
+    _, (iy, ix) = ndimage.distance_transform_edt(hole, return_indices=True)
+    out[..., :3] = arr[iy, ix, :3]
+    out[..., 3] = 255
+    return out
+
+
+def save_png(arr, path, opaque=None):
+    """Glow maps keep their alpha; every other skin is written opaque (see opaque_skin)."""
+    if opaque is None:
+        opaque = not str(path).endswith('_glow.png')
+    Image.fromarray(opaque_skin(arr) if opaque else np.asarray(arr), 'RGBA').save(path)
 
 
 def coarse_part(grid, palette, solid, f, A, occ_frac=0.375):
