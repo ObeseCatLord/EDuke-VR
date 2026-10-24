@@ -5,7 +5,12 @@
 // transform replaced by the two saved XR eye transforms.  The vertex payload
 // remains eye-specific: a_eye merely excludes the payload from the other
 // multiview layer.
-layout(num_views=2) in;
+// Foveated frames compile with XR_VIEWS 4: views 2 and 3 are the full-detail insets of the
+// left and right eyes, cropped from the same projection (u_inset: scale xy, offset zw).
+#ifndef XR_VIEWS
+#define XR_VIEWS 2
+#endif
+layout(num_views=XR_VIEWS) in;
 
 in float a_eye;
 
@@ -19,10 +24,13 @@ uniform float u_usePalette;
 uniform mat4 u_projection[2];
 uniform mat4 u_rotation[2];
 uniform mat4 u_modelview[2];
+#if XR_VIEWS > 2
+uniform vec4 u_inset[2];
+#endif
 
 void main()
 {
-   int view = int(gl_ViewID_OVR);
+   int view = int(gl_ViewID_OVR) & 1;
    vec4 vertex = u_rotation[view] * gl_Vertex;
    vec4 eyeCoordPosition = u_modelview[view] * vertex;
    // This uniform is native MVP: projection for identity-modelview ART,
@@ -31,6 +39,11 @@ void main()
 
    // A finite, outside-the-frustum position makes an eye-owned payload
    // disappear from the other layer without depending on user clip planes.
+#if XR_VIEWS > 2
+   if (gl_ViewID_OVR >= 2u)
+      gl_Position.xy = gl_Position.xy*u_inset[view].xy + gl_Position.w*u_inset[view].zw;
+#endif
+
    if (a_eye >= 0.0 && a_eye != float(view))
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 

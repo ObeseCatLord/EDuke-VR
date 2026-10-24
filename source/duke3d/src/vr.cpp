@@ -26,6 +26,7 @@
 
 // VR settings (cvars; vr.h).
 int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1;
+int32_t vr_foveation=0, vr_foveation_level=1;
 
 // Engine-private depth-clear latch for Polymost room passes.
 extern int32_t yax_polymostclearzbuffer;
@@ -189,6 +190,8 @@ void G_XRRegisterCvars()
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
+        { "vr_foveation", "VR foveated rendering: 0 = auto (eye-tracked on a Steam Frame, else off), 1 = off, 2 = fixed, 3 = eye-tracked (fixed without an eye tracker)", (void *)&vr_foveation, CVAR_INT, 0, 3 },
+        { "vr_foveation_level", "VR foveation strength: 0 = low, 1 = medium, 2 = high (less detail outside the centre/gaze, faster)", (void *)&vr_foveation_level, CVAR_INT, 0, 2 },
     };
     for (auto &cv : cvars) OSD_RegisterCvar(&cv, osdcmd_cvar_set);
 }
@@ -4553,6 +4556,49 @@ static void updateTwoHand()
 } // namespace
 
 
+// Foveated rendering for the stereo world: the periphery at `scale` resolution per axis and a
+// full-detail inset of the same size (as a fraction of the view) around the lens centre or the gaze.
+static float const FoveationScales[3]={.6f,.5f,.4f};
+
+static eduke_xr::Foveation chosenFoveation(eduke_xr::FoveationStatus const &status)
+{
+    using eduke_xr::Foveation;
+    if (auto const forced=std::getenv("EDUKE32_XR_FOVEATION"))
+        return !Bstrcmp(forced,"eye") ? Foveation::EyeTracked : !Bstrcmp(forced,"fixed") ? Foveation::Fixed : Foveation::Off;
+    switch (vr_foveation)
+    {
+        case 1: return Foveation::Off;
+        case 2: return Foveation::Fixed;
+        case 3: return Foveation::EyeTracked;
+        default: return status.steamFrame ? Foveation::EyeTracked : Foveation::Off;
+    }
+}
+
+static void applyFoveation(eduke_xr::Runtime *runtime)
+{
+    auto const before=runtime->foveation();
+    float scale=FoveationScales[clamp(vr_foveation_level,0,2)];
+    if (auto const forced=std::getenv("EDUKE32_XR_FOVEATION_SCALE")) scale=float(Batof(forced));
+    runtime->setFoveation(chosenFoveation(before),scale);
+    auto const after=runtime->foveation();
+    static int reported=-1; static float reportedScale;
+    if (int(after.mode)!=reported || after.scale!=reportedScale)
+    {
+        static char const *const names[]={"off","fixed","eye-tracked"};
+        LOG_F(INFO,"OpenXR foveation: %s (vr_foveation=%d level=%d scale=%.2f target=%ux%u per view; %s, eye tracker %s, Steam Frame %s).",
+              names[int(after.mode)],vr_foveation,vr_foveation_level,after.scale,after.width,after.height,
+              after.available ? "available" : "unavailable",after.eyeTracking ? "yes" : "no",after.steamFrame ? "yes" : "no");
+        reported=int(after.mode); reportedScale=after.scale;
+    }
+}
+
+char const *G_XRFoveationAutoName()
+{
+    auto *runtime=sdlayer_xr_worldRuntime();
+    if (!runtime) return "Auto";
+    return runtime->foveation().steamFrame ? "Auto (eye-tracked)" : "Auto (off)";
+}
+
 void G_XRBeginFrame()
 {
     runConsoleRequest();
@@ -4584,6 +4630,7 @@ void G_XRBeginFrame()
     auto *runtime=sdlayer_xr_worldRuntime();
     if (!runtime) { neutral(); return; }
     logPerf(runtime);
+    applyFoveation(runtime);
     std::string error;
     auto const status=runtime->beginFrame(pendingFrame,error);
     if (status == eduke_xr::Runtime::FrameResult::Error || status == eduke_xr::Runtime::FrameResult::Exit)
@@ -4899,6 +4946,17 @@ static void drawEyeMirror(Camera const &cam, int32_t smoothRatio, Eye const *eye
 }
 
 
+// Bind the stereo replay target: the swapchain's two views, or the foveated four (each eye whole
+// at reduced resolution, then its full-detail inset) while this frame is foveated.
+static bool bindStereo(eduke_xr::Runtime *runtime, std::string &error)
+{
+    if (!runtime->bindMultiview(error)) return false;
+    float inset[8];
+    runtime->foveationInset(inset);
+    polymost_xrSetStereoViews(int(runtime->boundViews()),inset);
+    return true;
+}
+
 bool G_XRDrawRooms(int32_t smoothRatio)
 {
     double const timingStart=xrNowMs();
@@ -5037,6 +5095,8 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     bool animated=false, good=true, usedMultiview=false, usedMaskMultiview=false, usedHandModel=false, usedModelMultiview=false, attemptedHandModel=false;
     videoSetViewableArea(0,0,xdim-1,ydim-1);
     auto const drawOpaque = [&](bool collect) {
+        // Per-eye native drawing goes to the full-resolution image: end any foveation first.
+        if (!collect && !(good=runtime->resolveFoveation(error))) return false;
         for (unsigned i=0;i<2 && good;++i)
         {
             auto &eye=eyes[i];
@@ -5103,12 +5163,16 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                   std::atan2(eyes[0].upSin,eyes[0].upCos)*180.f/Pi,nativePitch(body.horizon)*180.f/Pi,
                   frame.views[0].fov.angleLeft,frame.views[0].fov.angleRight,frame.views[0].fov.angleUp,frame.views[0].fov.angleDown);
     }
+    // Foveate only frames that replay the world in single-pass multiview; test captures compare
+    // exact full-resolution pixels and stay unfoveated.
+    runtime->foveateFrame(singlePass && !fixtureTest && polymost_xrFoveationUsable() && !std::getenv("EDUKE32_XR_TEST_CAPTURE")
+                          && !std::getenv("EDUKE32_XR_MODEL_OUTPUT") && !std::getenv("EDUKE32_XR_TEST_MASK_ORACLE"));
     if (singlePass)
     {
         bool committed=drawOpaque(true);
         if (committed)
         {
-            good=runtime->bindMultiview(error);
+            good=bindStereo(runtime,error);
             if (good)
             {
                 // Collection can execute unsupported native draw families on
@@ -5377,6 +5441,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             bool oracleSamples[2]{}, oracleCompared[2]{};
             auto const drawHandModel = [&](bool collect,NativeOracleTarget *oracle=nullptr) {
                 bool accepted=true;
+                if (!collect && !(good=runtime->resolveFoveation(error))) return false;
                 for (unsigned i=0;i<2 && good;++i)
                 {
                     good=runtime->bindEye(i,error);
@@ -5455,7 +5520,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 if (good) good=captureModels("-collected");
                 if (committed && good)
                 {
-                    good=runtime->bindMultiview(error);
+                    good=bindStereo(runtime,error);
                     if (good)
                     {
                         committed=polymost_xrReplayCollection()==POLYMOST_XR_COLLECT_OK;
@@ -5605,6 +5670,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         bool const maskCapture=maskPrefix && maskPrefix[0] && singlePass && !fixtureTest && worldFrames==59;
         auto const drawMasks = [&](bool collect,NativeOracleTarget *oracle=nullptr) {
             bool accepted=true;
+            if (!collect && !(good=runtime->resolveFoveation(error))) return false;
             for (unsigned i=0;i<2 && good;++i)
             {
                 auto const &eye=eyes[i];
@@ -5681,7 +5747,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
             if (snapshot && good) good=captureCollection("-mask-after");
             if (committed && good)
             {
-                good=runtime->bindMultiview(error);
+                good=bindStereo(runtime,error);
                 if (good)
                 {
                     committed=polymost_xrReplayCollection() == POLYMOST_XR_COLLECT_OK;
@@ -5770,6 +5836,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     }
     install(logical);
     polymost_xrProjectionReset();
+    polymost_xrSetStereoViews(2,nullptr);
     videoSetViewableArea(oldStart.x,oldStart.y,oldEnd.x,oldEnd.y);
     renderSetAspect(oldRange,oldAspect);
     std::string endError;

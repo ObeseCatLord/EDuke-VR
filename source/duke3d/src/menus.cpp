@@ -1418,6 +1418,15 @@ static MenuOption_t MEO_VR_FULLBODY = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn
 static MenuEntry_t ME_VR_FULLBODY = MAKE_MENUENTRY( "Full body", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_FULLBODY, Option );
 static MenuOption_t MEO_VR_TWOHAND = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_twohand );
 static MenuEntry_t ME_VR_TWOHAND = MAKE_MENUENTRY( "Two-handed aiming", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_TWOHAND, Option );
+// Foveated rendering (vr_foveation): "Auto" names what it picks on this headset (see Menu_PopulateVRSetup).
+static char const *MEOSN_VR_FOVEATION[] = { "Auto", "Off", "Fixed", "Eye tracked", };
+static MenuOptionSet_t MEOS_VR_FOVEATION = MAKE_MENUOPTIONSET( MEOSN_VR_FOVEATION, NULL, 0x2 );
+static MenuOption_t MEO_VR_FOVEATION = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_FOVEATION, &vr_foveation );
+static MenuEntry_t ME_VR_FOVEATION = MAKE_MENUENTRY( "Foveated rendering", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_FOVEATION, Option );
+static char const *MEOSN_VR_FOVEATIONLEVEL[] = { "Low", "Medium", "High", };
+static MenuOptionSet_t MEOS_VR_FOVEATIONLEVEL = MAKE_MENUOPTIONSET( MEOSN_VR_FOVEATIONLEVEL, NULL, 0x2 );
+static MenuOption_t MEO_VR_FOVEATIONLEVEL = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_FOVEATIONLEVEL, &vr_foveation_level );
+static MenuEntry_t ME_VR_FOVEATIONLEVEL = MAKE_MENUENTRY( "Foveation strength", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_FOVEATIONLEVEL, Option );
 static MenuOption_t MEO_VR_LASER = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_laser );
 static MenuEntry_t ME_VR_LASER = MAKE_MENUENTRY( "Laser pointer", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_LASER, Option );
 static char const *MEOSN_VR_LEFTTRIGGER[] = { "Mighty foot", "Alt fire", };
@@ -1433,6 +1442,8 @@ static MenuEntry_t *MEL_VRSETUP[] = {
     &ME_VR_MODELSET,
     &ME_VR_FULLBODY,
     &ME_VR_TWOHAND,
+    &ME_VR_FOVEATION,
+    &ME_VR_FOVEATIONLEVEL,
     &ME_VR_LASER,
     &ME_VR_LEFTTRIGGER,
 #ifdef USE_VOICECHAT
@@ -2723,6 +2734,7 @@ static void Menu_PopulateVRSetup(void)
     MEOS_VR_MODELSET.numOptions = count + 1;
     vrmodelset = vr_models ? min(G_XRChosenModelSet(), count - 1) : count;
     MEO_VR_MODELSET.currentOption = vrmodelset;
+    MEOSN_VR_FOVEATION[0] = G_XRFoveationAutoName();
 }
 #endif
 

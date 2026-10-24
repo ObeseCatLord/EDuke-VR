@@ -58,6 +58,10 @@ void polymost_xrEndTint();
 // The Build CPU traversal remains on its covering symmetric frustum.
 void polymost_xrProjection(float leftTan, float rightTan, float downTan, float upTan);
 void polymost_xrProjectionReset();
+// Multiview replay target: 2 views, or 4 for a foveated frame (views 2,3 are the eyes' full-detail
+// insets; inset = 2 eyes x {scale x, scale y, offset x, offset y} applied to clip xy).
+void polymost_xrSetStereoViews(int views, float const *inset);
+bool polymost_xrFoveationUsable();
 // Explicit upward view pitch (any angle) and viewport direction clip for
 // the current XR projection; reset by the next polymost_xrProjection call.
 void polymost_xrViewPitch(float upSin, float upCos, float viewportClip, float nearClip);

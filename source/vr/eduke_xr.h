@@ -49,6 +49,26 @@ struct PerfStats
     unsigned frames = 0, flushes = 0, gpuFrames = 0;
 };
 
+// Foveated rendering of the multiview world (see Runtime::foveateFrame).
+enum class Foveation : uint32_t
+{
+    Off,
+    Fixed,       // full detail around each lens centre
+    EyeTracked,  // full detail where you look (XR_EXT_eye_gaze_interaction); fixed while gaze is lost
+};
+
+struct FoveationStatus
+{
+    bool        available = false;    // GL multiview with 4 views (both eyes, each wide plus inset)
+    bool        eyeTracking = false;  // the system reports an eye tracker
+    bool        steamFrame = false;   // a Valve Steam Frame (standalone or streamed)
+    bool        gazeTracked = false;  // a tracked gaze located for the current frame
+    Foveation   mode = Foveation::Off;  // effective mode (after availability)
+    float       scale = 1;            // periphery resolution per axis (= inset size, in image fractions)
+    uint32_t    width = 0, height = 0;  // per-view size of the foveated target
+    std::string systemName, runtimeName;
+};
+
 struct ActionInput
 {
     bool      focused = false;
@@ -110,6 +130,20 @@ class Runtime
     FrameResult beginFrame(Frame &frame, std::string &error);
     bool        bindEye(uint32_t eye, std::string &error);
     bool        bindMultiview(std::string &error);
+    // Foveation: setFoveation picks the mode and the periphery scale (0.3..1; the full-detail inset is
+    // the same fraction of each view). A frame opts in with foveateFrame(true) before its first
+    // bindMultiview: from then on bindMultiview binds a 4-view target (views 0,1 the whole eyes at
+    // `scale` resolution, 2,3 the full-detail insets; boundViews() and foveationInset() give the replay
+    // what it needs) until resolveFoveation() blends it into the swapchain image and depth. Every
+    // runtime call that reads or draws the swapchain image resolves first; per-eye native drawing
+    // (bindEye) must call resolveFoveation() itself before it draws.
+    void            setFoveation(Foveation mode, float scale);
+    FoveationStatus foveation() const;
+    void            foveateFrame(bool on);
+    bool            resolveFoveation(std::string &error);
+    uint32_t        boundViews() const;
+    // Per eye: clip-space xy scale and offset from the full view to its inset (8 floats).
+    void            foveationInset(float *out) const;
     // Redirect native UI into a reusable RGBA8/depth-stencil target. Opaque
     // title menus clear black; overlay capture preserves the rendered stereo
     // world. One logical owner retains the existing acquired XR frame.

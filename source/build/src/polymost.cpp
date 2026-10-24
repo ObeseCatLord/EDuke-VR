@@ -946,24 +946,76 @@ struct xr_opaque_locations_t
     GLint texturePosSize, halfTexel, palswapPos, palswapSize, clamp, shade, numShades, vis, fog;
     GLint colorOnly, paletteEnabled, detailEnabled, glowEnabled, npot, shadeInterpolate, correction;
     GLint projection[2], rotation[2], modelview[2];
+    GLint inset[2];
 };
 
 static xr_opaque_locations_t xrOpaqueLoc{};
+// Replay target: 2 views, or 4 for a foveated frame (see polymost_xrSetStereoViews). The
+// 4-view program is built on first use; xrOpaqueLoc holds the active program's locations.
+static int xrStereoViews = 2;
+static float xrStereoInset[2][4];
+static GLuint xrFoveatedProgram;
+static xr_opaque_locations_t xrOpaqueLoc2{}, xrOpaqueLoc4{};
+
+void polymost_xrSetStereoViews(int const views, float const *inset)
+{
+    xrStereoViews = views == 4 ? 4 : 2;
+    if (inset) Bmemcpy(xrStereoInset, inset, sizeof(xrStereoInset));
+}
+
+static std::string polymost_xrVertexSource(int const views)
+{
+    std::string code(polymost1VertXR);
+    if (views > 2)
+    {
+        // After the #version and #extension lines: the shader's own default stays 2.
+        auto at = code.find('\n');
+        at = at == std::string::npos ? at : code.find('\n', at + 1);
+        code.insert(at == std::string::npos ? 0 : at + 1, "#define XR_VIEWS " + std::to_string(views) + "\n");
+    }
+    return code;
+}
+
+static GLuint polymost_xrLinkReplay(int views, xr_opaque_locations_t &loc);
+static bool xrFoveatedFailed;
+
+// The 4-view program, linked once on first foveated use. A driver that cannot link it
+// (GL_MAX_VIEWS_OVR < 4) reports foveation unusable instead of retrying every frame.
+static bool polymost_xrInitFoveatedReplay()
+{
+    if (xrStereoViews != 4 || xrFoveatedProgram) return true;
+    if (!xrFoveatedFailed)
+    {
+        xrFoveatedProgram = polymost_xrLinkReplay(4, xrOpaqueLoc4);
+        xrFoveatedFailed = !xrFoveatedProgram;
+        if (xrFoveatedFailed) LOG_F(WARNING, "OpenXR foveated rendering: the 4-view replay shader did not link; foveation stays off.");
+    }
+    return xrFoveatedProgram != 0;
+}
+
+bool polymost_xrFoveationUsable() { return !xrFoveatedFailed; }
+static std::string polymost_xrReplayFragment();
+static bool polymost_xrInitReplayProgram();
 
 static bool polymost_xrInitOpaqueReplay()
 {
     if (xrOpaque.program && xrOpaque.vbo)
-        return true;
+    {
+        return polymost_xrInitFoveatedReplay();
+    }
 
     if (xrOpaque.program) glDeleteProgram(xrOpaque.program);
     if (xrOpaque.vbo) glDeleteBuffers(1, &xrOpaque.vbo);
     xrOpaque.program = xrOpaque.vbo = 0;
 
-    // Replay variant of the native fragment shader: the replay never enables detail/glow maps (their
-    // samplers are skipped) and fetches the next shade's palette entries only when shade
-    // interpolation is on. Same result for the replay's uniforms, fewer texture fetches per pixel.
-    static std::string const replayFragment = []
-    {
+    return polymost_xrInitReplayProgram();
+}
+
+// Replay variant of the native fragment shader: the replay never enables detail/glow maps (their
+// samplers are skipped) and fetches the next shade's palette entries only when shade
+// interpolation is on. Same result for the replay's uniforms, fewer texture fetches per pixel.
+static std::string polymost_xrReplayFragment()
+{
         std::string code(polymost1FragmentSource());
         auto const erase = [&code](char const *text)
         {
@@ -993,10 +1045,44 @@ static bool polymost_xrInitOpaqueReplay()
                 code.insert(after + Bstrlen("    vec4 palettedColor = texture2D(s_palette, vec2(colorIndex, c_zero));\n"), block);
         }
         return code;
-    }();
-    char const * const vertexSource[] = { polymost1VertXR };
+}
+
+static bool polymost_xrInitReplayProgram()
+{
+    GLuint const program = polymost_xrLinkReplay(2, xrOpaqueLoc2);
+    if (!program)
+        return false;
+    GLuint vbo = 0;
+    glGenBuffers(1, &vbo);
+    static bool injected;
+    char const * const failure = Bgetenv("EDUKE32_XR_TEST_FAIL");
+    if (!injected && failure && !Bstrcmp(failure,"replay-init"))
+    {
+        injected = true;
+        // Invalid buffer target deliberately queues an owned GL error. The
+        // same cleanup/retry path must work without poisoning Runtime::bindEye.
+        glBindBuffer(GL_TEXTURE_2D,0);
+        if (vbo) glDeleteBuffers(1,&vbo);
+        vbo = 0;
+        xrOpaque.reason = "injected opaque replay initialization";
+    }
+    if (!vbo)
+    {
+        glDeleteProgram(program);
+        return false;
+    }
+    xrOpaque.program = program;
+    xrOpaque.vbo = vbo;
+    return polymost_xrInitFoveatedReplay();
+}
+
+static GLuint polymost_xrLinkReplay(int const views, xr_opaque_locations_t &loc)
+{
+    static std::string const replayFragment = polymost_xrReplayFragment();
+    std::string const vertexCode = polymost_xrVertexSource(views);
+    char const * const vertexSource[] = { vertexCode.c_str() };
     char const * const fragmentSource[] = { replayFragment.c_str() };
-    GLuint const vertex = polymost_xrCompileShader(GL_VERTEX_SHADER, vertexSource, nullptr, "opaque replay vertex");
+    GLuint const vertex = polymost_xrCompileShader(GL_VERTEX_SHADER, vertexSource, nullptr, views > 2 ? "foveated replay vertex" : "opaque replay vertex");
     GLuint const fragment = polymost_xrCompileShader(GL_FRAGMENT_SHADER, fragmentSource, nullptr, "opaque replay fragment");
     if (!vertex || !fragment)
     {
@@ -1026,10 +1112,10 @@ static bool polymost_xrInitOpaqueReplay()
     if (!linked)
     {
         glDeleteProgram(program);
-        return false;
+        return 0;
     }
 
-#define XR_OPAQUE_UNIFORM(name, member) xrOpaqueLoc.member = glGetUniformLocation(program, name)
+#define XR_OPAQUE_UNIFORM(name, member) loc.member = glGetUniformLocation(program, name)
     XR_OPAQUE_UNIFORM("s_texture", texture); XR_OPAQUE_UNIFORM("s_palswap", palswap); XR_OPAQUE_UNIFORM("s_palette", palette);
     XR_OPAQUE_UNIFORM("s_detail", detail); XR_OPAQUE_UNIFORM("s_glow", glow);
     XR_OPAQUE_UNIFORM("u_texturePosSize", texturePosSize); XR_OPAQUE_UNIFORM("u_halfTexelSize", halfTexel);
@@ -1042,29 +1128,9 @@ static bool polymost_xrInitOpaqueReplay()
     XR_OPAQUE_UNIFORM("u_projection[0]", projection[0]); XR_OPAQUE_UNIFORM("u_projection[1]", projection[1]);
     XR_OPAQUE_UNIFORM("u_rotation[0]", rotation[0]); XR_OPAQUE_UNIFORM("u_rotation[1]", rotation[1]);
     XR_OPAQUE_UNIFORM("u_modelview[0]", modelview[0]); XR_OPAQUE_UNIFORM("u_modelview[1]", modelview[1]);
+    XR_OPAQUE_UNIFORM("u_inset[0]", inset[0]); XR_OPAQUE_UNIFORM("u_inset[1]", inset[1]);
 #undef XR_OPAQUE_UNIFORM
-    GLuint vbo = 0;
-    glGenBuffers(1, &vbo);
-    static bool injected;
-    char const * const failure = Bgetenv("EDUKE32_XR_TEST_FAIL");
-    if (!injected && failure && !Bstrcmp(failure,"replay-init"))
-    {
-        injected = true;
-        // Invalid buffer target deliberately queues an owned GL error. The
-        // same cleanup/retry path must work without poisoning Runtime::bindEye.
-        glBindBuffer(GL_TEXTURE_2D,0);
-        if (vbo) glDeleteBuffers(1,&vbo);
-        vbo = 0;
-        xrOpaque.reason = "injected opaque replay initialization";
-    }
-    if (!vbo)
-    {
-        glDeleteProgram(program);
-        return false;
-    }
-    xrOpaque.program = program;
-    xrOpaque.vbo = vbo;
-    return true;
+    return program;
 }
 
 static bool polymost_xrCompatibleOpaque(xr_opaque_packet_t const &left, xr_opaque_packet_t const &right)
@@ -1419,7 +1485,11 @@ polymost_xr_collect_result polymost_xrReplayCollection()
     for (int i = 0; i < MAXTEXUNIT - GL_TEXTURE0; ++i) { GLint sampler = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, i, &sampler); samplers[i] = sampler; }
 
     buildgl_resetStateAccounting();
-    glUseProgram(xrOpaque.program); glBindBuffer(GL_ARRAY_BUFFER, xrOpaque.vbo); glClientActiveTexture(GL_TEXTURE0);
+    GLuint const replayProgram = xrStereoViews == 4 ? xrFoveatedProgram : xrOpaque.program;
+    xrOpaqueLoc = xrStereoViews == 4 ? xrOpaqueLoc4 : xrOpaqueLoc2;
+    glUseProgram(replayProgram); glBindBuffer(GL_ARRAY_BUFFER, xrOpaque.vbo); glClientActiveTexture(GL_TEXTURE0);
+    for (int eye = 0; eye < 2; ++eye)
+        if (xrStereoViews == 4 && xrOpaqueLoc.inset[eye] >= 0) glUniform4fv(xrOpaqueLoc.inset[eye], 1, xrStereoInset[eye]);
     size_t left = 0, right = 0;
     xrOpaque.stats = {};
     static bool injectedBefore;
@@ -1637,9 +1707,10 @@ void polymost_glreset()
     if (!nogl)
     {
         if (xrOpaque.program) glDeleteProgram(xrOpaque.program);
+        if (xrFoveatedProgram) glDeleteProgram(xrFoveatedProgram);
         if (xrOpaque.vbo) glDeleteBuffers(1, &xrOpaque.vbo);
     }
-    xrOpaque.program = xrOpaque.vbo = 0;
+    xrOpaque.program = xrOpaque.vbo = xrFoveatedProgram = 0;
     xrOpaque.active = false;
 #endif
     buildgl_resetStateAccounting();

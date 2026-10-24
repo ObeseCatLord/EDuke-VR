@@ -16,6 +16,7 @@ extern uint32_t polymost_xr2DDraws;
 #include <SDL2/SDL_syswm.h>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +32,24 @@ namespace
 {
 constexpr uint32_t kViewCount = 2;
 constexpr float    kNearZ = .05f, kFarZ = 100.f;
+
+XrVector3f rotateVector(XrQuaternionf const &q, XrVector3f const &v)
+{
+    // v + 2w(u x v) + 2u x (u x v)
+    XrVector3f const u { q.x, q.y, q.z };
+    XrVector3f const t { 2 * (u.y * v.z - u.z * v.y), 2 * (u.z * v.x - u.x * v.z), 2 * (u.x * v.y - u.y * v.x) };
+    return { v.x + q.w * t.x + (u.y * t.z - u.z * t.y), v.y + q.w * t.y + (u.z * t.x - u.x * t.z), v.z + q.w * t.z + (u.x * t.y - u.y * t.x) };
+}
+
+template <typename T> T clampTo(T value, T low, T high) { return value < low ? low : value > high ? high : value; }
+
+bool containsNoCase(std::string const &text, char const *wanted)
+{
+    std::string a(text), b(wanted);
+    for (auto &c : a) c = char(std::tolower((unsigned char)c));
+    for (auto &c : b) c = char(std::tolower((unsigned char)c));
+    return a.find(b) != std::string::npos;
+}
 
 std::string xrError(XrInstance instance, XrResult result, char const *where)
 {
@@ -435,6 +454,30 @@ struct Runtime::Impl
     GLuint                                  fbo = 0, depth = 0, program = 0, vao = 0, vbo = 0;
     GLuint                                  menuFbo = 0, menuColor = 0, menuDepth = 0, menuProgram = 0, menuFlatProgram = 0, menuVao = 0, menuVbo = 0;
     PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC multiview = nullptr;
+    int64_t                                 colorFormat = 0;
+    // Foveated rendering: a 4-layer multiview target (both eyes whole at `foveationScale`, then
+    // their full-detail insets) blended into the swapchain by resolveFoveation.
+    Foveation                               foveationMode = Foveation::Off;
+    float                                   foveationScale = 1;
+    bool                                    foveationViews = false;   // GL_MAX_VIEWS_OVR >= 4
+    bool                                    foveateNow = false, foveationPending = false;
+    uint32_t                                boundViews = 2;
+    GLuint                                  fovFbo = 0, fovColor = 0, fovDepth = 0, fovProgram = 0;
+    uint32_t                                fovWidth = 0, fovHeight = 0;
+    std::array<std::array<int32_t, 2>, kViewCount> insetOrigin {};  // inset's lower-left pixel per eye
+    std::array<std::array<float, 4>, kViewCount>   insetClip {};    // clip xy scale/offset per eye
+    std::array<std::array<float, 2>, kViewCount>   insetCenter {};  // full-detail circle centre (pixels)
+    bool                                    insetPlaced[kViewCount] {};
+    GLint                                   gameViewport[4] {};
+    bool                                    gameViewportSaved = false;
+    // Optional XR_EXT_eye_gaze_interaction.
+    bool                                    eyeGazeExtension = false, eyeGazeSupported = false, steamFrame = false;
+    XrAction                                gazeAction = XR_NULL_HANDLE;
+    XrSpace                                 gazeSpace = XR_NULL_HANDLE;
+    bool                                    gazeTracked = false;
+    XrQuaternionf                           gazeOrientation { 0, 0, 0, 1 };
+    std::chrono::steady_clock::time_point   gazeSeen {};
+    std::string                             systemName, runtimeName;
     bool                                    running = false, exiting = false;
     XrSessionState                          sessionState = XR_SESSION_STATE_UNKNOWN;
     bool                                    frameBegun = false, imageAcquired = false, imageReady = false;
@@ -654,6 +697,232 @@ struct Runtime::Impl
         return good;
     }
 
+    void restoreGameViewport()
+    {
+        if (gameViewportSaved) glViewport(gameViewport[0], gameViewport[1], gameViewport[2], gameViewport[3]);
+        gameViewportSaved = false;
+    }
+
+    void destroyFoveation()
+    {
+        if (fovFbo) glDeleteFramebuffers(1, &fovFbo);
+        if (fovColor) glDeleteTextures(1, &fovColor);
+        if (fovDepth) glDeleteTextures(1, &fovDepth);
+        if (fovProgram) glDeleteProgram(fovProgram);
+        fovFbo = fovColor = fovDepth = fovProgram = 0;
+        fovWidth = fovHeight = 0;
+        foveateNow = foveationPending = false;
+    }
+
+    // Target size for the current scale; the inset is the same size, cut from the full image.
+    void foveationSize(uint32_t &w, uint32_t &h) const
+    {
+        w = std::max<uint32_t>(16, std::min(width, uint32_t(std::lround(width * foveationScale))));
+        h = std::max<uint32_t>(16, std::min(height, uint32_t(std::lround(height * foveationScale))));
+    }
+
+    bool ensureFoveation(std::string &error)
+    {
+        uint32_t w, h;
+        foveationSize(w, h);
+        if (fovFbo && fovWidth == w && fovHeight == h) return true;
+        if (!fovProgram)
+        {
+            char const *vert = "#version 410 compatibility\n#extension GL_OVR_multiview2 : require\nlayout(num_views=2) in; flat out int view; "
+                               "void main(){ vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position=vec4(p*2.0-1.0,0.0,1.0); view=int(gl_ViewID_OVR); }";
+            // The full-detail area is a circle (uRadius pixels) around the gaze or lens centre, inside the
+            // rendered inset rectangle. There the full-detail texel is copied 1:1 (it is pixel-aligned with
+            // the image); elsewhere the low-resolution whole view is filtered up. A band of uFeather pixels
+            // inside the circle's edge blends the two, as does one inside the rectangle's edges (except
+            // where it meets the image border). Depth follows the colour's source.
+            char const *frag = "#version 410 compatibility\nuniform sampler2DArray uColor; uniform sampler2DArray uDepth; uniform ivec4 uRect[2]; "
+                               "uniform vec2 uCenter[2]; uniform float uRadius; "
+                               "uniform ivec2 uImage; uniform float uFeather; flat in int view; out vec4 outColor; void main(){ "
+                               "ivec2 px=ivec2(gl_FragCoord.xy); ivec4 r=uRect[view]; ivec2 q=px-r.xy; vec2 uv=gl_FragCoord.xy/vec2(uImage); "
+                               "vec4 c=texture(uColor,vec3(uv,float(view))); float w=0.0; "
+                               "if(all(greaterThanEqual(q,ivec2(0)))&&all(lessThan(q,r.zw))){ "
+                               "vec2 lo=vec2(q)+0.5, hi=vec2(r.zw-q)-0.5; "
+                               "if(r.x==0) lo.x=1e6; if(r.y==0) lo.y=1e6; if(r.x+r.z>=uImage.x) hi.x=1e6; if(r.y+r.w>=uImage.y) hi.y=1e6; "
+                               "vec2 e=min(lo,hi); float edge=(uRadius-distance(gl_FragCoord.xy,uCenter[view]))/uFeather; "
+                               "w=clamp(min(min(e.x,e.y)/uFeather,edge),0.0,1.0); "
+                               "if(w>0.0) c=mix(c,texelFetch(uColor,ivec3(q,view+2),0),w); } "
+                               "ivec2 low=min(ivec2(uv*vec2(r.zw)),r.zw-1); "
+                               "gl_FragDepth = w>=0.5 ? texelFetch(uDepth,ivec3(q,view+2),0).r : texelFetch(uDepth,ivec3(low,view),0).r; "
+                               "outColor=c; }";
+            std::string shaderError;
+            GLuint vs = compile(GL_VERTEX_SHADER, vert, shaderError), fs = vs ? compile(GL_FRAGMENT_SHADER, frag, shaderError) : 0;
+            if (vs && fs)
+            {
+                fovProgram = glCreateProgram();
+                glAttachShader(fovProgram, vs);
+                glAttachShader(fovProgram, fs);
+                glLinkProgram(fovProgram);
+                GLint linked = 0;
+                glGetProgramiv(fovProgram, GL_LINK_STATUS, &linked);
+                if (!linked)
+                {
+                    char log[2048] = {};
+                    glGetProgramInfoLog(fovProgram, sizeof(log), nullptr, log);
+                    shaderError = std::string("foveation resolve shader link failed: ") + log;
+                }
+            }
+            if (vs) glDeleteShader(vs);
+            if (fs) glDeleteShader(fs);
+            if (!shaderError.empty())
+            {
+                error = shaderError;
+                destroyFoveation();
+                return false;
+            }
+        }
+        GLint previousArray = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &previousArray);
+        if (!fovFbo) glGenFramebuffers(1, &fovFbo);
+        if (!fovColor) glGenTextures(1, &fovColor);
+        if (!fovDepth) glGenTextures(1, &fovDepth);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, fovColor);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GLenum(colorFormat), w, h, 2 * kViewCount, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, fovDepth);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH24_STENCIL8, w, h, 2 * kViewCount, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, previousArray);
+        fovWidth = w;
+        fovHeight = h;
+        insetPlaced[0] = insetPlaced[1] = false;
+        if (!glSucceeded("allocating the foveated target", error))
+        {
+            destroyFoveation();
+            return false;
+        }
+        return true;
+    }
+
+    // Place each eye's inset around its lens centre, or around the gaze when it is tracked (or was
+    // within the last half second). Small moves are ignored so the blend band does not shimmer.
+    void placeInsets()
+    {
+        uint32_t w, h;
+        foveationSize(w, h);
+        bool const gaze = foveationMode == Foveation::EyeTracked && eyeGazeSupported
+            && std::chrono::steady_clock::now() - gazeSeen < std::chrono::milliseconds(500);
+        XrVector3f const gazeDirection = rotateVector(gazeOrientation, { 0, 0, -1 });
+        for (uint32_t eye = 0; eye < kViewCount; ++eye)
+        {
+            auto const &fov = views[eye].fov;
+            float const l = std::tan(fov.angleLeft), r = std::tan(fov.angleRight), d = std::tan(fov.angleDown), u = std::tan(fov.angleUp);
+            float tx = 0, ty = 0;
+            if (gaze)
+            {
+                auto const &q = views[eye].pose.orientation;
+                XrVector3f const local = rotateVector({ -q.x, -q.y, -q.z, q.w }, gazeDirection);
+                if (local.z < -.1f)
+                {
+                    tx = clampTo(local.x / -local.z, l, r);
+                    ty = clampTo(local.y / -local.z, d, u);
+                }
+            }
+            // Tangent to image pixel: the image spans [l, r] x [d, u].
+            float const cx = (tx - l) / (r - l) * width, cy = (ty - d) / (u - d) * height;
+            int32_t const ox = clampTo(int32_t(std::lround(cx - w * .5f)), 0, int32_t(width - w));
+            int32_t const oy = clampTo(int32_t(std::lround(cy - h * .5f)), 0, int32_t(height - h));
+            auto &origin = insetOrigin[eye];
+            float const deadzone = width * .015f;
+            if (!insetPlaced[eye] || std::abs(ox - origin[0]) > deadzone || std::abs(oy - origin[1]) > deadzone)
+            {
+                origin = { ox, oy };
+                // The circle follows the gaze; while the rectangle is held at the image border the centre
+                // stays nearer that border, where the circle runs off the image.
+                insetCenter[eye] = { clampTo(cx, 0.f, float(width)), clampTo(cy, 0.f, float(height)) };
+            }
+            insetPlaced[eye] = true;
+            // Full-view NDC x maps to inset NDC x' = x*W/w - (2*ox + w - W)/w (and likewise y).
+            insetClip[eye] = { float(width) / w, float(height) / h, -float(2 * origin[0] + int32_t(w) - int32_t(width)) / w,
+                               -float(2 * origin[1] + int32_t(h) - int32_t(height)) / h };
+        }
+    }
+
+    bool attachSwapchainMultiview(std::string &error)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, colorImages[imageIndex].image, 0, 0, kViewCount);
+        multiview(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, depth, 0, 0, kViewCount);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE)
+        {
+            error = "OpenXR multiview framebuffer incomplete: " + std::to_string(status);
+            return false;
+        }
+        boundViews = kViewCount;
+        return true;
+    }
+
+    // Blend the foveated target into the swapchain image and depth; closes foveation for this frame.
+    bool resolveFoveation(std::string &error)
+    {
+        foveateNow = false;
+        if (!foveationPending)
+        {
+            restoreGameViewport();
+            return true;
+        }
+        foveationPending = false;
+        GLState state;
+        state.save();
+        GLint unit1Array = 0, unit1Sampler = 0;
+        glActiveTexture(GL_TEXTURE1);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &unit1Array);
+        glGetIntegerv(GL_SAMPLER_BINDING, &unit1Sampler);
+        bool good = attachSwapchainMultiview(error);
+        if (good)
+        {
+            glViewport(0, 0, width, height);
+            glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glDisable(GL_CULL_FACE); glDisable(GL_ALPHA_TEST);
+            glDisable(GL_STENCIL_TEST); glDisable(GL_RASTERIZER_DISCARD); glDisable(GL_DITHER);
+            if (colorFormat == GL_SRGB8_ALPHA8) glEnable(GL_FRAMEBUFFER_SRGB); else glDisable(GL_FRAMEBUFFER_SRGB);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glStencilMask(~0u);
+            glClearStencil(0);
+            glClear(GL_STENCIL_BUFFER_BIT);
+            glEnable(GL_DEPTH_TEST); glDepthFunc(GL_ALWAYS); glDepthMask(GL_TRUE);
+            glUseProgram(fovProgram);
+            glUniform1i(glGetUniformLocation(fovProgram, "uColor"), 0);
+            glUniform1i(glGetUniformLocation(fovProgram, "uDepth"), 1);
+            GLint const rects[8] = { insetOrigin[0][0], insetOrigin[0][1], GLint(fovWidth), GLint(fovHeight),
+                                     insetOrigin[1][0], insetOrigin[1][1], GLint(fovWidth), GLint(fovHeight) };
+            glUniform4iv(glGetUniformLocation(fovProgram, "uRect"), 2, rects);
+            glUniform2i(glGetUniformLocation(fovProgram, "uImage"), GLint(width), GLint(height));
+            float const radius = .5f * std::min(fovWidth, fovHeight);
+            GLfloat const centers[4] = { insetCenter[0][0], insetCenter[0][1], insetCenter[1][0], insetCenter[1][1] };
+            glUniform2fv(glGetUniformLocation(fovProgram, "uCenter"), 2, centers);
+            glUniform1f(glGetUniformLocation(fovProgram, "uRadius"), radius);
+            glUniform1f(glGetUniformLocation(fovProgram, "uFeather"), std::max(4.f, radius * .18f));
+            glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D_ARRAY, fovDepth); glBindSampler(1, 0);
+            glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D_ARRAY, fovColor); glBindSampler(0, 0);
+            glBindVertexArray(vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            good = glSucceeded("resolving the foveated frame", error);
+        }
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, unit1Array);
+        glBindSampler(1, unit1Sampler);
+        state.restore();
+        // Whatever was bound now draws into the swapchain image, never the closed foveated target.
+        GLint drawFbo = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
+        if (good && GLuint(drawFbo) == fbo) good = attachSwapchainMultiview(error);
+        restoreGameViewport();
+        return good;
+    }
+
     bool createActions(std::string &error)
     {
         auto fail = [&](XrResult result, char const *where) { error = xrError(instance, result, where); return false; };
@@ -760,6 +1029,30 @@ struct Runtime::Impl
                 { aimPoseAction, "/user/hand/left/input/aim/pose" }, { aimPoseAction, "/user/hand/right/input/aim/pose" },
                 { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings vive");
 
+        if (eyeGazeSupported)
+        {
+            // Eye gaze is optional: without it foveation stays fixed.
+            XrActionCreateInfo info { XR_TYPE_ACTION_CREATE_INFO };
+            info.actionType = XR_ACTION_TYPE_POSE_INPUT;
+            std::snprintf(info.actionName, sizeof(info.actionName), "eye_gaze");
+            std::snprintf(info.localizedActionName, sizeof(info.localizedActionName), "Eye gaze");
+            XrResult gazeResult = xrCreateAction(actionSet, &info, &gazeAction);
+            if (XR_SUCCEEDED(gazeResult) && !suggest("/interaction_profiles/ext/eye_gaze_interaction", { { gazeAction, "/user/eyes_ext/input/gaze_ext/pose" } }))
+                gazeResult = result;
+            if (XR_SUCCEEDED(gazeResult))
+            {
+                XrActionSpaceCreateInfo spaceInfo { XR_TYPE_ACTION_SPACE_CREATE_INFO };
+                spaceInfo.action = gazeAction;
+                spaceInfo.poseInActionSpace.orientation.w = 1.f;
+                gazeResult = xrCreateActionSpace(session, &spaceInfo, &gazeSpace);
+            }
+            if (XR_FAILED(gazeResult))
+            {
+                std::fprintf(stderr, "OpenXR eye gaze: unavailable (%s).\n", xrError(instance, gazeResult, "eye gaze action").c_str());
+                eyeGazeSupported = false;
+                gazeSpace = XR_NULL_HANDLE;
+            }
+        }
         for (size_t hand = 0; hand < handPaths.size(); ++hand)
         {
             XrActionSpaceCreateInfo info { XR_TYPE_ACTION_SPACE_CREATE_INFO };
@@ -782,6 +1075,7 @@ struct Runtime::Impl
     void destroyGl()
     {
         destroyMenuGl();
+        destroyFoveation();
         if (vbo)
             glDeleteBuffers(1, &vbo);
         if (vao)
@@ -803,6 +1097,11 @@ struct Runtime::Impl
             if (actionSpace != XR_NULL_HANDLE) xrDestroySpace(actionSpace);
         for (XrSpace &actionSpace : aimSpaces)
             if (actionSpace != XR_NULL_HANDLE) xrDestroySpace(actionSpace);
+        if (gazeSpace != XR_NULL_HANDLE)
+            xrDestroySpace(gazeSpace);
+        gazeSpace = XR_NULL_HANDLE;
+        gazeAction = XR_NULL_HANDLE;
+        eyeGazeExtension = eyeGazeSupported = steamFrame = gazeTracked = false;
         if (space != XR_NULL_HANDLE)
             xrDestroySpace(space);
         if (viewSpace != XR_NULL_HANDLE)
@@ -964,19 +1263,23 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
             opengl = true;
         if (!std::strcmp(extension.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME))
             handTracking = true;
+        if (!std::strcmp(extension.extensionName, XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
+            m_impl->eyeGazeExtension = true;
     }
     if (XR_FAILED(result) || !opengl)
     {
         error = XR_FAILED(result) ? xrError(XR_NULL_HANDLE, result, "xrEnumerateInstanceExtensionProperties") : "OpenXR runtime lacks XR_KHR_opengl_enable";
         return false;
     }
-    // Finger tracking is optional: enabled only when the runtime offers it.
-    char const          *enabled[] = { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME, XR_EXT_HAND_TRACKING_EXTENSION_NAME };
+    // Finger tracking and eye gaze are optional: enabled only when the runtime offers them.
+    std::vector<char const *> enabled { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME };
+    if (handTracking) enabled.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+    if (m_impl->eyeGazeExtension) enabled.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
     XrInstanceCreateInfo instanceInfo { XR_TYPE_INSTANCE_CREATE_INFO };
     std::snprintf(instanceInfo.applicationInfo.applicationName, sizeof(instanceInfo.applicationInfo.applicationName), "EDuke32 VR");
     instanceInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
-    instanceInfo.enabledExtensionCount      = handTracking ? 2 : 1;
-    instanceInfo.enabledExtensionNames      = enabled;
+    instanceInfo.enabledExtensionCount      = uint32_t(enabled.size());
+    instanceInfo.enabledExtensionNames      = enabled.data();
     result                                  = xrCreateInstance(&instanceInfo, &m_impl->instance);
     if (XR_FAILED(result))
     {
@@ -992,6 +1295,34 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
         error = xrError(m_impl->instance, result, "xrGetSystem");
         shutdown();
         return false;
+    }
+    {
+        XrInstanceProperties instanceProperties { XR_TYPE_INSTANCE_PROPERTIES };
+        if (XR_SUCCEEDED(xrGetInstanceProperties(m_impl->instance, &instanceProperties)))
+            m_impl->runtimeName = instanceProperties.runtimeName;
+        XrSystemEyeGazeInteractionPropertiesEXT gaze { XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT };
+        XrSystemProperties properties { XR_TYPE_SYSTEM_PROPERTIES };
+        if (m_impl->eyeGazeExtension) properties.next = &gaze;
+        if (XR_SUCCEEDED(xrGetSystemProperties(m_impl->instance, m_impl->system, &properties)))
+        {
+            m_impl->systemName = properties.systemName;
+            m_impl->eyeGazeSupported = m_impl->eyeGazeExtension && gaze.supportsEyeGazeInteraction;
+        }
+        // The Steam Frame, standalone (SteamVR on the headset) or streamed (SteamVR on a PC). SteamVR
+        // names the system after its driver; an eye tracker under SteamVR is taken to be a Frame too.
+        // EDUKE32_XR_HEADSET=frame / other overrides the detection.
+        char const *headset = std::getenv("EDUKE32_XR_HEADSET");
+        bool const steamVr = containsNoCase(m_impl->runtimeName, "steamvr");
+        if (headset && *headset)
+            m_impl->steamFrame = containsNoCase(headset, "frame");
+        else
+            m_impl->steamFrame = (containsNoCase(m_impl->systemName, "frame") && (steamVr || containsNoCase(m_impl->systemName, "steam")))
+                || (steamVr && m_impl->eyeGazeSupported);
+        // Lab hook: a synthetic gaze (EDUKE32_XR_TEST_GAZE=yawDeg,pitchDeg from the head) stands in for a tracker.
+        if (std::getenv("EDUKE32_XR_TEST_GAZE")) m_impl->eyeGazeSupported = true;
+        std::fprintf(stderr, "OpenXR system: \"%s\" on \"%s\"; eye gaze %s; Steam Frame %s.\n", m_impl->systemName.c_str(),
+                     m_impl->runtimeName.c_str(), m_impl->eyeGazeSupported ? "supported" : m_impl->eyeGazeExtension ? "extension only" : "unavailable",
+                     m_impl->steamFrame ? "yes" : "no");
     }
     PFN_xrGetOpenGLGraphicsRequirementsKHR getRequirements = nullptr;
     result = xrGetInstanceProcAddr(m_impl->instance, "xrGetOpenGLGraphicsRequirementsKHR", reinterpret_cast<PFN_xrVoidFunction *>(&getRequirements));
@@ -1109,6 +1440,15 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
                                   : "OpenXR runtime supports neither GL_SRGB8_ALPHA8 nor GL_RGBA8 swapchain images";
         shutdown();
         return false;
+    }
+    m_impl->colorFormat = chosen;
+    {
+        GLint maxViews = 0;
+        glGetIntegerv(GL_MAX_VIEWS_OVR, &maxViews);
+        while (glGetError() != GL_NO_ERROR) {}
+        m_impl->foveationViews = maxViews >= GLint(2 * kViewCount);
+        if (!m_impl->foveationViews)
+            std::fprintf(stderr, "OpenXR foveated rendering: unavailable (GL_MAX_VIEWS_OVR=%d, 4 needed).\n", maxViews);
     }
     if (renderWidth && renderHeight && (renderWidth < m_impl->width || renderHeight < m_impl->height))
         std::fprintf(stderr, "OpenXR: runtime recommends %ux%u per eye; rendering at the game resolution %ux%u. "
@@ -1398,6 +1738,32 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
     if ((viewState.viewStateFlags & (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT))
         != (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT))
         return finishFrame(false, error) ? FrameResult::Idle : FrameResult::Error;
+    m_impl->foveateNow = m_impl->foveationPending = m_impl->gameViewportSaved = false;
+    m_impl->boundViews = kViewCount;
+    m_impl->gazeTracked = false;
+    if (char const *test = std::getenv("EDUKE32_XR_TEST_GAZE"))
+    {
+        float yaw = 0, pitch = 0;
+        std::sscanf(test, "%f,%f", &yaw, &pitch);
+        yaw *= 3.14159265f / 360.f; pitch *= 3.14159265f / 360.f;   // half angles
+        XrQuaternionf const y { 0, std::sin(yaw), 0, std::cos(yaw) }, x { std::sin(pitch), 0, 0, std::cos(pitch) };
+        auto const multiply = [](XrQuaternionf a, XrQuaternionf b) {
+            return XrQuaternionf { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+                                   a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z };
+        };
+        m_impl->gazeOrientation = multiply(multiply(m_impl->views[0].pose.orientation, y), x);
+        m_impl->gazeTracked = true;
+    }
+    else if (m_impl->gazeSpace != XR_NULL_HANDLE)
+    {
+        XrSpaceLocation location { XR_TYPE_SPACE_LOCATION };
+        XrSpaceLocationFlags const wanted = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+        m_impl->gazeTracked = XR_SUCCEEDED(xrLocateSpace(m_impl->gazeSpace, m_impl->space, frameState.predictedDisplayTime, &location))
+            && (location.locationFlags & wanted) == wanted;
+        if (m_impl->gazeTracked) m_impl->gazeOrientation = location.pose.orientation;
+    }
+    if (m_impl->gazeTracked) m_impl->gazeSeen = std::chrono::steady_clock::now();
+    if (m_impl->foveationMode != Foveation::Off) m_impl->placeInsets();
     auto                       &imageIndex = m_impl->imageIndex;
     XrSwapchainImageAcquireInfo acquire { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
     result = xrAcquireSwapchainImage(m_impl->color, &acquire, &imageIndex);
@@ -1460,6 +1826,9 @@ bool Runtime::bindEye(uint32_t eye, std::string &error)
         error = "cannot bind an eye without a ready OpenXR frame";
         return false;
     }
+    // A pending foveated frame stays pending: per-eye collection draws nothing, and per-eye native
+    // drawing resolves first (see the header).
+    m_impl->restoreGameViewport();
     glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fbo);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[m_impl->imageIndex].image, 0, eye);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, m_impl->depth, 0, eye);
@@ -1480,21 +1849,96 @@ bool Runtime::bindMultiview(std::string &error)
         error = "cannot bind multiview without a ready OpenXR frame";
         return false;
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fbo);
-    m_impl->multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->colorImages[m_impl->imageIndex].image, 0, 0, kViewCount);
-    m_impl->multiview(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, m_impl->depth, 0, 0, kViewCount);
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    if (status != GL_FRAMEBUFFER_COMPLETE)
+    if (m_impl->foveateNow && m_impl->foveationMode != Foveation::Off && m_impl->foveationViews)
     {
-        error = "OpenXR multiview framebuffer incomplete: " + std::to_string(status);
-        return false;
+        std::string why;
+        bool good = m_impl->ensureFoveation(why);
+        if (good)
+        {
+            if (!m_impl->gameViewportSaved)
+            {
+                glGetIntegerv(GL_VIEWPORT, m_impl->gameViewport);
+                m_impl->gameViewportSaved = true;
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, m_impl->fovFbo);
+            m_impl->multiview(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_impl->fovColor, 0, 0, 2 * kViewCount);
+            m_impl->multiview(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, m_impl->fovDepth, 0, 0, 2 * kViewCount);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            GLenum const status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            good = status == GL_FRAMEBUFFER_COMPLETE && glSucceeded("binding the foveated target", why);
+            if (status != GL_FRAMEBUFFER_COMPLETE) why = "foveated framebuffer incomplete: " + std::to_string(status);
+        }
+        if (good)
+        {
+            glViewport(0, 0, m_impl->fovWidth, m_impl->fovHeight);
+            m_impl->foveationPending = true;
+            m_impl->boundViews = 2 * kViewCount;
+            return true;
+        }
+        // Nothing was drawn into it yet this frame: carry on unfoveated, and stay so.
+        std::fprintf(stderr, "OpenXR foveated rendering disabled: %s.\n", why.c_str());
+        m_impl->foveationViews = false;
+        m_impl->foveateNow = m_impl->foveationPending = false;
     }
+    m_impl->restoreGameViewport();
+    if (!m_impl->attachSwapchainMultiview(error))
+        return false;
     return glSucceeded("binding OpenXR multiview", error);
+}
+
+void Runtime::setFoveation(Foveation mode, float scale)
+{
+    scale = clampTo(scale, .3f, 1.f);
+    if (mode != m_impl->foveationMode || scale != m_impl->foveationScale)
+        m_impl->insetPlaced[0] = m_impl->insetPlaced[1] = false;
+    m_impl->foveationMode = mode == Foveation::EyeTracked && !m_impl->eyeGazeSupported ? Foveation::Fixed : mode;
+    m_impl->foveationScale = scale;
+}
+
+FoveationStatus Runtime::foveation() const
+{
+    FoveationStatus status;
+    status.available = m_impl->foveationViews;
+    status.eyeTracking = m_impl->eyeGazeSupported;
+    status.steamFrame = m_impl->steamFrame;
+    status.gazeTracked = m_impl->gazeTracked;
+    status.mode = m_impl->foveationViews ? m_impl->foveationMode : Foveation::Off;
+    status.scale = m_impl->foveationScale;
+    m_impl->foveationSize(status.width, status.height);
+    status.systemName = m_impl->systemName;
+    status.runtimeName = m_impl->runtimeName;
+    return status;
+}
+
+void Runtime::foveateFrame(bool on)
+{
+    // Opting out after foveated drawing began would lose it: resolve instead.
+    if (!m_impl->foveationPending)
+        m_impl->foveateNow = on && m_impl->imageReady && m_impl->foveationMode != Foveation::Off && m_impl->foveationViews && m_impl->foveationScale < 1;
+}
+
+bool Runtime::resolveFoveation(std::string &error)
+{
+    if (!m_impl->imageReady)
+    {
+        m_impl->foveateNow = m_impl->foveationPending = false;
+        return true;
+    }
+    return m_impl->resolveFoveation(error);
+}
+
+uint32_t Runtime::boundViews() const { return m_impl->boundViews; }
+
+void Runtime::foveationInset(float *out) const
+{
+    for (uint32_t eye = 0; eye < kViewCount; ++eye)
+        for (uint32_t i = 0; i < 4; ++i) out[eye * 4 + i] = m_impl->insetClip[eye][i];
 }
 
 bool Runtime::beginMenuPresentation(uint32_t width, uint32_t height, uint64_t &owner, std::string &error, bool overlay)
 {
+    // The swapchain image is read or drawn: blend a pending foveated world into it first.
+    if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
     owner = 0;
     error.clear();
     if (!m_impl || !m_impl->frameBegun || !m_impl->imageReady)
@@ -1580,6 +2024,8 @@ bool Runtime::menuOverlayTargetBound() const
 
 bool Runtime::tintMenuWorld(float const *rgba, float const *correction, std::string &error)
 {
+    // The swapchain image is read or drawn: blend a pending foveated world into it first.
+    if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
     if (!menuOverlayTargetBound()) { error="full-eye tint requires the active UI target"; return false; }
     GLState state; state.save();
     bool good=bindMultiview(error);
@@ -1623,6 +2069,8 @@ bool Runtime::tintMenuWorld(float const *rgba, float const *correction, std::str
 
 bool Runtime::cancelMenuPresentation(std::string &error, bool mirror)
 {
+    // The swapchain image is read or drawn: blend a pending foveated world into it first.
+    if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
     error.clear();
     if (!m_impl || !m_impl->menuActive)
     {
@@ -1648,6 +2096,8 @@ bool Runtime::cancelMenuPresentation(std::string &error, bool mirror)
 bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices,
                               float const *uvRect)
 {
+    // The swapchain image is read or drawn: blend a pending foveated world into it first.
+    if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
     GLState state;
     state.save();
     bool rendered = bindMultiview(error);
@@ -1772,6 +2222,8 @@ XrPosef Runtime::anchoredScreen(XrPosef const &head)
 
 bool Runtime::presentNativeFrame(uint32_t width, uint32_t height, std::string &error, char const *capturePrefix)
 {
+    // The swapchain image is read or drawn: blend a pending foveated world into it first.
+    if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
     error.clear();
     if (!m_impl || !m_impl->frameBegun || !m_impl->imageReady || m_impl->menuActive)
     { error="native frame presentation requires a ready OpenXR frame"; return false; }
@@ -1805,6 +2257,8 @@ bool Runtime::presentNativeFrame(uint32_t width, uint32_t height, std::string &e
 
 bool Runtime::completeMenuPresentation(std::string &error, char const *capturePrefix)
 {
+    // The swapchain image is read or drawn: blend a pending foveated world into it first.
+    if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
     error.clear();
     if (!m_impl || !m_impl->menuActive)
     {
@@ -1881,6 +2335,8 @@ bool Runtime::completeMenuPresentation(std::string &error, char const *capturePr
 
 bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error, bool captureDepth)
 {
+    // The swapchain image is read or drawn: blend a pending foveated world into it first.
+    if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
     if (!m_impl->frameBegun || !m_impl->imageReady)
     {
         error = "cannot capture without a ready OpenXR frame";
@@ -1967,6 +2423,8 @@ bool Runtime::captureFrame(char const *outputPrefix, bool requireDistinct, std::
 
 bool Runtime::mirrorEye(uint32_t eye, std::string &error)
 {
+    // The swapchain image is read or drawn: blend a pending foveated world into it first.
+    if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
     if (!bindEye(eye, error))
         return false;
     // FBOs and scissor are restored exactly; no engine-cached state is changed.
@@ -1986,6 +2444,23 @@ bool Runtime::mirrorEye(uint32_t eye, std::string &error)
 
 bool Runtime::finishFrame(bool submit, std::string &error)
 {
+    if (m_impl->foveationPending || m_impl->foveateNow)
+    {
+        std::string why;
+        if (submit && m_impl->imageReady && !m_impl->menuActive)
+        {
+            if (!m_impl->resolveFoveation(why))
+            {
+                std::fprintf(stderr, "OpenXR foveated rendering disabled: %s.\n", why.c_str());
+                m_impl->foveationViews = false;
+            }
+        }
+        else
+        {
+            m_impl->foveateNow = m_impl->foveationPending = false;
+            m_impl->restoreGameViewport();
+        }
+    }
     if (m_impl->menuActive)
     {
         // An early caller must not retain the private target or submit an
