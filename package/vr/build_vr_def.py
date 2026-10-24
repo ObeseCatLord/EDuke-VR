@@ -295,6 +295,11 @@ def main():
             rig_lines.append('ikbody 30067 ' + ' '.join('vr_duke_ik' + ext
                                                         for ext in ('.skel', '.skin', '.headverts', '.handverts_l', '.handverts_r')))
             notes.append(f'full body: {ik[".md3"]}')
+            # A pack whose own body includes the hands (pack.json "ik_hands"): the engine poses its
+            # finger bones and draws no separate hand shells with it.
+            if pack_info.get('ik_hands') and (pack_root / 'exports/eduke32/vr_duke_ik.md3').is_file():
+                rig_lines.append('ikhands')
+                notes.append('full body: own hands')
         # Per-character hands (Alien Armageddon's pchar 1..4) from the pack's characters.json.
         chars = pack_root / 'metadata/characters.json'
         if aa and chars.is_file():

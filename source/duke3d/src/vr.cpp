@@ -1505,6 +1505,9 @@ struct HandRig
         std::vector<IkBone> bones;
         std::vector<IkVertex> vertices;
         std::vector<uint8_t> hide;   // 1 head, 2 left hand, 4 right hand
+        // The body has its own hands (rig line "ikhands"): its finger bones follow the hand joints
+        // and no separate hand shells are drawn with it.
+        bool hands=false;
         // Eyes relative to the head bone in the bind pose (model units, +X forward, +Z up).
         float eyeForward=.09f*64.f, eyeUp=.06f*64.f;
         int find(char const *name) const
@@ -1596,6 +1599,8 @@ static HandRig const *handRig()
             }
             else LOG_F(WARNING,"OpenXR hand rig: unreadable shell skin %s.",skinPath);
         }
+        else if (!Bstrcmp(word,"ikhands"))
+            rig.ik.hands=true;
         else if (!Bstrcmp(word,"ikbody"))
         {
             // ikbody <tile> <skel> <skin> <headverts> <handverts_l> <handverts_r>
@@ -1939,6 +1944,8 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
     handJoints[hand].valid=true;
     handJoints[hand].roots=roots;
     handJoints[hand].bases=bases;
+    // A full body with its own hands draws them itself (AA's other characters keep floating hands).
+    if (fullBodyFrame && rig->ik.hands && playerCharacter()==0) return 1;
     // One continuous skinned shell (one draw) when the rig has it; segments otherwise. With the
     // full IK body the wrist-cut variant (no forearm) meets the body's own forearm.
     bool const wristCut=fullBodyFrame && rig->wristShellTile[hand]>=0 && md_tilehasmodel(rig->wristShellTile[hand],0)>=0;
@@ -2389,6 +2396,8 @@ struct IkInput
     bool hand[2]{};
     vec3_t wrist[2]{};                     // hand shell wrist joint (Build)
     std::array<XrVector3f,3> wristBasis[2]{};   // its axes, Build units per model unit
+    // Every hand joint's axes (XR_EXT_hand_tracking order), for a body with its own hands.
+    std::array<std::array<XrVector3f,3>,eduke_xr::HandInput::JointCount> jointBasis[2]{};
     float feetZ=0.f;
     vec3_t pos{};                          // player position, for the stride
     float kick=0.f;                        // mighty foot leg extension 0..1
@@ -2579,6 +2588,24 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
                 return l>1e-6f ? XrVector3f{m.x/l,m.y/l,m.z/l} : XrVector3f{1,0,0};
             };
             worldRot[handB[side]]=quatFromAxes(axis(bs[0]),axis(bs[1]),axis(bs[2])); overridden[handB[side]]=1;
+            if (ik.hands)
+            {
+                // Finger bones share the hand joints' frame convention (bind: fingers along the
+                // hand bone), so each takes its joint's axes like the hand bone does.
+                static char const *const fingers[]={"thumb_metacarpal","thumb_proximal","thumb_distal",
+                    "index_proximal","index_intermediate","index_distal","middle_proximal","middle_intermediate","middle_distal",
+                    "ring_proximal","ring_intermediate","ring_distal","little_proximal","little_intermediate","little_distal"};
+                static int const joints[]={2,3,4,7,8,9,12,13,14,17,18,19,22,23,24};
+                for (size_t f=0;f<sizeof(joints)/sizeof(joints[0]);++f)
+                {
+                    char name[48];
+                    Bsnprintf(name,sizeof(name),"%s_%c",fingers[f],side ? 'r' : 'l');
+                    int const b=bone(name);
+                    if (b<0) continue;
+                    auto const &jb=in.jointBasis[side][joints[f]];
+                    worldRot[b]=quatFromAxes(axis(jb[0]),axis(jb[1]),axis(jb[2])); overridden[b]=1;
+                }
+            }
             fk(size_t(handB[side])+1);
         }
     }
@@ -2707,6 +2734,7 @@ static bool localIkInput(IkInput &in, Camera const &body, eduke_xr::Runtime *run
         in.hand[side]=handJoints[side].valid;
         in.wrist[side]=handJoints[side].roots[1];
         in.wristBasis[side]=handJoints[side].bases[1];
+        in.jointBasis[side]=handJoints[side].bases;
     }
     in.feetZ=float(sprite[p->i].z);
     in.pos=p->pos;
@@ -2863,6 +2891,8 @@ static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smo
             HandBases bases;
             placeHandJoints(joints,hp->weaponFrame,decodeFrame(pose.handFrame[side],ref),roots,bases);
             in.hand[side]=true; in.wrist[side]=roots[1]; in.wristBasis[side]=bases[1];
+            for (size_t j=0;j<in.jointBasis[side].size();++j) in.jointBasis[side][j]=bases[j];
+            if (rig->ik.hands) continue;   // the body's own hands
             bool const wristCut=rig->wristShellTile[side]>=0 && md_tilehasmodel(rig->wristShellTile[side],0)>=0;
             HandSegmentSample sample;
             if (skinHandShell(sample,remote.hands[side],wristCut ? rig->wristShell[side] : rig->shell[side],
