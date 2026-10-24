@@ -14,7 +14,8 @@ is a separate download; give this script its zip (voxel_duke3d.zip) and it makes
                                weapon. The mod's zip is copied in too, so the game world is voxels as well.
   VRPACKS/voxel.zip (--zip)    the pack as a mod, or VRPACKS/voxel/ (default; links into the folder).
 
-Anything the voxels do not cover (hands, the full-body IK model, detonator, flamethrower, laser,
+Duke is one skinned voxel body on v7's skeleton with his own hands (vr_duke_ik, vr_duke, vr_duke_body;
+pack.json "ik_hands"). Anything the voxels do not cover (hands, detonator, flamethrower, laser,
 wheel) falls back to the shipped original set. The launcher (eduke32-vr-play) lists the pack by
 itself once the folder exists; pick it in VR Setup > Models or with --pack voxel.
 
@@ -40,7 +41,7 @@ SCRIPTS = HERE / 'voxelpack'
 # Voxel Duke Nukem 3D v1.0 (the release the weapon mapping in voxelpack/weapon_specs.py was made for).
 KNOWN_SHA256 = '935a9079c4f3a3c3a2a869e066c5366b0201a856cc6041644f644d22918178aa'
 STEPS = [('meshing the weapons', 'build_weapons.py'), ('meshing the boot', 'build_boot.py'),
-         ('meshing Duke and the first-person body', 'build_duke.py'), ('solving the hand poses', 'solve_holds.py'),
+         ('building the skinned voxel Duke (third person, first-person and full IK body)', 'build_duke_skinned.py'), ('solving the hand poses', 'solve_holds.py'),
          ('checking the result', 'validate.py')]
 NEEDED = ['voxels/weapons/21_PISTOL.kvx', 'voxels/player/1536_BOOT.kvx']
 
@@ -105,7 +106,7 @@ def main():
     (stage / 'pack.json').write_text(json.dumps({
         'name': 'voxel', 'title': 'Voxel Duke', 'texture_filter': 'nearest', 'redistributable': False,
         'source': f'Voxel Duke Nukem 3D by Daniel Peterson ("Cheello"), {archive.name} (sha256 {digest}); built by build_voxel_pack.py',
-        'autoload': ['source/voxel_duke3d.zip'], 'games': ['duke3d'],
+        'autoload': ['source/voxel_duke3d.zip'], 'games': ['duke3d'], 'ik_hands': True,
     }, indent=1) + '\n')
     (stage / 'README.txt').write_text(
         'Voxel Duke model pack for EDuke32 VR, built on this machine by build_voxel_pack.py from your copy of\n'

@@ -94,6 +94,8 @@ def main():
             r = out[st]
             print(st, 'frames', r['frames'], 'surf', r['surfaces'], 'verts', r['verts'], 'tris', r['tris'],
                   'ratio', r['size_ratio_vs_v6'], 'ERR' if r['errors'] else 'ok', r['errors'][:2], len(r['warnings']), 'warnings')
+    import validate_duke                          # the skinned voxel Duke against v7's IK contract
+    out.update(validate_duke.check_all(ROOT))
     # hand poses
     flat = json.loads((ROOT / 'metadata/hand_poses_flat.json').read_text())
     v6f = json.loads((V6 / 'metadata/hand_poses_flat.json').read_text())

@@ -4,6 +4,7 @@ mesh_parts(parts) where each part is dict(
     solid : bool [X, Y, Z]       occupied cells (interior filled)
     rgb   : uint8 [X, Y, Z, 3]   colour of each cell (only exposed cells are read)
     glow  : bool [X, Y, Z]       optional, emissive cells (written to the glow map)
+    label : int [X, Y, Z]        optional, greedy rectangles never span two labels (skinned meshes)
     A     : 3x4 affine           grid corner coordinates (cell (i,j,k) spans [i,i+1]x[j,j+1]x[k,k+1]) -> output units
 )
 returns dict(pos[nv,3], nrm[nv,3], tris[nt,3], st[nv,2], tex (H,W,4 uint8), glow (H,W,4 uint8),
@@ -58,6 +59,14 @@ def _slices(solid):
                     sl = sl.T
                 if sl.any():
                     yield a, s, (i + 1 if s > 0 else i), i, sl
+
+
+def _label_slice(label, a, i):
+    """Label grid slice i along axis a in the (u, v) layout of _slices."""
+    u_ax, v_ax = AXES[a]
+    rem = [x for x in range(3) if x != a]
+    sl = np.take(label, i, axis=a)
+    return sl.T if rem != [u_ax, v_ax] else sl
 
 
 def _corner(a, plane, u, v):
@@ -131,7 +140,14 @@ def mesh_parts(parts, pad=1, min_atlas_w=16):
             for ci, bb in enumerate(ndimage.find_objects(lab)):
                 m = lab[bb] == ci + 1
                 cu0, cv0 = bb[0].start, bb[1].start
-                rects = [(cu0 + u0, cv0 + v0, w, h) for (u0, v0, w, h) in _greedy(m)]
+                if P.get('label') is None:
+                    rects = [(cu0 + u0, cv0 + v0, w, h) for (u0, v0, w, h) in _greedy(m)]
+                else:
+                    # rectangles never span two labels (e.g. two bones of a skinned hand), so the mesh has
+                    # vertices on every label border
+                    L2 = _label_slice(P['label'], a, i)[bb]
+                    rects = [(cu0 + u0, cv0 + v0, w, h) for lv in np.unique(L2[m])
+                             for (u0, v0, w, h) in _greedy(m & (L2 == lv))]
                 comps.append(dict(part=pi, a=a, s=s, plane=plane, i=i, u0=cu0, v0=cv0, w=m.shape[0], h=m.shape[1],
                                   mask=m, rects=rects))
                 for (u0, v0, w, h) in rects:
