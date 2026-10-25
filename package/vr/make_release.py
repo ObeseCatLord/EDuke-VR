@@ -6,7 +6,9 @@ Usage: make_release.py OUT [--binary eduke32-xr] [--assets DUKE_VR_ASSETS]
 
 OUT receives:
   eduke32-vr/            launcher, DEF and pack builders (and build_voxel_pack.py, which makes
-                         the Voxel Duke pack from the player's own copy of that mod), AA
+                         the Voxel Duke pack from the player's own copy of that mod; the launcher
+                         runs it when voxel_duke3d.zip is put next to the game, and the pack is
+                         then the default model set), AA
                          compatibility CON, docs,
                          GPL text, the binary (when given or built), a source
                          archive of the current commit (GPL source) and

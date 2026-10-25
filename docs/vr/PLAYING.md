@@ -34,9 +34,9 @@ pack can be set in `~/.config/eduke32-vr/launcher.conf` (`pack=NAME`); `--releas
 refuses packs marked not redistributable. A pack's `pack.json` may also list game data
 to autoload (`autoload`, for the games in `games`); its `duke3d.def` is then included,
 e.g. a voxel world. Personal packs seen so far: `dnf-private` (Duke, hands, body, foot
-and all weapons incl. AA and Caribbean variants) and `voxel-private` (voxel world plus
-voxel weapons, foot and player model, base game only; hands and the full body come from
-v6). Neither may ever be redistributed.
+and all weapons incl. AA and Caribbean variants) and the built Voxel Duke pack (`voxel`, see
+below; it replaces the older hand-made `voxel-private`, which is no longer listed once it is
+built). Neither may ever be redistributed.
 
 ### Two-handed aiming
 
@@ -61,7 +61,7 @@ A VR model pack is an ordinary EDuke32 mod, a folder or a `.zip`:
 | --- | --- |
 | `vrpack.def` | the models (an EDuke32 DEF) for Duke Nukem 3D and its add-ons |
 | `vrpack_aa.def` | the models for Alien Armageddon (optional) |
-| `vrpack/pack.txt` | `name=`, `title=`, `filter=` (`nearest` = unfiltered skins), `redistributable=`, `autoload_games=` |
+| `vrpack/pack.txt` | `name=`, `title=`, `filter=` (`nearest` = unfiltered skins), `redistributable=`, `autoload_games=`, `supersedes=` (packs it replaces in the menu) |
 | `vrpack/hand-rig.txt`, `hand-rig-aa.txt` | hand rig, weapon holds, full IK body (names are files in the pack) |
 | `vrpack/hud-model-map-aa.txt` | AA HUD tile → held model |
 | `vrpack/autoload/*.zip` | game data the pack brings (e.g. a voxel world), loaded with it for the listed games |
@@ -70,22 +70,34 @@ A VR model pack is an ordinary EDuke32 mod, a folder or a `.zip`:
 Put packs in a `vrpacks/` folder anywhere the game looks for data, e.g. `~/.config/eduke32/vrpacks/`.
 
 The packs are:
-- **Original 3D (low-res)** (`original-lowres`, the default): the original set with Quake-style
-  8-bit, low-resolution skins.
+- **Voxel Duke** (`voxel`, the default once it is built): made on your machine from your copy of
+  Voxel Duke Nukem 3D (below).
+- **Original 3D (low-res)** (`original-lowres`, the default until then): the original set with
+  Quake-style 8-bit, low-resolution skins.
 - **Original 3D** (`original`, from `duke-vr-assets/v7-original`): the redistributable set.
   - Duke and the vanilla weapons are remodelled to the proportions and designs of the original
     sprites and the Voxel Duke voxels.
   - Single solid shells, low poly, clean painted skins.
-- **Personal packs**, never redistributed: Duke Nukem Forever 2001 and Voxel Duke.
+- **Personal packs**, never redistributed: Duke Nukem Forever 2001 (`dnf-private`) and Voxel Duke.
+
+With no pack chosen the game loads Voxel Duke if it is installed, else the low-res original set; the
+others are a VR Setup > Models choice away. A chosen pack that is missing falls back the same way.
 
 #### Voxel Duke pack (build it yourself)
 
-The release ships no voxel art. With your own copy of **Voxel Duke Nukem 3D v1.0** by Daniel
-Peterson ("Cheello") (`voxel_duke3d.zip`), one command builds the pack on your machine:
+The release ships no voxel art, only the code that makes it. Download **Voxel Duke Nukem 3D v1.0**
+by Daniel Peterson ("Cheello") (`voxel_duke3d.zip`) and put it next to the game, in
+`~/.local/share/eduke32-vr/` or in `~/Downloads/` (or name it with `--voxel-zip ZIP` or
+`voxel_zip=` in `launcher.conf`). `eduke32-vr-play` then builds the pack by itself before the game
+starts: once, and again after an update that changes the builder. `--no-voxel-build` skips that,
+`--build-packs` builds the packs and quits. By hand:
 
 ```sh
 python3 package/vr/build_voxel_pack.py ~/Downloads/voxel_duke3d.zip
 ```
+
+A build that fails (e.g. Python's numpy is missing) is reported and not retried until the zip or
+the builder changes; the game then uses the original models.
 
 - **What it builds:** first-person weapons meshed from the mod's voxels, with hand poses solved for each. The weapons are the pistol, shotgun, ripper, RPG, pipe bomb, shrinker, expander, devastator, trip bomb and freezer.
 - **Kitbashed:** the detonator and the World Tour Incinerator have no voxel in the mod, so they are assembled from its other voxels. The detonator uses the trip bomb panel and the microphone; the Incinerator uses the freezer's hull in red and orange with a gauge, the shotgun grip and the fire.
@@ -95,8 +107,8 @@ python3 package/vr/build_voxel_pack.py ~/Downloads/voxel_duke3d.zip
 - **Not covered by the voxels:** the laser and wheel. These come from the original set.
 - **Requirements:** Python 3 with numpy, scipy and Pillow. It runs on the CPU only and takes about 20 minutes, most of it solving the hand poses.
 - **Version check:** the zip is checked against v1.0's checksum. `--any-version` tries another release.
-- **Where it goes:** the pack lands in `duke-vr-assets/voxel-duke/`, so the launcher lists it. A ready-made copy goes to `~/.local/share/eduke32-vr/vrpacks/voxel` (or `voxel.zip` with `--zip`).
-- **Choosing it:** pick **Voxel Duke** in VR Setup > Models, or run `eduke32-vr-play --pack voxel`.
+- **Where it goes:** the pack lands in `duke-vr-assets/voxel-duke/` (its `pack.json` records the builder version), so the launcher lists it. A ready-made copy goes to `~/.local/share/eduke32-vr/vrpacks/voxel` (or `voxel.zip` with `--zip`).
+- **Choosing it:** it is the default once built; otherwise pick **Voxel Duke** in VR Setup > Models, or run `eduke32-vr-play --pack voxel`.
 - **Sharing:** the built pack is third-party art. Keep it to yourself. Its `pack.json` marks it non-redistributable, so release builds refuse it.
 
 - **Options > VR Setup > Models** lists the installed packs (their titles), plus **2D sprites (no models)** (`vr_models 0`), which applies at once.
@@ -445,7 +457,9 @@ archive of the current commit, plus only the v6-original models, skins, hand
 rig and metadata. The asset manifest's `release_excludes` (private reference
 tiles and comparison sheets) are enforced, and the DEF builder must succeed
 with `--release` on the assembled tree. No game data is included; players
-supply their own DUKE3D.GRP or AA install. Nothing is uploaded.
+supply their own DUKE3D.GRP or AA install. Nothing is uploaded. The Voxel Duke builder ships as
+code only (`build_voxel_pack.py`, `voxelpack/`): players who put their own `voxel_duke3d.zip`
+next to the game get it built and loaded as the default model set by `eduke32-vr-play`.
 
 Tracked pitch note: with `EDUKE32_XR_STICK_PITCH=0` native view centering
 (hard landings, auto-centering) is cancelled instead of locking tracked aim;

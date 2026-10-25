@@ -37,14 +37,21 @@ JOINTS = ['palm', 'wrist', 'thumb_metacarpal', 'thumb_proximal', 'thumb_distal',
 
 def list_packs(assets, release):
     """Installed model sets as NAME=TITLE=DIRECTORY lines: every directory with a pack.json and
-    exports/eduke32 (private ones left out with --release); the base set first."""
-    for root in sorted((p for p in assets.iterdir() if (p / 'exports/eduke32').is_dir() and (p / 'pack.json').is_file()),
-                       key=lambda p: (p.name != BASE + '-lowres', p.name != BASE, p.name)):
+    exports/eduke32 (private ones left out with --release, and any a listed pack "supersedes");
+    the defaults first (the built Voxel Duke, then the low-res and full original sets)."""
+    packs = []
+    for root in sorted(p for p in assets.iterdir() if (p / 'exports/eduke32').is_dir() and (p / 'pack.json').is_file()):
         info = json.loads((root / 'pack.json').read_text())
         if release and info.get('redistributable') is False:
             continue
+        packs.append((info.get('name', root.name), root, info))
+    superseded = {name for _, _, info in packs for name in info.get('supersedes', [])}
+    rank = {'voxel': 0, 'original-lowres': 1, 'original': 2}
+    for name, root, info in sorted(packs, key=lambda p: (rank.get(p[0], 3), p[1].name)):
+        if name in superseded or root.name in superseded:
+            continue
         title = (info.get('title') or root.name).replace(';', ',').replace('=', '-')
-        print(f"{info.get('name', root.name)}={title}={root.name}")
+        print(f"{name}={title}={root.name}")
 
 
 def main():

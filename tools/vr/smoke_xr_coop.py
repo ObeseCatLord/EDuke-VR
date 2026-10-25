@@ -126,7 +126,7 @@ def main():
             right.pose.position.x, right.pose.position.y, right.pose.position.z = .2, 1.3, -.4
             remote.send()
             result['phase'] = 'XR join'
-            xr, co = launch('xr', [str(launcher), '--binary', binary, '--', *common, '-connect', f'127.0.0.1:{args.port}'], xr_env)
+            xr, co = launch('xr', [str(launcher), '--no-voxel-build', '--pack', 'original-lowres', '--binary', binary, '--', *common, '-connect', f'127.0.0.1:{args.port}'], xr_env)
             until(co, lambda t: 'Multiplayer client level synchronization complete.' in t, 120)
             until(co, lambda t: 'OpenXR world oracle: 60 frames' in t, 240)
             co.pause(2)

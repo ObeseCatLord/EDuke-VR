@@ -3,7 +3,8 @@
 # Launch EDuke32 VR with the qualified gameplay features (EDUKE32_XR=play).
 #
 #   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release] [--glow] [--pack NAME]
-#                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [-- eduke32 args]
+#                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [--voxel-zip ZIP] [--no-voxel-build]
+#                   [--build-packs] [-- eduke32 args]
 #
 # Stock Duke: pass --grp (or run where DUKE3D.GRP is found natively).
 # Alien Armageddon 5.66: pass --aa with the install directory; the shipped
@@ -11,8 +12,13 @@
 # Model packs are ordinary mods: every pack in the sibling duke-vr-assets checkout is built into
 # ~/.local/share/eduke32-vr/vrpacks/<name>/ (build_vr_pack.py), where the game finds it; the game
 # loads the one chosen in Options > VR Setup (saved in its config), --pack NAME for this run, or
-# your launcher.conf "pack=NAME" default. --no-models loads none (native 2D sprites). --release
-# builds only redistributable packs. Installed game data is never modified.
+# your launcher.conf "pack=NAME" default; with none chosen, Voxel Duke when it is built, else the
+# low-res original set. --no-models loads none (native 2D sprites). --release builds only
+# redistributable packs. Installed game data is never modified.
+# Voxel Duke: given voxel_duke3d.zip (Voxel Duke Nukem 3D v1.0, a separate download: --voxel-zip,
+# launcher.conf "voxel_zip=PATH", or found next to the game, in its data folder or in ~/Downloads),
+# the pack is built on this machine from it by code (build_voxel_pack.py, about 20 minutes, once and
+# again when the builder changes). --no-voxel-build skips that; --build-packs builds and quits.
 # Any EDUKE32_XR_* variable you export still overrides the preset.
 set -euo pipefail
 
@@ -20,11 +26,14 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 binary="$repo/eduke32-xr"
 assets="$(cd "$repo/.." && pwd)/duke-vr-assets"
-aa="" grp="" models=1 release="" glow="" pack="" default_pack=""
-# Personal defaults (never shipped): ~/.config/eduke32-vr/launcher.conf, e.g. "pack=dnf-private".
-# It is only the default; the pack chosen in the game's VR Setup menu wins.
+aa="" grp="" models=1 release="" glow="" pack="" default_pack="" voxel_zip="" no_voxel="" build_only=""
+# Personal defaults (never shipped): ~/.config/eduke32-vr/launcher.conf, e.g. "pack=dnf-private" or
+# "voxel_zip=/path/to/voxel_duke3d.zip". The pack is only the default; the game's VR Setup choice wins.
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/eduke32-vr/launcher.conf"
-[[ -f $conf ]] && default_pack=$(sed -n 's/^pack=//p' "$conf" | tail -1)
+if [[ -f $conf ]]; then
+    default_pack=$(sed -n 's/^pack=//p' "$conf" | tail -1)
+    voxel_zip=$(sed -n 's/^voxel_zip=//p' "$conf" | tail -1)
+fi
 args=()
 while (($#)); do
     case "$1" in
@@ -37,12 +46,15 @@ while (($#)); do
         --pack) pack=$2; shift 2 ;;
         --assets) assets=$(cd "$2" && pwd); shift 2 ;;
         --binary) binary=$(realpath "$2"); shift 2 ;;
+        --voxel-zip) voxel_zip=$(realpath "$2"); shift 2 ;;
+        --no-voxel-build) no_voxel=1; shift ;;
+        --build-packs) build_only=1; shift ;;
         --) shift; args+=("$@"); break ;;
-        -h|--help) sed -n '3,14p' "$0"; exit 0 ;;
+        -h|--help) sed -n '3,22p' "$0"; exit 0 ;;
         *) args+=("$1"); shift ;;
     esac
 done
-[[ -x "$binary" ]] || { echo "eduke32-vr-play: build $binary first (make USE_OPENXR=1 ...)" >&2; exit 1; }
+[[ -n $build_only || -x "$binary" ]] || { echo "eduke32-vr-play: build $binary first (make USE_OPENXR=1 ...)" >&2; exit 1; }
 
 export EDUKE32_VR_HERE="$here"
 root="${XDG_DATA_HOME:-$HOME/.local/share}/eduke32-vr"
@@ -57,6 +69,36 @@ pack_name() {
         [[ $1 == "$name" || $1 == "$dir" ]] && { echo "$name"; return; }
     done
     echo "$1"
+}
+
+# Voxel Duke, built here from the player's own copy of that mod (code only; never shipped): when
+# voxel_duke3d.zip is found and the pack is missing or was made by an older builder.
+voxel_pack() {
+    ((models)) && [[ -z $release && -z $no_voxel && -d $assets ]] || return 0
+    local want have="" zip=$voxel_zip candidate
+    want=$(python3 "$here/build_voxel_pack.py" --version)
+    [[ -f $assets/voxel-duke/pack.json ]] && have=$(python3 -c \
+        'import json, sys; print(json.load(open(sys.argv[1])).get("builder_version", 1))' "$assets/voxel-duke/pack.json")
+    [[ $have == "$want" ]] && return 0
+    if [[ -z $zip ]]; then
+        for candidate in "$here/../../voxel_duke3d.zip" "$(dirname "$assets")/voxel_duke3d.zip" "$root/voxel_duke3d.zip" \
+                         "$HOME/Downloads/voxel_duke3d.zip" "$assets"/*/source/voxel_duke3d.zip; do
+            [[ -f $candidate ]] && { zip=$candidate; break; }
+        done
+    fi
+    [[ -n $zip && -f $zip ]] || return 0
+    # A failed build is not retried until the zip or the builder changes.
+    local stamp
+    stamp="$want $(stat -c '%s %Y' "$zip") $(realpath "$zip")"
+    [[ -f $root/voxel-build.failed && $(cat "$root/voxel-build.failed") == "$stamp" ]] && return 0
+    echo "eduke32-vr-play: $([[ -n $have ]] && echo rebuilding || echo building) the Voxel Duke model pack from $zip" \
+         "(about 20 minutes, once)" >&2
+    if python3 "$here/build_voxel_pack.py" "$zip" --assets "$assets" --out "$packs" >&2; then
+        rm -f "$root/voxel-build.failed"
+    else
+        echo "$stamp" > "$root/voxel-build.failed"
+        echo "eduke32-vr-play: the Voxel Duke pack could not be built (see above); using the original models" >&2
+    fi
 }
 
 # Builds every installed pack (quick: symlinks into the asset folders) and the local extras.
@@ -123,6 +165,13 @@ export mesa_glthread="${mesa_glthread:-false}"
 # A model set chosen in the game's VR Setup menu asks for a restart: the game saves its choice,
 # writes this file and quits, and the next round loads it (a --pack given for the first run no
 # longer applies).
+voxel_pack
+if [[ -n $build_only ]]; then
+    prepare
+    printf 'eduke32-vr-play: model sets in %s:\n' "$packs" >&2
+    printf '  %s\n' "${pack_list[@]}" >&2
+    exit 0
+fi
 restart=$(mktemp -t eduke32-vr-restart.XXXXXX)
 trap 'rm -f "$restart"' EXIT
 export EDUKE32_XR_RESTART_REQUEST="$restart"

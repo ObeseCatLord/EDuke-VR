@@ -12,7 +12,7 @@ sharing; with --release it refuses non-redistributable packs).
 Layout, like any mod:
   vrpack.def                 the models (EDuke32 DEF), Duke Nukem 3D and its add-ons
   vrpack_aa.def              the models for Alien Armageddon (when the assets have its arsenal)
-  vrpack/pack.txt            name=, title=, filter=, redistributable=, autoload_games=
+  vrpack/pack.txt            name=, title=, filter=, redistributable=, autoload_games=, supersedes=
   vrpack/hand-rig.txt        VR hand rig, holds and full body (hand-rig-aa.txt for AA)
   vrpack/hud-model-map-aa.txt
   vrpack/autoload/*.zip      game data the pack brings (e.g. a voxel world), loaded with it
@@ -91,7 +91,8 @@ def main():
     (pack / 'vrpack' / 'pack.txt').write_text(
         f'name={name}\ntitle={info.get("title", name)}\nfilter={texture_filter}\n'
         f'redistributable={0 if info.get("redistributable") is False else 1}\n'
-        + (f'autoload_games={",".join(games)}\n' if autoload else ''))
+        + (f'autoload_games={",".join(games)}\n' if autoload else '')
+        + (f'supersedes={",".join(info["supersedes"])}\n' if info.get('supersedes') else ''))
 
     if as_zip:
         target = out / f'{name}.zip'

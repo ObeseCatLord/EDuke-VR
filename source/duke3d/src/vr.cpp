@@ -203,6 +203,24 @@ void G_XRRegisterCvars()
 namespace
 {
 struct ModelSet { std::string name, title; };
+// pack.txt "supersedes=a,b": packs this one replaces.
+std::vector<std::string> packSupersedes(char const *packTxt)
+{
+    std::vector<std::string> names;
+    if (FILE *file=openPackFile(packTxt))
+    {
+        char line[256];
+        while (std::fgets(line,sizeof(line),file))
+            if (!std::strncmp(line,"supersedes=",11))
+            {
+                line[std::strcspn(line,"\r\n")]=0;
+                for (char *name=std::strtok(line+11,","); name; name=std::strtok(nullptr,","))
+                    if (*name) names.push_back(name);
+            }
+        std::fclose(file);
+    }
+    return names;
+}
 std::string packTitle(char const *packTxt, std::string fallback)
 {
     if (FILE *file=openPackFile(packTxt))
@@ -241,8 +259,20 @@ std::vector<ModelSet> const &modelSets()
         fnlist_clearnames(&fnlist);
         // The loaded pack is always listed (it may have come in as -g/-j like any mod).
         if (g_vrLoadedPack[0]) add(g_vrLoadedPack,packTitle("vrpack/pack.txt",g_vrLoadedPack));
-        // The default (low-res original) first, then the full-resolution original.
-        auto const rank=[](ModelSet const &m) { return m.name=="original-lowres" ? 0 : m.name=="original" ? 1 : 2; };
+        // A pack another one replaces (pack.txt "supersedes=", e.g. the built Voxel Duke over an older
+        // hand-made voxel pack) is left out when that one is installed.
+        std::vector<std::string> superseded;
+        for (auto const &set:list)
+            for (auto &name:packSupersedes((std::string("vrpacks/")+set.name+"/vrpack/pack.txt").c_str()))
+                superseded.push_back(name);
+        if (g_vrLoadedPack[0])
+            for (auto &name:packSupersedes("vrpack/pack.txt")) superseded.push_back(name);
+        list.erase(std::remove_if(list.begin(),list.end(),[&](ModelSet const &m) {
+            for (auto const &name:superseded) if (!Bstrcasecmp(name.c_str(),m.name.c_str())) return true;
+            return false;
+        }),list.end());
+        // The defaults first: Voxel Duke (when built), the low-res original, the full-resolution original.
+        auto const rank=[](ModelSet const &m) { return m.name=="voxel" ? 0 : m.name=="original-lowres" ? 1 : m.name=="original" ? 2 : 3; };
         std::stable_sort(list.begin(),list.end(),[&](ModelSet const &l, ModelSet const &r) { return rank(l)<rank(r); });
         if (list.empty()) list.push_back({"","3D models"});
         return list;

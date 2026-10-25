@@ -46,7 +46,7 @@ def main():
                EDUKE32_XR_CAPTURE_REQUEST=str(capture), EDUKE32_XR_CONSOLE_REQUEST=str(console),
                XDG_DATA_HOME=str(lab / 'data'))
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
-    command = [str(launcher), '--binary', str(args.binary.resolve()), '--aa', str(args.aa_root.resolve()), '--pack', args.pack, '--',
+    command = [str(launcher), '--no-voxel-build', '--binary', str(args.binary.resolve()), '--aa', str(args.aa_root.resolve()), '--pack', args.pack, '--',
                '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
                '-mx', 'aa_controller_observer.con', '-v1', '-l2', '-s1']
     log_path = lab / 'game.log'

@@ -3,6 +3,7 @@
 """Build the "Voxel Duke" VR model pack from your own copy of Voxel Duke Nukem 3D.
 
 Usage: build_voxel_pack.py VOXEL_DUKE3D_ZIP [--assets DUKE_VR_ASSETS] [--out VRPACKS] [--zip] [--any-version]
+       build_voxel_pack.py --version      (the builder version; a pack built by an older one is rebuilt)
 
 The EDuke32 VR release ships no voxel content. Voxel Duke Nukem 3D v1.0 by Daniel Peterson ("Cheello")
 is a separate download; give this script its zip (voxel_duke3d.zip) and it makes, on your machine:
@@ -20,8 +21,9 @@ is a separate download; give this script its zip (voxel_duke3d.zip) and it makes
 
 Duke is one skinned voxel body on v7's skeleton with his own hands (vr_duke_ik, vr_duke, vr_duke_body;
 pack.json "ik_hands"). Anything the voxels do not cover (laser, wheel) falls back to the shipped
-original set. The launcher (eduke32-vr-play) lists the pack by
-itself once the folder exists; pick it in VR Setup > Models or with --pack voxel.
+original set. Once built it is the game's default model set (the original sets and any private ones
+stay in VR Setup > Models). The launcher (eduke32-vr-play) runs this script by itself when it finds
+voxel_duke3d.zip and the pack is missing or was built by an older version of this script.
 
 Needs Python 3 with numpy, scipy and Pillow; CPU only; about 20 minutes, most of it solving the hand poses.
 The result is built from third-party art: it is for your own use and is never redistributable (its
@@ -42,6 +44,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE / 'voxelpack'
+# Bumped whenever the built pack changes; eduke32-vr-play rebuilds a pack made by an older builder.
+BUILDER_VERSION = 2
 # Voxel Duke Nukem 3D v1.0 (the release the weapon mapping in voxelpack/weapon_specs.py was made for).
 KNOWN_SHA256 = '935a9079c4f3a3c3a2a869e066c5366b0201a856cc6041644f644d22918178aa'
 # (label, script, arguments, only with --aa-experimental)
@@ -78,6 +82,9 @@ def extract(archive, target):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    if sys.argv[1:] == ['--version']:
+        print(BUILDER_VERSION)
+        return
     parser.add_argument('zip', type=Path, help='voxel_duke3d.zip (Voxel Duke Nukem 3D v1.0)')
     parser.add_argument('--assets', type=Path, default=HERE.parents[2] / 'duke-vr-assets')
     parser.add_argument('--out', type=Path, default=Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'eduke32-vr/vrpacks')
@@ -124,6 +131,8 @@ def main():
         'name': 'voxel', 'title': 'Voxel Duke', 'texture_filter': 'nearest', 'redistributable': False,
         'source': f'Voxel Duke Nukem 3D by Daniel Peterson ("Cheello"), {archive.name} (sha256 {digest}); built by build_voxel_pack.py',
         'autoload': ['source/voxel_duke3d.zip'], 'games': ['duke3d'], 'ik_hands': True,
+        # the older hand-made voxel pack (a private folder of the asset checkout) is not listed beside it
+        'supersedes': ['voxel-private'], 'builder_version': BUILDER_VERSION,
     }, indent=1) + '\n')
     (stage / 'README.txt').write_text(
         'Voxel Duke model pack for EDuke32 VR, built on this machine by build_voxel_pack.py from your copy of\n'

@@ -44,7 +44,7 @@ def main():
     if args.scale:
         env['EDUKE32_XR_TEST_WHEEL_SCALE'] = args.scale
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
-    command = [str(launcher), '--binary', str(args.binary.resolve()), '--',
+    command = [str(launcher), '--no-voxel-build', '--pack', 'original-lowres', '--binary', str(args.binary.resolve()), '--',
                '-usecwd', '-nosetup', '-noautoload', '-nologo', '-v1', '-l1', '-s1']
     log_path = lab / 'game.log'
     text = lambda: log_path.read_text(errors='replace')

@@ -74,7 +74,7 @@ def main():
 
     def launch(role):
         log = (labs[role] / 'game.log').open('w'); logs.append(log)
-        command = [str(launcher), '--binary', str(args.binary.resolve()), '--pack', args.pack, '--', *common,
+        command = [str(launcher), '--no-voxel-build', '--binary', str(args.binary.resolve()), '--pack', args.pack, '--', *common,
                    '-connect', args.server]
         process = subprocess.Popen(command, cwd=labs[role], env=envs[role], stdin=subprocess.DEVNULL, stdout=log,
                                    stderr=subprocess.STDOUT)

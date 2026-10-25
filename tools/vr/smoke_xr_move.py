@@ -35,7 +35,7 @@ def main():
     if args.fire_only:
         env.update(EDUKE32_XR_TEST_INPUT='1', EDUKE32_XR_TEST_SHOTS='1')
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
-    command = [str(launcher), '--binary', str(args.binary.resolve()), '--',
+    command = [str(launcher), '--no-voxel-build', '--pack', 'original-lowres', '--binary', str(args.binary.resolve()), '--',
                '-usecwd', '-nosetup', '-noautoload', '-nologo', '-v1', '-l1', '-s1']
     log_path = lab / 'game.log'
     text = lambda: log_path.read_text(errors='replace')

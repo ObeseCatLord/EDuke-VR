@@ -87,7 +87,7 @@ def main():
         env['EDUKE32_XR'] = 'play'
         env['XDG_DATA_HOME'] = str(lab / 'data')
         launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
-        command = [str(launcher), '--binary', str(args.binary.resolve())]
+        command = [str(launcher), '--no-voxel-build', '--pack', 'original-lowres', '--binary', str(args.binary.resolve())]
         if args.aa_root:
             command += ['--aa', str(args.aa_root.resolve())]
         command += ['--', '-usecwd', '-nosetup', '-noautoload', '-nologo']

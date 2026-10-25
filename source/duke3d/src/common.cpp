@@ -491,27 +491,38 @@ static void G_LoadVRPack(void)
 #ifdef USE_OPENXR
     if (!testkopen("vrpack.def", 0))
     {
+        // The chosen pack, else the default: Voxel Duke once the player has built it from their copy of
+        // that mod (build_voxel_pack.py; the launcher does it), else the shipped low-res original set.
         char const *const fallback = getenv("EDUKE32_XR_DEFAULT_PACK");
-        char const *name = g_vrModelPackOverride[0] ? g_vrModelPackOverride
-                         : g_vrModelPack[0] ? g_vrModelPack : fallback && *fallback ? fallback : "original-lowres";
-        if (!Bstrcasecmp(name, "none"))
+        char const *const chosen = g_vrModelPackOverride[0] ? g_vrModelPackOverride
+                                 : g_vrModelPack[0] ? g_vrModelPack : fallback && *fallback ? fallback : nullptr;
+        if (chosen && !Bstrcasecmp(chosen, "none"))
             return;
-        char path[BMAX_PATH];
-        Bsnprintf(path, sizeof(path), "vrpacks/%s.zip", name);
-        if (testkopen(path, 0) && initgroupfile(path) != -1)
-            LOG_F(INFO, "VR model pack: %s", path);
-        else
+        char const *const candidates[] = { chosen, "voxel", "original-lowres" };
+        for (char const *name : candidates)
         {
+            if (!name || !*name)
+                continue;
+            char path[BMAX_PATH];
+            Bsnprintf(path, sizeof(path), "vrpacks/%s.zip", name);
+            if (testkopen(path, 0) && initgroupfile(path) != -1)
+            {
+                LOG_F(INFO, "VR model pack: %s", path);
+                break;
+            }
             char *where = nullptr;
             Bsnprintf(path, sizeof(path), "vrpacks/%s", name);
-            if (findfrompath(path, &where) == 0 && where)
+            bool const found = findfrompath(path, &where) == 0 && where;
+            if (found)
             {
                 addsearchpath(where);
                 LOG_F(INFO, "VR model pack: %s", where);
             }
-            else
-                LOG_F(WARNING, "VR model pack \"%s\" not found in vrpacks/.", name);
             Xfree(where);
+            if (found)
+                break;
+            if (name == chosen)
+                LOG_F(WARNING, "VR model pack \"%s\" not found in vrpacks/; using the default.", name);
         }
         if (!testkopen("vrpack.def", 0))
             return;
