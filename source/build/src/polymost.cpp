@@ -7262,6 +7262,7 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
     otex.d = dd;
     xtex.u = otex.d * (t * double(((uint64_t)xdimscale * yxaspect) * viewingrange)) *
                         (1.0 / (16384.0 * 65536.0 * 65536.0 * 5.0 * 1024.0));
+
     ytex.v = vv[1];
     otex.v = r_parallaxskypanning ? vv[0] + dd*(float)global_cf_ypanning*(float)ti*(1.f/256.f) : vv[0];
 #ifdef USE_OPENXR
@@ -7299,7 +7300,28 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
     ti = globalpicnum;
     o.y = fviewingrange/(ghalfx*256.f); o.z = 1.f/o.y;
 
+#ifdef USE_OPENXR
+    // Headset: Build lays the sky panels out linearly in angle at a flat 90-degree screen's scale,
+    // so in a perspective view the sky turns faster than the world (4/pi at the centre) and lags at
+    // the edges; it reads as the sky moving with the head. Each panel is instead a flat facet of a
+    // prism around the viewer, placed and textured in perspective (projective texture mapping), so
+    // every view direction keeps its texel (like a sky dome). Polymost's focal length for the level
+    // view is ghalfx/gvrcorrection (the walls' own).
+    static bool const xrNativeSky = Bgetenv("EDUKE32_XR_TEST_NATIVE_SKY_RATE") != nullptr;   // A/B test hook
+    static bool const xrSkyCheck = Bgetenv("EDUKE32_XR_TEST_SKY") != nullptr;
+    bool const xrFacets = xrProjection.active && !npot && dapskybits >= 2 && !xrNativeSky;
+    float const xrFocal = ghalfx / gvrcorrection;
+    float const xrUnitsToRadians = 2.f*fPI/2048.f;
+    auto const xrAngleAt = [&](float x) { return fglobalang + atanf((x-ghalfx)/xrFocal) / xrUnitsToRadians; };
+    auto const xrScreenAt = [&](float angle) {
+        float const d = (angle - fglobalang) * xrUnitsToRadians;
+        return d >= fPI*0.5f - 1e-3f ? FLT_MAX : d <= -fPI*0.5f + 1e-3f ? -FLT_MAX : ghalfx + xrFocal*tanf(d);
+    };
+    int y = xrFacets ? ((int32_t)floorf(xrAngleAt(x0)) >> (11-dapskybits))
+                     : ((int32_t)(((x0-ghalfx)*o.y)+fglobalang)>>(11-dapskybits));
+#else
     int y = ((int32_t)(((x0-ghalfx)*o.y)+fglobalang)>>(11-dapskybits));
+#endif
     float fx = x0;
 
     do
@@ -7314,20 +7336,26 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
         else
             otex.u = otex.d*(t*((float)(fglobalang-(y<<(11-dapskybits)))) * (1.f/2048.f) + xpanning) - xtex.u*ghalfx;
         y++;
+#ifdef USE_OPENXR
+        o.x = fx; fx = xrFacets ? xrScreenAt((float)(y<<(11-dapskybits))) : ((float)((y<<(11-dapskybits))-fglobalang))*o.z+ghalfx;
+#else
         o.x = fx; fx = ((float)((y<<(11-dapskybits))-fglobalang))*o.z+ghalfx;
+#endif
 
         if (fx > x1) { fx = x1; ti = -1; }
 
-        vec3d_t const otexbak = otex, xtexbak = xtex, ytexbak = ytex;
-        float const columnLeft = o.x, columnRight = fx;
+        vec3d_t otexbak = otex, xtexbak = xtex, ytexbak = ytex;
+        float columnLeft = o.x, columnRight = fx;
 
         // One band of this tile column, between level rows yLo and yHi; a constant band repeats
         // one texture row (vertical edge clamp done geometrically: the shader clamps after NPOT
         // wrapping, so a 300-texel sky tile would otherwise tile upward).
-        auto const drawBand = [&](float const yLo, float const yHi, bool const constant, float const row)
+        auto const drawBand = [&](float const yLo, float const yHi, bool const constant, float const row,
+                                  float const slopeLo = 0.f, float const slopeHi = 0.f)
         {
         otex = otexbak, xtex = xtexbak, ytex = ytexbak;
-        if (constant) { ytex.v = 0; otex.v = otex.d*row; }
+        // a constant texel row: v = row wherever the (possibly projective) depth term is
+        if (constant) { ytex.v = 0; xtex.v = xtex.d*row; otex.v = otex.d*row; }
         // Transform texture mapping factors
         vec2f_t fxy[3] = { { ghalfx * (1.f - 0.25f), ghalfy * (1.f - 0.25f) },
                           { ghalfx, ghalfy * (1.f + 0.25f) },
@@ -7416,26 +7444,29 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
         }
 
         // Clip to the band's rows
-        auto const clipRows = [&](float const limit, bool const below)
+        // Clip to the band's rows: the line y = limit + slope*x (sloped where the facet's depth varies)
+        auto const clipRows = [&](float const limit, float const slope, bool const below)
         {
             vec2f_t in[8];
             int const count = n3;
             Bmemcpy(in, cxy2, sizeof(vec2f_t)*count);
             n3 = 0;
+            auto const side = [&](vec2f_t const &p) { return p.y - (limit + slope*p.x); };
             for (int i=0; i<count; i++)
             {
                 int const j = i < count-1 ? i + 1 : 0;
-                bool const inside = below ? in[i].y <= limit : in[i].y >= limit;
+                float const si = side(in[i]), sj = side(in[j]);
+                bool const inside = below ? si <= 0.f : si >= 0.f;
                 if (inside && n3 < 8) cxy2[n3++] = in[i];
-                if (inside != (below ? in[j].y <= limit : in[j].y >= limit) && n3 < 8)
+                if (inside != (below ? sj <= 0.f : sj >= 0.f) && n3 < 8)
                 {
-                    float const r = (limit - in[i].y) / (in[j].y - in[i].y);
-                    cxy2[n3++] = { (in[j].x - in[i].x) * r + in[i].x, limit };
+                    float const r = si / (si - sj);
+                    cxy2[n3++] = { (in[j].x - in[i].x) * r + in[i].x, (in[j].y - in[i].y) * r + in[i].y };
                 }
             }
         };
-        if (yLo > -FLT_MAX) clipRows(yLo, false);
-        if (yHi < FLT_MAX && n3 >= 3) clipRows(yHi, true);
+        if (yLo > -FLT_MAX) clipRows(yLo, slopeLo, false);
+        if (yHi < FLT_MAX && n3 >= 3) clipRows(yHi, slopeHi, true);
         if (n3 < 3) return;
 
         // Transform back to polymost coordinates
@@ -7453,22 +7484,80 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
         polymost_drawpoly(cxy, n3, method|DAMETH_WALL);
         };
 
+        auto const drawColumn = [&]()
+        {
 #ifdef USE_OPENXR
         // Level-space rows where the tile's first and last texel rows fall (v = otex.v + ytex.v*y).
         if (xrProjection.active && ytexbak.v > 0.0)
         {
+            // v = (otex.v + ytex.v*y)/(otex.d + xtex.d*x): the last row's line slopes with a facet's depth
             float const height = float(tilesiz[globalpicnum].y);
             float const yTop = float((0.0 - otexbak.v) / ytexbak.v);
             float const yBottom = float((otexbak.d*height - otexbak.v) / ytexbak.v);
-            drawBand(-FLT_MAX, yTop, true, 0.5f);
-            drawBand(yTop, yBottom, false, 0.f);
-            drawBand(yBottom, FLT_MAX, true, height-0.5f);
+            float const bottomSlope = float(xtexbak.d*height / ytexbak.v);
+            drawBand(-FLT_MAX, yTop, true, 0.5f, 0.f, 0.f);
+            drawBand(yTop, yBottom, false, 0.f, 0.f, bottomSlope);
+            drawBand(yBottom, FLT_MAX, true, height-0.5f, bottomSlope, 0.f);
         }
         else
 #endif
             drawBand(-FLT_MAX, FLT_MAX, false, 0.f);
 
         otex = otexbak, xtex = xtexbak, ytex = ytexbak;
+        };
+
+#ifdef USE_OPENXR
+        if (xrFacets)
+        {
+            // The panel as narrow flat facets (<= ~11 degrees each, so their seams do not show), each at
+            // unit distance facing its own centre angle a: a screen ray X = (x-ghalfx)/f meets it at
+            // depth 1/(X sin a + cos a), at tangent offset s = (X cos a - sin a)/(X sin a + cos a), and the
+            // texel there is u = uc + uh/tan(h) * s (uc, uh: centre and half width of its slice of the
+            // tile, h: its half angle). Projective in x, so Polymost's texgen maps it exactly; the rows
+            // (v) stay the cylinder's: height over the facet's distance.
+            vec3d_t const base_o = otex, base_x = xtex, base_y = ytex;
+            float const panel = float(1<<(11-dapskybits));
+            float const panelStart = (float)((y-1)<<(11-dapskybits));
+            int const slices = max(1, (int)ceilf(panel/64.f));
+            float const tw = t / float(1<<dapskybits);
+            float const h = panel*0.5f/slices*xrUnitsToRadians;
+            float const left = columnLeft, right = columnRight;
+            for (int k = 0; k < slices; k++)
+            {
+                float const a0 = panelStart + panel*k/slices, a1 = panelStart + panel*(k+1)/slices;
+                columnLeft = max(left, xrScreenAt(a0));
+                columnRight = min(right, xrScreenAt(a1));
+                if (!(columnRight > columnLeft))
+                    continue;
+                float const a = ((a0 + a1)*0.5f - fglobalang) * xrUnitsToRadians;
+                float const sa = sinf(a), ca = cosf(a);
+                float const uc = tw*(k + 0.5f)/slices + xpanning, B = tw*0.5f/slices/tanf(h);
+                otex = base_o; xtex = base_x; ytex = base_y;
+                xtex.d = dd*sa/xrFocal;
+                otex.d = dd*(ca - ghalfx*sa/xrFocal);
+                xtex.u = dd*(uc*sa + B*ca)/xrFocal;
+                otex.u = dd*(uc*ca - B*sa) - xtex.u*ghalfx;
+                otexbak = otex; xtexbak = xtex; ytexbak = ytex;
+                if (xrSkyCheck)
+                {
+                    // Self-check: the sky angle the texture gives across this slice vs the view ray's.
+                    static float worst; static uint32_t checks;
+                    for (int q = 0; q <= 4; q++)
+                    {
+                        float const x = columnLeft + (columnRight - columnLeft)*q/4.f;
+                        float const uu = float((xtex.u*x + otex.u) / (xtex.d*x + otex.d)) - xpanning;
+                        float const skyAngle = panelStart + uu/tw*panel;
+                        worst = max(worst, fabsf(skyAngle - xrAngleAt(x)));
+                    }
+                    if (checks++%2000==0) LOG_F(INFO, "XR sky facets: worst angle error %.3f units over %u slices.", worst, checks);
+                }
+                drawColumn();
+            }
+            otex = base_o; xtex = base_x; ytex = base_y;
+        }
+        else
+#endif
+            drawColumn();
     }
     while (ti >= 0);
 

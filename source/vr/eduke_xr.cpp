@@ -1975,6 +1975,20 @@ Runtime::FrameResult Runtime::beginFrame(Frame &frame, std::string &error)
     if ((viewState.viewStateFlags & (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT))
         != (XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT))
         return finishFrame(false, error) ? FrameResult::Idle : FrameResult::Error;
+    // Test hook: the left eye's field of view "left,right,down,up" in degrees (the right eye
+    // mirrored), e.g. a wide, asymmetric headset's in a runtime whose views are symmetric.
+    if (char const *test = std::getenv("EDUKE32_XR_TEST_FOV"))
+    {
+        float l = 0, r = 0, d = 0, u = 0;
+        if (std::sscanf(test, "%f,%f,%f,%f", &l, &r, &d, &u) == 4)
+            for (uint32_t i = 0; i < kViewCount; ++i)
+            {
+                float const k = 3.14159265f / 180.f;
+                auto &fov = m_impl->views[i].fov;
+                fov.angleLeft = (i ? -r : l) * k; fov.angleRight = (i ? -l : r) * k;
+                fov.angleDown = d * k; fov.angleUp = u * k;
+            }
+    }
     m_impl->foveateNow = m_impl->foveationPending = m_impl->gameViewportSaved = false;
     m_impl->boundViews = kViewCount;
     m_impl->gazeTracked = false;

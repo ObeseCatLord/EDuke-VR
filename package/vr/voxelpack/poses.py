@@ -339,22 +339,52 @@ def _solve_hold_once(tris, palm, axis, hold_cfg, trigger=None):
     return ang, root, dict(front=front, palm_joint_forward=d_pj, **info)
 
 
+STUCK_FLEX = 15.0       # a wrapping finger whose knuckle bends less than this sticks out past the grip
+TUCKED = {'proximal': 75.0, 'intermediate': 95.0, 'distal': 60.0}
+
+
+def stuck_fingers(ang, trigger=None):
+    """Fingers that found nothing to wrap (straight or bent back), the trigger finger aside."""
+    return [f for f in ('index', 'middle', 'ring', 'little')
+            if not (trigger is not None and f == 'index') and ang.get(f'{f}_proximal', (0.0,))[0] < STUCK_FLEX]
+
+
 def solve_hold(tris, palm, axis, hold_cfg, trigger=None):
     """Try a few palm wraps (most natural first); keep the first that seats both the trigger finger and
-    the thumb, else the best by (trigger seated, thumb seated, contacts)."""
+    the thumb, else the best by (trigger seated, thumb seated, contacts). A short grip can leave fingers
+    with nothing to wrap (they would stick out straight): the hand then also tries sliding along the
+    grip, and any finger still left over is tucked into a curl."""
     wraps = [hold_cfg['wrap_deg']] if 'wrap_deg' in hold_cfg else [35.0, 20.0, 0.0]
+    base_up = hold_cfg.get('slide_up', 0.0)
     best = None
-    for wrap in wraps:
-        ang, root, info = _solve_hold_once(tris, palm, axis, dict(hold_cfg, wrap_deg=wrap), trigger)
-        info['wrap_deg'] = wrap
-        trig_ok = trigger is None or info.get('trigger_cost_m') is not None
-        thumb_ok = 'thumb_cost_m' in info
-        score = (not trig_ok, not thumb_ok, info.get('trigger_contacts', 0) + info.get('thumb_contacts', 0))
-        if best is None or score < best[0]:
-            best = (score, ang, root, info)
-        if trig_ok and thumb_ok:
+    for up in (0.0, -0.012, -0.024, 0.012, -0.036):
+        for wrap in wraps:
+            cfg = dict(hold_cfg, wrap_deg=wrap, slide_up=base_up + up)
+            ang, root, info = _solve_hold_once(tris, palm, axis, cfg, trigger)
+            info['wrap_deg'] = wrap
+            trig_ok = trigger is None or info.get('trigger_cost_m') is not None
+            thumb_ok = 'thumb_cost_m' in info
+            stuck = len(stuck_fingers(ang, trigger))
+            score = (stuck, not trig_ok, not thumb_ok, abs(up),
+                     info.get('trigger_contacts', 0) + info.get('thumb_contacts', 0))
+            if best is None or score < best[0]:
+                best = (score, ang, root, info, up)
+            if trig_ok and thumb_ok and not stuck:
+                break
+        if best[0][0] == 0 and not best[0][1] and not best[0][2]:
             break
-    return best[1], best[2], best[3]
+    ang, root, info, up = dict(best[1]), best[2], best[3], best[4]
+    if up:
+        info['slide_up_m'] = up
+    left = stuck_fingers(ang, trigger)
+    for f in left:
+        for seg, flex in TUCKED.items():
+            j = f'{f}_{seg}'
+            v = list(ang.get(j, (0.0, 0.0, 0.0)))
+            ang[j] = tuple([flex] + v[1:])
+    if left:
+        info['tucked'] = left
+    return ang, root, info
 
 
 def hold_records(md3_path, meta):

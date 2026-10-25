@@ -1,0 +1,7 @@
+[
+ {"pose": {"head": [0, 1.7, 0, 0, -70, 0], "left": [-0.2, 1.1, -0.15, 0, 0, 0], "right": [0.2, 1.1, -0.15, 0, 0, 0]}}, {"wait": 4},
+ {"capture": "stand"},
+ {"buttons": {"left": {"thumbstick": [0, 0.5]}}}, {"wait": 1.5},
+ {"capture": "walk1"}, {"wait": 0.25}, {"capture": "walk2"}, {"wait": 0.25}, {"capture": "walk3"}, {"wait": 0.25}, {"capture": "walk4"},
+ {"buttons": {"left": {"thumbstick": [0, 0]}}}, {"wait": 1.5}, {"capture": "stopped"}
+]

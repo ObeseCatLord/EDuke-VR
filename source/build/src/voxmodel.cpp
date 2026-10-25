@@ -1162,6 +1162,51 @@ int32_t polymost_voxdraw(voxmodel_t *m, tspriteptr_t const tspr)
     mat[13] -= (m->piv.x*mat[1] + m->piv.y*mat[5] + zoff*mat[9]);
     mat[14] -= (m->piv.x*mat[2] + m->piv.y*mat[6] + zoff*mat[10]);
     //
+#ifdef USE_OPENXR
+    // XR views: the matrix above is built from the native camera (its yaw, pitch and screen-derived
+    // scale), which leaves voxels turning with the head. Place the voxel in camera-relative Build
+    // units instead and map them through the world pass's own rotation, as world MD3 models do.
+    // The scales, offsets and flips are the native ones re-expressed in Build units.
+    float xrToEye[16];
+    static bool const xrLegacy = Bgetenv("EDUKE32_XR_TEST_LEGACY_VOXELS") != nullptr;   // A/B test hook
+    if (!xrLegacy && tspriteptr[maxspritesonscreen] != tspr && polymost_xrSpriteWorldToEye(xrToEye))
+    {
+        float const angle = (float)((tspr->ang + spriteext[tspr->owner].mdangoff) & 2047) * (fPI/1024.f);
+        float const ca = cosf(angle), sa = sinf(angle);
+        float xyScale = m->scale * (float)tspr->xrepeat * (256.f/320.f) * (m->bscale/64.f) * 16.f;
+        if ((sprite[tspr->owner].cstat & CSTAT_SPRITE_ALIGNMENT) == CSTAT_SPRITE_ALIGNMENT_WALL)
+            xyScale *= 1.25f;
+        float const zScale = m->scale * (float)tspr->yrepeat * (m->bscale/64.f) * 256.f;
+        float const xSign = (globalorientation&4) ? -1.f : 1.f, zSign = (globalorientation&8) ? -1.f : 1.f;
+        // The sprite's x offset (native a0 before the projection scale), in Build units.
+        float const offsetScale = (float)tspr->xrepeat * (256.f/320.f) * (m->bscale/64.f) * 1024.f
+                                  * (((sprite[tspr->owner].cstat & CSTAT_SPRITE_ALIGNMENT) == CSTAT_SPRITE_ALIGNMENT_WALL) ? 1.25f : 1.f);
+        float offY = -tspr->xoffset*sintable[(spriteext[tspr->owner].mdangoff+512)&2047]*(1.f/(64.f*16384.f));
+        float offX = tspr->xoffset*sintable[spriteext[tspr->owner].mdangoff&2047]*(1.f/(64.f*16384.f));
+        if (globalorientation&4) { offX = -offX; offY = -offY; }
+        // native: a0.y (pre-projection) = -offY*f, a0.x = offX*f; world axes A = (-sin, cos), B = (-cos, -sin)
+        float const ay = -offY*offsetScale, ax = offX*offsetScale;
+        float const zAdd = m->zadd * m->scale * (float)tspr->yrepeat * (m->bscale/64.f) * 16384.f * zSign;
+        float const baseZ = k0 - (float)globalposz - (float)shadowHack - zAdd;
+        float local[16] = {
+            xSign*sa*xyScale, -xSign*ca*xyScale, 0.f, 0.f,
+            ca*xyScale, sa*xyScale, 0.f, 0.f,
+            0.f, 0.f, zSign*zScale, 0.f,
+            (float)(tspr->x + spriteext[tspr->owner].mdposition_offset.x - globalposx) + ay*-sa - ax*-ca,
+            (float)(tspr->y + spriteext[tspr->owner].mdposition_offset.y - globalposy) + ay*ca - ax*-sa,
+            baseZ, 1.f,
+        };
+        for (int row = 0; row < 3; ++row)
+            local[12+row] -= m->piv.x*local[row] + m->piv.y*local[4+row] + zoff*local[8+row];
+        for (int column = 0; column < 4; ++column)
+            for (int row = 0; row < 4; ++row)
+            {
+                mat[column*4+row] = 0.f;
+                for (int k = 0; k < 4; ++k) mat[column*4+row] += xrToEye[k*4+row]*local[column*4+k];
+            }
+        if (grhalfxdown10x < 0) { mat[0] = -mat[0]; mat[4] = -mat[4]; mat[8] = -mat[8]; mat[12] = -mat[12]; }
+    }
+#endif
     glMatrixMode(GL_MODELVIEW); //Let OpenGL (and perhaps hardware :) handle the matrix rotation
     mat[3] = mat[7] = mat[11] = 0.f; mat[15] = 1.f;
 

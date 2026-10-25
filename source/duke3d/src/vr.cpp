@@ -624,12 +624,15 @@ static bool slotSelectable(Wheel const &w, DukePlayer_t const *p, int slot)
     return w.gadgets ? gadgetSelectable(p,w.slots[slot]) : wheelSelectable(p,w.slots[slot]);
 }
 
+// Only what the player has: weapons picked up (greyed out without ammo) and gadgets carried.
 static void wheelFillSlots(Wheel &w)
 {
     w.count=0;
+    auto const p=g_player[myconnectindex].ps;
     if (w.gadgets)
     {
-        for (unsigned gadget=0;gadget<GadgetCount;++gadget) w.slots[w.count++]=int(gadget);
+        for (unsigned gadget=0;gadget<GadgetCount;++gadget)
+            if (gadgetSelectable(p,int(gadget))) w.slots[w.count++]=int(gadget);
         return;
     }
     static int const order[]={PISTOL_WEAPON,SHOTGUN_WEAPON,CHAINGUN_WEAPON,RPG_WEAPON,HANDBOMB_WEAPON,SHRINKER_WEAPON,
@@ -638,6 +641,7 @@ static void wheelFillSlots(Wheel &w)
     {
         if (weapon==GROW_WEAPON && !PLUTOPAK) continue;
         if (weapon==FLAMETHROWER_WEAPON && !WORLDTOUR) continue;
+        if (!(p->gotweapon & (1<<weapon))) continue;
         w.slots[w.count++]=weapon;
     }
 }
@@ -1399,10 +1403,45 @@ static int bodyModelTile()
     return md_tilehasmodel(BodyShellTile,0)>=0 ? BodyShellTile : tile;
 }
 
+// Walking speed of a body (Build units/s): the game moves players on its 30 Hz ticks, slower than
+// the headset's frames, so the distance per frame is lumpy (zero on most frames). Measured between
+// position updates and smoothed, it drives a steady stride.
+struct WalkSpeed
+{
+    float speed=0.f;
+    vec3_t lastPos{};
+    double lastTime=0., lastMove=0.;
+    bool valid=false;
+    // Seconds since the last update (0 for a second call in the same frame).
+    float update(vec3_t const &pos)
+    {
+        double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+        if (!valid) { speed=0.f; lastPos=pos; lastTime=lastMove=now; valid=true; }
+        float const dt=float(std::min(.1,std::max(0.,now-lastTime)));
+        lastTime=now;
+        float const moved=std::hypot(float(pos.x-lastPos.x),float(pos.y-lastPos.y));
+        float target=speed;
+        if (moved>0.f)
+        {
+            float const span=float(std::max(1./120.,now-lastMove));
+            target=moved<4.f*UnitsPerMetre ? moved/span : 0.f;   // a teleport is not a step
+            lastPos=pos; lastMove=now;
+        }
+        else if (now-lastMove>.15)
+            target=0.f;   // no update for longer than a few game ticks: standing
+        if (dt>0.f)
+        {
+            speed+=(target-speed)*(1.f-std::exp(-dt/.12f));
+            if (speed<.05f*UnitsPerMetre && target==0.f) speed=0.f;
+        }
+        return dt;
+    }
+};
+
 bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Runtime *runtime)
 {
     static float bodyYaw, stride;
-    static vec3_t lastPos;
+    static WalkSpeed walk;
     static bool yawValid;
     int const tile=bodyModelTile();
     auto const p=g_player[myconnectindex].ps;
@@ -1413,7 +1452,7 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
         || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || p->newowner>=0 || p->over_shoulder_on
         || p->dead_flag || unsigned(p->i)>=MAXSPRITES || sprite[p->i].extra<=0
         || unsigned(body.sector)>=unsigned(numsectors) || md_tilehasmodel(tile,0)<0)
-    { yawValid=false; return false; }
+    { yawValid=walk.valid=false; return false; }
     sample.context.instance=3;
     sample.context.modelid=md_tilehasmodel(tile,0);
     sample.context.skinnum=tile2model[Ptile2tile(tile,0)].skinnum;
@@ -1426,12 +1465,12 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     auto const headForward=rotate(multiply(inverseYaw,rawInput.headPose.orientation),{0,0,-1});
     if (std::hypot(headForward.x,headForward.z)<1e-3f) return false;
     float const headYaw=std::atan2(headForward.x,-headForward.z);
-    float const moved=std::hypot(float(p->pos.x-lastPos.x),float(p->pos.y-lastPos.y));
-    lastPos=p->pos;
+    float const dt=walk.update(p->pos);
+    bool const moving=walk.speed>.25f*UnitsPerMetre;
     if (!yawValid) { bodyYaw=headYaw; stride=0.f; yawValid=true; }
     float const lag=wrapRadians(headYaw-bodyYaw), limit=Pi/4.f;
     if (lag>limit) bodyYaw=headYaw-limit; else if (lag<-limit) bodyYaw=headYaw+limit;
-    if (moved>1.f) bodyYaw+=wrapRadians(headYaw-bodyYaw)*.2f;
+    if (moving) bodyYaw+=wrapRadians(headYaw-bodyYaw)*(1.f-std::exp(-dt/.08f));
 
     // Feet on the player's floor, neck kept below the eyes.
     auto const tracking=multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw);
@@ -1448,8 +1487,7 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     float const eyeHeight=(feetZ-eyeZ)/ZUnitsPerMetre;
     bool const airborne=!p->on_ground && p->jumping_counter;
     bool const crouched=!airborne && eyeHeight<1.15f;
-    float const speed=moved/UnitsPerMetre; // metres this frame
-    stride+=moved/(1.4f*UnitsPerMetre);
+    stride+=walk.speed*dt/(1.4f*UnitsPerMetre);
     stride-=std::floor(stride);
     // Frames of the shared third-person Duke model (4-step cycles), falling
     // back to a dedicated body's 8-step names, then the rest pose.
@@ -1462,10 +1500,10 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
         frame=md3_getframeindex(sample.context.modelid,name);
     };
     if (airborne) { tryFrame(p->vel.z>0 ? "fall" : "jump",0); tryFrame("jump",0); }
-    else if (crouched) { if (moved>1.f) tryFrame("crouch_walk_%02d",step); tryFrame("crouch",0); }
-    else if (moved>1.f)
+    else if (crouched) { if (moving) tryFrame("crouch_walk_%02d",step); tryFrame("crouch",0); }
+    else if (moving)
     {
-        if (speed>.08f) tryFrame("run_%02d",step);
+        if (walk.speed>3.f*UnitsPerMetre) tryFrame("run_%02d",step);
         tryFrame("walk_%02d",step);
         tryFrame("walk_%02d",1+int(stride*8.f)%8);
     }
@@ -2445,7 +2483,7 @@ struct IkInput
     int16_t sector=-1;
     int32_t shade=0, instance=4;
 };
-struct IkState { float bodyYaw=0.f, stride=0.f, standingHeight=0.f; vec3_t lastPos{}; bool yawValid=false; };
+struct IkState { float bodyYaw=0.f, stride=0.f, standingHeight=0.f; WalkSpeed walk; bool yawValid=false; };
 
 // Skins the IK body to the input into buffers (0: as drawn, 1: always with the head, for mirrors).
 static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &state, bool showHead,
@@ -2464,13 +2502,14 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
     // Facing: head yaw with a 45 degree deadzone; lines up with the head while moving.
     if (std::hypot(in.headForward.x,in.headForward.y)<1e-3f) return false;
     float const headYaw=wrapRadians(std::atan2(in.headForward.y,in.headForward.x)-in.angle);
-    float const moved=state.yawValid ? std::hypot(float(in.pos.x-state.lastPos.x),float(in.pos.y-state.lastPos.y)) : 0.f;
-    state.lastPos=in.pos;
-    if (!state.yawValid) { bodyYaw=headYaw; stride=0.f; state.yawValid=true; }
+    if (!state.yawValid) { bodyYaw=headYaw; stride=0.f; state.walk.valid=false; state.yawValid=true; }
+    // A second solve in the same frame (e.g. for a mirror) leaves the walk as it is.
+    float const dt=state.walk.update(in.pos);
+    float const walk=std::min(1.f,state.walk.speed/(1.2f*UnitsPerMetre));   // full stride from 1.2 m/s
     float const lag=wrapRadians(headYaw-bodyYaw), limit=Pi/4.f;
     if (lag>limit) bodyYaw=headYaw-limit; else if (lag<-limit) bodyYaw=headYaw+limit;
-    if (moved>1.f) bodyYaw+=wrapRadians(headYaw-bodyYaw)*.2f;
-    stride+=moved/(1.4f*UnitsPerMetre);
+    if (walk>.25f) bodyYaw+=wrapRadians(headYaw-bodyYaw)*(1.f-std::exp(-dt/.08f));
+    stride+=state.walk.speed*dt/(1.4f*UnitsPerMetre);
     stride-=std::floor(stride);
 
     float const facing=in.angle+bodyYaw, fx=std::cos(facing), fy=std::sin(facing);
@@ -2655,7 +2694,7 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
     for (unsigned side=0;side<2;++side)
     {
         float const phase=(stride+(side ? .5f : 0.f))*2.f*Pi;
-        float const amount=std::min(1.f,moved/4.f);
+        float const amount=walk;
         XrVector3f target=bind[foot[side]].position;
         target.x+=std::sin(phase)*.18f*64.f*amount;
         target.z+=std::max(0.f,std::cos(phase))*.08f*64.f*amount;
@@ -2731,7 +2770,7 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
     if (std::getenv("EDUKE32_XR_TEST_HANDS") && in.instance==4)
     {
         static int logged;
-        if (logged++%30==0)
+        if (logged++%(std::getenv("EDUKE32_XR_TEST_WALK") ? 1 : 30)==0)
         {
             // How far the left index finger bends from the hand (degrees; 0 = flat bind hand).
             int const finger=bone("index_intermediate_l");
@@ -2742,9 +2781,10 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
                 float const d=std::fabs(a.x*b.x+a.y*b.y+a.z*b.z+a.w*b.w);
                 bend=2.f*std::acos(std::min(1.f,d))*180.f/Pi;
             }
-            LOG_F(INFO,"OpenXR IK body: scale=%.2f eye=%.1f,%.1f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f ownHands=%d indexBend=%.0f.",scale,
+            LOG_F(INFO,"OpenXR IK body: scale=%.2f eye=%.1f,%.1f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f ownHands=%d indexBend=%.0f walk=%.2fm/s stride=%.2f.",scale,
                   ik.eyeForward,ik.eyeUp,drop,
-                  headTarget.x,headTarget.y,headTarget.z,int(in.hand[0]),int(in.hand[1]),kickExtend,int(ik.hands),bend);
+                  headTarget.x,headTarget.y,headTarget.z,int(in.hand[0]),int(in.hand[1]),kickExtend,int(ik.hands),bend,
+                  state.walk.speed/UnitsPerMetre,stride);
         }
     }
     return true;

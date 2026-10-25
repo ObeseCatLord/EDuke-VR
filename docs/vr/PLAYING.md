@@ -215,7 +215,11 @@ and the KHR simple controller.
 
 ## Sky, sprites and flat screens
 
-- The sky stays put: it no longer drifts with your head when you look up/down.
+- The sky stays put: it no longer drifts with your head when you look up/down or turn. Build lays
+  its sky out linearly in angle for a flat 90-degree screen, which in a headset turned it faster
+  than the world (1.27x at the centre of an 80-degree view) and bent it at the edges; in a headset
+  each sky panel is drawn as narrow flat facets around you with perspective-correct texturing, so
+  every direction keeps its texel, like a sky dome.
 - Enemies and other sprites are upright cards that face your head, the same for
   both eyes, instead of turning with each eye's view (`EDUKE32_XR_FACE_BILLBOARD=0`
   restores the old screen-aligned sprites).
@@ -258,14 +262,14 @@ and above your weapon hand, facing you, and the held weapon hides. A blue beam
 runs from your hand to a pointer bead on the ring; turn your wrist about 20
 degrees toward a weapon to move the bead onto it: its bubble lights up yellow
 and grows, the weapon spins and the controller pulses. Let go to switch.
-Weapons you don't have or have no ammo for sit in dark bubbles and can't be
-picked. Shrinker/Expander and Freezer/Flamethrower each have their own slot; the
+Only weapons you have picked up are on the ring; one out of ammo sits in a
+dark bubble and can't be picked. Shrinker/Expander and Freezer/Flamethrower each have their own slot; the
 switch goes through the normal weapon keys, so it works in multiplayer. Turning
 is paused while the weapon wheel is open.
 
 The **gadget wheel** works the same on the off hand (left stick click; Index:
 rest your thumb on the left trackpad): portable medkit, steroids, HoloDuke,
-jetpack and night vision goggles with their charge; picking one uses or toggles
+jetpack and night vision goggles with their charge (only the ones you carry); picking one uses or toggles
 it through the normal inventory keys. Scuba gear and boots work by themselves.
 
 `EDUKE32_XR_WEAPON_WHEEL=0` disables both. Without VR models the weapon wheel

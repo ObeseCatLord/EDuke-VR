@@ -22,8 +22,10 @@ SPECS = {
                     muzzle=dict(z=(0, 4)), support=dict(x=(28, 37), z=(10, 20))),
     'chaingun': dict(kvx='22_RIPPER', **STD, grip=dict(x=(76, 88), y=(0, 16), z=(3, 11)),
                      support=dict(x=(30, 35), y=(18, 28), z=(15, 20)), glow='fullbright'),
-    'rpg': dict(kvx='23_RPG', **STD, grip=dict(x=(28, 30), y=(19, 26), z=(16, 18)), handlebar=True,
-                support=dict(x=(20, 36), y=(0, 18), z=(17, 23))),
+    # trigger hand on the rear grip (the handle slanting down behind the tube); off hand on the side
+    # handle half way along (Duke's 2D HUD holds that one, but in VR it is the support)
+    'rpg': dict(kvx='23_RPG', **STD, grip=dict(x=(68, 76), y=(6, 12), z=(12, 20)),
+                support=dict(x=(28, 30), y=(19, 26), z=(16, 18))),
     'freezer': dict(kvx='24_FREEZE', **STD, grip=dict(x=(31, 35), y=(23, 29), z=(10, 14)), handlebar=True,
                     support=dict(x=(26, 36), y=(0, 22), z=(3, 8))),
     'shrinker': dict(kvx='25_SHRINK', **STD, grip=dict(x=(65, 78), z=(19, 25)), grip_axis=(0.0, 1.0),

@@ -45,7 +45,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE / 'voxelpack'
 # Bumped whenever the built pack changes; eduke32-vr-play rebuilds a pack made by an older builder.
-BUILDER_VERSION = 2
+BUILDER_VERSION = 3
 # Voxel Duke Nukem 3D v1.0 (the release the weapon mapping in voxelpack/weapon_specs.py was made for).
 KNOWN_SHA256 = '935a9079c4f3a3c3a2a869e066c5366b0201a856cc6041644f644d22918178aa'
 # (label, script, arguments, only with --aa-experimental)
