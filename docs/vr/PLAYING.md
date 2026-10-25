@@ -18,6 +18,22 @@ package/vr/eduke32-vr-play --grp /path/to/DUKE3D.GRP
 package/vr/eduke32-vr-play --aa /path/to/alien_armageddon_566
 ```
 
+### Desktop play (no headset)
+
+```sh
+package/vr/eduke32-vr-play --desktop --grp /path/to/DUKE3D.GRP
+```
+
+The same game on the monitor, played with keyboard, mouse or gamepad as usual: no OpenXR session
+and none of the VR settings. The model set still loads, so the Voxel Duke world is voxels on
+the desktop too. `--desktop` works with every other launcher option (`--aa`, `--pack`, `-- ...`).
+Running `eduke32-xr` directly without `EDUKE32_XR` is also flat play. In multiplayer a desktop
+player sees the VR players' full bodies (below), the same as a VR player does.
+`tools/vr/smoke_desktop.py` checks desktop play (walk, turn, fire, menu) and
+`tools/vr/smoke_mp_desktop_body.py` a desktop player seeing a VR player's body.
+
+### VR play
+
 The launcher sets `EDUKE32_XR=play`, links the held-weapon/hand models from the
 sibling `duke-vr-assets` checkout into `~/.local/share/eduke32-vr/` and passes a
 generated DEF. Installed game files are never modified. It always plays the GRP
@@ -329,7 +345,9 @@ Every client solves the other players' full IK bodies locally, using the same ri
 - legs step and kick;
 - hand shells grip the weapon each player is holding.
 
-Players without a fresh pose (flat players, the dead, a stalled connection) keep the native Duke sprite. Remote bodies need a pack with the IK body (the DNF pack). Other packs show the native sprite.
+Desktop (flat) players draw them too: a desktop client solves and draws the VR players' bodies in its own view the same way, with its model set.
+
+Players without a fresh pose (flat players, the dead, a stalled connection) keep the native Duke sprite. Remote bodies need a model set with the IK body (the original sets, Voxel Duke and the DNF pack all have it); without one, and in the pure desktop build `eduke32-net`, VR players show as the native sprite.
 
 On a dedicated server, the server's own player 0 is not in the game: it is invisible, never blocks, never takes shots and is never targeted.
 

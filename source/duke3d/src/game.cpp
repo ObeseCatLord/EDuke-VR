@@ -1188,8 +1188,12 @@ void G_DrawRooms(int32_t playerNum, int32_t smoothRatio)
 #ifdef LEGACY_ROR
                 drawing_ror = 0;
 #endif
+#ifdef USE_OPENXR
+                G_XRPrepareDesktopBodies(smoothRatio);
+#endif
                 renderDrawMasks();
 #ifdef USE_OPENXR
+                G_XRDrawDesktopBodies();
                 G_XRTestCaptureNative();
 #endif
             }

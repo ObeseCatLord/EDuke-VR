@@ -74,6 +74,8 @@ bool G_XRDrawRooms(int32_t smoothRatio);
 void G_XRTestAnimationInputs();
 void G_XRTestBeginNative();
 void G_XRTestCaptureNative();
+void G_XRPrepareDesktopBodies(int32_t smoothRatio);   // desktop play: other players' VR bodies (before the masks)
+void G_XRDrawDesktopBodies();                         // ... drawn after them
 bool G_XRCanAppendSprite(int32_t limit);
 void G_XRInheritSprite(int32_t destination, int32_t parent);
 #endif

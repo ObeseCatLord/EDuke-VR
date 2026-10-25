@@ -2560,6 +2560,35 @@ void videoShowFrame(int32_t w)
 #ifdef USE_OPENXR
             if (desktopSwap) sdlayer_xr_desktopPresent();
 #endif
+            // Test hook (desktop play): when the file EDUKE32_TEST_FLAT_CAPTURE names exists, the
+            // frame about to be shown is written to the PPM path it holds, and the file is removed.
+            if (desktopSwap && !headsetActive)
+                if (char const *request = getenv("EDUKE32_TEST_FLAT_CAPTURE"))
+                    if (FILE *file = fopen(request, "r"))
+                    {
+                        char path[1024] = {};
+                        bool const named = fgets(path, sizeof(path), file) != nullptr;
+                        fclose(file);
+                        remove(request);
+                        path[strcspn(path, "\r\n")] = 0;
+                        if (named && path[0])
+                        {
+                            int32_t const w = xdim, h = ydim;
+                            auto *pixels = (uint8_t *)Xmalloc(size_t(w) * h * 3);
+                            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                            glReadBuffer(GL_BACK);
+                            glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+                            if (FILE *out = fopen(path, "wb"))
+                            {
+                                fprintf(out, "P6\n%d %d\n255\n", w, h);
+                                for (int32_t y = h - 1; y >= 0; --y)
+                                    fwrite(&pixels[size_t(y) * w * 3], 1, size_t(w) * 3, out);
+                                fclose(out);
+                                LOG_F(INFO, "Flat capture: %s (%dx%d).", path, w, h);
+                            }
+                            Xfree(pixels);
+                        }
+                    }
             if (desktopSwap) SDL_GL_SwapWindow(sdl_window);
 #ifdef USE_OPENXR
             sdlayer_xr_desktopTarget();   // draw the next frame offscreen again (or not, if it fits)

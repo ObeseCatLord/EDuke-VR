@@ -4,7 +4,7 @@
 #
 #   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release] [--glow] [--pack NAME]
 #                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [--voxel-zip ZIP] [--no-voxel-build]
-#                   [--build-packs] [-- eduke32 args]
+#                   [--build-packs] [--desktop] [-- eduke32 args]
 #
 # Stock Duke: pass --grp (or run where DUKE3D.GRP is found natively).
 # Alien Armageddon 5.66: pass --aa with the install directory; the shipped
@@ -19,6 +19,8 @@
 # launcher.conf "voxel_zip=PATH", or found next to the game, in its data folder or in ~/Downloads),
 # the pack is built on this machine from it by code (build_voxel_pack.py, about half an hour, once and
 # again when the builder changes). --no-voxel-build skips that; --build-packs builds and quits.
+# --desktop plays on the monitor without a headset: the normal flat game (keyboard, mouse or
+# gamepad) with the chosen model set's world (e.g. the Voxel Duke voxels) and none of the VR settings.
 # Any EDUKE32_XR_* variable you export still overrides the preset.
 set -euo pipefail
 
@@ -26,7 +28,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 binary="$repo/eduke32-xr"
 assets="$(cd "$repo/.." && pwd)/duke-vr-assets"
-aa="" grp="" models=1 release="" glow="" pack="" default_pack="" voxel_zip="" no_voxel="" build_only=""
+aa="" grp="" models=1 release="" glow="" pack="" default_pack="" voxel_zip="" no_voxel="" build_only="" desktop=""
 # Personal defaults (never shipped): ~/.config/eduke32-vr/launcher.conf, e.g. "pack=dnf-private" or
 # "voxel_zip=/path/to/voxel_duke3d.zip". The pack is only the default; the game's VR Setup choice wins.
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/eduke32-vr/launcher.conf"
@@ -49,8 +51,9 @@ while (($#)); do
         --voxel-zip) voxel_zip=$(realpath "$2"); shift 2 ;;
         --no-voxel-build) no_voxel=1; shift ;;
         --build-packs) build_only=1; shift ;;
+        --desktop) desktop=1; shift ;;
         --) shift; args+=("$@"); break ;;
-        -h|--help) sed -n '3,22p' "$0"; exit 0 ;;
+        -h|--help) sed -n '3,24p' "$0"; exit 0 ;;
         *) args+=("$1"); shift ;;
     esac
 done
@@ -152,15 +155,20 @@ PY
     cmd+=(-nosetup "${args[@]}")
 }
 
-export EDUKE32_XR="${EDUKE32_XR:-play}"
-# The headset needs an X11 (XWayland) GL window, and the setup dialog would
-# wait on the desktop; -setup in the EDuke32 arguments still shows it.
-export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
-# The headset paces frames: the desktop mirror must never wait on the monitor (a vsync forced
-# in nvidia-settings), and the stereo collector reads GL state back per draw, which a threaded
-# GL driver turns into a queue drain each time.
-export __GL_SYNC_TO_VBLANK="${__GL_SYNC_TO_VBLANK:-0}" __GL_THREADED_OPTIMIZATIONS="${__GL_THREADED_OPTIMIZATIONS:-0}"
-export mesa_glthread="${mesa_glthread:-false}"
+if [[ -n $desktop ]]; then
+    # Flat play: no OpenXR session, the game's own video settings and vsync.
+    unset EDUKE32_XR
+else
+    export EDUKE32_XR="${EDUKE32_XR:-play}"
+    # The headset needs an X11 (XWayland) GL window, and the setup dialog would
+    # wait on the desktop; -setup in the EDuke32 arguments still shows it.
+    export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
+    # The headset paces frames: the desktop mirror must never wait on the monitor (a vsync forced
+    # in nvidia-settings), and the stereo collector reads GL state back per draw, which a threaded
+    # GL driver turns into a queue drain each time.
+    export __GL_SYNC_TO_VBLANK="${__GL_SYNC_TO_VBLANK:-0}" __GL_THREADED_OPTIMIZATIONS="${__GL_THREADED_OPTIMIZATIONS:-0}"
+    export mesa_glthread="${mesa_glthread:-false}"
+fi
 
 # A model set chosen in the game's VR Setup menu asks for a restart: the game saves its choice,
 # writes this file and quits, and the next round loads it (a --pack given for the first run no

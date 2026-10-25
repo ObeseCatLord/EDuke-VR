@@ -2458,12 +2458,13 @@ static XrQuaternionf ikSlerpIdentity(XrQuaternionf q, float t)   // rotation by 
 static std::vector<vec3f_t> ikDeformed[2];   // first person, with head
 static vec3f_t const *ikMirrorVertices() { return ikDeformed[1].data(); }
 
-static bool fullBodyAvailable()
+static bool fullBodyAvailable(bool desktop=false)
 {
     auto const *rig=handRig();
-    // Duke's body: only while playing Duke (AA's other characters keep floating hands).
-    return vr_fullbody && G_XRModelsEnabled() && rig && rig->ik.tile>=0 && md_tilehasmodel(rig->ik.tile,0)>=0
-        && playerCharacter()==0;
+    // Duke's body: only while playing Duke (AA's other characters keep floating hands). Desktop play
+    // (no headset) still draws other players' VR bodies with the model set loaded.
+    return vr_fullbody && (desktop ? vr_models && usemodels : G_XRModelsEnabled()) && rig && rig->ik.tile>=0
+        && md_tilehasmodel(rig->ik.tile,0)>=0 && playerCharacter()==0;
 }
 
 // What the IK body follows: the local headset, or another player's received pose.
@@ -2924,10 +2925,10 @@ static struct RemoteBody { IkState ik; std::vector<vec3f_t> body[2], hands[2]; }
 
 // Remote VR players in view: IK body, hand shells and held model from their latest pose, and their
 // native player sprite (with its attached weapon) hidden. Players without a fresh pose stay native.
-static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smoothRatio)
+static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smoothRatio, bool desktop=false)
 {
     auto const *rig=handRig();
-    if ((!g_netServer && !g_netClient) || !fullBodyAvailable()) return;
+    if ((!g_netServer && !g_netClient) || !fullBodyAvailable(desktop)) return;
     char const *const named[]={nullptr,"relaxed","trigger","point","fist"};
     float const sr=float(smoothRatio)/65536.f;
     for (int k=0;k<MAXPLAYERS;++k)
@@ -3383,7 +3384,7 @@ bool prepareHandModelFallback(HandModelSample &sample, Camera const &body, eduke
     return true;
 }
 
-void worldModelMatrix(WorldModelSample &sample, Eye const &eye)
+void worldModelMatrix(WorldModelSample &sample, vec3_t const &camera)
 {
     float toEye[16]; polymost_xrRelativeWorldToEye(toEye);
     float local[16]={};
@@ -3393,9 +3394,9 @@ void worldModelMatrix(WorldModelSample &sample, Eye const &eye)
         local[column*4+1]=sample.basis[column].y;
         local[column*4+2]=sample.basis[column].z;
     }
-    local[12]=float(int64_t(sample.root.x)-eye.camera.pos.x);
-    local[13]=float(int64_t(sample.root.y)-eye.camera.pos.y);
-    local[14]=float(int64_t(sample.root.z)-eye.camera.pos.z);
+    local[12]=float(int64_t(sample.root.x)-camera.x);
+    local[13]=float(int64_t(sample.root.y)-camera.y);
+    local[14]=float(int64_t(sample.root.z)-camera.z);
     float const pivot[3]={sample.pivot.x,sample.pivot.y,sample.pivot.z};
     for (int column=0;column<3;++column)
         for (int row=0;row<3;++row) local[12+row]-=local[column*4+row]*pivot[column];
@@ -3407,7 +3408,42 @@ void worldModelMatrix(WorldModelSample &sample, Eye const &eye)
             for (int k=0;k<4;++k) sample.context.modelToEye[column*4+row]+=toEye[k*4+row]*local[column*4+k];
         }
 }
+void worldModelMatrix(WorldModelSample &sample, Eye const &eye) { worldModelMatrix(sample,eye.camera.pos); }
 } // namespace
+
+// ---- Desktop play (no headset) in multiplayer: other players' VR bodies in the flat view, from
+// the same solve as a headset's (prepareRemoteBodies) and the native camera. Their own player
+// sprites leave the sprite list before the masks are drawn; the bodies are drawn after them.
+static std::vector<HandSegmentSample> desktopBodies;
+void G_XRPrepareDesktopBodies(int32_t smoothRatio)
+{
+    desktopBodies.clear();
+    if (videoGetRenderMode()!=REND_POLYMOST || sdlayer_xr_worldActive()) return;
+    prepareRemoteBodies(desktopBodies,smoothRatio,true);
+}
+void G_XRDrawDesktopBodies()
+{
+    if (desktopBodies.empty()) return;
+    // The masks pass may leave its own rotation installed: rebuild the native camera first.
+    renderPrepareMasksQ16(CAMERA(pos.x),CAMERA(pos.y),CAMERA(pos.z),CAMERA(q16ang),CAMERA(q16horiz),CAMERA(sect));
+    vec3_t const camera=CAMERA(pos);
+    unsigned drawn=0;
+    for (auto &sample:desktopBodies)
+    {
+        worldModelMatrix(sample,camera);
+        if (polymost_xrBeginModelDraw(sample.context.shade,sample.context.palette,sample.sector))
+        {
+            drawn+=polymost_md3drawcontext(&sample.context)!=0;
+            polymost_xrEndModelDraw();
+        }
+    }
+    if (std::getenv("EDUKE32_XR_TEST_BODY_POSES"))
+    {
+        static uint32_t logged;
+        if (logged++%60==0) LOG_F(INFO,"VR desktop bodies: models=%zu drawn=%u.",desktopBodies.size(),drawn);
+    }
+    desktopBodies.clear();
+}
 
 static bool weaponReceiptOwned()
 {
