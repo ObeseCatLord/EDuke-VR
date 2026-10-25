@@ -105,7 +105,7 @@ the builder changes; the game then uses the original models.
 - **Alien Armageddon:** not covered yet. AA's weapons and character hands come from the original set. (An unfinished `--aa-experimental` option exists; it is paused.)
 - **Duke himself:** one connected, skinned voxel body on the original set's skeleton, with his own voxel hands, used for the third-person Duke, the first-person body and the full IK body (his fingers follow your hands; first person hides only his head).
 - **Not covered by the voxels:** the laser and wheel. These come from the original set.
-- **Requirements:** Python 3 with numpy, scipy and Pillow. It runs on the CPU only and takes about 20 minutes, most of it solving the hand poses.
+- **Requirements:** Python 3 with numpy, scipy and Pillow. It runs on the CPU only and takes about half an hour, most of it solving the hand poses.
 - **Version check:** the zip is checked against v1.0's checksum. `--any-version` tries another release.
 - **Where it goes:** the pack lands in `duke-vr-assets/voxel-duke/` (its `pack.json` records the builder version), so the launcher lists it. A ready-made copy goes to `~/.local/share/eduke32-vr/vrpacks/voxel` (or `voxel.zip` with `--zip`).
 - **Choosing it:** it is the default once built; otherwise pick **Voxel Duke** in VR Setup > Models, or run `eduke32-vr-play --pack voxel`.

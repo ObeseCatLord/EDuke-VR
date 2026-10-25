@@ -17,7 +17,7 @@
 # redistributable packs. Installed game data is never modified.
 # Voxel Duke: given voxel_duke3d.zip (Voxel Duke Nukem 3D v1.0, a separate download: --voxel-zip,
 # launcher.conf "voxel_zip=PATH", or found next to the game, in its data folder or in ~/Downloads),
-# the pack is built on this machine from it by code (build_voxel_pack.py, about 20 minutes, once and
+# the pack is built on this machine from it by code (build_voxel_pack.py, about half an hour, once and
 # again when the builder changes). --no-voxel-build skips that; --build-packs builds and quits.
 # Any EDUKE32_XR_* variable you export still overrides the preset.
 set -euo pipefail
@@ -92,7 +92,7 @@ voxel_pack() {
     stamp="$want $(stat -c '%s %Y' "$zip") $(realpath "$zip")"
     [[ -f $root/voxel-build.failed && $(cat "$root/voxel-build.failed") == "$stamp" ]] && return 0
     echo "eduke32-vr-play: $([[ -n $have ]] && echo rebuilding || echo building) the Voxel Duke model pack from $zip" \
-         "(about 20 minutes, once)" >&2
+         "(about half an hour, once)" >&2
     if python3 "$here/build_voxel_pack.py" "$zip" --assets "$assets" --out "$packs" >&2; then
         rm -f "$root/voxel-build.failed"
     else

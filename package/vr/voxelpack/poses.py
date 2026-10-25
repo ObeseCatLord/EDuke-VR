@@ -352,27 +352,34 @@ def stuck_fingers(ang, trigger=None):
 def solve_hold(tris, palm, axis, hold_cfg, trigger=None):
     """Try a few palm wraps (most natural first); keep the first that seats both the trigger finger and
     the thumb, else the best by (trigger seated, thumb seated, contacts). A short grip can leave fingers
-    with nothing to wrap (they would stick out straight): the hand then also tries sliding along the
-    grip, and any finger still left over is tucked into a curl."""
+    with nothing to wrap (they would stick out straight): then the best wrap is also tried slid along
+    the grip (at most three more solves), and any finger still left over is tucked into a curl."""
     wraps = [hold_cfg['wrap_deg']] if 'wrap_deg' in hold_cfg else [35.0, 20.0, 0.0]
     base_up = hold_cfg.get('slide_up', 0.0)
+
+    def attempt(wrap, up):
+        ang, root, info = _solve_hold_once(tris, palm, axis, dict(hold_cfg, wrap_deg=wrap, slide_up=base_up + up), trigger)
+        info['wrap_deg'] = wrap
+        trig_ok = trigger is None or info.get('trigger_cost_m') is not None
+        thumb_ok = 'thumb_cost_m' in info
+        score = (len(stuck_fingers(ang, trigger)), not trig_ok, not thumb_ok, abs(up),
+                 info.get('trigger_contacts', 0) + info.get('thumb_contacts', 0))
+        return (score, ang, root, info, up, wrap)
+
     best = None
-    for up in (0.0, -0.012, -0.024, 0.012, -0.036):
-        for wrap in wraps:
-            cfg = dict(hold_cfg, wrap_deg=wrap, slide_up=base_up + up)
-            ang, root, info = _solve_hold_once(tris, palm, axis, cfg, trigger)
-            info['wrap_deg'] = wrap
-            trig_ok = trigger is None or info.get('trigger_cost_m') is not None
-            thumb_ok = 'thumb_cost_m' in info
-            stuck = len(stuck_fingers(ang, trigger))
-            score = (stuck, not trig_ok, not thumb_ok, abs(up),
-                     info.get('trigger_contacts', 0) + info.get('thumb_contacts', 0))
-            if best is None or score < best[0]:
-                best = (score, ang, root, info, up)
-            if trig_ok and thumb_ok and not stuck:
-                break
-        if best[0][0] == 0 and not best[0][1] and not best[0][2]:
+    for wrap in wraps:
+        r = attempt(wrap, 0.0)
+        if best is None or r[0][1:] < best[0][1:] or (r[0][1:] == best[0][1:] and r[0] < best[0]):
+            best = r
+        if not r[0][1] and not r[0][2]:
             break
+    if best[0][0]:
+        for up in (-0.012, -0.024, 0.012):
+            r = attempt(best[5], up)
+            if r[0][0] < best[0][0] and r[0][1:3] <= best[0][1:3]:
+                best = r
+            if not best[0][0]:
+                break
     ang, root, info, up = dict(best[1]), best[2], best[3], best[4]
     if up:
         info['slide_up_m'] = up

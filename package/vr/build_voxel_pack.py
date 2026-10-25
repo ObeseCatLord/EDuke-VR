@@ -25,7 +25,7 @@ original set. Once built it is the game's default model set (the original sets a
 stay in VR Setup > Models). The launcher (eduke32-vr-play) runs this script by itself when it finds
 voxel_duke3d.zip and the pack is missing or was built by an older version of this script.
 
-Needs Python 3 with numpy, scipy and Pillow; CPU only; about 20 minutes, most of it solving the hand poses.
+Needs Python 3 with numpy, scipy and Pillow; CPU only; about half an hour, most of it solving the hand poses.
 The result is built from third-party art: it is for your own use and is never redistributable (its
 pack.json says so, and build_vr_pack.py --release refuses it).
 

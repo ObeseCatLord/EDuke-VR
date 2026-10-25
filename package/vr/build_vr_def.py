@@ -40,7 +40,8 @@ def list_packs(assets, release):
     exports/eduke32 (private ones left out with --release, and any a listed pack "supersedes");
     the defaults first (the built Voxel Duke, then the low-res and full original sets)."""
     packs = []
-    for root in sorted(p for p in assets.iterdir() if (p / 'exports/eduke32').is_dir() and (p / 'pack.json').is_file()):
+    for root in sorted(p for p in assets.iterdir() if not p.name.startswith('.')   # builders' staging folders
+                       and (p / 'exports/eduke32').is_dir() and (p / 'pack.json').is_file()):
         info = json.loads((root / 'pack.json').read_text())
         if release and info.get('redistributable') is False:
             continue
