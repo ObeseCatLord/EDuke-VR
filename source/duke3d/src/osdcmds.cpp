@@ -1227,6 +1227,40 @@ static int osdcmd_listplayers(osdcmdptr_t parm)
     return OSDCMD_OK;
 }
 
+// Test servers: every connected player gets all weapons, full ammo and a full inventory. The
+// server is authoritative for these, so its player updates carry them to the clients.
+static int osdcmd_net_giveall(osdcmdptr_t parm)
+{
+    if (parm && parm->numparms != 0)
+        return OSDCMD_SHOWHELP;
+
+    if (!g_netServer)
+    {
+        LOG_F(INFO, "Only the server can give items to players.");
+        return OSDCMD_OK;
+    }
+
+    for (int TRAVERSE_CONNECT(i))
+    {
+        auto const p = g_player[i].ps;
+        if ((g_networkMode == NET_DEDICATED_SERVER && i == myconnectindex) || (unsigned)p->i >= MAXSPRITES || p->dead_flag)
+            continue;
+
+        for (int weapon = PISTOL_WEAPON; weapon < MAX_WEAPONS; ++weapon)
+        {
+            p->gotweapon |= 1 << weapon;
+            P_AddAmmo(p, weapon, p->max_ammo_amount[weapon]);
+        }
+
+        p->inv_amount[GET_FIRSTAID] = 100; p->inv_amount[GET_STEROIDS] = 400; p->inv_amount[GET_HOLODUKE] = 2400;
+        p->inv_amount[GET_JETPACK] = 1600; p->inv_amount[GET_HEATS] = 1200; p->inv_amount[GET_SCUBA] = 6400;
+        p->inv_amount[GET_BOOTS] = 200; p->inv_amount[GET_SHIELD] = 100;
+        LOG_F(INFO, "Gave all weapons and items to player %d (%s).", i, g_player[i].user_name);
+    }
+
+    return OSDCMD_OK;
+}
+
 #if 0
 static int osdcmd_kick(osdcmdptr_t parm)
 {
@@ -1750,6 +1784,7 @@ int32_t registerosdcommands(void)
     OSD_RegisterFunction("kickban","kickban <id>: kicks a multiplayer client and prevents them from reconnecting.  See listplayers.", osdcmd_kickban);
 #endif
     OSD_RegisterFunction("listplayers","listplayers: lists currently connected multiplayer clients", osdcmd_listplayers);
+    OSD_RegisterFunction("net_giveall","net_giveall: (server) gives every connected player all weapons, ammo and items", osdcmd_net_giveall);
     OSD_RegisterFunction("name","name: change your multiplayer nickname", osdcmd_name);
     OSD_RegisterFunction("password","password: sets multiplayer game password", osdcmd_password);
     OSD_RegisterFunction("playerinfo", "prints information about the current player", osdcmd_playerinfo);
