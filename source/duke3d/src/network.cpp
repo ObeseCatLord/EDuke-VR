@@ -528,6 +528,9 @@ static void Net_DeleteFromSect(int16_t spriteIndex)
     }
 
     do_deletespritesect(spriteIndex);
+    // Not in any sector list any more: a repeated delete (a snapshot applied again) must not
+    // unlink it a second time through its stale links, which can close a sector list into a loop.
+    sprite[spriteIndex].sectnum = MAXSECTORS;
 }
 
 static void Net_DeleteFromStat(int16_t spriteIndex)
@@ -543,6 +546,45 @@ static void Net_DeleteFromStat(int16_t spriteIndex)
     }
 
     do_deletespritestat(spriteIndex);
+    Net_DeleteFromSect(spriteIndex);
+
+    // Back on the engine's free list, as deletesprite() does, so statnum MAXSTATUS always means
+    // "on the free list" and a later snapshot can take it off again safely.
+    if (enginecompatibilitymode != ENGINE_EDUKE32)
+        do_insertsprite_at_headofstat(spriteIndex, MAXSTATUS);
+    else
+    {
+        prevspritestat[spriteIndex] = tailspritefree;
+        nextspritestat[spriteIndex] = -1;
+        if (tailspritefree >= 0)
+            nextspritestat[tailspritefree] = spriteIndex;
+        else
+            headspritestat[MAXSTATUS] = spriteIndex;
+        sprite[spriteIndex].statnum = MAXSTATUS;
+        tailspritefree = spriteIndex;
+    }
+}
+
+// A free sprite (statnum MAXSTATUS) the server now has in the world: off the free list first,
+// or the free list would keep handing out a sprite that is in use.
+static void Net_TakeFromFreeList(int16_t spriteIndex)
+{
+    if (sprite[spriteIndex].statnum != MAXSTATUS)
+        return;
+
+    int16_t const prev = prevspritestat[spriteIndex];
+    int16_t const next = nextspritestat[spriteIndex];
+
+    if (headspritestat[MAXSTATUS] == spriteIndex)
+        headspritestat[MAXSTATUS] = next;
+    if (prev >= 0)
+        nextspritestat[prev] = next;
+    if (next >= 0)
+        prevspritestat[next] = prev;
+    if (tailspritefree == spriteIndex)
+        tailspritefree = prev;
+
+    prevspritestat[spriteIndex] = nextspritestat[spriteIndex] = -1;
 }
 
 static void Net_DoDeleteSprite(int32_t spritenum)
@@ -795,7 +837,7 @@ static void Net_UpdateSpriteLinkedLists(int16_t spriteIndex, const netactor_t* s
         OSD_Printf("DEBUG: Sprite %d: Case 2 (delete game sprite)\n", spriteIndex);
 #endif
 
-        Net_DeleteFromStat(spriteIndex);
+        Net_DeleteFromStat(spriteIndex);  // also leaves its sector, onto the free list
         Net_DeleteFromSect(spriteIndex);
 
         return;
@@ -808,8 +850,13 @@ static void Net_UpdateSpriteLinkedLists(int16_t spriteIndex, const netactor_t* s
         OSD_Printf("DEBUG: Sprite %d: Case 3 (insert new game sprite)\n", spriteIndex);
 #endif
 
+        Net_TakeFromFreeList(spriteIndex);
+        Net_DeleteFromSect(spriteIndex);
         do_insertsprite_at_headofstat(spriteIndex, snapActor->spr_statnum);
-        do_insertsprite_at_headofsect(spriteIndex, snapActor->spr_sectnum);
+        if ((unsigned)snapActor->spr_sectnum < MAXSECTORS)  // the server's STAT_NETALLOC reserve has no sector
+            do_insertsprite_at_headofsect(spriteIndex, snapActor->spr_sectnum);
+        else
+            sprite[spriteIndex].sectnum = MAXSECTORS;
 
     }
 
@@ -821,6 +868,7 @@ static void Net_UpdateSpriteLinkedLists(int16_t spriteIndex, const netactor_t* s
 #endif
 
         changespritestat(spriteIndex, snapActor->spr_statnum);
+        Net_DeleteFromSect(spriteIndex);
         do_insertsprite_at_headofsect(spriteIndex, snapActor->spr_sectnum);
 
     }
@@ -1098,6 +1146,48 @@ static void Net_CopyPlayerActorDataFromNet(const netactor_t* netActor, spritetyp
 
 }
 
+// Every sector and status list: in bounds, back links matching, members owning the list, no loop.
+static char const *Net_CheckSpriteLists()
+{
+    static char message[96];
+    auto walk=[](char const *kind, int list, int16_t const *head, int16_t const *next, int16_t const *prev, bool sectors) -> char const * {
+        int count=0, last=-1;
+        for (int i=head[list]; i>=0; last=i, i=next[i])
+        {
+            char const *problem=++count>MAXSPRITES ? "loop" : (unsigned)i>=MAXSPRITES ? "bad index" : prev[i]!=last ? "bad back link"
+                               : (sectors ? sprite[i].sectnum : sprite[i].statnum)!=list ? "member of another list" : nullptr;
+            if (problem)
+            {
+                Bsnprintf(message,sizeof(message),"%s %d: %s at sprite %d",kind,list,problem,i);
+                return message;
+            }
+        }
+        return nullptr;
+    };
+    for (int s=0; s<numsectors; s++)
+        if (auto problem=walk("sector",s,headspritesect,nextspritesect,prevspritesect,true)) return problem;
+    for (int s=0; s<=MAXSTATUS; s++)
+        if (auto problem=walk("status",s,headspritestat,nextspritestat,prevspritestat,false)) return problem;
+    return nullptr;
+}
+
+static void Net_RebuildSpriteLists()
+{
+    for (int s=0; s<=MAXSECTORS; s++) headspritesect[s]=-1;
+    for (int s=0; s<=MAXSTATUS; s++) headspritestat[s]=-1;
+    tailspritefree=-1;
+    for (int i=MAXSPRITES-1; i>=0; i--)
+    {
+        auto &spr=sprite[i];
+        if ((unsigned)spr.statnum>MAXSTATUS) spr.statnum=MAXSTATUS;
+        if (spr.statnum==MAXSTATUS || spr.statnum==STAT_NETALLOC || (unsigned)spr.sectnum>=(unsigned)numsectors) spr.sectnum=MAXSECTORS;
+        if (spr.statnum==MAXSTATUS && tailspritefree<0) tailspritefree=i;   // the free list's last entry
+        do_insertsprite_at_headofstat(i,spr.statnum);
+        if (spr.sectnum<MAXSECTORS) do_insertsprite_at_headofsect(i,spr.sectnum);
+        else prevspritesect[i]=nextspritesect[i]=-1;
+    }
+}
+
 static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const netmapstate_t* cl_snapshot)
 {
     int32_t actorIndex = 0;
@@ -1193,6 +1283,32 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
     }
 
     Numsprites = actorCount;
+
+    // The sector and status lists must stay well formed: a broken link can close a list into a
+    // loop, and every walk of that list (hitscan, the renderer, actor code) then never ends.
+    // Should one break anyway, rebuild the lists from the sprites' own sector and status numbers
+    // instead of hanging the client.
+    static int32_t snapshots, repairs;
+    ++snapshots;
+    if (auto at=std::getenv("EDUKE32_TEST_BREAK_SPRITE_LIST"))   // test hook: close a sector list into a loop
+        if (snapshots==Batoi(at))
+            for (int s=0; s<numsectors; s++)
+                if (headspritesect[s]>=0 && nextspritesect[headspritesect[s]]>=0)
+                {
+                    int last=headspritesect[s];
+                    while (nextspritesect[last]>=0) last=nextspritesect[last];
+                    nextspritesect[last]=headspritesect[s];
+                    LOG_F(INFO,"Sprite lists: test loop in sector %d (sprite %d back to %d).",s,last,headspritesect[s]);
+                    break;
+                }
+    char const *problem=Net_CheckSpriteLists();
+    if (problem)
+    {
+        if (++repairs<=20) LOG_F(ERROR,"Sprite lists: %s (snapshot %d); rebuilt them.",problem,snapshots);
+        Net_RebuildSpriteLists();
+    }
+    if (std::getenv("EDUKE32_TEST_SPRITE_LISTS") && (snapshots==1 || snapshots%300==0))
+        LOG_F(INFO,"Sprite lists: %d snapshots checked, %d errors.",snapshots,repairs);
 }
 
 
@@ -2789,6 +2905,7 @@ static int32_t Net_DoInsertSprite(int32_t sect, int32_t stat)
     }
 
     changespritestat(i, stat);
+    Net_DeleteFromSect(i);
     do_insertsprite_at_headofsect(i, sect);
 
     return i;
