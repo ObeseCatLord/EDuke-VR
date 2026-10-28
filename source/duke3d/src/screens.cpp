@@ -35,6 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "microprofile.h"
 #include "sbar.h"
 #include "voice.h"
+#include "sdlayer.h"
 #include "screens.h"
 
 #define COLOR_RED redcol
@@ -305,11 +306,23 @@ static inline void G_MoveClouds(void)
 
     if (totalclock <= g_cloudClock && totalclock >= (g_cloudClock-7))
         return;
+#ifdef USE_OPENXR
+    static bool const frozen = Bgetenv("EDUKE32_XR_TEST_SKY_PATTERN") != nullptr;   // sky measurement: still clouds
+    if (frozen)
+        return;
+#endif
 
     g_cloudClock = totalclock+6;
 
-    g_cloudX += sintable[(fix16_to_int(g_player[screenpeek].ps->q16ang)+512)&2047]>>9;
-    g_cloudY += sintable[fix16_to_int(g_player[screenpeek].ps->q16ang)&2047]>>9;
+    int cloudAngle = fix16_to_int(g_player[screenpeek].ps->q16ang);
+#ifdef USE_OPENXR
+    // Headset: the clouds drift one fixed way. Following the view angle they would turn with the
+    // head, which reads as the sky moving with it.
+    if (sdlayer_xr_worldActive())
+        cloudAngle = 0;
+#endif
+    g_cloudX += sintable[(cloudAngle+512)&2047]>>9;
+    g_cloudY += sintable[cloudAngle&2047]>>9;
 
     for (i=g_cloudCnt-1; i>=0; i--)
     {
@@ -1158,6 +1171,8 @@ void G_DisplayRest(int32_t smoothratio)
     if (VM_OnEvent(EVENT_DISPLAYSBAR, g_player[screenpeek].ps->i, screenpeek) == 0)
         G_DrawStatusBar(screenpeek);
 #ifdef USE_OPENXR
+    // Headset: the mic state goes on the left wrist with health (drawn into the wrist segment).
+    if (xrWrist) Voice_DrawStatus(true);
     G_XREndWristHud(xrWrist);
 #endif
 
@@ -1171,7 +1186,10 @@ void G_DisplayRest(int32_t smoothratio)
 #endif
 
     G_PrintGameQuotes(screenpeek);
-    Voice_DrawStatus();
+#ifdef USE_OPENXR
+    if (!xrWrist)
+#endif
+        Voice_DrawStatus();
 #ifdef USE_OPENXR
     G_XRDrawWheelPanels();
 #endif

@@ -133,7 +133,8 @@ def main():
         result['differences']['ammo counter'] = round(changed(ammo(turned), ammo(fired)), 4)
         checks['firing uses ammo'] = changed(ammo(turned), ammo(fired)) > 0.005
         checks['game running'] = process.poll() is None
-        checks['no OpenXR session'] = 'OpenXR' not in text()
+        # (The VR hand rig still loads on the desktop, for other players' VR bodies.)
+        checks['no OpenXR session'] = not any(k in text() for k in ('OpenXR system', 'OpenXR session', 'OpenXR world'))
         result['pack'] = [line.split('|', 1)[-1].strip() for line in text().splitlines() if 'VR model pack' in line]
         result['passed'] = all(checks.values())
     except Exception as error:

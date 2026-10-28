@@ -7219,10 +7219,48 @@ void fgetzsofslope(usectorptr_t sec, float dax, float day, float* ceilz, float *
         *florz += (sec->floorheinum*j)/i;
 }
 
+#ifdef USE_OPENXR
+// Test hook (EDUKE32_XR_TEST_SKY_PATTERN): a sky panel's pixels become 4x4 blocks of bright random
+// colours, keeping the tile's size and layout, so dark or plain skies can be measured too.
+static void xrPatternSkyTile(int tile)
+{
+    static std::vector<bool> done(MAXTILES);
+    if ((unsigned)tile>=MAXTILES || done[tile] || !tileLoad(tile) || !waloff[tile]) return;
+    done[tile]=true;
+    static uint8_t const colours[8][3]={{255,40,40},{40,255,40},{60,90,255},{255,255,40},{255,40,255},{40,255,255},{255,255,255},{255,140,0}};
+    uint8_t indices[8];
+    for (int i=0;i<8;i++) indices[i]=paletteGetClosestColorUpToIndex(colours[i][0],colours[i][1],colours[i][2],254);
+    auto const pixels=(uint8_t *)waloff[tile];
+    int const w=tilesiz[tile].x, h=tilesiz[tile].y;
+    for (int x=0;x<w;x++)
+        for (int y=0;y<h;y++)
+        {
+            uint32_t hash=uint32_t(x/4)*73856093u ^ uint32_t(y/4)*19349663u;   // same in every frame of an animated sky
+            hash^=hash>>13; hash*=0x5bd1e995u; hash^=hash>>15;
+            pixels[x*h+y]=indices[hash&7];
+        }
+    tileInvalidate(tile,-1,-1);
+}
+#endif
+
 static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, int32_t method)
 {
+#ifdef USE_OPENXR
+    static bool const xrSkyPattern = Bgetenv("EDUKE32_XR_TEST_SKY_PATTERN") != nullptr;
+    if (xrSkyPattern && xrProjection.active) globalshade = 0;
+#endif
     flatskyrender = 0;
     vec2f_t xys[8];
+
+#ifdef USE_OPENXR
+    // Headset: map the sky in Polymost's own un-pitched view space and let the view rotation (the
+    // GL rotation matrix) pitch it like every wall. Native Build maps it in screen space instead
+    // (the rotation below is the screen projection's), which pins the sky's rows to the screen: in
+    // a headset the sky then follows the head whenever it looks up or down.
+    float const skyChang = xrProjection.active ? 1.f : gchang, skyShang = xrProjection.active ? 0.f : gshang;
+#else
+    float const skyChang = gchang, skyShang = gshang;
+#endif
 
     // Transform polygon to sky coordinates
     for (int i = 0; i < n; i++)
@@ -7230,7 +7268,7 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
         vec3f_t const o = { dpxy[i].x-ghalfx, dpxy[i].y-ghalfy, ghalfx / gvrcorrection };
 
         //Up/down rotation
-        vec3d_t v = { o.x, o.y * gchang - o.z * gshang, o.z * gchang + o.y * gshang };
+        vec3d_t v = { o.x, o.y * skyChang - o.z * skyShang, o.z * skyChang + o.y * skyShang };
         float const r = (ghalfx / gvrcorrection) / v.z;
         xys[i].x = v.x * r + ghalfx;
         xys[i].y = v.y * r + ghalfy;
@@ -7239,13 +7277,13 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
     float const fglobalang = fix16_to_float(qglobalang);
     int32_t dapyscale, dapskybits, dapyoffs, daptileyscale;
     int8_t const * dapskyoff = getpsky(globalpicnum, &dapyscale, &dapskybits, &dapyoffs, &daptileyscale);
-#ifdef USE_OPENXR
-    // Native skies scroll vertically slower than the world (parallax y scale); in a headset that
-    // reads as the sky following the head. Keep it at infinity: move 1:1 with the view.
-    if (xrProjection.active) dapyscale = 65536;
-#endif
-
     ghoriz = (qglobalhoriz*(1.f/65536.f)-float(ydimen>>1))*dapyscale*(1.f/65536.f)+float(ydimen>>1)+ghorizcorrect;
+#ifdef USE_OPENXR
+    // Headset: the sky is mapped in the un-pitched view space (above), whose horizon is its centre
+    // row. Native Build also shifts the horizon by the view's horizon (scaled by the sky's parallax
+    // factor); here that horizon carries the head pitch, which the view rotation already applies.
+    if (xrProjection.active) ghoriz = float(ydimen>>1);
+#endif
 
     float const dd = fxdimen*.0000001f; //Adjust sky depth based on screen size!
     float vv[2];
@@ -7310,6 +7348,16 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
     static bool const xrNativeSky = Bgetenv("EDUKE32_XR_TEST_NATIVE_SKY_RATE") != nullptr;   // A/B test hook
     static bool const xrSkyCheck = Bgetenv("EDUKE32_XR_TEST_SKY") != nullptr;
     bool const xrFacets = xrProjection.active && !npot && dapskybits >= 2 && !xrNativeSky;
+    if (xrSkyCheck && xrProjection.active)
+    {
+        static uint32_t calls;
+        if (calls++%500==0)
+            LOG_F(INFO, "XR sky camera: pic=%d bits=%d yscale=%d yoffs=%d ghalfx=%.2f ghalfy=%.2f ghoriz=%.2f horiz=%.3f gvr=%.4f "
+                  "pitch=%.4f,%.4f ang=%.2f xpan=%d ypan=%d tile=%dx%d xdimen=%d ydimen=%d vrange=%d",
+                  globalpicnum, dapskybits, dapyscale, dapyoffs, ghalfx, ghalfy, ghoriz, qglobalhoriz/65536.f, gvrcorrection,
+                  gshang, gchang, fglobalang, xpanning, global_cf_ypanning, tilesiz[globalpicnum].x, tilesiz[globalpicnum].y,
+                  xdimen, ydimen, viewingrange);
+    }
     float const xrFocal = ghalfx / gvrcorrection;
     float const xrUnitsToRadians = 2.f*fPI/2048.f;
     auto const xrAngleAt = [&](float x) { return fglobalang + atanf((x-ghalfx)/xrFocal) / xrUnitsToRadians; };
@@ -7327,6 +7375,9 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
     do
     {
         globalpicnum = dapskyoff[y&((1<<dapskybits)-1)]+ti;
+#ifdef USE_OPENXR
+        if (xrSkyPattern && xrProjection.active) xrPatternSkyTile(globalpicnum);
+#endif
         if (npot)
         {
             float fx = ((float)((y<<(11-dapskybits))-fglobalang))*o.z+ghalfx;
@@ -7384,7 +7435,7 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
             vec3f_t const o2 = { o.x, o.y, ghalfx / gvrcorrection };
 
             //Up/down rotation (backwards)
-            vec3d_t v = { o2.x, o2.y * gchang + o2.z * gshang, o2.z * gchang - o2.y * gshang };
+            vec3d_t v = { o2.x, o2.y * skyChang + o2.z * skyShang, o2.z * skyChang - o2.y * skyShang };
             float const r = (ghalfx / gvrcorrection) / v.z;
             fxyt[i].x = v.x * r + ghalfx;
             fxyt[i].y = v.y * r + ghalfy;
@@ -7475,7 +7526,7 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
             vec3f_t const o = { cxy2[i].x-ghalfx, cxy2[i].y-ghalfy, ghalfx / gvrcorrection };
 
             //Up/down rotation
-            vec3d_t v = { o.x, o.y * gchang + o.z * gshang, o.z * gchang - o.y * gshang };
+            vec3d_t v = { o.x, o.y * skyChang + o.z * skyShang, o.z * skyChang - o.y * skyShang };
             float const r = (ghalfx / gvrcorrection) / v.z;
             cxy[i].x = v.x * r + ghalfx;
             cxy[i].y = v.y * r + ghalfy;
@@ -7487,16 +7538,16 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
         auto const drawColumn = [&]()
         {
 #ifdef USE_OPENXR
-        // Level-space rows where the tile's first and last texel rows fall (v = otex.v + ytex.v*y).
+        // Level-space rows where the tile's first and last texel rows fall.
         if (xrProjection.active && ytexbak.v > 0.0)
         {
-            // v = (otex.v + ytex.v*y)/(otex.d + xtex.d*x): the last row's line slopes with a facet's depth
+            // v = (otex.v + xtex.v*x + ytex.v*y)/(otex.d + xtex.d*x): both lines slope with a facet's depth
             float const height = float(tilesiz[globalpicnum].y);
-            float const yTop = float((0.0 - otexbak.v) / ytexbak.v);
+            float const yTop = float(-otexbak.v / ytexbak.v), topSlope = float(-xtexbak.v / ytexbak.v);
             float const yBottom = float((otexbak.d*height - otexbak.v) / ytexbak.v);
-            float const bottomSlope = float(xtexbak.d*height / ytexbak.v);
-            drawBand(-FLT_MAX, yTop, true, 0.5f, 0.f, 0.f);
-            drawBand(yTop, yBottom, false, 0.f, 0.f, bottomSlope);
+            float const bottomSlope = float((xtexbak.d*height - xtexbak.v) / ytexbak.v);
+            drawBand(-FLT_MAX, yTop, true, 0.5f, 0.f, topSlope);
+            drawBand(yTop, yBottom, false, 0.f, topSlope, bottomSlope);
             drawBand(yBottom, FLT_MAX, true, height-0.5f, bottomSlope, 0.f);
         }
         else
@@ -7537,6 +7588,12 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
                 otex.d = dd*(ca - ghalfx*sa/xrFocal);
                 xtex.u = dd*(uc*sa + B*ca)/xrFocal;
                 otex.u = dd*(uc*ca - B*sa) - xtex.u*ghalfx;
+                // Rows: the horizon texel row stays put and only the height above it scales with
+                // the facet's depth: v = vh + base_y.v*(y - ghoriz)/d.
+                double const vh = (base_o.v + base_y.v*ghoriz) / base_o.d;
+                otex.v = vh*otex.d - base_y.v*ghoriz;
+                xtex.v = vh*xtex.d;
+                ytex.v = base_y.v;
                 otexbak = otex; xtexbak = xtex; ytexbak = ytex;
                 if (xrSkyCheck)
                 {

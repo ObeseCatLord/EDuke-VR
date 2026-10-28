@@ -3997,7 +3997,11 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
         Bassert(i >= 0);
 
         auto const ps = (pSprite->statnum != STAT_ACTOR && pSprite->picnum == APLAYER && pSprite->owner >= 0) ? g_player[P_GetP(pSprite)].ps : NULL;
-        if (ps && ps->newowner == -1)
+        // Another player's dying/dead body lies where its sprite is (on the floor). Placing it from
+        // that player's camera height, interpolated between network updates, sank it into the floor
+        // and bounced it on every update (the most visible with 3D models).
+        bool const remoteBody = ps && (ps->dead_flag || sprite[ps->i].extra <= 0) && P_GetP(pSprite) != screenpeek;
+        if (ps && ps->newowner == -1 && !remoteBody)
         {
             t->x -= mulscale16(65536-smoothratio,ps->pos.x-ps->opos.x);
             t->y -= mulscale16(65536-smoothratio,ps->pos.y-ps->opos.y);
@@ -4029,7 +4033,10 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
         {
 #ifndef EDUKE32_STANDALONE
         case DUKELYINGDEAD__:
-            t->z += (24<<8);
+            // The 2D corpse art is drawn 24 units low; a 3D body already lies on the floor and would
+            // sink into it.
+            if (!tilehasmodelorvoxel(t->picnum, t->pal))
+                t->z += (24<<8);
             break;
         case BLOODPOOL__:
         case FOOTPRINTS__:
@@ -4173,6 +4180,22 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
 
             if (t->pal == 1)
                 t->z -= ZOFFSET7;
+
+            {
+                // Another player's body keeps the angle it died with: the server's snapshots and this
+                // client's own simulation of that player disagree once it is dead, and the body would
+                // flip between the two.
+                static int16_t deadAngle[MAXPLAYERS];
+                static bool    deadSeen[MAXPLAYERS];
+                auto const     bodyPlayer = g_player[playerNum].ps;
+                if (bodyPlayer && playerNum != screenpeek && (bodyPlayer->dead_flag || pSprite->extra <= 0))
+                {
+                    if (!deadSeen[playerNum]) { deadSeen[playerNum] = true; deadAngle[playerNum] = t->ang; }
+                    t->ang = deadAngle[playerNum];
+                }
+                else
+                    deadSeen[playerNum] = false;
+            }
 
             if (g_player[playerNum].ps->over_shoulder_on > 0 && g_player[playerNum].ps->newowner < 0)
             {
@@ -4505,6 +4528,16 @@ PALONLY:
 
             if (actor[i].dispicnum >= 0)
                 actor[i].dispicnum = t->picnum;
+#ifdef USE_OPENXR
+            if (pSprite->picnum == APLAYER && pSprite->extra <= 0 && Bgetenv("EDUKE32_XR_TEST_DEAD"))
+            {
+                // Test hook: how a dying player is drawn (frame, height, angle) frame by frame.
+                static int logged;
+                if (logged++ < 600)
+                    LOG_F(INFO, "Dead player drawn: player=%d picnum=%d z=%d ang=%d cstat=%d action=%d count=%d.", P_GetP(pSprite),
+                          t->picnum, t->z, t->ang, t->cstat, AC_ACTION_ID(actor[i].t_data), AC_ACTION_COUNT(actor[i].t_data));
+            }
+#endif
         }
 //        else if (display_mirror == 1)
 //            t->cstat |= 4;
@@ -6419,6 +6452,19 @@ static void G_Startup(void)
 
     // These depend on having the dynamic tile and/or sound mappings set up:
     G_InitMultiPsky(CLOUDYOCEAN, MOONSKY1, BIGORBIT1, LA);
+    if (WORLDTOUR)
+    {
+        // World Tour's episode 5 skies are eight-panel panoramas (eight consecutive 128x400 tiles);
+        // undefined they would show their first panel all the way round.
+        for (int const first : { 5284, 5412, 5420, 5450, 5540, 5548, 5556, 5720, 5814 })
+        {
+            psky_t *sky      = tileSetupSky(first);
+            sky->lognumtiles = 3;
+            sky->horizfrac   = 32768;
+            for (int i = 0; i < 8; i++)
+                sky->tileofs[i] = i;
+        }
+    }
     Gv_FinalizeWeaponDefaults();
     G_PostCreateGameState();
     if (g_netServer || ud.multimode > 1) G_CheckGametype();

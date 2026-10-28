@@ -47,6 +47,7 @@ def main():
     parser.add_argument('--remote-port', type=int, default=49777)
     parser.add_argument('--timeout', default=560, type=int)
     parser.add_argument('--map', default='', help='user map instead of E1L1')
+    parser.add_argument('--level', default='1,1', help='episode,level when no --map is given (default E1L1)')
     parser.add_argument('--env', action='append', default=[], help='extra KEY=VALUE for the game')
     parser.add_argument('--args', default='', help='extra EDuke32 arguments (space separated)')
     parser.add_argument('--pack', default='original-lowres', help='model pack (launcher --pack); "default": the game\'s own choice')
@@ -67,7 +68,7 @@ def main():
         # EDuke32 resolves user maps against its search path: copy into the lab directory.
         (lab / Path(args.map).name).write_bytes(Path(args.map).read_bytes())
         args.map = Path(args.map).name
-    level = ['-map', args.map] if args.map else ['-v1', '-l1']
+    level = ['-map', args.map] if args.map else ['-v' + args.level.split(',')[0], '-l' + args.level.split(',')[1]]
     pack = [] if args.pack == 'default' else ['--pack', args.pack]
     command = [str(launcher), '--no-voxel-build', '--binary', str(args.binary.resolve()), *pack, '--',
                '-usecwd', '-noautoload', '-nologo', *level, '-s1', *args.args.split()]

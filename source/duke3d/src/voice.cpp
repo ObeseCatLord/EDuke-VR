@@ -672,24 +672,26 @@ void Voice_Frame(void)
     }
 }
 
-void Voice_DrawStatus(void)
+void Voice_DrawStatus(bool wrist)
 {
     if (!voice_hud || !(Net_VoiceAvailable() || voice_loopback)) return;
-    int y = 30;
+    struct Line { char text[64]; int pal; } lines[MaxSpeakers + 1];
+    int count = 0;
     if (transmitAllowed())
     {
-        char const *state = transmitting ? "^10MIC LIVE" : voice_mode ? "^12MIC (PUSH TO TALK)" : "^12MIC READY";
-        minitext(4, y, state, 0, 2 + 8 + 16 + 256);
-        y += 8;
+        Bstrcpy(lines[count].text, transmitting ? "^10MIC LIVE" : voice_mode ? "^12MIC (PUSH TO TALK)" : "^12MIC READY");
+        lines[count++].pal = 0;
     }
     for (int i = 0; i < MaxSpeakers; ++i)
     {
         if (i == myconnectindex || !Voice_IsTalking(i)) continue;
-        char line[64];
-        Bsnprintf(line, sizeof(line), "> %s", g_player[i].user_name);
-        minitext(4, y, line, g_player[i].ps ? g_player[i].ps->palookup : 0, 2 + 8 + 16 + 256);
-        y += 8;
+        Bsnprintf(lines[count].text, sizeof(lines[count].text), "> %s", g_player[i].user_name);
+        lines[count++].pal = g_player[i].ps ? g_player[i].ps->palookup : 0;
     }
+    // Flat: top left, mic first. Headset: on the left wrist HUD, stacked upward from just above the
+    // health readout (which starts at y 175), the mic line nearest it.
+    for (int i = 0; i < count; ++i)
+        minitext(4, wrist ? 167 - 8*i : 30 + 8*i, lines[i].text, lines[i].pal, 2 + 8 + 16 + 256);
 }
 
 #endif

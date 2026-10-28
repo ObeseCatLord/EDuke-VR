@@ -9,6 +9,7 @@
 #include "network.h"
 #include "menus.h"
 #include "mdsprite.h"
+#include "colmatch.h"
 #include "../../vr/eduke_xr.h"
 #include <algorithm>
 #include <cfloat>
@@ -3094,6 +3095,56 @@ static bool prepareTipWad(HandSegmentSample &sample, Camera const &body)
 static SpriteBounds wheelPanelBounds;
 static void wheelPanelSprite(float x0,float y0,float x1,float y1) { wheelPanelBounds.add(x0,y0,x1,y1); }
 
+// Ammo rings (after the Serious Sam VR wheels): around every slot a faint track, filled clockwise
+// from 12 o'clock with the slot's ammo (or a gadget's charge): green, yellow below two thirds, red
+// below one third; a sliver stays while any is left, so "almost empty" never reads as empty. Drawn
+// from short rotated segments of small solid tiles in the nearest palette colours.
+enum { RingTrack, RingGreen, RingYellow, RingRed, RingCount };
+static constexpr int RingTileBase=30500, RingSegments=40;
+static bool makeRingTiles()
+{
+    static int made=-1;
+    if (made>=0) return made;
+    static uint8_t const colours[RingCount][3]={{200,200,205},{60,220,80},{242,194,48},{232,68,60}};
+    made=1;
+    for (int i=0;i<RingCount;++i)
+    {
+        int const tile=RingTileBase+i;
+        auto const pixels=(uint8_t *)tileCreate(tile,6,7);
+        if (!pixels) { made=0; break; }
+        Bmemset(pixels,paletteGetClosestColorUpToIndex(colours[i][0],colours[i][1],colours[i][2],254),6*7);
+        picanm[tile].xofs=picanm[tile].yofs=0;
+    }
+    return made;
+}
+
+static float slotFraction(Wheel const &w, DukePlayer_t const *p, int item, int &amount)
+{
+    if (w.gadgets)
+    {
+        static int const full[GadgetCount]={100,400,2400,1600,1200};
+        amount=p->inv_amount[gadgetItem(item)];
+        return float(amount)/full[item];
+    }
+    amount=p->ammo_amount[item];
+    int const most=p->max_ammo_amount[item];
+    return most>0 ? float(amount)/most : amount>0 ? 1.f : 0.f;
+}
+
+static void drawAmmoRing(float cx, float cy, float radius, float fraction, int amount, float frac)
+{
+    float const sweep=amount>0 ? std::max(std::min(fraction,1.f),.03f) : 0.f;
+    int const fill=fraction<1.f/3 ? RingRed : fraction<2.f/3 ? RingYellow : RingGreen;
+    int const scale=int(.45f*frac*65536.f);
+    for (int k=0;k<RingSegments;++k)
+    {
+        float const turn=(k+.5f)/RingSegments, angle=2*Pi*turn;
+        bool const filled=turn<=sweep;
+        rotatesprite_fs(int(std::lround((cx+radius*std::sin(angle))*65536.f)),int(std::lround((cy-radius*std::cos(angle))*65536.f)),
+                        scale,int(std::lround(turn*2048.f))&2047,RingTileBase+(filled ? fill : RingTrack),0,0,2+8+(filled ? 0 : 1));
+    }
+}
+
 // 2D icons of a wheel on a panel at the ring itself (never on the HUD): the gadget wheel's
 // inventory items with their charge, and the weapon wheel's pickup sprites when VR models are off
 // or a slot has none. Drawn as its own overlay segment, cropped and placed facing the head.
@@ -3102,7 +3153,10 @@ void G_XRDrawWheelPanels()
     auto const p=g_player[myconnectindex].ps;
     for (Wheel *w:{&wheel,&gadgetWheel})
     {
-        if (!w->open || !w->count || (!w->gadgets && wheelUses3D())) continue;
+        if (!w->open || !w->count) continue;
+        // With weapon models the ring itself is 3D; this panel then only carries the ammo rings.
+        bool const models=!w->gadgets && wheelUses3D();
+        bool const rings=makeRingTiles();
         if (!menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
         if (!flushHeadPanel()) return;
         float const frac=wheelOpenFraction(*w);
@@ -3124,20 +3178,38 @@ void G_XRDrawWheelPanels()
             float const angle=2*Pi*slot/w->count;
             float const cx=160.f+ringUnits*std::sin(angle), cy=100.f-ringUnits*std::cos(angle);
             int const scale=int((hovered ? 62000.f : selectable ? 50000.f : 38000.f)*frac);
-            // Centre the picture itself: pickup sprites carry ground-anchored tile offsets.
-            float const k=scale/65536.f;
-            float const ox=picanm[tile].xofs*k, oy=picanm[tile].yofs*k;
-            rotatesprite_fs(int(std::lround((cx+ox)*65536.f)),int(std::lround((cy+oy)*65536.f)),scale,0,tile,
-                            hovered ? -16 : selectable ? 0 : 28,0,2+8);
-            if (w->gadgets && selectable)
+            if (!models)
             {
-                int const amount=p->inv_amount[gadgetItem(item)];
-                int const percent=item==0 ? amount : item==1 ? (amount+3)>>2 : item==2 ? (amount+15)/24
-                    : item==3 ? (amount+15)>>4 : amount/12;
-                char text[8];
-                Bsnprintf(text,sizeof(text),"%d%%",percent);
-                minitext(int(cx)-int(std::strlen(text))*2,int(cy)+12,text,hovered ? 7 : 0,2+8+16);
+                // Centre the picture itself: pickup sprites carry ground-anchored tile offsets.
+                float const k=scale/65536.f;
+                float const ox=picanm[tile].xofs*k, oy=picanm[tile].yofs*k;
+                rotatesprite_fs(int(std::lround((cx+ox)*65536.f)),int(std::lround((cy+oy)*65536.f)),scale,0,tile,
+                                hovered ? -16 : selectable ? 0 : 28,0,2+8);
             }
+            int amount=0;
+            float const fraction=slotFraction(*w,p,item,amount);
+            float const ringRadius=std::min(16.f,ringUnits*std::sin(Pi/std::max(3u,w->count))*.85f)*(hovered ? 1.15f : 1.f);
+            if (rings) drawAmmoRing(cx,cy,ringRadius,fraction,amount,frac*(hovered ? 1.15f : 1.f));
+            // The count under the ring: rounds, or a gadget's charge in percent.
+            char text[12];
+            if (w->gadgets) Bsnprintf(text,sizeof(text),"%d%%",int(std::lround(std::min(fraction,1.f)*100.f)));
+            else Bsnprintf(text,sizeof(text),"%d",amount);
+            minitext(int(cx)-int(std::strlen(text))*2,int(cy+ringRadius)+3,text,hovered ? 7 : selectable ? 0 : 13,2+8+16);
+        }
+        // The hovered slot's count large in the centre (else the weapon in hand).
+        int const centreSlot=w->hovered>=0 && unsigned(w->hovered)<w->count ? w->hovered : -1;
+        int centreItem=centreSlot>=0 ? w->slots[centreSlot] : -1;
+        if (centreItem<0 && !w->gadgets)
+            for (unsigned slot=0;slot<w->count;++slot)
+                if (w->slots[slot]==wheelCurrentWeapon(p)) centreItem=w->slots[slot];
+        if (centreItem>=0)
+        {
+            int amount=0;
+            float const fraction=slotFraction(*w,p,centreItem,amount);
+            char text[12];
+            if (w->gadgets) Bsnprintf(text,sizeof(text),"%d%%",int(std::lround(std::min(fraction,1.f)*100.f)));
+            else Bsnprintf(text,sizeof(text),"%d",amount);
+            gametext_center(96,text);
         }
         polymost_xrSpriteBounds=nullptr;
         float rect[4]={0,0,1,1};
@@ -4584,9 +4656,34 @@ static void runConsoleRequest()
             if (unsigned(weapon)<MAX_WEAPONS) P_AddWeapon(g_player[myconnectindex].ps,weapon,1);
             continue;
         }
+        if (!command.compare(0,8,"xr_goto "))
+        {
+            // Test hook: put the local player at x y (standing on the floor there), optionally facing ang.
+            auto const p=g_player[myconnectindex].ps;
+            int x=0, y=0, ang=-1;
+            if (std::sscanf(command.c_str()+8,"%d %d %d",&x,&y,&ang)>=2 && (unsigned)p->i<MAXSPRITES)
+            {
+                int16_t sect=p->cursectnum;
+                updatesector(x,y,&sect);
+                if (sect>=0)
+                {
+                    p->pos={x,y,getflorzofslope(sect,x,y)-PHEIGHT}; p->opos=p->pos;
+                    p->cursectnum=sect;
+                    if (ang>=0) { p->q16ang=p->oq16ang=fix16_from_int(ang&2047); }
+                    sprite[p->i].xyz={x,y,p->pos.z+PHEIGHT};
+                    changespritesect(p->i,sect);
+                }
+                LOG_F(INFO,"VR goto: %d,%d sector=%d.",x,y,sect);
+            }
+            continue;
+        }
         if (command=="xr_where")
         {
-            // Read-only position report for multiplayer harnesses.
+            // Read-only position report for multiplayer harnesses (players, then corpses).
+            for (int j=0;j<MAXSPRITES;++j)
+                if (sprite[j].statnum<MAXSTATUS && sprite[j].picnum==DUKELYINGDEAD && (unsigned)sprite[j].sectnum<(unsigned)numsectors)
+                    LOG_F(INFO,"VR where corpse: index=%d z=%d cstat=%d floorz=%d model=%d.",j,sprite[j].z,sprite[j].cstat,
+                          getflorzofslope(sprite[j].sectnum,sprite[j].x,sprite[j].y),md_tilehasmodel(sprite[j].picnum,sprite[j].pal));
             for (int TRAVERSE_CONNECT(i))
             {
                 auto const q=g_player[i].ps;
@@ -4594,10 +4691,20 @@ static void runConsoleRequest()
                 auto const &body=sprite[q->i];
                 LOG_F(INFO,"VR where: player=%d local=%d pos=%d,%d,%d ang=%d weapon=%d sprite=%d,%d,%d,%d.",i,int(i==myconnectindex),
                       q->pos.x,q->pos.y,q->pos.z,fix16_to_int(q->q16ang),q->curr_weapon,body.x,body.y,body.z,body.ang);
+                LOG_F(INFO,"VR where sprite: player=%d index=%d picnum=%d cstat=%d xrepeat=%d extra=%d dead=%d floorz=%d.",i,q->i,
+                      body.picnum,body.cstat,body.xrepeat,body.extra,int(q->dead_flag),
+                      (unsigned)body.sectnum<(unsigned)numsectors ? getflorzofslope(body.sectnum,body.x,body.y) : 0);
             }
             continue;
         }
-        int weapon;
+        int weapon, amount;
+        if (std::sscanf(command.c_str(),"xr_ammo %d %d",&weapon,&amount)==2 && (unsigned)weapon<MAX_WEAPONS)
+        {
+            // Test hook: set one weapon's ammo (e.g. to show partly used ammo rings on the wheel).
+            auto const p=g_player[myconnectindex].ps;
+            p->ammo_amount[weapon]=clamp(amount,0,int(p->max_ammo_amount[weapon]));
+            continue;
+        }
         if (std::sscanf(command.c_str(),"xr_weapon %d",&weapon)==1 && (unsigned)weapon<MAX_WEAPONS)
         {
             auto const p=g_player[myconnectindex].ps;

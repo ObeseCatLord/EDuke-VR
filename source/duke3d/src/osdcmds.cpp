@@ -1261,6 +1261,30 @@ static int osdcmd_net_giveall(osdcmdptr_t parm)
     return OSDCMD_OK;
 }
 
+// Test servers: kills a connected player (as from damage), e.g. to check how bodies look to others.
+static int osdcmd_net_kill(osdcmdptr_t parm)
+{
+    if (!parm || parm->numparms != 1)
+        return OSDCMD_SHOWHELP;
+
+    if (!g_netServer)
+    {
+        LOG_F(INFO, "Only the server can kill players.");
+        return OSDCMD_OK;
+    }
+
+    int const i = Batoi(parm->parms[0]);
+    if ((unsigned)i >= MAXPLAYERS || !g_player[i].ps || (unsigned)g_player[i].ps->i >= MAXSPRITES)
+    {
+        LOG_F(INFO, "No player %d.", i);
+        return OSDCMD_OK;
+    }
+
+    sprite[g_player[i].ps->i].extra = 0;
+    LOG_F(INFO, "Killed player %d (%s).", i, g_player[i].user_name);
+    return OSDCMD_OK;
+}
+
 #if 0
 static int osdcmd_kick(osdcmdptr_t parm)
 {
@@ -1784,6 +1808,7 @@ int32_t registerosdcommands(void)
     OSD_RegisterFunction("kickban","kickban <id>: kicks a multiplayer client and prevents them from reconnecting.  See listplayers.", osdcmd_kickban);
 #endif
     OSD_RegisterFunction("listplayers","listplayers: lists currently connected multiplayer clients", osdcmd_listplayers);
+    OSD_RegisterFunction("net_kill","net_kill <player>: (server) kills that player, as from damage", osdcmd_net_kill);
     OSD_RegisterFunction("net_giveall","net_giveall: (server) gives every connected player all weapons, ammo and items", osdcmd_net_giveall);
     OSD_RegisterFunction("name","name: change your multiplayer nickname", osdcmd_name);
     OSD_RegisterFunction("password","password: sets multiplayer game password", osdcmd_password);

@@ -24,7 +24,7 @@ void Voice_ResetPlayer(int player);
 bool Voice_IsTalking(int player);
 void Voice_SetPushToTalk(bool held); // VR controller push-to-talk (left Y / Index left B)
 bool Voice_PushToTalkMode(void);     // voice chat on in push-to-talk mode (the VR button talks)
-void Voice_DrawStatus(void);         // HUD: mic state and who is talking
+void Voice_DrawStatus(bool wrist = false);   // HUD: mic state and who is talking (wrist: above the left wrist HUD)
 
 // Transport, implemented by network.cpp.
 bool Net_VoiceAvailable(void);
@@ -50,5 +50,5 @@ static inline void Voice_ResetPlayer(int) {}
 static inline bool Voice_IsTalking(int) { return false; }
 static inline void Voice_SetPushToTalk(bool) {}
 static inline bool Voice_PushToTalkMode(void) { return false; }
-static inline void Voice_DrawStatus(void) {}
+static inline void Voice_DrawStatus(bool = false) {}
 #endif

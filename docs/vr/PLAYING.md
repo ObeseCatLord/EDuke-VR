@@ -231,11 +231,16 @@ and the KHR simple controller.
 
 ## Sky, sprites and flat screens
 
-- The sky stays put: it no longer drifts with your head when you look up/down or turn. Build lays
-  its sky out linearly in angle for a flat 90-degree screen, which in a headset turned it faster
-  than the world (1.27x at the centre of an 80-degree view) and bent it at the edges; in a headset
-  each sky panel is drawn as narrow flat facets around you with perspective-correct texturing, so
-  every direction keeps its texel, like a sky dome.
+- The sky stays fixed in the world when you turn, look up or down, or tilt your head. Native Build
+  maps the sky in screen space (rows pinned to the screen, the horizon shifted by the view's look
+  angle, panels laid out for a flat 90-degree screen); in a headset the sky is mapped in the
+  un-pitched view space and rotated with the view like every wall, each panel as narrow flat
+  facets with perspective-correct texturing, like a sky dome. The drifting clouds of CLOUDYSKIES
+  (E4L1) drift one fixed way instead of the way you face. Every sky of the official episodes
+  (E1-E4 and World Tour's E5) is checked by `tools/vr/sky_rotation_suite.py`: lab captures at
+  known head orientations, the sky and the world must move by the same rotation.
+- World Tour's episode 5 skies are full eight-panel panoramas (before, each showed its first
+  panel all the way round).
 - Enemies and other sprites are upright cards that face your head, the same for
   both eyes, instead of turning with each eye's view (`EDUKE32_XR_FACE_BILLBOARD=0`
   restores the old screen-aligned sprites).
@@ -248,7 +253,9 @@ and the KHR simple controller.
 The status bar is drawn as two watches (`EDUKE32_XR_WRIST_HUD`, on in the
 preset): turn your **left** wrist toward you to read health and armour, your
 **right** wrist for ammo and the selected item. They hide while a wheel is open.
-Game messages, voice status and menus stay on the panel in front of you.
+In multiplayer the mic state (`MIC READY` / `MIC LIVE`) and who is talking sit on
+the left watch, just above health. Game messages and menus stay on the panel in
+front of you.
 
 ## Aiming, 3D models and the 2D fallback
 
@@ -279,13 +286,17 @@ runs from your hand to a pointer bead on the ring; turn your wrist about 20
 degrees toward a weapon to move the bead onto it: its bubble lights up yellow
 and grows, the weapon spins and the controller pulses. Let go to switch.
 Only weapons you have picked up are on the ring; one out of ammo sits in a
-dark bubble and can't be picked. Shrinker/Expander and Freezer/Flamethrower each have their own slot; the
+dark bubble and can't be picked. Around every weapon an ammo ring (after the
+Serious Sam VR wheels) fills clockwise from 12 o'clock with its ammo: green, yellow
+below two thirds, red below one third (a sliver stays while any is left), with the
+count under it; the hovered weapon's count (else the one in your hand) is shown
+large in the middle. Shrinker/Expander and Freezer/Flamethrower each have their own slot; the
 switch goes through the normal weapon keys, so it works in multiplayer. Turning
 is paused while the weapon wheel is open.
 
 The **gadget wheel** works the same on the off hand (left stick click; Index:
 rest your thumb on the left trackpad): portable medkit, steroids, HoloDuke,
-jetpack and night vision goggles with their charge (only the ones you carry); picking one uses or toggles
+jetpack and night vision goggles with their charge as rings and percentages (only the ones you carry); picking one uses or toggles
 it through the normal inventory keys. Scuba gear and boots work by themselves.
 
 `EDUKE32_XR_WEAPON_WHEEL=0` disables both. Without VR models the weapon wheel
@@ -297,7 +308,7 @@ Verified with `tools/vr/smoke_xr_wheel.py` and `tools/vr/scenes/wheels.json`.
 Built in when libopus is available. In VR your microphone transmits by voice
 activation as soon as you join a game (`voice_transmit 2`, the default, means
 on in VR, off on desktop); the HUD shows `MIC READY` / `MIC LIVE` and
-`> name` for whoever is talking. Other players' voices come from where they
+`> name` for whoever is talking (in VR on the left wrist watch). Other players' voices come from where they
 are: louder and panned when near, fading to a centred "radio" level beyond
 `voice_spatial_distance` (about 24 m), following your head in VR.
 
