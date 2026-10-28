@@ -9286,6 +9286,10 @@ bool polymost_xrSpriteWorldToEye(float *matrix)
             matrix[column*4+row]=0;
             for (int k=0;k<4;++k) matrix[column*4+row]+=rotation[k*4+row]*coordinates[column*4+k];
         }
+    // This matrix already holds the view's pitch and roll: the shader must not apply them again.
+    // (Flat sprites set the shader rotation before they draw; voxels inherited whatever the
+    // previous draw left, so after a flat sprite they pitched and rolled twice with the head.)
+    polymost_identityrotmat();
     return true;
 }
 

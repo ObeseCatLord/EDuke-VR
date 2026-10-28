@@ -4681,13 +4681,15 @@ static void runConsoleRequest()
         }
         if (!command.compare(0,8,"xr_goto "))
         {
-            // Test hook: put the local player at x y (standing on the floor there), optionally facing ang.
+            // Test hook: put the local player at x y (standing on the floor there), optionally facing ang;
+            // an optional z picks the sector at that height where sectors overlap.
             auto const p=g_player[myconnectindex].ps;
-            int x=0, y=0, ang=-1;
-            if (std::sscanf(command.c_str()+8,"%d %d %d",&x,&y,&ang)>=2 && (unsigned)p->i<MAXSPRITES)
+            int x=0, y=0, ang=-1, z=INT32_MIN;
+            if (std::sscanf(command.c_str()+8,"%d %d %d %d",&x,&y,&ang,&z)>=2 && (unsigned)p->i<MAXSPRITES)
             {
                 int16_t sect=p->cursectnum;
-                updatesector(x,y,&sect);
+                if (z!=INT32_MIN) { sect=0; updatesectorz(x,y,z,&sect); if (sect<0) for (int s=0;s<numsectors && sect<0;++s) if (inside(x,y,s)==1 && z>=sector[s].ceilingz && z<=sector[s].floorz) sect=s; }
+                else updatesector(x,y,&sect);
                 if (sect>=0)
                 {
                     p->pos={x,y,getflorzofslope(sect,x,y)-PHEIGHT}; p->opos=p->pos;
