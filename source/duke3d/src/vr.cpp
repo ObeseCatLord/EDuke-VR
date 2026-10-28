@@ -8,6 +8,7 @@
 #include "vrshoot.h"
 #include "network.h"
 #include "menus.h"
+#include "savegame.h"
 #include "mdsprite.h"
 #include "colmatch.h"
 #include "../../vr/eduke_xr.h"
@@ -4700,6 +4701,14 @@ static void runConsoleRequest()
                 }
                 LOG_F(INFO,"VR goto: %d,%d sector=%d.",x,y,sect);
             }
+            continue;
+        }
+        if (!command.compare(0,8,"xr_load "))
+        {
+            // Test hook: load a saved game (a path the game's file search can open).
+            savebrief_t save("xr_load");
+            Bstrncpyz(save.path,command.c_str()+8,sizeof(save.path));
+            LOG_F(INFO,"VR load: %s -> %d.",save.path,G_LoadPlayerMaybeMulti(save));
             continue;
         }
         if (command=="xr_where")

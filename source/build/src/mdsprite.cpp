@@ -2313,7 +2313,7 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
                 mat[column*4+row] = 0.f;
                 for (int k = 0; k < 4; ++k) mat[column*4+row] += xrToEye[k*4+row]*local[column*4+k];
             }
-        if (grhalfxdown10x < 0) { mat[0] = -mat[0]; mat[4] = -mat[4]; mat[8] = -mat[8]; mat[12] = -mat[12]; }
+        // (mirror passes: the x flip is already in xrToEye, before the view rotation)
         xrSprite = true;
     }
 #else
@@ -2350,6 +2350,8 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
     glFrontFace(clockwise ? GL_CW : GL_CCW);
     buildgl_setEnabled(GL_CULL_FACE);
     glCullFace(GL_BACK);
+    static int const testCull = Bgetenv("EDUKE32_TEST_MD_CULL") ? Batoi(Bgetenv("EDUKE32_TEST_MD_CULL")) : 0;   // 1 off, 2 front
+    if (testCull == 1) buildgl_setDisabled(GL_CULL_FACE); else if (testCull == 2) glCullFace(GL_FRONT);
 
     // tinting
     int32_t const drawpal = explicitContext ? ctx->palette : globalpal;

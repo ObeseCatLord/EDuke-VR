@@ -1204,7 +1204,7 @@ int32_t polymost_voxdraw(voxmodel_t *m, tspriteptr_t const tspr)
                 mat[column*4+row] = 0.f;
                 for (int k = 0; k < 4; ++k) mat[column*4+row] += xrToEye[k*4+row]*local[column*4+k];
             }
-        if (grhalfxdown10x < 0) { mat[0] = -mat[0]; mat[4] = -mat[4]; mat[8] = -mat[8]; mat[12] = -mat[12]; }
+        // (mirror passes: the x flip is already in xrToEye, before the view rotation)
     }
 #endif
     glMatrixMode(GL_MODELVIEW); //Let OpenGL (and perhaps hardware :) handle the matrix rotation

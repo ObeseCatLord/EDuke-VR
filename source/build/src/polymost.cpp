@@ -9200,7 +9200,14 @@ static float polymost_prepareCamera(bool clearDebugBuffers = true)
         gctang = (gctang > 0.f) ? 1.f : -1.f;
     }
 
-    if (inpreparemirror)
+    // A mirror pass reflects the tilt. XR views hand in the reflected camera's own roll already,
+    // and their viewport coverage below must use the same roll as the view rotation, or the
+    // reflection leaves wedges of the mirror unfilled when the head tilts.
+    if (inpreparemirror
+#ifdef USE_OPENXR
+        && !xrProjection.active
+#endif
+        )
         gstang = -gstang;
 
     return ratio;
@@ -9276,8 +9283,11 @@ bool polymost_xrSpriteWorldToEye(float *matrix)
     float rotation[16];
     polymost_worldrotmat(rotation);
     float const scale=1.f/(gviewxrange*1024.f);
-    float const coordinates[16]={-gsinang*scale,0,gcosang2*scale,0,
-                                gcosang*scale,0,gsinang2*scale,0,
+    // Mirror passes flip x like the walls do: before the view rotation (flip and roll do not
+    // commute; flipped after it, reflected models rolled the wrong way when the head tilted).
+    float const flip=grhalfxdown10x<0 ? -1.f : 1.f;
+    float const coordinates[16]={-gsinang*scale*flip,0,gcosang2*scale,0,
+                                gcosang*scale*flip,0,gsinang2*scale,0,
                                 0,-gyxscale*grhalfxdown10/gviewxrange,0,0,
                                 0,0,0,1};
     for (int column=0;column<4;++column)
@@ -9393,7 +9403,11 @@ void polymost_drawrooms()
     }
 
 #if !SOFTROTMAT
-    if (inpreparemirror)
+    if (inpreparemirror
+# ifdef USE_OPENXR
+        && !xrProjection.active
+# endif
+        )
         gstang = -gstang;
 #endif
 
