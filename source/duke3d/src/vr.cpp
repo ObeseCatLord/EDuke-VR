@@ -3131,8 +3131,21 @@ static float slotFraction(Wheel const &w, DukePlayer_t const *p, int item, int &
     return most>0 ? float(amount)/most : amount>0 ? 1.f : 0.f;
 }
 
+// rotatesprite's 320x200 scale with auto sizing (RS_AUTO|RS_NOCLIP), as dorotspr_handle_bit2: pixels per
+// unit across and down. Units are taller than wide (1.2 on wide screens, yxaspect on square ones).
+static void rotatespriteUnitPixels(float &across, float &down)
+{
+    bool const wide=4*ydim<=3*xdim;
+    float const width=wide ? ydim*4.f/3.f : float(xdim);
+    float const aspect=(wide ? 1.2f : yxaspect/65536.f)*(rotatesprite_yxaspect/65536.f);
+    across=width/320.f; down=width*aspect/320.f;
+}
+
 static void drawAmmoRing(float cx, float cy, float radius, float fraction, int amount, float frac)
 {
+    float across, down;
+    rotatespriteUnitPixels(across,down);
+    float const stretch=down/across;   // keeps the ring round on screen
     float const sweep=amount>0 ? std::max(std::min(fraction,1.f),.03f) : 0.f;
     int const fill=fraction<1.f/3 ? RingRed : fraction<2.f/3 ? RingYellow : RingGreen;
     int const scale=int(.45f*frac*65536.f);
@@ -3140,7 +3153,7 @@ static void drawAmmoRing(float cx, float cy, float radius, float fraction, int a
     {
         float const turn=(k+.5f)/RingSegments, angle=2*Pi*turn;
         bool const filled=turn<=sweep;
-        rotatesprite_fs(int(std::lround((cx+1.2f*radius*std::sin(angle))*65536.f)),int(std::lround((cy-radius*std::cos(angle))*65536.f)),
+        rotatesprite_fs(int(std::lround((cx+stretch*radius*std::sin(angle))*65536.f)),int(std::lround((cy-radius*std::cos(angle))*65536.f)),
                         scale,int(std::lround(turn*2048.f))&2047,RingTileBase+(filled ? fill : RingTrack),0,0,2+8+(filled ? 0 : 1));
     }
 }
@@ -3176,8 +3189,10 @@ void G_XRDrawWheelPanels()
             if ((unsigned)tile>=MAXTILES) continue;
             bool const selectable=slotSelectable(*w,p,int(slot)), hovered=int(slot)==w->hovered;
             float const angle=2*Pi*slot/w->count;
-            // 320x200 units are 1.2x taller than wide on screen: stretch x so the ring stays round.
-            float const cx=160.f+1.2f*ringUnits*std::sin(angle), cy=100.f-ringUnits*std::cos(angle);
+            // 320x200 units are taller than wide on screen: stretch x so the ring stays round.
+            float unitAcross, unitDown;
+            rotatespriteUnitPixels(unitAcross,unitDown);
+            float const cx=160.f+unitDown/unitAcross*ringUnits*std::sin(angle), cy=100.f-ringUnits*std::cos(angle);
             int const scale=int((hovered ? 62000.f : selectable ? 50000.f : 38000.f)*frac);
             if (!models)
             {
@@ -3224,16 +3239,16 @@ void G_XRDrawWheelPanels()
             auto &b=wheelPanelBounds;
             b.x0-=2; b.y0-=2; b.x1+=2; b.y1+=2;
             b.uv(rect);
-            // Pixels per 320x200 unit (vertical): the 4:3 area fits the height on wide screens, the
-            // width on square or tall ones (the headset's UI surface is square).
-            float const unitPixels=(4*ydim<=3*xdim ? float(ydim) : float(xdim)*.75f)/200.f;
-            float const metresPerPixel=wheelRadius(*w,frac)/std::max(1.f,ringUnits*unitPixels);
+            // The ring radius is ringUnits 320x200 units down (the headset's UI surface is square).
+            float unitAcross, unitDown;
+            rotatespriteUnitPixels(unitAcross,unitDown);
+            float const metresPerPixel=wheelRadius(*w,frac)/std::max(1.f,ringUnits*unitDown);
             float const x0=rect[0]*xdim, x1=rect[2]*xdim, y0=(1.f-rect[3])*ydim, y1=(1.f-rect[1])*ydim;
             halfWidth=(x1-x0)*.5f*metresPerPixel; halfHeight=(y1-y0)*.5f*metresPerPixel;
             float const dx=((x0+x1)*.5f-xdim*.5f)*metresPerPixel, dy=-((y0+y1)*.5f-ydim*.5f)*metresPerPixel;
             auto const c=wheelCentre(*w,frac);
-            // In the bubbles' plane (3.5 cm behind the slots), so the rings sit on their rims.
-            float const depth=w->gadgets || !models ? .02f : -.035f;
+            // Just in front of the bubbles (3.5 cm behind the slots), so the rings sit on their rims.
+            float const depth=-.03f;
             pose.position={c.x+w->faceRight.x*dx+w->faceUp.x*dy+w->faceBack.x*depth,
                            c.y+w->faceRight.y*dx+w->faceUp.y*dy+w->faceBack.y*depth,
                            c.z+w->faceRight.z*dx+w->faceUp.z*dy+w->faceBack.z*depth};
