@@ -3140,7 +3140,7 @@ static void drawAmmoRing(float cx, float cy, float radius, float fraction, int a
     {
         float const turn=(k+.5f)/RingSegments, angle=2*Pi*turn;
         bool const filled=turn<=sweep;
-        rotatesprite_fs(int(std::lround((cx+radius*std::sin(angle))*65536.f)),int(std::lround((cy-radius*std::cos(angle))*65536.f)),
+        rotatesprite_fs(int(std::lround((cx+1.2f*radius*std::sin(angle))*65536.f)),int(std::lround((cy-radius*std::cos(angle))*65536.f)),
                         scale,int(std::lround(turn*2048.f))&2047,RingTileBase+(filled ? fill : RingTrack),0,0,2+8+(filled ? 0 : 1));
     }
 }
@@ -3176,7 +3176,8 @@ void G_XRDrawWheelPanels()
             if ((unsigned)tile>=MAXTILES) continue;
             bool const selectable=slotSelectable(*w,p,int(slot)), hovered=int(slot)==w->hovered;
             float const angle=2*Pi*slot/w->count;
-            float const cx=160.f+ringUnits*std::sin(angle), cy=100.f-ringUnits*std::cos(angle);
+            // 320x200 units are 1.2x taller than wide on screen: stretch x so the ring stays round.
+            float const cx=160.f+1.2f*ringUnits*std::sin(angle), cy=100.f-ringUnits*std::cos(angle);
             int const scale=int((hovered ? 62000.f : selectable ? 50000.f : 38000.f)*frac);
             if (!models)
             {
@@ -3188,7 +3189,9 @@ void G_XRDrawWheelPanels()
             }
             int amount=0;
             float const fraction=slotFraction(*w,p,item,amount);
-            float const ringRadius=std::min(16.f,ringUnits*std::sin(Pi/std::max(3u,w->count))*.85f)*(hovered ? 1.15f : 1.f);
+            // On the slot's own bubble rim (the 3D bubble: .046 m, .055 m for gadgets, 1.2x when hovered).
+            float const bubbleMetres=(w->gadgets ? .055f : .046f)*(hovered ? 1.2f : 1.f)*frac;
+            float const ringRadius=.92f*bubbleMetres*ringUnits/std::max(1e-4f,wheelRadius(*w,frac));
             if (rings) drawAmmoRing(cx,cy,ringRadius,fraction,amount,frac*(hovered ? 1.15f : 1.f));
             // The count under the ring: rounds, or a gadget's charge in percent.
             char text[12];
@@ -3221,14 +3224,19 @@ void G_XRDrawWheelPanels()
             auto &b=wheelPanelBounds;
             b.x0-=2; b.y0-=2; b.x1+=2; b.y1+=2;
             b.uv(rect);
-            float const metresPerPixel=wheelRadius(*w,frac)/std::max(1.f,ringUnits*ydim/200.f);
+            // Pixels per 320x200 unit (vertical): the 4:3 area fits the height on wide screens, the
+            // width on square or tall ones (the headset's UI surface is square).
+            float const unitPixels=(4*ydim<=3*xdim ? float(ydim) : float(xdim)*.75f)/200.f;
+            float const metresPerPixel=wheelRadius(*w,frac)/std::max(1.f,ringUnits*unitPixels);
             float const x0=rect[0]*xdim, x1=rect[2]*xdim, y0=(1.f-rect[3])*ydim, y1=(1.f-rect[1])*ydim;
             halfWidth=(x1-x0)*.5f*metresPerPixel; halfHeight=(y1-y0)*.5f*metresPerPixel;
             float const dx=((x0+x1)*.5f-xdim*.5f)*metresPerPixel, dy=-((y0+y1)*.5f-ydim*.5f)*metresPerPixel;
             auto const c=wheelCentre(*w,frac);
-            pose.position={c.x+w->faceRight.x*dx+w->faceUp.x*dy+w->faceBack.x*.02f,
-                           c.y+w->faceRight.y*dx+w->faceUp.y*dy+w->faceBack.y*.02f,
-                           c.z+w->faceRight.z*dx+w->faceUp.z*dy+w->faceBack.z*.02f};
+            // In the bubbles' plane (3.5 cm behind the slots), so the rings sit on their rims.
+            float const depth=w->gadgets || !models ? .02f : -.035f;
+            pose.position={c.x+w->faceRight.x*dx+w->faceUp.x*dy+w->faceBack.x*depth,
+                           c.y+w->faceRight.y*dx+w->faceUp.y*dy+w->faceBack.y*depth,
+                           c.z+w->faceRight.z*dx+w->faceUp.z*dy+w->faceBack.z*depth};
             pose.orientation=quatFromAxes(w->faceRight,w->faceUp,w->faceBack);
         }
         std::string error;
