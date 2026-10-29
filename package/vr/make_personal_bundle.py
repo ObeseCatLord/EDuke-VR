@@ -36,10 +36,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SERVER = 'incidentalstoat.xyz:26555'
+GITHUB_REPO = 'ObeseCatLord/EDuke-VR'   # releases the updaters download (see make_github_release.py)
 WORLD_TOUR = Path('/home/obesecatlord/Windows/Steam/steamapps/common/Duke Nukem 3D Twentieth Anniversary World Tour')
 ADDONS = Path.home() / '.config/eduke32'
-LINUX_LIBS = ('libSDL2-2.0.so.0', 'libopenxr_loader.so.1', 'libopus.so.0', 'libvpx.so.12', 'libFLAC.so.14', 'libogg.so.0',
+# Bundled beside the game (the system's own SDL2, GL, X11 and ALSA are used). Build the binary with
+# PORTABLE_GLIBC=1 LTO=0: with these libraries it then needs glibc 2.38 and GCC 13's libstdc++.
+LINUX_LIBS = ('libopenxr_loader.so.1', 'libopus.so.0', 'libvpx.so.12', 'libFLAC.so.14', 'libogg.so.0',
               'libjsoncpp.so.27', 'libatomic.so.1')
+WINDOWS_FILES = ('eduke32-vr.exe', 'openxr_loader.dll', 'libopus-0.dll')
 PACKS = ('original', 'original-lowres', 'voxel')
 AA_FILES = ('hand-rig-aa.txt', 'hud-model-map-aa.txt')
 
@@ -50,6 +54,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 data="$here/data"
 export LD_LIBRARY_PATH="$here/linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# The bundled GRP when there is one; otherwise EDuke32 finds an installed copy (Steam, GOG...).
+grp=(); [[ -f $data/grp/DUKE3D.GRP ]] && grp=(-j "$data/grp" -gamegrp DUKE3D.GRP)
 run() {   # run MODE(vr|desktop) [game arguments...]
     local mode=$1; shift
     if [[ $mode == vr ]]; then
@@ -76,10 +82,14 @@ def sh_script(body):
 
 SH_PLAY = sh_script(r'''# ./play.sh [vr|desktop] [extra EDuke32 arguments]   (default: vr)
 mode=${1:-vr}; [[ $# -gt 0 ]] && shift
-run "$mode" -j "$data/grp" -gamegrp DUKE3D.GRP "$@"
+run "$mode" "${grp[@]}" "$@"
+''')
+SH_JOIN_ANY = sh_script(r'''# ./join.sh HOST[:PORT] [vr|desktop]   join a multiplayer server (default port 23513)
+server=${1:?usage: join.sh HOST[:PORT] [vr|desktop]}; mode=${2:-vr}; shift $(( $# >= 2 ? 2 : 1 ))
+run "$mode" "${grp[@]}" -connect "$server" "$@"
 ''')
 SH_JOIN = sh_script(r'''# Join the marmot (foundry) Duke server in MODE. Same game data as the server: the World Tour GRP.
-run "{mode}" -j "$data/grp" -gamegrp DUKE3D.GRP -connect {server} "$@"
+run "{mode}" "${grp[@]}" -connect {server} "$@"
 ''')
 SH_EXPANSION = sh_script(r'''# ./play-expansion.sh NAME [vr|desktop]   NAME: worldtour (episode 5), dc, caribbean, nuclearwinter
 name=${1:?worldtour, dc, caribbean or nuclearwinter}; mode=${2:-vr}; shift $(( $# >= 2 ? 2 : 1 ))
@@ -98,9 +108,9 @@ set -euo pipefail
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 dest="${1:-$HOME/.local/share/eduke32-vr-bundle}"
 if [[ $(readlink -f "$here") != $(readlink -f "$dest" 2>/dev/null || echo none) ]]; then
+    # Lay the files over any earlier install: nothing there is deleted (game data, model sets).
     mkdir -p "$dest"
-    rsync -a --delete --exclude 'data/local/*' "$here/" "$dest/" 2>/dev/null || { rm -rf "$dest"; cp -a "$here" "$dest"; }
-    mkdir -p "$dest/data/local"; cp -an "$here/data/local/." "$dest/data/local/" 2>/dev/null || true
+    cp -a "$here/." "$dest/"
 fi
 apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"; mkdir -p "$apps"
 entry() {   # file name exec
@@ -108,20 +118,45 @@ entry() {   # file name exec
 }
 entry eduke32-vr "Duke Nukem 3D VR" "$dest/play.sh vr"
 entry eduke32-vr-desktop "Duke Nukem 3D (desktop)" "$dest/play.sh desktop"
-entry eduke32-vr-marmot "Duke 3D VR - join marmot server" "$dest/join-marmot-vr.sh"
-entry eduke32-vr-marmot-desktop "Duke 3D - join marmot server (desktop)" "$dest/join-marmot-desktop.sh"
+if [[ -x $dest/join-marmot-vr.sh ]]; then
+    entry eduke32-vr-marmot "Duke 3D VR - join marmot server" "$dest/join-marmot-vr.sh"
+    entry eduke32-vr-marmot-desktop "Duke 3D - join marmot server (desktop)" "$dest/join-marmot-desktop.sh"
+fi
 echo "Installed in $dest (app menu: Duke Nukem 3D VR)."
 '''
 SH_UPDATE = r'''#!/usr/bin/env bash
-# ./update.sh NEW_BUNDLE.tar.gz   installs a newer bundle over this one (settings and saves are kept)
+# ./update.sh              update to the latest release on GitHub (github.com/@REPO@)
+# ./update.sh FILE.tar.gz  update from a downloaded release (or personal bundle) archive
+# ./update.sh --force      reinstall the latest release even when it is the installed version
+# Only files the release carries are replaced: game data, the Voxel Duke pack, extras, settings and
+# saved games stay.
+{   # (braces: bash reads the whole script before running it, as the update replaces this file)
 set -euo pipefail
-archive=${1:?usage: update.sh eduke32-vr-bundle-*.tar.gz}
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+repo=@REPO@
+current=$(cat "$here/VERSION" 2>/dev/null || echo none)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-tar -xzf "$archive" -C "$tmp"
-new=$(find "$tmp" -maxdepth 2 -name install.sh -printf '%h\n' | head -1)
-[[ -n $new ]] || { echo "update: $archive is not an EDuke32 VR bundle" >&2; exit 1; }
-"$new/install.sh" "$here"
+if [[ $# -gt 0 && $1 != --force ]]; then
+    archive=$1
+else
+    api=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases/latest") \
+        || { echo "update: cannot reach GitHub (github.com/$repo)" >&2; exit 1; }
+    tag=$(grep -o '"tag_name": *"[^"]*"' <<<"$api" | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')
+    url=$(grep -o '"browser_download_url": *"[^"]*-linux-x86_64\.tar\.gz"' <<<"$api" | head -n1 | sed 's/.*"\(https[^"]*\)"$/\1/')
+    [[ -n $tag && -n $url ]] || { echo "update: the latest release has no Linux download" >&2; exit 1; }
+    if [[ $tag == "$current" && ${1:-} != --force ]]; then echo "EDuke VR is up to date ($tag)."; exit 0; fi
+    echo "Updating EDuke VR $current -> $tag"
+    archive="$tmp/release.tar.gz"
+    curl -fL --progress-bar -o "$archive" "$url"
+fi
+mkdir "$tmp/x"
+tar -xzf "$archive" -C "$tmp/x"
+new=$(find "$tmp/x" -maxdepth 2 -name play.sh -printf '%h\n' | head -n1)
+[[ -n $new && -x $new/linux/eduke32-vr ]] || { echo "update: $archive is not an EDuke VR archive" >&2; exit 1; }
+cp -a "$new/." "$here/"
+echo "EDuke VR is now $(cat "$here/VERSION" 2>/dev/null || echo updated)."
+exit 0
+}
 '''
 
 # ---------------------------------------------------------------- scripts (Windows)
@@ -132,6 +167,9 @@ set "HERE=%~dp0"
 set "DATA=%HERE%data"
 set "EXE=%HERE%windows\eduke32-vr.exe"
 set "EDUKE32_XR_RESTART_REQUEST=%TEMP%\eduke32-vr-restart.txt"
+rem The bundled GRP when there is one; otherwise EDuke32 finds an installed copy (Steam, GOG...).
+set GRP=
+if exist "%DATA%\grp\DUKE3D.GRP" set GRP=-j "%DATA%\grp" -gamegrp DUKE3D.GRP
 '''
 BAT_RUN = r'''
 rem :run MODE args...  (MODE vr or desktop)
@@ -164,10 +202,17 @@ def bat(body):
 BAT_PLAY = bat(r'''rem play.bat [vr|desktop]   (default vr)
 set "M=%~1"
 if "%M%"=="" set "M=vr"
-call :run %M% -j "%DATA%\grp" -gamegrp DUKE3D.GRP
+call :run %M% %GRP%
+''')
+BAT_JOIN_ANY = bat(r'''rem join.bat HOST[:PORT] [vr|desktop]   join a multiplayer server (default port 23513)
+set "S=%~1"
+set "M=%~2"
+if "%S%"=="" (echo usage: join.bat HOST[:PORT] [vr^|desktop] & exit /b 2)
+if "%M%"=="" set "M=vr"
+call :run %M% %GRP% -connect %S%
 ''')
 BAT_JOIN = bat(r'''rem Join the marmot (foundry) Duke server ({mode}). Same game data as the server: the World Tour GRP.
-call :run {mode} -j "%DATA%\grp" -gamegrp DUKE3D.GRP -connect {server}
+call :run {mode} %GRP% -connect {server}
 ''')
 BAT_EXPANSION = bat(r'''rem play-expansion.bat NAME [vr|desktop]   NAME: worldtour (episode 5), dc, caribbean, nuclearwinter
 set "N=%~1"
@@ -184,30 +229,59 @@ param([string]$Dest = "$env:LOCALAPPDATA\EDuke32-VR")
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ((Resolve-Path $here).Path -ne $Dest) {
     New-Item -ItemType Directory -Force $Dest | Out-Null
-    robocopy $here $Dest /MIR /XD "$here\data\local" /NFL /NDL /NJH /NJS /NP | Out-Null
-    robocopy "$here\data\local" "$Dest\data\local" /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+    # Lay the files over any earlier install: nothing there is deleted (game data, model sets).
+    robocopy $here $Dest /E /IS /IT /NFL /NDL /NJH /NJS /NP | Out-Null
 }
 $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'EDuke32 VR'
 New-Item -ItemType Directory -Force $menu | Out-Null
 $shell = New-Object -ComObject WScript.Shell
-foreach ($s in @(@('Duke Nukem 3D VR','play.bat','vr'), @('Duke Nukem 3D (desktop)','play.bat','desktop'),
-                 @('Join marmot server (VR)','join-marmot-vr.bat',''), @('Join marmot server (desktop)','join-marmot-desktop.bat',''))) {
+$links = @(@('Duke Nukem 3D VR','play.bat','vr'), @('Duke Nukem 3D (desktop)','play.bat','desktop'))
+if (Test-Path (Join-Path $Dest 'join-marmot-vr.bat')) {
+    $links += ,@('Join marmot server (VR)','join-marmot-vr.bat','')
+    $links += ,@('Join marmot server (desktop)','join-marmot-desktop.bat','')
+}
+foreach ($s in $links) {
     $l = $shell.CreateShortcut((Join-Path $menu ($s[0] + '.lnk')))
     $l.TargetPath = Join-Path $Dest $s[1]; $l.Arguments = $s[2]; $l.WorkingDirectory = $Dest
     $l.IconLocation = (Join-Path $Dest 'windows\eduke32-vr.exe'); $l.Save()
 }
 Write-Host "Installed in $Dest (Start menu: EDuke32 VR)."
 '''
-PS_UPDATE = r'''# Install a newer bundle over this one (settings and saves are kept):
-#   powershell -ExecutionPolicy Bypass -File update.ps1 C:\path\eduke32-vr-bundle-....zip
-param([Parameter(Mandatory=$true)][string]$Archive)
+PS_UPDATE = r'''# update.ps1              update to the latest release on GitHub (github.com/@REPO@)
+# update.ps1 FILE.zip     update from a downloaded release (or personal bundle) archive
+# update.ps1 -Force       reinstall the latest release even when it is the installed version
+# Run:  powershell -ExecutionPolicy Bypass -File update.ps1
+# Only files the release carries are replaced: game data, the Voxel Duke pack, extras, settings and
+# saved games stay.
+param([string]$Archive = '', [switch]$Force)
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$tmp = Join-Path $env:TEMP ("eduke32-vr-update-" + [guid]::NewGuid())
-Expand-Archive -Path $Archive -DestinationPath $tmp
-$new = Get-ChildItem $tmp -Recurse -Filter install.ps1 | Select-Object -First 1
-if (-not $new) { throw "$Archive is not an EDuke32 VR bundle" }
-& powershell -ExecutionPolicy Bypass -File $new.FullName -Dest $here
-Remove-Item -Recurse -Force $tmp
+$repo = '@REPO@'
+$current = if (Test-Path "$here\VERSION") { (Get-Content "$here\VERSION" -Raw).Trim() } else { 'none' }
+$tmp = Join-Path $env:TEMP ('eduke-vr-update-' + [guid]::NewGuid())
+New-Item -ItemType Directory $tmp | Out-Null
+try {
+    if (-not $Archive) {
+        $headers = @{ 'User-Agent' = 'EDuke-VR-updater'; 'Accept' = 'application/vnd.github+json' }
+        $release = Invoke-RestMethod -UseBasicParsing -Headers $headers "https://api.github.com/repos/$repo/releases/latest"
+        $asset = $release.assets | Where-Object { $_.name -like '*-windows-x64.zip' } | Select-Object -First 1
+        if (-not $asset) { throw 'The latest release has no Windows download.' }
+        if ($release.tag_name -eq $current -and -not $Force) { Write-Host "EDuke VR is up to date ($current)."; return }
+        Write-Host "Updating EDuke VR $current -> $($release.tag_name)"
+        $Archive = Join-Path $tmp 'release.zip'
+        Invoke-WebRequest -UseBasicParsing -Headers @{ 'User-Agent' = 'EDuke-VR-updater' } $asset.browser_download_url -OutFile $Archive
+    }
+    Expand-Archive -Path $Archive -DestinationPath "$tmp\x"
+    $new = Get-ChildItem "$tmp\x" -Recurse -Filter play.bat | Select-Object -First 1
+    if (-not $new -or -not (Test-Path (Join-Path $new.DirectoryName 'windows\eduke32-vr.exe'))) { throw "$Archive is not an EDuke VR archive" }
+    robocopy $new.DirectoryName $here /E /IS /IT /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Copying the update failed (robocopy exit $LASTEXITCODE)." }
+    Write-Host ('EDuke VR is now ' + (Get-Content "$here\VERSION" -Raw).Trim() + '.')
+} finally {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+}
 '''
 
 README = '''EDuke32 VR - personal test bundle ({stamp})
@@ -217,17 +291,38 @@ Linux:   ./install.sh  (optional; adds app-menu entries)   then ./play.sh vr | .
          ./join-marmot-vr.sh | ./join-marmot-desktop.sh            (server {server})
          ./play-expansion.sh worldtour|dc|caribbean|nuclearwinter [vr|desktop]
          Needs an OpenXR runtime for VR (Monado/Envision, WiVRn, SteamVR) and a recent glibc
-         (built on Arch); SDL2, OpenXR loader, Opus etc. are in linux/lib.
+         (2.38+: Ubuntu 24.04, Debian 13, Fedora 39, Arch...) and SDL2 (installed with Steam);
+         the OpenXR loader, Opus etc. are in linux/lib.
 Windows: install.ps1 (optional; Start menu shortcuts: right-click > Run with PowerShell)
          play.bat vr | play.bat desktop, join-marmot-vr.bat, join-marmot-desktop.bat,
          play-expansion.bat worldtour|dc|caribbean|nuclearwinter [vr|desktop]
          VR needs an OpenXR runtime (SteamVR, Oculus, WMR, Virtual Desktop/VDXR...).
-Update:  ./update.sh NEW.tar.gz  /  powershell -ExecutionPolicy Bypass -File update.ps1 NEW.zip
+Update:  ./update.sh  /  powershell -ExecutionPolicy Bypass -File update.ps1
+         (downloads the latest release from github.com/@REPO@ and lays it over this
+         bundle: your game data, the Voxel Duke pack, settings and saves stay)
 
 Model sets: Voxel Duke (default), original, original-lowres; switch in Options > VR Setup.
 Multiplayer joins use the World Tour GRP like the server; voice chat is on in VR (Options > Sound).
-Built from commit {commit}.
+Version {version}, built from commit {commit}.
 '''
+
+
+def copy_linux_build(binary, dest):
+    """The game as linux/eduke32-vr plus lib/ with the shared libraries it needs beyond the system's
+    SDL2/GL/X11/ALSA/glibc."""
+    (dest / 'lib').mkdir(parents=True)
+    shutil.copy2(binary, dest / 'eduke32-vr')
+    ldd = subprocess.run(['ldd', str(binary)], capture_output=True, text=True, check=True).stdout
+    for line in ldd.splitlines():
+        parts = line.split()
+        if parts and parts[0] in LINUX_LIBS and '=>' in parts:
+            shutil.copy2(Path(parts[2]).resolve(), dest / 'lib' / parts[0])
+
+
+def copy_windows_build(windir, dest):
+    dest.mkdir(parents=True)
+    for name in WINDOWS_FILES:
+        shutil.copy2(windir / name, dest / name)
 
 
 def copy_pack(src, dst):
@@ -242,6 +337,7 @@ def copy_pack(src, dst):
 
 
 def write(path, text, executable=False, crlf=False):
+    text = text.replace('@REPO@', GITHUB_REPO)
     path.write_text(text.replace('\n', '\r\n') if crlf else text, newline='')
     if executable:
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -256,6 +352,7 @@ def main():
     parser.add_argument('--world-tour', type=Path, default=WORLD_TOUR)
     parser.add_argument('--addons', type=Path, default=ADDONS, help='folder with the Atomic DUKE3D.GRP and dukedc/vacation/nwinter.grp')
     parser.add_argument('--zip', action='store_true', help='also write OUT.tar.gz (Linux) and OUT.zip (Windows)')
+    parser.add_argument('--version', required=True, help='the GitHub release this bundle matches (VERSION, for update.sh/ps1)')
     args = parser.parse_args()
     out = args.out.resolve()
     if out.exists() and any(out.iterdir()):
@@ -263,16 +360,8 @@ def main():
     data = out / 'data'
 
     # Builds.
-    (out / 'linux/lib').mkdir(parents=True)
-    shutil.copy2(args.linux_binary, out / 'linux/eduke32-vr')
-    ldd = subprocess.run(['ldd', str(args.linux_binary)], capture_output=True, text=True, check=True).stdout
-    for line in ldd.splitlines():
-        parts = line.split()
-        if parts and parts[0] in LINUX_LIBS and '=>' in parts:
-            shutil.copy2(Path(parts[2]).resolve(), out / 'linux/lib' / parts[0])
-    (out / 'windows').mkdir()
-    for name in ('eduke32-vr.exe', 'openxr_loader.dll', 'libopus-0.dll'):
-        shutil.copy2(args.windows_dir / name, out / 'windows' / name)
+    copy_linux_build(args.linux_binary, out / 'linux')
+    copy_windows_build(args.windows_dir, out / 'windows')
 
     # Model sets and generated extras.
     for pack in PACKS:
@@ -305,6 +394,9 @@ def main():
     for mode in ('vr', 'desktop'):
         write(out / f'join-marmot-{mode}.sh', SH_JOIN.replace('{mode}', mode).replace('{server}', SERVER), True)
         write(out / f'join-marmot-{mode}.bat', BAT_JOIN.replace('{mode}', mode).replace('{server}', SERVER), crlf=True)
+    write(out / 'join.sh', SH_JOIN_ANY, True)
+    write(out / 'join.bat', BAT_JOIN_ANY, crlf=True)
+    write(out / 'VERSION', args.version + '\n')
     write(out / 'install.sh', SH_INSTALL, True)
     write(out / 'update.sh', SH_UPDATE, True)
     write(out / 'play.bat', BAT_PLAY, crlf=True)
@@ -313,7 +405,7 @@ def main():
     write(out / 'update.ps1', PS_UPDATE, crlf=True)
     commit = subprocess.run(['git', '-C', str(REPO), 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip()
     stamp = subprocess.run(['date', '+%Y-%m-%d'], capture_output=True, text=True).stdout.strip()
-    write(out / 'README.txt', README.format(stamp=stamp, server=SERVER, commit=commit))
+    write(out / 'README.txt', README.format(stamp=stamp, server=SERVER, commit=commit, version=args.version))
 
     result = {'out': str(out), 'linux_libs': sorted(p.name for p in (out / 'linux/lib').iterdir()),
               'packs': sorted(p.name for p in (data / 'vrpacks').iterdir()), 'commit': commit}

@@ -1009,6 +1009,12 @@ LIBS += -lm
 # normal build free of OpenXR dependencies until explicitly requested.
 # Windows (WGL binding, cross-built with MinGW): OPENXR_CFLAGS names the OpenXR headers and
 # OPENXR_LIBS the loader (e.g. -L<dir> -l:openxr_loader.dll); GL comes through glad.
+# Portable Linux release builds: pin glibc symbol versions (see source/build/include/glibc_compat.h).
+PORTABLE_GLIBC ?= 0
+ifeq ($(PORTABLE_GLIBC),1)
+    COMPILERFLAGS += -include $(abspath $(dir $(lastword $(MAKEFILE_LIST)))source/build/include/glibc_compat.h)
+endif
+
 ifeq ($(USE_OPENXR),1)
     ifneq ($(RENDERTYPE)$(SDL_TARGET)$(USE_OPENGL),SDL21)
         $(error USE_OPENXR=1 requires SDL2 and desktop OpenGL)
