@@ -3262,12 +3262,12 @@ int32_t A_CheckHitSprite(int spriteNum, int16_t *hitSprite)
     return FindDistance2D(hitData.x-SX(spriteNum),hitData.y-SY(spriteNum));
 }
 
-static int P_FindWall(DukePlayer_t *pPlayer, int *hitWall)
+static int P_FindWall(DukePlayer_t *pPlayer, int *hitWall, int angle)
 {
     hitdata_t hitData;
 
-    hitscan((const vec3_t *)pPlayer, pPlayer->cursectnum, sintable[(fix16_to_int(pPlayer->q16ang) + 512) & 2047],
-            sintable[fix16_to_int(pPlayer->q16ang) & 2047], 0, &hitData, CLIPMASK0);
+    hitscan((const vec3_t *)pPlayer, pPlayer->cursectnum, sintable[(angle + 512) & 2047],
+            sintable[angle & 2047], 0, &hitData, CLIPMASK0);
 
     *hitWall = hitData.wall;
 
@@ -3373,7 +3373,9 @@ void P_CheckSectors(int playerNum)
         pPlayer->toggle_key_flag = 1;
         foundWall = -1;
 
-        int wallDist = P_FindWall(pPlayer, &foundWall);
+        // VR: use where the off hand points (its yaw rides the hand shot sample).
+        int const useAng = G_VRUseAngle(playerNum, fix16_to_int(pPlayer->q16ang));
+        int wallDist = P_FindWall(pPlayer, &foundWall, useAng);
 
         if (foundWall >= 0 && wallDist < 1280 && wall[foundWall].overpicnum == MIRROR)
             if (wall[foundWall].lotag > 0 && !A_CheckSoundPlaying(pPlayer->i,wall[foundWall].lotag) && playerNum == screenpeek)
@@ -3386,7 +3388,7 @@ void P_CheckSectors(int playerNum)
             if (wall[foundWall].lotag)
                 return;
 
-        int const intang = fix16_to_int(pPlayer->oq16ang);
+        int const intang = G_VRUseAngle(playerNum, fix16_to_int(pPlayer->oq16ang));
 
         if (pPlayer->newowner >= 0)
             neartag(pPlayer->opos.x, pPlayer->opos.y, pPlayer->opos.z, sprite[pPlayer->i].sectnum, intang, &nearSector,
@@ -3450,6 +3452,10 @@ void P_CheckSectors(int playerNum)
             }
         }
 
+        if (std::getenv("EDUKE32_XR_TEST_USE"))
+            LOG_F(INFO, "VR use: player=%d body=%d use=%d sprite=%d picnum=%d wall=%d sector=%d.", playerNum, fix16_to_int(pPlayer->q16ang),
+                  intang, nearSprite, nearSprite >= 0 ? sprite[nearSprite].picnum : -1, nearWall, nearSector);
+
         if (nearSprite >= 0)
         {
             if (P_ActivateSwitch(playerNum, nearSprite, 1))
@@ -3490,7 +3496,7 @@ void P_CheckSectors(int playerNum)
             {
                 int wallNum;
 
-                P_FindWall(pPlayer, &wallNum);
+                P_FindWall(pPlayer, &wallNum, useAng);
 
                 if (wallNum >= 0 && wall[wallNum].overpicnum == 0)
                 {

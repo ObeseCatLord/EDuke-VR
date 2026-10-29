@@ -10,6 +10,7 @@ struct VRShotInput
 {
     int16_t offset[3] {}, direction[3] {};
     int16_t head[3] {}; // head forward (same axes): the mighty foot kicks where you look
+    uint16_t use=0;     // off hand pointing yaw for Open/use: 1 + Build angle (0..2047), 0 = body angle
     uint8_t flags=0;
 };
 constexpr uint8_t VRShotEnabled=1, VRShotValid=2;
@@ -18,7 +19,7 @@ constexpr uint8_t VRShotEnabled=1, VRShotValid=2;
 // throwing mode, bit 7 off-hand detonate request.
 constexpr uint8_t VRShotThrowShift=2, VRShotThrowMask=0x3c, VRShotPhysical=0x40, VRShotDetonate=0x80;
 constexpr float VRShotThrowStep=.75f; // metres/second per speed unit
-constexpr size_t VRShotWireSize=20;
+constexpr size_t VRShotWireSize=22;
 constexpr uint8_t VRShotFeatureRPG=1, VRShotFeatureHitscan=2, VRShotFeatureFreezeShrink=4;
 constexpr uint8_t VRShotFeatureHandBomb=8, VRShotFeatureTripmine=16;
 constexpr uint8_t VRShotFeatureMelee=32;
@@ -35,6 +36,8 @@ bool G_VRShotEnabled(int player);
 int G_VRShotThrowVelocity(int player);
 bool G_VRShotPhysicalThrow(int player);
 bool G_VRShotDetonate(int player);
+// Build angle that Open/use searches along: the off hand's pointing yaw when sent, else fallback.
+int G_VRUseAngle(int player, int fallback);
 // Required firing/presentation capability, or zero for an unsupported replacement.
 uint8_t G_VRHandShotFeature(int player, int tile=-1);
 bool G_VRShotReady(int player);

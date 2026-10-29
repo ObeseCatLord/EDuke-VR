@@ -23,7 +23,7 @@ bool G_VRValidateShot(VRShotInput const &input)
     if (!(input.flags & VRShotValid))
     {
         for (int i=0;i<3;++i) if (input.offset[i] || input.direction[i] || input.head[i]) return false;
-        return true;
+        return input.use==0;
     }
     auto const unit=[](int16_t const *v) {
         int64_t length=0;
@@ -32,6 +32,7 @@ bool G_VRValidateShot(VRShotInput const &input)
     };
     // The head direction is optional (all zero: kicks keep the body's angle).
     if ((input.head[0] || input.head[1] || input.head[2]) && !unit(input.head)) return false;
+    if (input.use>2048) return false;
     int64_t const x=input.offset[0], y=input.offset[1], z=input.offset[2];
     // Unequal Build scales, checked without integer truncation or overflow.
     if ((x*x+y*y)*256+z*z > int64_t(MaxReach)*MaxReach*256) return false;
@@ -40,7 +41,7 @@ bool G_VRValidateShot(VRShotInput const &input)
 
 bool G_VRDecodeShot(uint8_t const *bytes, size_t size, VRShotInput &input)
 {
-    if (size!=VRShotWireSize || bytes[0]!=1) return false;
+    if (size!=VRShotWireSize || bytes[0]!=2) return false;
     VRShotInput decoded; decoded.flags=bytes[1];
     for (int i=0;i<9;++i)
     {
@@ -48,13 +49,15 @@ bool G_VRDecodeShot(uint8_t const *bytes, size_t size, VRShotInput &input)
         int const value=word<32768 ? int(word) : int(word)-65536;
         (i<3 ? decoded.offset[i] : i<6 ? decoded.direction[i-3] : decoded.head[i-6])=int16_t(value);
     }
+    decoded.use=uint16_t(bytes[20])|(uint16_t(bytes[21])<<8);
     if (!G_VRValidateShot(decoded)) return false;
     input=decoded; return true;
 }
 
 void G_VREncodeShot(VRShotInput const &input, uint8_t *bytes)
 {
-    bytes[0]=1; bytes[1]=input.flags;
+    bytes[0]=2; bytes[1]=input.flags;
+    bytes[20]=uint8_t(input.use); bytes[21]=uint8_t(input.use>>8);
     for (int i=0;i<9;++i)
     {
         uint16_t const word=uint16_t(i<3 ? input.offset[i] : i<6 ? input.direction[i-3] : input.head[i-6]);
@@ -69,6 +72,13 @@ void G_VRSetShotInput(int player, VRShotInput const &input)
     if (!(state.input.flags & VRShotEnabled) || !(input.flags & VRShotValid)
         || uint32_t(uint32_t(totalclock)-state.at)>ReleaseGapAge) state.blocked=true;
     state.input=input; state.at=uint32_t(totalclock);
+}
+int G_VRUseAngle(int player, int fallback)
+{
+    if (unsigned(player)>=MAXPLAYERS) return fallback;
+    auto const &state=shots[player];
+    if (!(state.input.flags & VRShotValid) || !state.input.use || uint32_t(uint32_t(totalclock)-state.at)>MaxAge) return fallback;
+    return (state.input.use-1)&2047;
 }
 VRShotInput G_VRGetShotInput(int player) { return unsigned(player)<MAXPLAYERS ? shots[player].input : VRShotInput{}; }
 void G_VRResetShot(int player, bool preserveMode)

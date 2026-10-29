@@ -818,6 +818,7 @@ static bool twoHandWeapon(int hand, int &tile, vec3f_t &palm, vec3f_t &support)
 }
 
 static void updateTwoHand();
+static bool physicallyDucking();
 
 static void publishInput()
 {
@@ -903,7 +904,10 @@ static void publishInput()
         bool const wantRun=always && !Bstrcmp(always,"1") ? !grip : grip;
         button(ud.runkey_mode ? wantRun : (wantRun!=bool(ud.auto_run)),gamefunc_Run);
     }
-    button(talkFree(1,ButtonSecondary) && (down[1]&ButtonSecondary),gamefunc_Crouch);
+    {
+        bool const ducking=physicallyDucking();
+        button((talkFree(1,ButtonSecondary) && (down[1]&ButtonSecondary)) || ducking,gamefunc_Crouch);
+    }
     Voice_SetPushToTalk(talkMode && (down[talkHand]&talkBit));
     if (physicalThrowEnabled() && aimHand()>=0)
     {
@@ -973,6 +977,14 @@ static void publishInput()
 static XrVector3f origin;
 static XrQuaternionf inverseYaw;
 static bool recentered, trackingRebase, lastHeadValid;
+// Ducking for real (head ~40 cm below where it was recentered) crouches too.
+static bool physicallyDucking()
+{
+    static bool ducking;
+    if (!recentered || !rawInput.headValid || !validPose(rawInput.headPose)) return ducking=false;
+    float const drop=origin.y-rawInput.headPose.position.y;
+    return ducking=drop>(ducking ? .3f : .4f);
+}
 static XrPosef lastHeadPose;
 
 static void setTrackingReference(XrPosef const &head)
@@ -1086,6 +1098,41 @@ static fix16_t horizonFromTan(float tangent)
     return fix16_from_float(100.f+128.f*std::max(-200.f,std::min(tangent,200.f)));
 }
 
+// Correction (Build units) applied to both eyes this frame: the tracked head pushed into a wall
+// slides along it instead (see clipHead), so both eyes stay on the same side of the wall.
+static vec2_t headShift;
+
+// Tracked head position for this frame, in Build units around the body camera.
+static vec3_t trackedHead(Camera const &base, XrVector3f position)
+{
+    float const pitch = std::atan((fix16_to_float(base.horizon)-100.f)/128.f);
+    XrQuaternionf const bodyPitch {std::sin(pitch*.5f),0,0,std::cos(pitch*.5f)};
+    XrQuaternionf const bodyRoll {0,0,std::sin(base.roll*.5f),std::cos(base.roll*.5f)};
+    auto const p = rotate(multiply(multiply(bodyPitch,bodyRoll),inverseYaw),
+                          {position.x-origin.x,position.y-origin.y,position.z-origin.z});
+    float const body = fix16_to_float(base.angle)*Pi/1024.f;
+    float const co = std::cos(body), si = std::sin(body);
+    return {base.pos.x+int32_t(std::lround((-p.z*co-p.x*si)*UnitsPerMetre)),
+            base.pos.y+int32_t(std::lround((-p.z*si+p.x*co)*UnitsPerMetre)),
+            base.pos.z-int32_t(std::lround(p.y*ZUnitsPerMetre))};
+}
+
+// Leaning into a wall: move the head out from the body with the engine's wall collision, keeping
+// ~15 cm from walls (eyes at the wall plane see through it and lose stereo depth).
+static void clipHead(Camera const &base, XrVector3f position)
+{
+    headShift={0,0};
+    if (base.sector<0) return;
+    vec3_t const head=trackedHead(base,position);
+    vec3_t pos{base.pos.x,base.pos.y,head.z};
+    int16_t sector=base.sector;
+    int32_t const dx=head.x-base.pos.x, dy=head.y-base.pos.y;
+    if (!dx && !dy) return;
+    constexpr int32_t HeadWallDistance=56; // Build units (384 per metre): ~15 cm
+    clipmove(&pos,&sector,dx*(1<<14),dy*(1<<14),HeadWallDistance,4<<8,4<<8,CLIPMASK0&0xffff);
+    headShift={pos.x-head.x,pos.y-head.y};
+}
+
 bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye, char const *&rejection)
 {
     float const pitch = std::atan((fix16_to_float(base.horizon)-100.f)/128.f);
@@ -1101,8 +1148,8 @@ bool makeEye(XrView const &view, Camera const &base, float aspect, Eye &eye, cha
     float const co = std::cos(body), si = std::sin(body);
     eye.camera = base;
     eye.split = false; eye.upSin=0.f; eye.upCos=1.f;
-    vec3_t const target{base.pos.x+int32_t(std::lround((-p.z*co-p.x*si)*UnitsPerMetre)),
-                        base.pos.y+int32_t(std::lround((-p.z*si+p.x*co)*UnitsPerMetre)),
+    vec3_t const target{base.pos.x+int32_t(std::lround((-p.z*co-p.x*si)*UnitsPerMetre))+headShift.x,
+                        base.pos.y+int32_t(std::lround((-p.z*si+p.x*co)*UnitsPerMetre))+headShift.y,
                         base.pos.z-int32_t(std::lround(p.y*ZUnitsPerMetre))};
     if (!placeEye(base,target,eye.camera))
     {
@@ -3068,9 +3115,10 @@ static bool prepareTipWad(HandSegmentSample &sample, Camera const &body)
     if (!handJoints[hand].valid) return false;
     auto const &palm=handJoints[hand].roots[0];
     auto const &b=handJoints[hand].bases[0];   // palm joint axes (Build units per model unit)
-    // XR palm frame: -Z toward the fingers, +Y the back of the hand. The wad lies across the palm,
-    // 2 cm out from it and 1 cm toward the fingers: MD3 X = palm X, Y = -Z, Z = +Y.
-    float const out=-.02f*64.f, toward=-.01f*64.f;
+    // XR palm frame: -Z toward the fingers, +Y the back of the hand. The wad is pinched against
+    // the palm and sticks out past the fingertips (8 cm toward the fingers, 1.5 cm on the palm
+    // side), so it shows whichever way the hand is turned: MD3 X = palm X, Y = -Z, Z = +Y.
+    float const out=-.015f*64.f, toward=-.08f*64.f;
     sample.root={palm.x+int32_t(std::lround(b[1].x*out+b[2].x*toward)),palm.y+int32_t(std::lround(b[1].y*out+b[2].y*toward)),
                  palm.z+int32_t(std::lround(b[1].z*out+b[2].z*toward))};
     sample.pivot={0,0,0};
@@ -3805,6 +3853,14 @@ void G_XRUpdateShotInput()
                 input.head[i]=int16_t(std::lround(std::max(-1.f,std::min(1.f,head[i]))*32767.f));
             }
             input.flags|=VRShotValid;
+            // Open/use (left grip) searches where the left hand points.
+            if (rawInput.hands[0].aimValid && validPose(rawInput.hands[0].aimPose))
+            {
+                auto const use=rotate(multiply(tracking,rawInput.hands[0].aimPose.orientation),{0,0,-1});
+                float const ux=-use.z*co-use.x*si, uy=-use.z*si+use.x*co;
+                if (ux*ux+uy*uy>.01f)
+                    input.use=uint16_t(1+(int(std::lround(std::atan2(uy,ux)*1024.f/Pi))&2047));
+            }
             if (xrThrow.pending && physicalThrowEnabled())
             {
                 // Throw direction and speed come from the hand's motion, not its aim.
@@ -5360,6 +5416,10 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         }
     }
     else
+    {
+        auto const &a=frame.views[0].pose.position, &b=frame.views[1].pose.position;
+        if (!stereoTest) clipHead(body,{(a.x+b.x)*.5f,(a.y+b.y)*.5f,(a.z+b.z)*.5f});
+        else headShift={0,0};
         for (unsigned i=0;i<2;++i)
         {
             char const *rejection=nullptr;
@@ -5381,6 +5441,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 return false;
             }
         }
+    }
     if (!fixtureTest && std::getenv("EDUKE32_XR_TEST_AIM")
         && (worldFrames==59 || std::getenv("EDUKE32_TEST_REFERENCE_MARKER")))
     {

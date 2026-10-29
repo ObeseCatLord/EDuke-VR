@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
 // net packet specification/compatibility version
-#define NETVERSION    10 // VR shot sample (hand + head) in every update, voice and VR body pose channels; no older peers
+#define NETVERSION    11 // VR shot sample (hand, head, use yaw) in every update, map-tagged world updates, voice and VR body pose channels; no older peers
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;
@@ -289,6 +289,8 @@ void    Net_StoreClientState(void);
 
 void    Net_ResetPrediction(void);
 void    Net_SpawnPlayer(int32_t player);
+// Server: a client connected but not set up in the map yet (its player is not simulated).
+extern bool g_netPlayerJoining[MAXPLAYERS];
 void    Net_WaitForServer(void);
 void    faketimerhandler(void);
 

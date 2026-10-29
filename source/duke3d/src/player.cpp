@@ -4621,6 +4621,12 @@ void P_FragPlayer(int playerNum)
     if (g_netClient) // [75] The server should not overwrite its own randomseed
         randomseed = ticrandomseed;
 
+    if (std::getenv("EDUKE32_TEST_PLAYER_DEATH"))
+        LOG_F(INFO, "Player death: player=%d pos=%d,%d,%d sect=%d sprite=%d,%d,%d sect=%d floorz=%d ceilz=%d htpicnum=%d htextra=%d htowner=%d falling=%d extra=%d dead=%d clock=%d.",
+              playerNum, pPlayer->pos.x, pPlayer->pos.y, pPlayer->pos.z, pPlayer->cursectnum, pSprite->x, pSprite->y, pSprite->z, pSprite->sectnum,
+              actor[pPlayer->i].floorz, actor[pPlayer->i].ceilingz, actor[pPlayer->i].htpicnum, actor[pPlayer->i].htextra, actor[pPlayer->i].htowner,
+              pPlayer->falling_counter, pSprite->extra, pPlayer->dead_flag, (int)totalclock);
+
     if (pSprite->pal != 1)
     {
         P_PalFrom(pPlayer, 63, 63, 0, 0);
@@ -5616,6 +5622,15 @@ void P_ProcessInput(int playerNum)
     auto const pPlayer = thisPlayer.ps;
     auto const pSprite = &sprite[pPlayer->i];
 
+    // A client that connected but has not finished loading (Net_Server_SetupPlayer not run yet) has
+    // a placeholder sprite with no health: running it would record a death and an obituary.
+#ifdef NETCODE_DISABLE
+    UNREFERENCED_PARAMETER(pSprite);
+#else
+    if (g_netServer && g_netPlayerJoining[playerNum])
+        return;
+#endif
+
     ++pPlayer->player_par;
 
     G_VRFilterShotInput(playerNum,thisPlayer.input);
@@ -5651,8 +5666,12 @@ void P_ProcessInput(int playerNum)
     // sectorLotag can be set to 0 later on, but the same block sets spritebridge to 1
     int sectorLotag       = sector[pPlayer->cursectnum].lotag;
     int getZRangeClipDist = (pPlayer->clipdist >> 1) - GETZRANGECLIPDISTOFFSET;
-    int const stepHeight  = (((TEST_SYNC_KEY(playerBits, SK_CROUCH) && sectorLotag != ST_2_UNDERWATER && ((pPlayer->on_ground && !pPlayer->jumping_toggle)))
-                            || (sectorLotag == ST_1_ABOVE_WATER && pPlayer->spritebridge != 1)))
+    // VR: in the air the crouched (low) step height applies, so a jump at a vent or duct opening
+    // gets in without timing a crouch (natively only a crouch on the ground does that).
+    bool const vrCrouchJump = G_VRShotEnabled(playerNum);
+    int const stepHeight  = ((((TEST_SYNC_KEY(playerBits, SK_CROUCH) && pPlayer->on_ground && !pPlayer->jumping_toggle)
+                               || (vrCrouchJump && !pPlayer->on_ground)) && sectorLotag != ST_2_UNDERWATER)
+                            || (sectorLotag == ST_1_ABOVE_WATER && pPlayer->spritebridge != 1))
                             ? pPlayer->autostep_sbw
                             : pPlayer->autostep;
 
@@ -6133,7 +6152,8 @@ void P_ProcessInput(int playerNum)
                     {
                         pPlayer->jumping_toggle = 1;
 
-                        if (!TEST_SYNC_KEY(playerBits, SK_CROUCH))
+                        // VR: jump while holding crouch too (and stay crouched in the air).
+                        if (!TEST_SYNC_KEY(playerBits, SK_CROUCH) || vrCrouchJump)
                             pPlayer->jumping_counter = 1;
                         else
                         {

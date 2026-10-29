@@ -1,0 +1,6 @@
+[{"pose": {"head": [0, 1.6, 0, 0, 0, 0], "left": [-0.2, 1.2, -0.3, 0, 0, 0], "right": [0.2, 1.2, -0.3, 0, 0, 0]}},
+ {"console": "xr_weapons"}, {"console": "xr_items"}, {"wait": 3}, {"capture": "idle"},
+ {"buttons": {"left": {"b_click": 1}}}, {"wait": 0.3}, {"buttons": {"left": {"b_click": 0}}}, {"wait": 0.4}, {"capture": "cycle1"},
+ {"wait": 0.5}, {"capture": "cycle1b"},
+ {"buttons": {"left": {"b_click": 1}}}, {"wait": 0.3}, {"buttons": {"left": {"b_click": 0}}}, {"wait": 0.2}, {"capture": "cycle2"},
+ {"wait": 3}, {"capture": "after"}]

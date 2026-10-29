@@ -151,6 +151,7 @@ typedef struct serverplayerupdate_s
     uint8_t  kickback_pic;
     uint8_t  reloading;
     uint8_t  hbomb_on, hbomb_hold_delay, rapid_fire_hold;
+    uint8_t  tipincs; // tipping a dancer runs in the server's actor code (the hand with the wad of bills)
     uint8_t  frags[MAXPLAYERS];
     int16_t  inv_amount[GET_MAX];
     int16_t  ammo_amount[MAX_WEAPONS];
@@ -183,6 +184,14 @@ typedef struct clientupdate_s
 static_assert(sizeof(input_t)==20 && sizeof(playerupdate_t)==56 && sizeof(clientupdate_t)==81,
               "native movement prefix ABI must remain unchanged");
 
+
+// Identifies the loaded map in world and client updates: around a level change the server and a client briefly
+// sit on different maps, and the other map's snapshot or player position must be ignored (episode, level, sector and wall counts).
+static uint32_t Net_MapTag()
+{
+    return (uint32_t(ud.volume_number & 0xff) << 24) ^ (uint32_t(ud.level_number & 0xff) << 16)
+        ^ (uint32_t(numsectors) * 2654435761u) ^ uint32_t(numwalls);
+}
 
 // Client player ready for world updates (player spawned and ready)
 static int ClientPlayerReady = 0;
@@ -1708,6 +1717,7 @@ static void Net_SyncPlayer(ENetEvent *event)
 
     g_player[newPlayerIndex].netsynctime = (int32_t) totalclock;
     g_player[newPlayerIndex].playerquitflag = 1;
+    g_netPlayerJoining[newPlayerIndex] = true; // until Net_Server_SetupPlayer
 
     NET_75_CHECK++; // Need to think of something better when finding a remaining slot for players.
 
@@ -1903,6 +1913,15 @@ static void Net_ExtractPlayerUpdate(playerupdate_t *update, int32_t type)
 
     if (playerindex != myconnectindex)
     {
+        if (type == PACKET_SLAVE_TO_MASTER)
+        {
+            // A client that is still spawning (or loading the map) reports a place outside every
+            // sector; taking it would kill the player (P_ProcessInput: cursectnum == -1).
+            int16_t sectnum = g_player[playerindex].ps->cursectnum;
+            updatesector(update->pos.x, update->pos.y, &sectnum);
+            if (sectnum < 0)
+                return;
+        }
         g_player[playerindex].ps->pos            = update->pos;
         g_player[playerindex].ps->opos          = update->opos;
         g_player[playerindex].ps->vel           = update->vel;
@@ -1930,7 +1949,12 @@ static void Net_ReceiveClientUpdate(ENetEvent *event)
     if (playeridx<=0 || playeridx>=MAXPLAYERS || !g_player[playeridx].playerquitflag) { reject("peer"); return; }
     if (event->channelID!=CHAN_MOVE) { reject("channel"); return; }
     // Every update carries the hand-shot sample (flat clients send it inactive).
-    if (event->packet->dataLength!=sizeof(clientupdate_t)+VRShotWireSize) { reject("size"); return; }
+    if (event->packet->dataLength!=sizeof(clientupdate_t)+VRShotWireSize+4) { reject("size"); return; }
+    {
+        uint8_t const *tag=event->packet->data+sizeof(clientupdate_t)+VRShotWireSize;
+        // An update from the previous map would place the player outside this one (and kill them).
+        if ((uint32_t(tag[0])|(uint32_t(tag[1])<<8)|(uint32_t(tag[2])<<16)|(uint32_t(tag[3])<<24))!=Net_MapTag()) { reject("map"); return; }
+    }
     VRShotInput shot;
     if (!G_VRDecodeShot(event->packet->data+sizeof(clientupdate_t),VRShotWireSize,shot)) { reject("payload"); return; }
     clientupdate_t update;
@@ -2079,8 +2103,11 @@ void Net_SendVRBodyPose(void)
         Net_RelayVRBodyPose(myconnectindex,bytes+1);
 }
 
+bool g_netPlayerJoining[MAXPLAYERS];
+
 static void Net_Server_SetupPlayer(int playerindex)
 {
+    g_netPlayerJoining[playerindex] = false;
     int16_t playerspriteindex;
 
     playerspriteindex = g_player[playerindex].ps->i;
@@ -2111,6 +2138,12 @@ static void Net_Server_SetupPlayer(int playerindex)
     }
 
     Net_SpawnPlayer(playerindex);
+    if (std::getenv("EDUKE32_TEST_PLAYER_DEATH"))
+    {
+        auto const &p = *g_player[playerindex].ps;
+        LOG_F(INFO, "Player setup: player=%d sprite=%d extra=%d dead=%d pos=%d,%d,%d sect=%d spawns=%d.", playerindex, p.i, sprite[p.i].extra,
+              p.dead_flag, p.pos.x, p.pos.y, p.pos.z, p.cursectnum, g_playerSpawnCnt);
+    }
 }
 
 static void Net_ReceiveChallenge(uint8_t *pbuf, int32_t packbufleng, ENetEvent *event)
@@ -2625,15 +2658,36 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
         g_player[player].ps->hbomb_on = playerupdate.hbomb_on;
         g_player[player].ps->hbomb_hold_delay = playerupdate.hbomb_hold_delay;
         g_player[player].ps->rapid_fire_hold = playerupdate.rapid_fire_hold;
+        g_player[player].ps->tipincs = playerupdate.tipincs;
 
         Bmemcpy(g_player[player].frags, playerupdate.frags, sizeof(playerupdate.frags));
         Bmemcpy(g_player[player].ps->inv_amount, playerupdate.inv_amount, sizeof(playerupdate.inv_amount));
         Bmemcpy(g_player[player].ps->ammo_amount, playerupdate.ammo_amount, sizeof(playerupdate.ammo_amount));
 
-        g_player[player].ps->curr_weapon    = playerupdate.curr_weapon;
-        g_player[player].ps->last_weapon    = playerupdate.last_weapon;
+        // This client switches its own weapon at once (prediction from its input); the server's
+        // copy lags one round trip behind, and applying it flipped the weapon back and forth on
+        // every switch (the 3D weapon dropping out for flat HUD art meanwhile). Keep the local
+        // switch, and take the server's weapon only when the two disagree for half a second.
+        bool takeWeapon = true;
+        if (player == myconnectindex)
+        {
+            static int32_t mismatchSince = -1;
+            if (playerupdate.curr_weapon == g_player[player].ps->curr_weapon)
+                mismatchSince = -1, takeWeapon = false;
+            else if (mismatchSince < 0)
+                mismatchSince = (int32_t)totalclock, takeWeapon = false;
+            else if ((int32_t)totalclock - mismatchSince < 60)
+                takeWeapon = false;
+            else
+                mismatchSince = -1;
+        }
+        if (takeWeapon)
+        {
+            g_player[player].ps->curr_weapon    = playerupdate.curr_weapon;
+            g_player[player].ps->last_weapon    = playerupdate.last_weapon;
+            g_player[player].ps->weapon_pos     = playerupdate.weapon_pos;
+        }
         g_player[player].ps->wantweaponfire = playerupdate.wantweaponfire;
-        g_player[player].ps->weapon_pos     = playerupdate.weapon_pos;
         g_player[player].ps->frag_ps        = playerupdate.frag_ps;
         g_player[player].ps->frag           = playerupdate.frag;
         g_player[player].ps->fraggedself    = playerupdate.fraggedself;
@@ -4606,6 +4660,7 @@ static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevision
 
     NetBuffer_WriteDword(bufferPtr, fromRevisionNumberToSend);
     NetBuffer_WriteDword(bufferPtr, toRevisionNumber);
+    NetBuffer_WriteDword(bufferPtr, Net_MapTag());
 
     // Map-entry player/bootstrap sprites differ between native server/client.
     // Initial/rebase actor fields must be self-contained; an unchanged server
@@ -4713,6 +4768,11 @@ static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
 
     uint32_t packetFromRevisionNumber = NetBuffer_ReadDWord(bufferPtr);
     uint32_t packetToRevisionNumber = NetBuffer_ReadDWord(bufferPtr);
+
+    // Around a level change the server and this client briefly sit on different maps: a snapshot
+    // of the other map would be decoded against the wrong baseline (corrupt actors, then a crash).
+    if (NetBuffer_ReadDWord(bufferPtr) != Net_MapTag())
+        return;
 
     uint32_t from_IsInitialState = (packetFromRevisionNumber == cInitialMapStateRevisionNumber);
 
@@ -5374,6 +5434,7 @@ void Net_SendServerUpdates(void)
         playerupdate.hbomb_on = g_player[i].ps->hbomb_on;
         playerupdate.hbomb_hold_delay = g_player[i].ps->hbomb_hold_delay;
         playerupdate.rapid_fire_hold = g_player[i].ps->rapid_fire_hold;
+        playerupdate.tipincs = g_player[i].ps->tipincs;
         Bmemcpy(playerupdate.frags, g_player[i].frags, sizeof(playerupdate.frags));
         Bmemcpy(playerupdate.inv_amount, g_player[i].ps->inv_amount, sizeof(playerupdate.inv_amount));
         Bmemcpy(playerupdate.ammo_amount, g_player[i].ps->ammo_amount, sizeof(playerupdate.ammo_amount));
@@ -5424,9 +5485,11 @@ void Net_SendClientUpdate(void)
     if ((shot.flags & VRShotEnabled) && !G_VRShotReady(myconnectindex))
     { shot={}; shot.flags=VRShotEnabled; }
     {
-        uint8_t bytes[sizeof(clientupdate_t)+VRShotWireSize];
+        uint8_t bytes[sizeof(clientupdate_t)+VRShotWireSize+4];
         Bmemcpy(bytes,&update,sizeof(update));
         G_VREncodeShot(shot,bytes+sizeof(update));
+        uint32_t const tag=Net_MapTag();
+        for (int i=0;i<4;++i) bytes[sizeof(update)+VRShotWireSize+i]=uint8_t(tag>>(8*i));
         size_t length=sizeof(bytes); uint8_t channel=CHAN_MOVE;
         if (auto test=std::getenv("EDUKE32_XR_TEST_BAD_SHOT"))
         {
@@ -5439,7 +5502,7 @@ void Net_SendClientUpdate(void)
                 auto bad=update; bad.player.pos.x=30000;
                 Bmemcpy(bytes,&bad,sizeof(bad));
                 auto tail=bytes+sizeof(update);
-                if (!Bstrcmp(test,"version")) tail[0]=2;
+                if (!Bstrcmp(test,"version")) tail[0]=3;
                 else if (!Bstrcmp(test,"flags")) tail[1]=128;
                 else if (!Bstrcmp(test,"direction")) { tail[1]=VRShotEnabled|VRShotValid; Bmemset(tail+8,0,6); }
                 else if (!Bstrcmp(test,"reach")) { tail[1]=VRShotEnabled|VRShotValid; tail[2]=255; tail[3]=127; }
