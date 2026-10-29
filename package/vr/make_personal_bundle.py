@@ -140,12 +140,24 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 if [[ $# -gt 0 && $1 != --force ]]; then
     archive=$1
 else
-    # Releases come newest first; the first Linux download is the latest Linux release.
-    api=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases?per_page=50") \
+    # Releases come newest first. Take the first Linux release: a tag ending in -linux, not a
+    # pre-release, with the Linux archive. Each release lists tag_name, then prerelease, then its
+    # assets' download URLs, so one pass over those fields in order finds it.
+    api=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases?per_page=100") \
         || { echo "update: cannot reach GitHub (github.com/$repo)" >&2; exit 1; }
-    url=$(grep -o '"browser_download_url": *"[^"]*-linux-x86_64\.tar\.gz"' <<<"$api" | head -n1 | sed 's/.*"\(https[^"]*\)"$/\1/')
-    [[ -n $url ]] || { echo "update: no Linux release found" >&2; exit 1; }
-    tag=${url%/*}; tag=${tag##*/}; tag=${tag%-linux}   # .../releases/download/vX.Y.Z-linux/FILE
+    url= tag= release= pre=
+    while IFS= read -r field; do
+        value=${field#*:}; value=${value#"${value%%[![:space:]]*}"}; value=${value//\"/}
+        case $field in
+            '"tag_name"'*) release=$value pre= ;;
+            '"prerelease"'*) pre=$value ;;
+            '"browser_download_url"'*)
+                if [[ $release == *-linux && $pre == false && $value == *-linux-x86_64.tar.gz ]]; then
+                    url=$value tag=${release%-linux}; break
+                fi ;;
+        esac
+    done < <(grep -oE '"(tag_name|prerelease|browser_download_url)": *("[^"]*"|true|false)' <<<"$api")
+    [[ -n $url ]] || { echo "update: no Linux release found on github.com/$repo" >&2; exit 1; }
     if [[ $tag == "$current" && ${1:-} != --force ]]; then echo "EDuke VR is up to date ($tag)."; exit 0; fi
     echo "Updating EDuke VR $current -> $tag"
     archive="$tmp/release.tar.gz"
@@ -269,11 +281,13 @@ try {
     if (-not $Archive) {
         $headers = @{ 'User-Agent' = 'EDuke-VR-updater'; 'Accept' = 'application/vnd.github+json' }
         # Releases come newest first; take the first one with the Windows download.
-        $releases = Invoke-RestMethod -UseBasicParsing -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=50"
+        $releases = Invoke-RestMethod -UseBasicParsing -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=100"
         $asset = $null; $tag = $null
+        # Only Windows releases: a tag ending in -windows, not a pre-release, with the Windows archive.
         foreach ($r in $releases) {
+            if ($r.draft -or $r.prerelease -or $r.tag_name -notlike '*-windows') { continue }
             $a = $r.assets | Where-Object { $_.name -like '*-windows-x64.zip' } | Select-Object -First 1
-            if ($a -and -not $r.prerelease) { $asset = $a; $tag = $r.tag_name -replace '-windows$', ''; break }
+            if ($a) { $asset = $a; $tag = $r.tag_name -replace '-windows$', ''; break }
         }
         if (-not $asset) { throw 'No Windows release found.' }
         if ($tag -eq $current -and -not $Force) { Write-Host "EDuke VR is up to date ($current)."; return }
