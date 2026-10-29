@@ -600,7 +600,10 @@ ifeq ($(PLATFORM),DARWIN)
 endif
 
 ifeq ($(PLATFORM),WINDOWS)
-    LIBS += -lFLAC -ldsound
+    LIBS += -ldsound
+    ifneq (0,$(HAVE_FLAC))
+        LIBS += -lFLAC
+    endif
     duke3d_game_objs += winbits.cpp
     duke3d_game_rsrc_objs += gameres.rc
     duke3d_editor_rsrc_objs += buildres.rc

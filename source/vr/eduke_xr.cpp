@@ -6,12 +6,28 @@
 extern uint32_t polymost_xr2DDraws;
 #include "../build/include/polymost_color_correction.h"
 
-#define XR_USE_PLATFORM_XLIB
+#ifdef _WIN32
+// Windows: WGL binding; modern GL entry points come from the engine's glad loader.
+# define WIN32_LEAN_AND_MEAN
+# include <windows.h>
+# include <unknwn.h>   // openxr_platform.h's D3D bindings name IUnknown
+# include "glad/glad.h"
+# ifndef GL_MAX_VIEWS_OVR
+#  define GL_MAX_VIEWS_OVR 0x9631
+# endif
+# define XR_USE_PLATFORM_WIN32
+# ifndef GL_OVR_multiview
+typedef void (APIENTRYP PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC)(GLenum target, GLenum attachment, GLuint texture, GLint level,
+                                                                 GLint baseViewIndex, GLsizei numViews);
+# endif
+#else
+# define XR_USE_PLATFORM_XLIB
+# define GL_GLEXT_PROTOTYPES 1
+# include <GL/gl.h>
+# include <GL/glext.h>
+# include <GL/glx.h>
+#endif
 #define XR_USE_GRAPHICS_API_OPENGL
-#define GL_GLEXT_PROTOTYPES 1
-#include <GL/gl.h>
-#include <GL/glext.h>
-#include <GL/glx.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
 #include <algorithm>
@@ -1411,6 +1427,15 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
     }
     SDL_SysWMinfo wm {};
     SDL_VERSION(&wm.version);
+#ifdef _WIN32
+    HDC const   hdc  = wglGetCurrentDC();
+    HGLRC const hglrc = wglGetCurrentContext();
+    if (!SDL_GetWindowWMInfo(window, &wm) || wm.subsystem != SDL_SYSWM_WINDOWS || !hdc || !hglrc)
+    {
+        error = "OpenXR requires a current WGL context on an SDL window";
+        return false;
+    }
+#else
     if (!SDL_GetWindowWMInfo(window, &wm) || wm.subsystem != SDL_SYSWM_X11)
     {
         error = "OpenXR GLX diagnostic requires an SDL X11 window";
@@ -1445,6 +1470,7 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
     }
     uint32_t visualid = visual->visualid;
     XFree(visual);
+#endif
     if (!hasExtension("GL_OVR_multiview2"))
     {
         error = "single-pass stereo unavailable: current GL context lacks GL_OVR_multiview2 (no two-pass fallback)";
@@ -1553,12 +1579,18 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
         shutdown();
         return false;
     }
+#ifdef _WIN32
+    XrGraphicsBindingOpenGLWin32KHR binding { XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR };
+    binding.hDC   = hdc;
+    binding.hGLRC = hglrc;
+#else
     XrGraphicsBindingOpenGLXlibKHR binding { XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR };
     binding.xDisplay    = display;
     binding.visualid    = visualid;
     binding.glxFBConfig = fbconfig;
     binding.glxDrawable = drawable;
     binding.glxContext  = context;
+#endif
     XrSessionCreateInfo sessionInfo { XR_TYPE_SESSION_CREATE_INFO };
     sessionInfo.next     = &binding;
     sessionInfo.systemId = m_impl->system;

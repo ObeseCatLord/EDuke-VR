@@ -532,11 +532,16 @@ static void G_LoadVRPack(void)
     G_ReadVRPackInfo("vrpack/pack.txt", g_vrLoadedPack, sizeof(g_vrLoadedPack), filter, sizeof(filter), games, sizeof(games));
     // Game data the pack brings (e.g. a voxel world), like an autoload folder of its own, for the
     // games it lists (Alien Armageddon runs through the eduke32_vr_aa566 compatibility CON).
-    bool const aa = g_scriptNamePtr && strcasestr(g_scriptNamePtr, "aa566");
-    if (!games[0] || strcasestr(games, aa ? "aa566" : "duke3d"))
+    auto const contains = [](char const *text, char const *word) {   // case-insensitive (no strcasestr on Windows)
+        for (size_t const n = strlen(word); *text; ++text)
+            if (!Bstrncasecmp(text, word, n)) return true;
+        return false;
+    };
+    bool const aa = g_scriptNamePtr && contains(g_scriptNamePtr, "aa566");
+    if (!games[0] || contains(games, aa ? "aa566" : "duke3d"))
         G_LoadVRPackAutoload();
-    if (filter[0])
-        setenv("EDUKE32_XR_MODEL_FILTER", filter, 0);
+    if (filter[0] && !SDL_getenv("EDUKE32_XR_MODEL_FILTER"))
+        SDL_setenv("EDUKE32_XR_MODEL_FILTER", filter, 0);
 #endif
 }
 

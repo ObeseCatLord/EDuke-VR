@@ -17,10 +17,12 @@
 #include <atomic>
 #include <csignal>
 #include <ctime>
-#include <dlfcn.h>
-#include <execinfo.h>
-#include <sys/syscall.h>
-#include <unistd.h>
+#ifndef _WIN32
+# include <dlfcn.h>
+# include <execinfo.h>
+# include <sys/syscall.h>
+# include <unistd.h>
+#endif
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -4536,6 +4538,13 @@ static void updateHaptics(eduke_xr::Runtime *runtime)
 // Test-only CPU profiler (EDUKE32_XR_PROFILE=1): samples the main thread's call stack every 1 ms
 // of its own CPU time; the console request "xr_profile <path>" writes inclusive/self counts per
 // function (symbols via dladdr; build with -rdynamic or symbolize addresses offline).
+#ifdef _WIN32
+namespace xrprofile   // the sampling profiler uses Linux signals and timers
+{
+static void start() {}
+static void dump(char const *) {}
+}
+#else
 namespace xrprofile
 {
 constexpr unsigned Depth=24, Capacity=1<<16;
@@ -4586,6 +4595,7 @@ static void dump(char const *path)
     count=0;
 }
 }
+#endif
 
 // Test hook: run native console commands written into the request file
 // (one per line), then remove it. Used by harnesses to give/switch weapons.

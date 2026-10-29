@@ -1007,15 +1007,22 @@ LIBS += -lm
 
 # The first OpenXR target is SDL2 desktop OpenGL on Linux/X11.  Keep the
 # normal build free of OpenXR dependencies until explicitly requested.
+# Windows (WGL binding, cross-built with MinGW): OPENXR_CFLAGS names the OpenXR headers and
+# OPENXR_LIBS the loader (e.g. -L<dir> -l:openxr_loader.dll); GL comes through glad.
 ifeq ($(USE_OPENXR),1)
-    ifneq ($(SUBPLATFORM),LINUX)
-        $(error USE_OPENXR=1 currently requires Linux)
-    endif
     ifneq ($(RENDERTYPE)$(SDL_TARGET)$(USE_OPENGL),SDL21)
         $(error USE_OPENXR=1 requires SDL2 and desktop OpenGL)
     endif
-    COMPILERFLAGS += -DUSE_OPENXR $(shell pkg-config --cflags openxr gl x11)
-    LIBS += $(shell pkg-config --libs openxr gl x11)
+    ifeq ($(PLATFORM),WINDOWS)
+        COMPILERFLAGS += -DUSE_OPENXR $(OPENXR_CFLAGS)
+        LIBS += $(OPENXR_LIBS) -lopengl32
+    else
+        ifneq ($(SUBPLATFORM),LINUX)
+            $(error USE_OPENXR=1 requires Linux or Windows)
+        endif
+        COMPILERFLAGS += -DUSE_OPENXR $(shell pkg-config --cflags openxr gl x11)
+        LIBS += $(shell pkg-config --libs openxr gl x11)
+    endif
 endif
 
 
