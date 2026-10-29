@@ -373,6 +373,20 @@ VoiceNode *MV_BeginService(int handle)
 
 static inline void MV_EndService(void) { MV_Unlock(); }
 
+// True while handle is still the voice started with this userdata: a stopped or finished voice's
+// handle is reused for other sounds, and stopping that (without its callback) would leave the
+// game's sound bookkeeping waiting for an end that never comes.
+int MV_VoiceOwnedBy(int handle, void const *userdata)
+{
+    if (!MV_Installed || handle < MV_MINVOICEHANDLE || handle > MV_MaxVoices)
+        return 0;
+    MV_Lock();
+    auto voice = MV_Handles[handle - MV_MINVOICEHANDLE];
+    int const owned = voice != nullptr && voice->rawdataptr == userdata;
+    MV_Unlock();
+    return owned;
+}
+
 int MV_VoicePlaying(int handle)
 {
     Bassert(handle <= MV_MaxVoices);

@@ -10,6 +10,7 @@
 
 #include "duke3d.h"
 #include "fx_man.h"
+#include "multivoc.h"
 #include "osd.h"
 #include "sdl_inc.h"
 #ifdef USE_OPENXR
@@ -392,7 +393,8 @@ void updatePlayback(int index, double now)
     bool const active = now - sp.lastAudio < 2000.0;
     if (!active || !voice_enable || !ud.config.SoundToggle)
     {
-        if (sp.handle > 0) { FX_StopSound(sp.handle, false); sp.handle = 0; }
+        if (MV_VoiceOwnedBy(sp.handle, &sp)) FX_StopSound(sp.handle, false);
+        sp.handle = 0;
         return;
     }
     // Gains: positional attenuation + pan near, crossfading into a centred radio level far away.
@@ -414,8 +416,10 @@ void updatePlayback(int index, double now)
     // Headroom so a nearby talker can pan fully (0.5x..1.5x per side) without clipping the 0-255 range.
     float const gain = .66f * voice_volume * playerVolume[index] * ud.config.FXVolume / 255.f;
     int const l = clamp(int(left * gain * 255.f), 0, 255), r = clamp(int(right * gain * 255.f), 0, 255);
-    if (sp.handle <= 0 || !FX_SoundValidAndActive(sp.handle))
-        sp.handle = FX_StartDemandFeedPlayback(demandFeed, 16, 1, Rate, 0, std::max(l, r), l, r, 255, fix16_one, 0, &sp);
+    // Our voice only while the handle still is it (a finished voice's handle is reused by game
+    // sounds). MUSIC_ID: the game's sound callback ignores this voice ending.
+    if (!MV_VoiceOwnedBy(sp.handle, &sp) || !FX_SoundValidAndActive(sp.handle))
+        sp.handle = FX_StartDemandFeedPlayback(demandFeed, 16, 1, Rate, 0, std::max(l, r), l, r, 255, fix16_one, MUSIC_ID, &sp);
     else
         FX_SetPan(sp.handle, std::max(l, r), l, r);
     if (std::getenv("EDUKE32_VOICE_TEST_DUMP"))
@@ -520,7 +524,7 @@ void Voice_Shutdown(void)
     closeCapture();
     for (auto &sp : speakers)
     {
-        if (sp.handle > 0) FX_StopSound(sp.handle, false);
+        if (MV_VoiceOwnedBy(sp.handle, &sp)) FX_StopSound(sp.handle, false);
         sp.handle = 0;
         if (sp.decoder) opus_decoder_destroy(sp.decoder);
         sp.decoder = nullptr;
@@ -588,7 +592,7 @@ void Voice_ResetPlayer(int player)
     auto &sp = speakers[player];
     resetSpeaker(sp);
     sp.lastAudio = 0;
-    if (sp.handle > 0) FX_StopSound(sp.handle, false);
+    if (MV_VoiceOwnedBy(sp.handle, &sp)) FX_StopSound(sp.handle, false);
     sp.handle = 0;
     playerVolume[player] = 1.f;
 }

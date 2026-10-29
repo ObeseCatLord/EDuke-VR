@@ -1038,7 +1038,20 @@ void S_StopEnvSound(int soundNum, int spriteNum)
                     LOG_F(ERROR, "Invalid voice for sound #%d index #%d! (%d)", soundNum, j, voice.handle);
                 else if (FX_SoundValidAndActive(voice.handle))
                     FX_StopSound(voice.handle);
-                else S_Cleanup();
+                else
+                {
+                    S_Cleanup();
+                    // A voice whose end was never reported (its handle stopped by someone else
+                    // without the callback) would keep this loop waiting forever: free it here.
+                    if (bitmap_test(&g_sounds[soundNum]->playing, j) && !FX_SoundValidAndActive(voice.handle))
+                    {
+                        LOG_F(WARNING, "Sound #%d index #%d ended without its callback; freed.", soundNum, j);
+                        bitmap_clear(&g_sounds[soundNum]->playing, j);
+                        if (spriteNum != -1 && S_IsAmbientSFX(spriteNum) && sector[SECT(spriteNum)].lotag < 3)
+                            actor[spriteNum].t_data[0] = 0;
+                        S_FillVoiceInfo(&voice, -1, 0, UINT16_MAX);
+                    }
+                }
                 break;
             }
         }

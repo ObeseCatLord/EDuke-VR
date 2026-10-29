@@ -86,6 +86,7 @@ static FORCE_INLINE void MV_Unlock(void)
 }
 
 int  MV_VoicePlaying(int handle);
+int  MV_VoiceOwnedBy(int handle, void const *userdata);
 int  MV_KillAllVoices(bool useCallBack = true);
 int  MV_Kill(int handle, bool useCallBack = true);
 int  MV_VoicesPlaying(void);
