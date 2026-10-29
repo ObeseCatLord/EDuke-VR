@@ -20,7 +20,8 @@ Steam). No game data is included.
 
 ## Download and play
 
-Get the archive for your system from [Releases](../../releases/latest):
+Get the archive for your system from [Releases](../../releases). Windows and Linux have separate
+releases, tagged `vX.Y.Z-windows` and `vX.Y.Z-linux`:
 
 - **Windows** (`EDuke-VR-*-windows-x64.zip`): run `play.bat vr` or `play.bat desktop`, or
   `install.ps1` for Start menu entries. VR needs an OpenXR runtime (SteamVR, Meta/Oculus, WMR,
@@ -31,7 +32,8 @@ Get the archive for your system from [Releases](../../releases/latest):
 
 Put `DUKE3D.GRP` in `data/grp/`, or let EDuke32 find an installed copy. Join a server with
 `join.sh` / `join.bat HOST[:PORT]`. To update, run `./update.sh` or
-`powershell -ExecutionPolicy Bypass -File update.ps1`: it fetches the latest release and keeps your
+`powershell -ExecutionPolicy Bypass -File update.ps1`: it fetches the latest release for your
+system and keeps your
 game data, model sets, settings and saves. In VR, options are under **Options > VR Setup**.
 [docs/vr/PLAYING.md](docs/vr/PLAYING.md) has more.
 

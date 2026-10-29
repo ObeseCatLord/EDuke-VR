@@ -9,7 +9,8 @@ OUT receives
                                            install/update .sh
   EDuke-VR-<version>-windows-x64.zip       EDuke-VR/ with windows/ (game + DLLs), play/join .bat,
                                            install/update .ps1
-both with data/vrpacks/ (the original and original-lowres model sets, without the Alien
+each published as its own GitHub release (tags vX.Y.Z-linux and vX.Y.Z-windows; update.sh/ps1
+take the newest release carrying their platform's archive). Both have data/vrpacks/ (the original and original-lowres model sets, without the Alien
 Armageddon files), licenses/, README.txt and VERSION (read by update.sh/ps1).
 
 No game data and no private model sets. The model sets come from make_release.py (run here unless
@@ -63,7 +64,7 @@ installed (Steam: 20th Anniversary World Tour or Megaton; GOG), where EDuke32 fi
 
 {platform}
 Update:  {update}
-         Downloads the latest release from GitHub and lays it over this folder. Files the release
+         Downloads the latest release for this system from GitHub and lays it over this folder. Files the release
          does not carry stay: your game data, other model sets, settings and saved games.
 
 In VR: Options > VR Setup (model set, snap turn, hand used for weapons, voice chat...).

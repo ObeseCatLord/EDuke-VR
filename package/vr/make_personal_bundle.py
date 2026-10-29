@@ -125,7 +125,8 @@ fi
 echo "Installed in $dest (app menu: Duke Nukem 3D VR)."
 '''
 SH_UPDATE = r'''#!/usr/bin/env bash
-# ./update.sh              update to the latest release on GitHub (github.com/@REPO@)
+# ./update.sh              update to the latest Linux release on GitHub (github.com/@REPO@,
+#                          tags vX.Y.Z-linux; Windows has its own vX.Y.Z-windows releases)
 # ./update.sh FILE.tar.gz  update from a downloaded release (or personal bundle) archive
 # ./update.sh --force      reinstall the latest release even when it is the installed version
 # Only files the release carries are replaced: game data, the Voxel Duke pack, extras, settings and
@@ -139,11 +140,12 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 if [[ $# -gt 0 && $1 != --force ]]; then
     archive=$1
 else
-    api=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases/latest") \
+    # Releases come newest first; the first Linux download is the latest Linux release.
+    api=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases?per_page=50") \
         || { echo "update: cannot reach GitHub (github.com/$repo)" >&2; exit 1; }
-    tag=$(grep -o '"tag_name": *"[^"]*"' <<<"$api" | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')
     url=$(grep -o '"browser_download_url": *"[^"]*-linux-x86_64\.tar\.gz"' <<<"$api" | head -n1 | sed 's/.*"\(https[^"]*\)"$/\1/')
-    [[ -n $tag && -n $url ]] || { echo "update: the latest release has no Linux download" >&2; exit 1; }
+    [[ -n $url ]] || { echo "update: no Linux release found" >&2; exit 1; }
+    tag=${url%/*}; tag=${tag##*/}; tag=${tag%-linux}   # .../releases/download/vX.Y.Z-linux/FILE
     if [[ $tag == "$current" && ${1:-} != --force ]]; then echo "EDuke VR is up to date ($tag)."; exit 0; fi
     echo "Updating EDuke VR $current -> $tag"
     archive="$tmp/release.tar.gz"
@@ -247,7 +249,8 @@ foreach ($s in $links) {
 }
 Write-Host "Installed in $Dest (Start menu: EDuke32 VR)."
 '''
-PS_UPDATE = r'''# update.ps1              update to the latest release on GitHub (github.com/@REPO@)
+PS_UPDATE = r'''# update.ps1              update to the latest Windows release on GitHub (github.com/@REPO@,
+#                         tags vX.Y.Z-windows; Linux has its own vX.Y.Z-linux releases)
 # update.ps1 FILE.zip     update from a downloaded release (or personal bundle) archive
 # update.ps1 -Force       reinstall the latest release even when it is the installed version
 # Run:  powershell -ExecutionPolicy Bypass -File update.ps1
@@ -265,11 +268,16 @@ New-Item -ItemType Directory $tmp | Out-Null
 try {
     if (-not $Archive) {
         $headers = @{ 'User-Agent' = 'EDuke-VR-updater'; 'Accept' = 'application/vnd.github+json' }
-        $release = Invoke-RestMethod -UseBasicParsing -Headers $headers "https://api.github.com/repos/$repo/releases/latest"
-        $asset = $release.assets | Where-Object { $_.name -like '*-windows-x64.zip' } | Select-Object -First 1
-        if (-not $asset) { throw 'The latest release has no Windows download.' }
-        if ($release.tag_name -eq $current -and -not $Force) { Write-Host "EDuke VR is up to date ($current)."; return }
-        Write-Host "Updating EDuke VR $current -> $($release.tag_name)"
+        # Releases come newest first; take the first one with the Windows download.
+        $releases = Invoke-RestMethod -UseBasicParsing -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=50"
+        $asset = $null; $tag = $null
+        foreach ($r in $releases) {
+            $a = $r.assets | Where-Object { $_.name -like '*-windows-x64.zip' } | Select-Object -First 1
+            if ($a -and -not $r.prerelease) { $asset = $a; $tag = $r.tag_name -replace '-windows$', ''; break }
+        }
+        if (-not $asset) { throw 'No Windows release found.' }
+        if ($tag -eq $current -and -not $Force) { Write-Host "EDuke VR is up to date ($current)."; return }
+        Write-Host "Updating EDuke VR $current -> $tag"
         $Archive = Join-Path $tmp 'release.zip'
         Invoke-WebRequest -UseBasicParsing -Headers @{ 'User-Agent' = 'EDuke-VR-updater' } $asset.browser_download_url -OutFile $Archive
     }
