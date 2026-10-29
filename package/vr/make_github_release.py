@@ -9,7 +9,10 @@ OUT receives
                                            install/update .sh
   EDuke-VR-<version>-windows-x64.zip       EDuke-VR/ with windows/ (game + DLLs), play/join .bat,
                                            install/update .ps1
-each published as its own GitHub release (tags vX.Y.Z-linux and vX.Y.Z-windows; update.sh/ps1
+  EDuke-VR-<version>-linux-arm64.tar.gz    (with --linux-arm64-dir) EDuke-VR/ with linux-arm64/ (the
+                                           64-bit ARM build: Steam Frame, other arm64 Linux) and
+                                           the .sh scripts
+each published as its own GitHub release (tags vX.Y.Z-linux, vX.Y.Z-linux-arm64 and vX.Y.Z-windows; update.sh/ps1
 take the newest release carrying their platform's archive). Both have data/vrpacks/ (the original and original-lowres model sets, without the Alien
 Armageddon files), licenses/, README.txt and VERSION (read by update.sh/ps1).
 
@@ -48,6 +51,14 @@ LINUX_LICENSES = {
     'libatomic-GPL-3.0.txt': '/usr/share/licenses/spdx/GPL-3.0-or-later.txt',
     'libatomic-RUNTIME.LIBRARY.EXCEPTION.txt': '/usr/share/licenses/libatomic/RUNTIME.LIBRARY.EXCEPTION',
 }
+ARM64_LICENSES = {
+    'OpenXR-loader-Apache-2.0.txt': '/usr/share/licenses/spdx/Apache-2.0.txt',
+    'jsoncpp-LICENSE.txt': '/usr/share/licenses/jsoncpp/LICENSE',
+    'opus-COPYING.txt': '/usr/share/licenses/opus/COPYING',
+    'libvpx-LICENSE.txt': '/usr/share/licenses/libvpx/LICENSE',
+    'flac-COPYING.Xiph.txt': '/usr/share/licenses/flac/COPYING.Xiph',
+    'libogg-COPYING.txt': '/usr/share/licenses/libogg/COPYING',
+}
 WINDOWS_LICENSES = {
     'OpenXR-loader-Apache-2.0.txt': '/usr/share/licenses/spdx/Apache-2.0.txt',
     'opus-COPYING.txt': '/usr/share/licenses/opus/COPYING',
@@ -78,6 +89,11 @@ The bundled third-party libraries keep their own licenses (licenses/THIRD-PARTY.
 is a trademark of Gearbox Software; no game data is included. Source code: the repository above,
 tag {version} (GitHub's "Source code" downloads of this release).
 '''
+ARM64_TEXT = '''Linux on 64-bit ARM (Steam Frame running SteamOS, other arm64 Linux):
+         ./play.sh vr | ./play.sh desktop        ./join.sh HOST[:PORT] [vr|desktop]
+         ./install.sh copies this folder to ~/.local/share/eduke32-vr-bundle and adds menu entries;
+         on SteamOS, add play.sh as a non-Steam game to start it from the Steam library.
+         Needs glibc 2.31+, SDL2 and, for VR, an OpenXR runtime with OpenGL support.'''
 LINUX_TEXT = '''Linux:   ./play.sh vr | ./play.sh desktop        ./join.sh HOST[:PORT] [vr|desktop]
          ./install.sh copies this folder to ~/.local/share/eduke32-vr-bundle and adds menu entries.
          Needs glibc 2.38+ (Ubuntu 24.04, Debian 13, Fedora 39, Arch...), SDL2 (installed with
@@ -101,6 +117,12 @@ linux/lib/libogg.so.0             libogg, BSD 3-clause (libogg-COPYING.txt)
 linux/lib/libjsoncpp.so.27        JsonCpp, MIT (jsoncpp-LICENSE.txt)
 linux/lib/libatomic.so.1          GCC libatomic, GPL v3 with the GCC Runtime Library Exception
                                   (libatomic-GPL-3.0.txt, libatomic-RUNTIME.LIBRARY.EXCEPTION.txt)'''
+ARM64_ITEMS = '''linux-arm64/lib/libopenxr_loader.so.1   Khronos OpenXR loader 1.1.60 built from source, Apache License 2.0
+                                        (OpenXR-loader-Apache-2.0.txt); it contains JsonCpp, MIT (jsoncpp-LICENSE.txt)
+linux-arm64/lib/libopus.so.0            Opus, BSD 3-clause (opus-COPYING.txt)
+linux-arm64/lib/libvpx.so.6             libvpx, BSD 3-clause (libvpx-LICENSE.txt)
+linux-arm64/lib/libFLAC.so.8            FLAC, BSD 3-clause (flac-COPYING.Xiph.txt)
+linux-arm64/lib/libogg.so.0             libogg, BSD 3-clause (libogg-COPYING.txt)'''
 WINDOWS_ITEMS = '''windows/openxr_loader.dll         Khronos OpenXR loader, Apache License 2.0 (OpenXR-loader-Apache-2.0.txt)
 windows/libopus-0.dll             Opus, BSD 3-clause (opus-COPYING.txt)
 windows/eduke32-vr.exe            statically links SDL2 (zlib license, SDL2-zlib-LICENSE.txt) and
@@ -116,7 +138,7 @@ def licenses(dest, table, items, version):
     (dest / 'THIRD-PARTY.txt').write_text(THIRD_PARTY.format(version=version, items=items))
 
 
-def tree(root, version, platform, binary, windir, packs):
+def tree(root, version, platform, binary, windir, packs, arm64dir=None):
     """One platform's EDuke-VR/ folder."""
     out = root / 'EDuke-VR'
     data = out / 'data'
@@ -125,14 +147,22 @@ def tree(root, version, platform, binary, windir, packs):
     (data / 'grp').mkdir(parents=True)
     (data / 'grp/PUT DUKE3D.GRP HERE.txt').write_text('Optional: put your DUKE3D.GRP here (else an installed copy is found).\n')
     mpb.write(out / 'VERSION', version + '\n')
-    if platform == 'linux':
-        mpb.copy_linux_build(binary, out / 'linux')
+    if platform in ('linux', 'linux-arm64'):
+        if platform == 'linux':
+            mpb.copy_linux_build(binary, out / 'linux')
+        else:
+            shutil.copytree(arm64dir, out / 'linux-arm64')
         mpb.write(out / 'play.sh', mpb.SH_PLAY, True)
         mpb.write(out / 'join.sh', mpb.SH_JOIN_ANY, True)
         mpb.write(out / 'install.sh', mpb.SH_INSTALL, True)
         mpb.write(out / 'update.sh', mpb.SH_UPDATE, True)
-        licenses(out / 'licenses', LINUX_LICENSES, LINUX_ITEMS, version)
-        text, update = LINUX_TEXT, './update.sh'
+        if platform == 'linux':
+            licenses(out / 'licenses', LINUX_LICENSES, LINUX_ITEMS, version)
+            text = LINUX_TEXT
+        else:
+            licenses(out / 'licenses', ARM64_LICENSES, ARM64_ITEMS, version)
+            text = ARM64_TEXT
+        update = './update.sh'
     else:
         mpb.copy_windows_build(windir, out / 'windows')
         mpb.write(out / 'play.bat', mpb.BAT_PLAY, crlf=True)
@@ -152,6 +182,7 @@ def main():
     parser.add_argument('--version', required=True, help='release tag, e.g. v0.1.0')
     parser.add_argument('--linux-binary', type=Path, default=REPO / 'eduke32-xr-portable')
     parser.add_argument('--windows-dir', type=Path, required=True, help='eduke32-vr.exe, openxr_loader.dll, libopus-0.dll')
+    parser.add_argument('--linux-arm64-dir', type=Path, help='prebuilt 64-bit ARM build: eduke32-vr and lib/ (package/vr/build_linux_arm64.sh)')
     parser.add_argument('--release', type=Path, help='an existing make_release.py output (else one is made)')
     args = parser.parse_args()
     out = args.out.resolve()
@@ -172,6 +203,9 @@ def main():
         name = f'EDuke-VR-{args.version}'
         lin = tree(scratch / 'linux', args.version, 'linux', args.linux_binary, None, packs)
         subprocess.run(['tar', '-czf', str(out / f'{name}-linux-x86_64.tar.gz'), '-C', str(lin.parent), lin.name], check=True)
+        if args.linux_arm64_dir:
+            arm = tree(scratch / 'arm64', args.version, 'linux-arm64', None, None, packs, args.linux_arm64_dir)
+            subprocess.run(['tar', '-czf', str(out / f'{name}-linux-arm64.tar.gz'), '-C', str(arm.parent), arm.name], check=True)
         win = tree(scratch / 'windows', args.version, 'windows', None, args.windows_dir, packs)
         subprocess.run(['zip', '-qr', str(out / f'{name}-windows-x64.zip'), win.name], cwd=win.parent, check=True)
     archives = sorted(str(p) for p in out.iterdir())

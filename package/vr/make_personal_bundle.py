@@ -53,7 +53,10 @@ SH_COMMON = r'''#!/usr/bin/env bash
 set -euo pipefail
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 data="$here/data"
-export LD_LIBRARY_PATH="$here/linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# x86_64 PCs use linux/, 64-bit ARM (Steam Frame, other arm64 Linux) linux-arm64/.
+case $(uname -m) in aarch64|arm64) bin="$here/linux-arm64" ;; *) bin="$here/linux" ;; esac
+[[ -x $bin/eduke32-vr ]] || { echo "EDuke VR: no build for $(uname -m) here ($bin)" >&2; exit 1; }
+export LD_LIBRARY_PATH="$bin/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # The bundled GRP when there is one; otherwise EDuke32 finds an installed copy (Steam, GOG...).
 grp=(); [[ -f $data/grp/DUKE3D.GRP ]] && grp=(-j "$data/grp" -gamegrp DUKE3D.GRP)
 run() {   # run MODE(vr|desktop) [game arguments...]
@@ -70,7 +73,7 @@ run() {   # run MODE(vr|desktop) [game arguments...]
     local pack=() status
     while :; do
         : > "$restart"; status=0
-        "$here/linux/eduke32-vr" -j "$data" -j "$data/local/duke3d" -mh vr-local.def "${pack[@]}" -nosetup "$@" || status=$?
+        "$bin/eduke32-vr" -j "$data" -j "$data/local/duke3d" -mh vr-local.def "${pack[@]}" -nosetup "$@" || status=$?
         [[ -s $restart ]] || return "$status"
         pack=(-vrpack "$(head -n1 "$restart")")   # the VR Setup menu switched model sets
     done
@@ -125,8 +128,9 @@ fi
 echo "Installed in $dest (app menu: Duke Nukem 3D VR)."
 '''
 SH_UPDATE = r'''#!/usr/bin/env bash
-# ./update.sh              update to the latest Linux release on GitHub (github.com/@REPO@,
-#                          tags vX.Y.Z-linux; Windows has its own vX.Y.Z-windows releases)
+# ./update.sh              update to the latest Linux release on GitHub (github.com/@REPO@):
+#                          tags vX.Y.Z-linux on x86_64, vX.Y.Z-linux-arm64 on 64-bit ARM (Steam
+#                          Frame); Windows has its own vX.Y.Z-windows releases
 # ./update.sh FILE.tar.gz  update from a downloaded release (or personal bundle) archive
 # ./update.sh --force      reinstall the latest release even when it is the installed version
 # Only files the release carries are replaced: game data, the Voxel Duke pack, extras, settings and
@@ -136,12 +140,16 @@ set -euo pipefail
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 repo=@REPO@
 current=$(cat "$here/VERSION" 2>/dev/null || echo none)
+case $(uname -m) in
+    aarch64|arm64) suffix=-linux-arm64 file=-linux-arm64.tar.gz dir=linux-arm64 ;;
+    *)             suffix=-linux file=-linux-x86_64.tar.gz dir=linux ;;
+esac
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 if [[ $# -gt 0 && $1 != --force ]]; then
     archive=$1
 else
-    # Releases come newest first. Take the first Linux release: a tag ending in -linux, not a
-    # pre-release, with the Linux archive. Each release lists tag_name, then prerelease, then its
+    # Releases come newest first. Take the first release for this machine: a tag ending in $suffix, not a
+    # pre-release, with this machine's archive. Each release lists tag_name, then prerelease, then its
     # assets' download URLs, so one pass over those fields in order finds it.
     api=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases?per_page=100") \
         || { echo "update: cannot reach GitHub (github.com/$repo)" >&2; exit 1; }
@@ -152,12 +160,12 @@ else
             '"tag_name"'*) release=$value pre= ;;
             '"prerelease"'*) pre=$value ;;
             '"browser_download_url"'*)
-                if [[ $release == *-linux && $pre == false && $value == *-linux-x86_64.tar.gz ]]; then
-                    url=$value tag=${release%-linux}; break
+                if [[ $release == *"$suffix" && $pre == false && $value == *"$file" ]]; then
+                    url=$value tag=${release%"$suffix"}; break
                 fi ;;
         esac
     done < <(grep -oE '"(tag_name|prerelease|browser_download_url)": *("[^"]*"|true|false)' <<<"$api")
-    [[ -n $url ]] || { echo "update: no Linux release found on github.com/$repo" >&2; exit 1; }
+    [[ -n $url ]] || { echo "update: no ${suffix#-} release found on github.com/$repo" >&2; exit 1; }
     if [[ $tag == "$current" && ${1:-} != --force ]]; then echo "EDuke VR is up to date ($tag)."; exit 0; fi
     echo "Updating EDuke VR $current -> $tag"
     archive="$tmp/release.tar.gz"
@@ -166,7 +174,7 @@ fi
 mkdir "$tmp/x"
 tar -xzf "$archive" -C "$tmp/x"
 new=$(find "$tmp/x" -maxdepth 2 -name play.sh -printf '%h\n' | head -n1)
-[[ -n $new && -x $new/linux/eduke32-vr ]] || { echo "update: $archive is not an EDuke VR archive" >&2; exit 1; }
+[[ -n $new && -x $new/$dir/eduke32-vr ]] || { echo "update: $archive is not an EDuke VR archive for $(uname -m)" >&2; exit 1; }
 cp -a "$new/." "$here/"
 echo "EDuke VR is now $(cat "$here/VERSION" 2>/dev/null || echo updated)."
 exit 0
@@ -314,7 +322,8 @@ Linux:   ./install.sh  (optional; adds app-menu entries)   then ./play.sh vr | .
          ./play-expansion.sh worldtour|dc|caribbean|nuclearwinter [vr|desktop]
          Needs an OpenXR runtime for VR (Monado/Envision, WiVRn, SteamVR) and a recent glibc
          (2.38+: Ubuntu 24.04, Debian 13, Fedora 39, Arch...) and SDL2 (installed with Steam);
-         the OpenXR loader, Opus etc. are in linux/lib.
+         the OpenXR loader, Opus etc. are in linux/lib. 64-bit ARM (Steam Frame on SteamOS):
+         the same scripts use linux-arm64/ when it is in the bundle.
 Windows: install.ps1 (optional; Start menu shortcuts: right-click > Run with PowerShell)
          play.bat vr | play.bat desktop, join-marmot-vr.bat, join-marmot-desktop.bat,
          play-expansion.bat worldtour|dc|caribbean|nuclearwinter [vr|desktop]
@@ -374,6 +383,7 @@ def main():
     parser.add_argument('--world-tour', type=Path, default=WORLD_TOUR)
     parser.add_argument('--addons', type=Path, default=ADDONS, help='folder with the Atomic DUKE3D.GRP and dukedc/vacation/nwinter.grp')
     parser.add_argument('--zip', action='store_true', help='also write OUT.tar.gz (Linux) and OUT.zip (Windows)')
+    parser.add_argument('--linux-arm64-dir', type=Path, help='prebuilt 64-bit ARM build: eduke32-vr and lib/ (package/vr/build_linux_arm64.sh)')
     parser.add_argument('--version', required=True, help='the GitHub release this bundle matches (VERSION, for update.sh/ps1)')
     args = parser.parse_args()
     out = args.out.resolve()
@@ -383,6 +393,8 @@ def main():
 
     # Builds.
     copy_linux_build(args.linux_binary, out / 'linux')
+    if args.linux_arm64_dir:
+        shutil.copytree(args.linux_arm64_dir, out / 'linux-arm64', symlinks=False)
     copy_windows_build(args.windows_dir, out / 'windows')
 
     # Model sets and generated extras.

@@ -20,8 +20,8 @@ Steam). No game data is included.
 
 ## Download and play
 
-Get the archive for your system from [Releases](../../releases). Windows and Linux have separate
-releases, tagged `vX.Y.Z-windows` and `vX.Y.Z-linux`:
+Get the archive for your system from [Releases](../../releases). Each platform has its own
+releases, tagged `vX.Y.Z-windows`, `vX.Y.Z-linux` and `vX.Y.Z-linux-arm64`:
 
 - **Windows** (`EDuke-VR-*-windows-x64.zip`): run `play.bat vr` or `play.bat desktop`, or
   `install.ps1` for Start menu entries. VR needs an OpenXR runtime (SteamVR, Meta/Oculus, WMR,
@@ -29,6 +29,9 @@ releases, tagged `vX.Y.Z-windows` and `vX.Y.Z-linux`:
 - **Linux** (`EDuke-VR-*-linux-x86_64.tar.gz`): run `./play.sh vr` or `./play.sh desktop`, or
   `./install.sh` for menu entries. It needs glibc 2.38+ (Ubuntu 24.04, Debian 13, Fedora 39,
   Arch...), SDL2, and for VR an OpenXR runtime (SteamVR, Monado/Envision, WiVRn).
+- **Linux on 64-bit ARM, e.g. the Steam Frame on SteamOS** (`EDuke-VR-*-linux-arm64.tar.gz`): the
+  same scripts. It needs glibc 2.31+, SDL2, and for VR an OpenXR runtime that supports OpenGL. On
+  SteamOS, add `play.sh` as a non-Steam game.
 
 Put `DUKE3D.GRP` in `data/grp/`, or let EDuke32 find an installed copy. Join a server with
 `join.sh` / `join.bat HOST[:PORT]`. To update, run `./update.sh` or
@@ -49,7 +52,8 @@ Add `PORTABLE_GLIBC=1 LTO=0` for a release binary that runs on older distributio
 server is `make NETCODE=1 duke3d_game=eduke32-net eduke32-net`, run with
 `eduke32-net -dedicated -port PORT -c2`.
 
-Windows: cross-build with MinGW-w64 via `package/vr/build_windows.sh DEPS` (see the script for
+64-bit ARM Linux: `package/vr/build_linux_arm64.sh OUT` on an arm64 machine (it builds the OpenXR
+loader from source too). Windows: cross-build with MinGW-w64 via `package/vr/build_windows.sh DEPS` (see the script for
 the OpenXR loader and Opus it expects). `package/vr/eduke32-vr-play` is the Linux launcher used
 during development. Release archives come from `package/vr/make_github_release.py`. The VR
 code is mostly in `source/duke3d/src/vr.cpp`, `source/vr/` and `source/build/src/polymost.cpp`.
