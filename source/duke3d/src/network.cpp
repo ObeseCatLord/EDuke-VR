@@ -84,11 +84,47 @@ void Net_CompleteStartup(void)
 #endif
 }
 
+#ifndef NETCODE_DISABLE
+// Network quality, logged once a minute (and at a level change) so a session can be judged
+// afterwards: round trip and jitter, ENet's packet-loss estimate and lost packets, and on clients
+// the world updates applied or skipped (baseline the client does not have, other map).
+static uint32_t g_netStatUpdates, g_netStatSkippedBase, g_netStatOtherMap;
+static void Net_LogStats(bool force)
+{
+    static uint64_t last;
+    uint64_t const now = timerGetNanoTicks(), rate = timerGetNanoTickRate();
+    if (!force && now - last < rate * 60) return;
+    last = now;
+    auto const peerStats = [](ENetPeer const *peer, char const *who) {
+        LOG_F(INFO, "Net stats %s: rtt=%u ms jitter=%u ms loss=%.1f%% lost=%u/%u packets.", who, peer->roundTripTime,
+              peer->roundTripTimeVariance, peer->packetLoss * 100.0 / ENET_PEER_PACKET_LOSS_SCALE, peer->packetsLost, peer->packetsSent);
+    };
+    if (g_netClient && g_netClientPeer)
+    {
+        peerStats(g_netClientPeer, "server");
+        LOG_F(INFO, "Net stats world: applied=%u skipped(no baseline)=%u skipped(other map)=%u.", g_netStatUpdates,
+              g_netStatSkippedBase, g_netStatOtherMap);
+        g_netStatUpdates = g_netStatSkippedBase = g_netStatOtherMap = 0;
+    }
+    if (g_netServer)
+        for (size_t i = 0; i < g_netServer->peerCount; i++)
+        {
+            ENetPeer const *peer = &g_netServer->peers[i];
+            if (peer->state != ENET_PEER_STATE_CONNECTED) continue;
+            char who[48];
+            Bsnprintf(who, sizeof(who), "player %d", int(intptr_t(peer->data)));
+            peerStats(peer, who);
+        }
+}
+#endif
+
 void Net_GetPackets(void)
 {
 #ifndef NETCODE_DISABLE
     if (g_netServer == NULL && g_netClient == NULL)
         return;
+
+    Net_LogStats(false);
 
     Net_AllocatePacketBuffer();
 
@@ -1913,14 +1949,20 @@ static void Net_ExtractPlayerUpdate(playerupdate_t *update, int32_t type)
 
     if (playerindex != myconnectindex)
     {
+        // A client that is still spawning, or a player update sent from the other map around a
+        // level change, is outside every sector of this map; taking it would kill the player
+        // (P_ProcessInput: cursectnum == -1), on the server and in clients' predictions.
+        int16_t sectnum = g_player[playerindex].ps->cursectnum;
+        if ((unsigned)sectnum >= (unsigned)numsectors) sectnum = 0;
+        updatesector(update->pos.x, update->pos.y, &sectnum);
+        if (sectnum < 0)
+        {
+            if (type == PACKET_SLAVE_TO_MASTER)
+                return;
+            goto skipPosition;
+        }
         if (type == PACKET_SLAVE_TO_MASTER)
         {
-            // A client that is still spawning (or loading the map) reports a place outside every
-            // sector; taking it would kill the player (P_ProcessInput: cursectnum == -1).
-            int16_t sectnum = g_player[playerindex].ps->cursectnum;
-            updatesector(update->pos.x, update->pos.y, &sectnum);
-            if (sectnum < 0)
-                return;
             // The sector goes with the position: sector triggers (one-shot sounds, secrets, exits;
             // P_CheckSectors) must see the player where the client put them. Keeping the old sector
             // left those triggers armed on the server, and every world update re-armed them on the
@@ -1934,6 +1976,7 @@ static void Net_ExtractPlayerUpdate(playerupdate_t *update, int32_t type)
         g_player[playerindex].ps->q16horiz      = update->q16horiz;
         g_player[playerindex].ps->q16horizoff   = update->q16horizoff;
     }
+skipPosition:
 
     if (type == PACKET_MASTER_TO_SLAVE)
     {
@@ -4777,7 +4820,10 @@ static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
     // Around a level change the server and this client briefly sit on different maps: a snapshot
     // of the other map would be decoded against the wrong baseline (corrupt actors, then a crash).
     if (NetBuffer_ReadDWord(bufferPtr) != Net_MapTag())
+    {
+        ++g_netStatOtherMap;
         return;
+    }
 
     uint32_t from_IsInitialState = (packetFromRevisionNumber == cInitialMapStateRevisionNumber);
 
@@ -4816,6 +4862,15 @@ static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
     else
     {
         fromMapState = g_mapStateHistory[packetFromRevisionNumber % NET_REVISIONS];
+        // A delta is only valid on top of the revision it names. Around a level change the
+        // server can still name a revision this client never received on this map (or that was
+        // overwritten): decoding against another state corrupts walls, sectors and sprites.
+        // Skip it; the server falls back to a full snapshot when this client's revision is old.
+        if (fromMapState == nullptr || fromMapState->revisionNumber != packetFromRevisionNumber)
+        {
+            ++g_netStatSkippedBase;
+            return;
+        }
     }
 
 
@@ -4833,6 +4888,7 @@ static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
     NetBuffer_ReadWorldSnapshotFromBuffer(bufferPtr, fromMapState, toMapState);
 
     g_netMapRevisionNumber = packetToRevisionNumber;
+    ++g_netStatUpdates;
 
     Net_CopySnapshotToGameArrays(toMapState, clMapState);
 
@@ -5705,8 +5761,14 @@ void Net_InitMapStateHistory()
 
     g_mapStartState->revisionNumber = cInitialMapStateRevisionNumber;
 
+    Net_LogStats(true);   // the old map's network statistics
     g_netMapRevisionNumber    = cInitialMapStateRevisionNumber;  // Net_InitMapStateHistory()
     g_cl_InterpolatedRevision = cInitialMapStateRevisionNumber;
+
+    // A new map (a natural level end too, not only a server new-game): the revisions players
+    // acknowledged belong to the old map. Send everyone the new map from its initial state.
+    for (int playerIndex = 0; playerIndex < MAXPLAYERS; playerIndex++)
+        g_player[playerIndex].revision = cInitialMapStateRevisionNumber;
 }
 
 void Net_StartNewGame()

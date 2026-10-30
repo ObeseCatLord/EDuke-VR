@@ -38,6 +38,8 @@ int32_t voice_loopback = 0;        // hear your own transmission (mic test)
 int32_t voice_hud = 1;
 float voice_input_gain = 1.f;
 float voice_volume = 1.f;
+int32_t voice_agc = 1;            // automatic gain control of each talker (received audio)
+float voice_agc_max_gain = 8.f;   // most a quiet microphone is raised (x)
 float voice_radio_volume = .45f;
 int32_t voice_spatial_distance = 9216;  // Build units (~24 m) where a talker becomes "radio"
 char voice_device[128] = "";
@@ -287,7 +289,35 @@ struct Speaker
     int16_t block[Frame];
     int handle = 0;
     FILE *dump = nullptr;
+    float agcLevel = 0.f, agcGain = 1.f, agcApplied = 1.f;   // AGC: speech level estimate, gain, last gain used
 } speakers[MaxSpeakers];
+
+// Automatic gain control per talker: brings each player's speech to one loudness whatever their
+// microphone (quiet mics were hard to hear in VR). The level follows speech only (frames above a
+// noise floor), so pauses and background noise are not pumped up; the gain falls quickly and rises
+// slowly, ramps across each 20 ms frame and is capped so the frame never clips.
+void applyAgc(Speaker &sp, int16_t *pcm, int n)
+{
+    if (!voice_agc || n <= 0) return;
+    constexpr float Target = 4000.f, NoiseFloor = 250.f;   // RMS: ~-18 dBFS speech, ~-42 dBFS floor
+    double sum = 0; int peak = 1;
+    for (int i = 0; i < n; i++) { sum += double(pcm[i]) * pcm[i]; peak = std::max(peak, std::abs(int(pcm[i]))); }
+    float const rms = float(std::sqrt(sum / n));
+    if (rms > NoiseFloor)
+    {
+        sp.agcLevel = sp.agcLevel <= 0.f ? rms : sp.agcLevel + (rms - sp.agcLevel) * (rms > sp.agcLevel ? .3f : .05f);
+        float const want = clamp(Target / sp.agcLevel, .5f, std::max(1.f, voice_agc_max_gain));
+        sp.agcGain += (want - sp.agcGain) * (want < sp.agcGain ? .3f : .05f);
+    }
+    float const gain = std::min(sp.agcGain, 32000.f / float(peak));
+    float const from = sp.agcApplied;
+    for (int i = 0; i < n; i++)
+    {
+        float const g = from + (gain - from) * float(i + 1) / float(n);
+        pcm[i] = int16_t(clamp(int(std::lround(pcm[i] * g)), -32768, 32767));
+    }
+    sp.agcApplied = gain;
+}
 
 void demandFeed(char const **ptr, uint32_t *length, void *userdata)
 {
@@ -302,8 +332,9 @@ void demandFeed(char const **ptr, uint32_t *length, void *userdata)
     *length = Frame;
 }
 
-void pushAudio(Speaker &sp, int16_t const *pcm, int n)
+void pushAudio(Speaker &sp, int16_t *pcm, int n)
 {
+    applyAgc(sp, pcm, n);
     uint32_t head = sp.head.load(std::memory_order_relaxed);
     uint32_t const tail = sp.tail.load(std::memory_order_acquire);
     for (int i = 0; i < n && head - tail < uint32_t(RingSamples); ++i, ++head) sp.ring[head % RingSamples] = pcm[i];
@@ -494,6 +525,8 @@ void Voice_Init(void)
         { "voice_hud", "show the microphone state and who is talking", (void *)&voice_hud, CVAR_BOOL, 0, 1 },
         { "voice_input_gain", "microphone gain (0-4)", (void *)&voice_input_gain, CVAR_FLOAT, 0, 4 },
         { "voice_volume", "voice chat volume (0-2)", (void *)&voice_volume, CVAR_FLOAT, 0, 2 },
+        { "voice_agc", "automatic gain control: every talker at one loudness, quiet microphones raised (0/1)", (void *)&voice_agc, CVAR_BOOL, 0, 1 },
+        { "voice_agc_max_gain", "most the automatic gain control raises a quiet microphone (1-16x)", (void *)&voice_agc_max_gain, CVAR_FLOAT, 1, 16 },
         { "voice_radio_volume", "volume of distant talkers (centred radio level, 0-1)", (void *)&voice_radio_volume, CVAR_FLOAT, 0, 1 },
         { "voice_spatial_distance", "distance (Build units) at which a talker is heard as radio", (void *)&voice_spatial_distance, CVAR_INT, 512, 65536 },
         { "voice_device", "recording device name (\"\" = system default; see voice_devices)", (void *)voice_device, CVAR_STRING, 0, sizeof(voice_device) },

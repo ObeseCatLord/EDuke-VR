@@ -1262,6 +1262,18 @@ static int osdcmd_net_giveall(osdcmdptr_t parm)
 }
 
 // Test servers: kills a connected player (as from damage), e.g. to check how bodies look to others.
+// Test hook: end the level here as the exit button does. Each machine ends it on its own in
+// multiplayer (whoever's simulation reaches the exit), so staggering this between the server and
+// the clients reproduces a natural level change.
+static int osdcmd_net_endlevel(osdcmdptr_t)
+{
+    if (!(g_player[myconnectindex].ps->gm & MODE_GAME))
+        return OSDCMD_OK;
+    P_EndLevel();
+    LOG_F(INFO, "Level ended (net_endlevel).");
+    return OSDCMD_OK;
+}
+
 static int osdcmd_net_kill(osdcmdptr_t parm)
 {
     if (!parm || parm->numparms != 1)
@@ -1808,6 +1820,7 @@ int32_t registerosdcommands(void)
     OSD_RegisterFunction("kickban","kickban <id>: kicks a multiplayer client and prevents them from reconnecting.  See listplayers.", osdcmd_kickban);
 #endif
     OSD_RegisterFunction("listplayers","listplayers: lists currently connected multiplayer clients", osdcmd_listplayers);
+    OSD_RegisterFunction("net_endlevel","net_endlevel: (test) ends the level here as the exit button does", osdcmd_net_endlevel);
     OSD_RegisterFunction("net_kill","net_kill <player>: (server) kills that player, as from damage", osdcmd_net_kill);
     OSD_RegisterFunction("net_giveall","net_giveall: (server) gives every connected player all weapons, ammo and items", osdcmd_net_giveall);
     OSD_RegisterFunction("name","name: change your multiplayer nickname", osdcmd_name);

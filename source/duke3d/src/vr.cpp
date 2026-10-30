@@ -29,7 +29,7 @@
 #include <vector>
 
 // VR settings (cvars; vr.h).
-int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1;
+int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1;
 int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
@@ -192,6 +192,7 @@ void G_XRRegisterCvars()
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
         { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
+        { "vr_physicalcrouch", "VR: ducking for real (head ~40 cm below your standing height) crouches", (void *)&vr_physicalcrouch, CVAR_BOOL, 0, 1 },
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
         { "vr_foveation", "VR foveated rendering: 0 = auto (eye-tracked on a Steam Frame, else off), 1 = off (default), 2 = fixed, 3 = eye-tracked (fixed without an eye tracker)", (void *)&vr_foveation, CVAR_INT, 0, 3 },
@@ -977,13 +978,27 @@ static void publishInput()
 static XrVector3f origin;
 static XrQuaternionf inverseYaw;
 static bool recentered, trackingRebase, lastHeadValid;
-// Ducking for real (head ~40 cm below where it was recentered) crouches too.
+// Ducking for real (head ~40 cm below the standing height) crouches too. The standing height is
+// the highest the head has been, so it follows the player up at once; a "duck" held for over 8 s
+// is taken as sitting down (or a recenter while standing, then playing seated) and becomes the new
+// standing height, so a seated player is not kept crouched.
 static bool physicallyDucking()
 {
-    static bool ducking;
-    if (!recentered || !rawInput.headValid || !validPose(rawInput.headPose)) return ducking=false;
-    float const drop=origin.y-rawInput.headPose.position.y;
-    return ducking=drop>(ducking ? .3f : .4f);
+    static bool ducking, valid;
+    static float standing;
+    static double duckStart;
+    if (!vr_physicalcrouch || !recentered || !rawInput.headValid || !validPose(rawInput.headPose))
+    {
+        valid=false;
+        return ducking=false;
+    }
+    float const height=rawInput.headPose.position.y;
+    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    if (!valid || height>standing) { standing=height; valid=true; }
+    bool const low=standing-height>(ducking ? .3f : .4f);
+    if (low && !ducking) duckStart=now;
+    if (low && now-duckStart>8.0) { standing=height; return ducking=false; }
+    return ducking=low;
 }
 static XrPosef lastHeadPose;
 
@@ -3733,6 +3748,10 @@ static bool weaponReceiptComplete()
     auto const &saved=handModelReceipt.presentation;
     if (saved.family==XRWeaponFamily::StockHeld || saved.family==XRWeaponFamily::HudMapped)
         return true; // Some counters draw no ART at all.
+    // Neither does the pistol while it is being raised (just switched to): no native pistol art in
+    // the frame means nothing to contradict the 3D pistol. Without this every frame of the raise was
+    // dropped and the flat fallback screen showed meanwhile ("HUD mode" on switching to the pistol).
+    if (!handModelReceipt.seen) return true;
     unsigned const required=saved.family==XRWeaponFamily::AAPistol && saved.counter>=10 && saved.counter<20 ? 3 : 1;
     return (handModelReceipt.seen&required)==required;
 }
