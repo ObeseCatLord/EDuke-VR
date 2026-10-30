@@ -139,6 +139,7 @@ int isanearoperator(int lotag);
 int isanunderoperator(int lotag);
 int P_ActivateSwitch(int playerNum, int wallOrSprite, int nSwitchType);
 void P_CheckSectors(int playerNum);
+void P_ResetClientSectorTriggers(void);
 void Sect_DamageFloor_Internal(int spriteNum, int sectNum);
 void Sect_DamageFloor(int spriteNum, int sectNum);
 void Sect_DamageCeiling_Internal(int spriteNum, int sectNum);

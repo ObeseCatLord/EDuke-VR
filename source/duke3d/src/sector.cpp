@@ -3291,6 +3291,13 @@ static void G_ClearCameras(DukePlayer_t *p)
         I_EscapeTriggerClear();
 }
 
+// Multiplayer clients: sectors whose one-time trigger (secret, exit, one-shot sound) already fired
+// here this level. The server's world updates restore a trigger until the server clears it too,
+// which must not fire it again (a restarting sound every update).
+static uint8_t g_clientSectorFired[(MAXSECTORS+7)>>3];
+
+void P_ResetClientSectorTriggers(void) { Bmemset(g_clientSectorFired, 0, sizeof(g_clientSectorFired)); }
+
 void P_CheckSectors(int playerNum)
 {
     auto const pPlayer = g_player[playerNum].ps;
@@ -3298,6 +3305,18 @@ void P_CheckSectors(int playerNum)
     if (pPlayer->cursectnum > -1)
     {
         sectortype *const pSector = &sector[pPlayer->cursectnum];
+        uint16_t const sectorTag = pSector->lotag;
+        bool const oneTime = sectorTag == 32767 || sectorTag == UINT16_MAX || sectorTag == UINT16_MAX-1
+                             || (sectorTag >= 10000 && sectorTag < 16383);
+        if (g_netClient && oneTime)
+        {
+            uint8_t &fired = g_clientSectorFired[pPlayer->cursectnum>>3];
+            uint8_t const bit = uint8_t(1 << (pPlayer->cursectnum&7));
+            if (fired & bit)
+                pSector->lotag = 0;  // already fired here (only the server's copy is still armed): skip it
+            else
+                fired |= bit;
+        }
         switch ((uint16_t)pSector->lotag)
         {
             case 32767:

@@ -1921,6 +1921,11 @@ static void Net_ExtractPlayerUpdate(playerupdate_t *update, int32_t type)
             updatesector(update->pos.x, update->pos.y, &sectnum);
             if (sectnum < 0)
                 return;
+            // The sector goes with the position: sector triggers (one-shot sounds, secrets, exits;
+            // P_CheckSectors) must see the player where the client put them. Keeping the old sector
+            // left those triggers armed on the server, and every world update re-armed them on the
+            // client (E1L1's opening line looping).
+            g_player[playerindex].ps->cursectnum = sectnum;
         }
         g_player[playerindex].ps->pos            = update->pos;
         g_player[playerindex].ps->opos          = update->opos;

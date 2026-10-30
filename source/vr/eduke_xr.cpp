@@ -75,6 +75,29 @@ std::string xrError(XrInstance instance, XrResult result, char const *where)
     return std::string(where) + ": " + (message[0] ? message : std::to_string(result));
 }
 
+// Create an instance with the newest OpenXR version this build knows (1.1), falling back to 1.0
+// for runtimes that only offer 1.0 (SteamVR on the Steam Frame answers 1.1 with
+// XR_ERROR_API_VERSION_UNSUPPORTED). Nothing here needs 1.1-only functions.
+XrResult createXrInstance(XrInstanceCreateInfo &info, XrInstance *instance)
+{
+    // Test hook: EDUKE32_XR_TEST_API10=1 asks for 1.0 straight away (a 1.0-only runtime's path).
+    static bool const only10 = std::getenv("EDUKE32_XR_TEST_API10") != nullptr;
+    info.applicationInfo.apiVersion = only10 ? XR_API_VERSION_1_0 : XR_CURRENT_API_VERSION;
+    XrResult result = xrCreateInstance(&info, instance);
+    if (result == XR_ERROR_API_VERSION_UNSUPPORTED && !only10)
+    {
+        info.applicationInfo.apiVersion = XR_API_VERSION_1_0;
+        result = xrCreateInstance(&info, instance);
+        static bool logged;
+        if (!logged && XR_SUCCEEDED(result))
+        {
+            logged = true;
+            std::fprintf(stderr, "OpenXR: the runtime offers OpenXR 1.0 only; using 1.0.\n");
+        }
+    }
+    return result;
+}
+
 bool hasExtension(char const *wanted)
 {
     GLint count = 0;
@@ -1372,8 +1395,7 @@ bool queryRecommendedExtent(uint32_t &width, uint32_t &height, std::string &erro
         XrInstance instance = XR_NULL_HANDLE;
         XrInstanceCreateInfo info { XR_TYPE_INSTANCE_CREATE_INFO };
         std::snprintf(info.applicationInfo.applicationName, sizeof(info.applicationInfo.applicationName), "EDuke32 VR");
-        info.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
-        XrResult result = xrCreateInstance(&info, &instance);
+        XrResult result = createXrInstance(info, &instance);
         if (XR_FAILED(result))
             cachedError = xrError(XR_NULL_HANDLE, result, "xrCreateInstance");
         else
@@ -1513,10 +1535,9 @@ bool Runtime::initialize(SDL_Window *window, std::string &error, uint32_t render
     if (m_impl->eyeGazeExtension) enabled.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
     XrInstanceCreateInfo instanceInfo { XR_TYPE_INSTANCE_CREATE_INFO };
     std::snprintf(instanceInfo.applicationInfo.applicationName, sizeof(instanceInfo.applicationInfo.applicationName), "EDuke32 VR");
-    instanceInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
     instanceInfo.enabledExtensionCount      = uint32_t(enabled.size());
     instanceInfo.enabledExtensionNames      = enabled.data();
-    result                                  = xrCreateInstance(&instanceInfo, &m_impl->instance);
+    result                                  = createXrInstance(instanceInfo, &m_impl->instance);
     if (XR_FAILED(result))
     {
         error = xrError(XR_NULL_HANDLE, result, "xrCreateInstance");
