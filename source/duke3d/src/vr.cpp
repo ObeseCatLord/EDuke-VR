@@ -1922,6 +1922,31 @@ static void curlIndexFinger(HandJoints &joints, float pull)
 
 // Joint roots and axes (Build units per model unit) of a pose placed in its frame. Weapon-frame
 // (hold) rotations use the weapon's right-handed aim frame W=(MD3 +Y, MD3 +Z, MD3 -X).
+// A pinch for holding out the tip wad: per finger between the rig's relaxed and fist poses
+// (thumb and index part-way so their tips meet, the other fingers curled in).
+static bool pinchPose(HandJoints &out, HandRigPose const *relaxed, HandRigPose const *fist)
+{
+    if (!relaxed || !fist || relaxed->weaponFrame || fist->weaponFrame) return false;
+    // XR_HAND_JOINT order: palm 0, wrist 1, thumb 2-5, index 6-10, middle 11-15, ring 16-20, little 21-25.
+    auto const weight=[](unsigned joint) {
+        return joint<2 ? 0.f : joint<6 ? .6f : joint<11 ? .45f : joint<16 ? .6f : joint<21 ? .85f : .9f;
+    };
+    for (unsigned j=0;j<out.size();++j)
+    {
+        float const t=weight(j);
+        auto const &a=relaxed->joints[j], &b=fist->joints[j];
+        out[j].position={a.position.x+(b.position.x-a.position.x)*t,a.position.y+(b.position.y-a.position.y)*t,
+                         a.position.z+(b.position.z-a.position.z)*t};
+        float const sign=a.orientation.x*b.orientation.x+a.orientation.y*b.orientation.y+a.orientation.z*b.orientation.z
+            +a.orientation.w*b.orientation.w<0.f ? -1.f : 1.f;
+        XrQuaternionf q={a.orientation.x+(sign*b.orientation.x-a.orientation.x)*t,a.orientation.y+(sign*b.orientation.y-a.orientation.y)*t,
+                         a.orientation.z+(sign*b.orientation.z-a.orientation.z)*t,a.orientation.w+(sign*b.orientation.w-a.orientation.w)*t};
+        float const n=std::sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w);
+        out[j].orientation=n>0.f ? XrQuaternionf{q.x/n,q.y/n,q.z/n,q.w/n} : a.orientation;
+    }
+    return true;
+}
+
 static void placeHandJoints(HandJoints const &joints, bool weaponFrame, HandFrame const &frame, HandRoots &roots, HandBases &bases)
 {
     XrVector3f const axes[3]={{1,0,0},{0,1,0},{0,0,1}};
@@ -2047,6 +2072,7 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         for (auto const &h:support ? rig->supports : rig->holds)
             if (h.first==heldTile) { hold=rig->pose(hand,h.second.c_str()); break; }
     auto &wire=handWire[hand];
+    HandJoints pinch;
     if (hold && hold->weaponFrame)
     {
         // While this hand's trigger is held the index finger curls (eased over ~80 ms; the trigger
@@ -2066,12 +2092,12 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         source=support ? "support" : "hold";
     }
     else if (tipWadShown() && hand==tipWadHand() && input.gripValid && validPose(input.gripPose)
-             && rig->pose(hand,"fist") && !rig->pose(hand,"fist")->weaponFrame)
+             && pinchPose(pinch,rig->pose(hand,"relaxed"),rig->pose(hand,"fist")))
     {
-        // Holding the tip wad: a closed hand around the bills, whatever the tracked fingers do.
-        wire={VRHandFist,0.f,gripFrame(input.gripPose)};
-        placeHandJoints(rig->pose(hand,"fist")->joints,false,wire.frame,roots,bases);
-        source="fist";
+        // Holding out the tip wad: pinched between thumb and fingers, whatever the tracked fingers do.
+        wire={VRHandRelaxed,0.f,gripFrame(input.gripPose)};
+        placeHandJoints(pinch,false,wire.frame,roots,bases);
+        source="pinch";
     }
     else if (input.jointsValid && sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING") && !Bstrcmp(sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING"),"1"))
     {
@@ -3145,21 +3171,41 @@ static bool prepareTipWad(HandSegmentSample &sample, Camera const &body)
     if (!tipWadShown() || modelid<0 || !G_XRModelsEnabled()) return false;
     unsigned const hand=tipWadHand();
     if (!handJoints[hand].valid) return false;
-    auto const &palm=handJoints[hand].roots[0];
+    auto const &roots=handJoints[hand].roots;
     auto const &b=handJoints[hand].bases[0];   // palm joint axes (Build units per model unit)
-    // XR palm frame: -Z toward the fingers, +Y the back of the hand. The wad lies in the closed
-    // fist (see the "fist" pose above): flat on the palm side, clear of the palm, its long side
-    // across the hand so the bills stick out of both sides of the fist: MD3 X = palm X, Y = -Z,
-    // Z = +Y. Offsets in metres (test override EDUKE32_XR_TEST_WAD=out,toward,side).
-    float wadOut=.03f, wadToward=.03f, wadSide=0.f;
-    if (auto const test=std::getenv("EDUKE32_XR_TEST_WAD")) std::sscanf(test,"%f,%f,%f",&wadOut,&wadToward,&wadSide);
-    float const out=-wadOut*64.f, toward=-wadToward*64.f, side=wadSide*64.f;
-    sample.root={palm.x+int32_t(std::lround(b[0].x*side+b[1].x*out+b[2].x*toward)),palm.y+int32_t(std::lround(b[0].y*side+b[1].y*out+b[2].y*toward)),
-                 palm.z+int32_t(std::lround(b[0].z*side+b[1].z*out+b[2].z*toward))};
+    // Held out between thumb and index (the pinch pose above): centred where the two tips meet,
+    // the bills' thickness along the thumb-to-index line and their long side pointing out past the
+    // fingers, with ~2 cm of the stack inside the pinch. Directions are solved in the palm frame
+    // (model units, metric) and mapped back through its axes, as Build's units are anisotropic.
+    auto const toLocal=[&](XrVector3f d) {
+        auto const det3=[](XrVector3f a, XrVector3f c, XrVector3f e) {
+            return a.x*(c.y*e.z-c.z*e.y)-c.x*(a.y*e.z-a.z*e.y)+e.x*(a.y*c.z-a.z*c.y);
+        };
+        float const det=det3(b[0],b[1],b[2]);
+        if (std::fabs(det)<1e-9f) return XrVector3f{0,0,0};
+        return XrVector3f{det3(d,b[1],b[2])/det,det3(b[0],d,b[2])/det,det3(b[0],b[1],d)/det};
+    };
+    auto const unit=[](XrVector3f v) { float const n=std::sqrt(dot(v,v)); return n>1e-6f ? XrVector3f{v.x/n,v.y/n,v.z/n} : XrVector3f{0,0,0}; };
+    vec3_t const thumb=roots[5], index=roots[10];   // XR_HAND_JOINT thumb tip, index tip
+    XrVector3f const pinchAxis=unit(toLocal({float(index.x-thumb.x),float(index.y-thumb.y),float(index.z-thumb.z)}));
+    if (!(dot(pinchAxis,pinchAxis)>.5f)) return false;
+    XrVector3f const fingers{0,0,-1};   // palm frame: -Z toward the fingers
+    XrVector3f const length=unit({fingers.x-pinchAxis.x*dot(fingers,pinchAxis),fingers.y-pinchAxis.y*dot(fingers,pinchAxis),
+                                  fingers.z-pinchAxis.z*dot(fingers,pinchAxis)});
+    if (!(dot(length,length)>.5f)) return false;
+    XrVector3f const width=cross(pinchAxis,length);
+    auto const toBuild=[&](XrVector3f v) {
+        return XrVector3f{b[0].x*v.x+b[1].x*v.y+b[2].x*v.z,b[0].y*v.x+b[1].y*v.y+b[2].y*v.z,b[0].z*v.x+b[1].z*v.y+b[2].z*v.z};
+    };
+    float inside=.02f;   // metres of the stack inside the pinch (test override EDUKE32_XR_TEST_WAD=inside)
+    if (auto const test=std::getenv("EDUKE32_XR_TEST_WAD")) std::sscanf(test,"%f",&inside);
+    float const reach=(.156f*.5f-inside)*64.f;   // model units from the pinch to the stack's centre
+    sample.basis[0]=toBuild(length);
+    sample.basis[1]=toBuild(width);
+    sample.basis[2]=toBuild(pinchAxis);
+    sample.root={(thumb.x+index.x)/2+int32_t(std::lround(sample.basis[0].x*reach)),(thumb.y+index.y)/2+int32_t(std::lround(sample.basis[0].y*reach)),
+                 (thumb.z+index.z)/2+int32_t(std::lround(sample.basis[0].z*reach))};
     sample.pivot={0,0,0};
-    sample.basis[0]=b[0];
-    sample.basis[1]={-b[2].x,-b[2].y,-b[2].z};
-    sample.basis[2]=b[1];
     sample.context.instance=124;
     sample.context.modelid=modelid;
     sample.context.skinnum=tile2model[Ptile2tile(VRMoneyTile,0)].skinnum;
