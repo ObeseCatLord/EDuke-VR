@@ -2900,7 +2900,25 @@ bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &erro
     if (!m_impl || !m_impl->running)
         return true;
     if (m_impl->sessionState != XR_SESSION_STATE_FOCUSED)
+    {
+        // VISIBLE (SteamVR's dashboard or a system UI has input focus): no controller input, but
+        // the head is still tracked and the app must keep rendering. Without the head pose the
+        // game never set its reference and showed only the flat fallback screen (seen on the
+        // Steam Frame, where an app launched outside Steam can stay unfocused).
+        if (atTime && m_impl->sessionState == XR_SESSION_STATE_VISIBLE && m_impl->ensureViewSpace(error))
+        {
+            XrSpaceLocation head {XR_TYPE_SPACE_LOCATION};
+            if (XR_SUCCEEDED(xrLocateSpace(m_impl->viewSpace,m_impl->space,atTime,&head))
+                && (head.locationFlags & (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT))
+                    == (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT))
+            {
+                out.headValid=true;
+                out.headPose=head.pose;
+            }
+        }
+        error.clear();
         return true;
+    }
     if (m_impl->actionSet == XR_NULL_HANDLE)
     {
         error = "OpenXR input action set is unavailable";

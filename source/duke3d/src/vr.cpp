@@ -819,6 +819,18 @@ static bool twoHandWeapon(int hand, int &tile, vec3f_t &palm, vec3f_t &support)
 }
 
 static void updateTwoHand();
+// Tipping ("shake it baby"): the wad shows in the off hand while the tip plays and a moment after;
+// that hand closes into a fist around it.
+static bool tipWadShown()
+{
+    auto const p=g_player[myconnectindex].ps;
+    static double until;
+    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    if (p && p->tipincs>0) until=now+.6;
+    return now<=until;
+}
+static int aimHand();
+static unsigned tipWadHand() { return aimHand()>=0 ? unsigned(1-aimHand()) : 0u; }
 static bool physicallyDucking();
 
 static void publishInput()
@@ -2053,6 +2065,14 @@ static unsigned prepareHandSegments(std::vector<HandSegmentSample> &out, unsigne
         placeHandJoints(joints,true,wire.frame,roots,bases);
         source=support ? "support" : "hold";
     }
+    else if (tipWadShown() && hand==tipWadHand() && input.gripValid && validPose(input.gripPose)
+             && rig->pose(hand,"fist") && !rig->pose(hand,"fist")->weaponFrame)
+    {
+        // Holding the tip wad: a closed hand around the bills, whatever the tracked fingers do.
+        wire={VRHandFist,0.f,gripFrame(input.gripPose)};
+        placeHandJoints(rig->pose(hand,"fist")->joints,false,wire.frame,roots,bases);
+        source="fist";
+    }
     else if (input.jointsValid && sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING") && !Bstrcmp(sdlayer_xr_option("EDUKE32_XR_FINGER_TRACKING"),"1"))
     {
         for (unsigned joint=0;joint<eduke_xr::HandInput::JointCount;++joint) fromLocal(joint,input.joints[joint]);
@@ -3121,21 +3141,21 @@ static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smo
 static bool prepareTipWad(HandSegmentSample &sample, Camera const &body)
 {
     auto const p=g_player[myconnectindex].ps;
-    static double shownUntil;
-    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
-    if (p->tipincs>0) shownUntil=now+.6;
     int const modelid=md_tilehasmodel(VRMoneyTile,0);
-    if (now>shownUntil || modelid<0 || !G_XRModelsEnabled()) return false;
-    unsigned const hand=aimHand()>=0 ? unsigned(1-aimHand()) : 0u;
+    if (!tipWadShown() || modelid<0 || !G_XRModelsEnabled()) return false;
+    unsigned const hand=tipWadHand();
     if (!handJoints[hand].valid) return false;
     auto const &palm=handJoints[hand].roots[0];
     auto const &b=handJoints[hand].bases[0];   // palm joint axes (Build units per model unit)
-    // XR palm frame: -Z toward the fingers, +Y the back of the hand. The wad is pinched against
-    // the palm and sticks out past the fingertips (8 cm toward the fingers, 1.5 cm on the palm
-    // side), so it shows whichever way the hand is turned: MD3 X = palm X, Y = -Z, Z = +Y.
-    float const out=-.015f*64.f, toward=-.08f*64.f;
-    sample.root={palm.x+int32_t(std::lround(b[1].x*out+b[2].x*toward)),palm.y+int32_t(std::lround(b[1].y*out+b[2].y*toward)),
-                 palm.z+int32_t(std::lround(b[1].z*out+b[2].z*toward))};
+    // XR palm frame: -Z toward the fingers, +Y the back of the hand. The wad lies in the closed
+    // fist (see the "fist" pose above): flat on the palm side, clear of the palm, its long side
+    // across the hand so the bills stick out of both sides of the fist: MD3 X = palm X, Y = -Z,
+    // Z = +Y. Offsets in metres (test override EDUKE32_XR_TEST_WAD=out,toward,side).
+    float wadOut=.03f, wadToward=.03f, wadSide=0.f;
+    if (auto const test=std::getenv("EDUKE32_XR_TEST_WAD")) std::sscanf(test,"%f,%f,%f",&wadOut,&wadToward,&wadSide);
+    float const out=-wadOut*64.f, toward=-wadToward*64.f, side=wadSide*64.f;
+    sample.root={palm.x+int32_t(std::lround(b[0].x*side+b[1].x*out+b[2].x*toward)),palm.y+int32_t(std::lround(b[0].y*side+b[1].y*out+b[2].y*toward)),
+                 palm.z+int32_t(std::lround(b[0].z*side+b[1].z*out+b[2].z*toward))};
     sample.pivot={0,0,0};
     sample.basis[0]=b[0];
     sample.basis[1]={-b[2].x,-b[2].y,-b[2].z};
