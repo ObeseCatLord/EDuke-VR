@@ -71,6 +71,7 @@ void faketimerhandler(void) { ; }
 static void Net_Disconnect(void);
 static void Net_HandleClientPackets(void);
 static void Net_HandleServerPackets(void);
+static void Net_ReceiveEndLevel(ENetEvent const *event);
 static void Net_AllocatePacketBuffer(void);
 static void Net_AcknowledgePendingClients(void);
 static bool netStartupComplete = false;
@@ -2903,6 +2904,10 @@ static void Net_ParseServerPacket(ENetEvent *event)
         Net_ReceiveNewGame(event);
         break;
 
+    case PACKET_END_LEVEL:
+        Net_ReceiveEndLevel(event);
+        break;
+
     case PACKET_ACK:
         Net_ReceiveAcknowledge(pbuf, packbufleng);
         break;
@@ -5006,6 +5011,35 @@ void Net_SendMapVoteInitiate(void)
     enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&newgame, sizeof(newgame_t), ENET_PACKET_FLAG_RELIABLE));
 }
 
+
+// Only the server runs the actors and sector effects that end a level (the nuke button's
+// animation, timed exits), so clients ended levels late, at a different moment from the server, or
+// never. The server now announces the level end; clients end it the same way (bonus screen,
+// inventory kept) and load the level the server chose.
+void Net_SendEndLevel(void)
+{
+    if (!g_netServer)
+        return;
+    uint8_t packet[3] = { PACKET_END_LEVEL, uint8_t(ud.volume_number), uint8_t(ud.level_number) };
+    enet_host_broadcast(g_netServer, CHAN_GAMESTATE, enet_packet_create(packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE));
+    LOG_F(INFO, "Level end sent: next E%dL%d.", ud.volume_number + 1, ud.level_number + 1);
+}
+
+static void Net_ReceiveEndLevel(ENetEvent const *event)
+{
+    if (event->packet->dataLength < 3)
+        return;
+    int const volume = event->packet->data[1], level = event->packet->data[2];
+    auto const p = g_player[myconnectindex].ps;
+    if (!(p->gm & MODE_GAME) || (p->gm & MODE_EOL) || level >= MAXLEVELS || volume >= MAXVOLUMES)
+        return;
+    LOG_F(INFO, "Level end from the server: next E%dL%d.", volume + 1, level + 1);
+    for (int TRAVERSE_CONNECT(playerNum))
+        g_player[playerNum].ps->gm = MODE_EOL;
+    ud.volume_number = ud.m_volume_number = volume;
+    ud.level_number = ud.m_level_number = level;
+    ud.from_bonus = 0;
+}
 
 void Net_SendNewGame(int32_t frommenu, ENetPeer *peer)
 {

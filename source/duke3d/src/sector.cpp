@@ -3517,6 +3517,10 @@ void P_CheckSectors(int playerNum)
 
                 P_FindWall(pPlayer, &wallNum, useAng);
 
+                if (std::getenv("EDUKE32_XR_TEST_USE"))
+                    LOG_F(INFO, "VR use nuke button: player=%d wall=%d overpicnum=%d state=%d noexits=%d.", playerNum, wallNum,
+                          wallNum >= 0 ? wall[wallNum].overpicnum : -1, actor[nearSprite].t_data[0], ud.noexits);
+
                 if (wallNum >= 0 && wall[wallNum].overpicnum == 0)
                 {
                     if (actor[nearSprite].t_data[0] == 0)

@@ -5342,6 +5342,11 @@ static void P_ProcessWeapon(int playerNum)
 
 void P_EndLevel(void)
 {
+#ifndef NETCODE_DISABLE
+    // Multiplayer: the server ends levels and tells the clients (Net_SendEndLevel).
+    if (g_netClient)
+        return;
+#endif
     for (bssize_t TRAVERSE_CONNECT(playerNum))
         g_player[playerNum].ps->gm = MODE_EOL;
 
@@ -5356,6 +5361,9 @@ void P_EndLevel(void)
         ud.level_number   = (++ud.level_number < MAXLEVELS) ? ud.level_number : 0;
         ud.m_level_number = ud.level_number;
     }
+#ifndef NETCODE_DISABLE
+    Net_SendEndLevel();
+#endif
 }
 
 static int P_DoFist(DukePlayer_t *pPlayer)
@@ -5379,6 +5387,13 @@ static int P_DoFist(DukePlayer_t *pPlayer)
     {
         if (pPlayer->buttonpalette && ud.from_bonus == 0)
         {
+#ifndef NETCODE_DISABLE
+            if (g_netClient)   // the server takes the secret exit and tells the clients
+            {
+                pPlayer->fist_incs = 0;
+                return 1;
+            }
+#endif
             for (bssize_t TRAVERSE_CONNECT(playerNum))
                 g_player[playerNum].ps->gm = MODE_EOL;
 
@@ -5388,6 +5403,9 @@ static int P_DoFist(DukePlayer_t *pPlayer)
                 ud.level_number = ud.secretlevel - 1;
 
             ud.m_level_number = ud.level_number;
+#ifndef NETCODE_DISABLE
+            Net_SendEndLevel();
+#endif
         }
         else
             P_EndLevel();

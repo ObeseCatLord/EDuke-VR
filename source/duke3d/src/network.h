@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
 // net packet specification/compatibility version
-#define NETVERSION    11 // VR shot sample (hand, head, use yaw) in every update, map-tagged world updates, voice and VR body pose channels; no older peers
+#define NETVERSION    12 // server-announced level ends (PACKET_END_LEVEL), VR shot sample (hand, head, use yaw), map-tagged world updates, voice and VR body pose channels; no older peers
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;
@@ -95,6 +95,7 @@ enum DukePacket_t
     PACKET_MAP_VOTE_CANCEL,
     PACKET_VOICE=202,              // CHAN_VOICE: client->server body, server->client [source][body]
     PACKET_VR_POSE=203,            // CHAN_VRPOSE: client->server pose, server->client [source][pose]
+    PACKET_END_LEVEL=204,          // CHAN_GAMESTATE, server->client: [volume][next level]; the level ended
 };
 
 
@@ -274,6 +275,8 @@ void    Net_StartNewGame();
 void    Net_ResetPlayers();
 void    Net_NotifyNewGame();
 void    Net_SendNewGame(int32_t frommenu, ENetPeer *peer);
+// Server: the level ended (exit, nuke button, timed exit); clients end it too and go to the same level.
+void    Net_SendEndLevel(void);
 
 void    Net_FillNewGame(newgame_t *newgame, int32_t frommenu);
 
