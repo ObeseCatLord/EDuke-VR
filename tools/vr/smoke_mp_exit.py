@@ -16,6 +16,10 @@ reach E1L2:
 - each client sees both players inside the new map, alive, and the two clients agree on where
   the other player is;
 - eye captures of each player on E1L2 for review.
+
+--episode: instead, everyone gets all weapons on E1L5 (the episode's boss level), the episode ends (as its boss's endofgame
+does, through the server's net_endlevel episode) and all three must reach E2L1, each player with
+the starting loadout again (pistol only, full health).
 """
 import argparse, json, math, os, re, subprocess, tempfile, time
 from pathlib import Path
@@ -44,6 +48,7 @@ def main():
     parser.add_argument('--display', default=':105')
     parser.add_argument('--remote-port', type=int, default=49777)
     parser.add_argument('--timeout', type=int, default=580)
+    parser.add_argument('--episode', action='store_true', help='end episode 1 instead (expect E2L1, starting loadout)')
     args = parser.parse_args()
     runtime2 = os.environ.get('SOFTWARE_XR_LAB_RUNTIME2')
     if not runtime2:
@@ -59,7 +64,7 @@ def main():
     server_log = server_dir / 'server.log'
     out = server_log.open('w'); files.append(out)
     server = subprocess.Popen([str(args.server_binary.resolve()), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-dedicated',
-                               '-port', str(args.port), '-c2', '-v1', '-l1', '-s2', '-m'], cwd=server_dir,
+                               '-port', str(args.port), '-c2', '-v1', '-l5' if args.episode else '-l1', '-s2', '-m'], cwd=server_dir,
                               env=dict(os.environ, EDUKE32_XR_TEST_USE='1'), stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT, text=True)
     processes.append(server)
     server_obs = Observer(server, server_log)
@@ -114,7 +119,9 @@ def main():
                 {int(m[0]): [int(v) for v in m] for m in SPRITE.findall(text)})
 
     try:
-        until(server_obs, lambda t: 'E1L1' in t, 60)
+        start_level, next_level = ('E1L5', 'E2L1') if args.episode else ('E1L1', 'E1L2')
+        result['levels'] = [start_level, next_level]
+        until(server_obs, lambda t: start_level in t, 60)
         with connect(args.remote_port) as ra, connect(args.remote_port + 1) as rb:
             remotes = {'a': ra, 'b': rb}
             for remote in remotes.values():
@@ -134,43 +141,69 @@ def main():
             for role in ('a', 'b'):
                 obs[role].pause(3)
 
-            result['phase'] = 'press the nuke button'
             mark = {role: len(obs[role].text()) for role in ('a', 'b')}
-            consoles['a'].write_text('xr_goto %d %d %d\n' % BUTTON_STAND)
-            obs['a'].pause(3)
-            ra.packet.right.pose.position.x, ra.packet.right.pose.position.y = .05, 1.5
-            ra.packet.right.pose.orientation = orientation(0, 0); ra.send()
-            obs['a'].pause(1.5)
-            for _ in range(3):   # break the glass
-                ra.packet.right.trigger_value = 1.0; ra.send(); obs['a'].pause(.25)
-                ra.packet.right.trigger_value = 0.0; ra.send(); obs['a'].pause(.6)
-            obs['a'].pause(2)
-            ra.packet.left.squeeze_value = 1.0; ra.send()
-            obs['a'].pause(.6)
-            ra.packet.left.squeeze_value = 0.0; ra.send()
-            checks['a_used_the_button'] = soft(obs['a'], lambda t: re.search(r'VR use: .*picnum=142', t[mark['a']:]) is not None, 30)
+            if args.episode:
+                result['phase'] = 'end the episode'
+                server.stdin.write('net_giveall\n'); server.stdin.flush()
+                time.sleep(5)
+                for remote in remotes.values():   # switch off the pistol, so the reset must show
+                    remote.packet.left.b_click = True; remote.send()
+                time.sleep(.4)
+                for remote in remotes.values():
+                    remote.packet.left.b_click = False; remote.send()
+                time.sleep(4)
+                give = {role: where(obs, role) for role in ('a', 'b')}
+                result['weapons_before'] = {role: {p: r[6] for p, r in give[role][0].items()} for role in give}
+                checks['players_armed_before'] = all(r[6] > 1 for role in give for p, r in give[role][0].items() if p > 0)
+                mark = {role: len(obs[role].text()) for role in ('a', 'b')}
+                server.stdin.write('net_endlevel episode\n'); server.stdin.flush()
+            else:
+                result['phase'] = 'press the nuke button'
+                consoles['a'].write_text('xr_goto %d %d %d\n' % BUTTON_STAND)
+                obs['a'].pause(3)
+                ra.packet.right.pose.position.x, ra.packet.right.pose.position.y = .05, 1.5
+                ra.packet.right.pose.orientation = orientation(0, 0); ra.send()
+                obs['a'].pause(1.5)
+                for _ in range(3):   # break the glass
+                    ra.packet.right.trigger_value = 1.0; ra.send(); obs['a'].pause(.25)
+                    ra.packet.right.trigger_value = 0.0; ra.send(); obs['a'].pause(.6)
+                obs['a'].pause(2)
+                ra.packet.left.squeeze_value = 1.0; ra.send()
+                obs['a'].pause(.6)
+                ra.packet.left.squeeze_value = 0.0; ra.send()
+                checks['a_used_the_button'] = soft(obs['a'], lambda t: re.search(r'VR use: .*picnum=142', t[mark['a']:]) is not None, 30)
 
+            if args.episode:
+                # Co-op clients see the episode's ending cutscene (the server waits for them).
+                result['phase'] = 'episode cutscene'
+                for role in ('a', 'b'):
+                    checks[f'{role}_episode_cutscene'] = soft(obs[role], lambda t: 'Episode ending cutscene' in t[mark[role]:], 90)
+                time.sleep(6)
+                for role in ('a', 'b'):
+                    captures[role].write_text(str(labs[role] / 'cutscene') + '\n')
+                for role in ('a', 'b'):
+                    soft(obs[role], lambda _: not captures[role].exists(), 60)
             result['phase'] = 'level change'
             # Every machine ends the level on its own; bonus screens wait for a button.
             for role in ('a', 'b'):
                 for _ in range(40):
-                    if 'E1L2' in obs[role].text()[mark[role]:] or time.monotonic() > deadline:
+                    if next_level + ':' in obs[role].text()[mark[role]:] or time.monotonic() > deadline:
                         break
                     remotes[role].packet.right.a_click = True; remotes[role].send()
                     time.sleep(.3)
                     remotes[role].packet.right.a_click = False; remotes[role].send()
                     time.sleep(2.7)
-            checks['server_on_e1l2'] = soft(server_obs, lambda t: 'E1L2' in t, 60)
+            checks['server_on_next_level'] = soft(server_obs, lambda t: next_level + ':' in t, 60)
             for role in ('a', 'b'):
-                checks[f'{role}_on_e1l2'] = soft(obs[role], lambda t: 'E1L2' in t[mark[role]:], 90)
-            changed = {role: obs[role].text().find('E1L2', mark[role]) for role in ('a', 'b')}
+                checks[f'{role}_on_next_level'] = soft(obs[role], lambda t: next_level + ':' in t[mark[role]:], 120)
+            changed = {role: obs[role].text().find(next_level + ':', mark[role]) for role in ('a', 'b')}
 
             result['phase'] = 'settle on E1L2'
             # The client waits for the server after loading (readiness pings); then a full minute of
             # play so it logs network statistics from the new map (the line logged at the change
             # itself describes the old map).
             for role in ('a', 'b'):
-                checks[f'{role}_ready_on_e1l2'] = soft(obs[role], lambda t: 'readiness wait: complete' in t[changed[role]:], 120)
+                checks[f'{role}_ready_on_next_level'] = soft(obs[role], lambda t: 'readiness wait: complete' in t[changed[role]:], 120)
             for role in ('a', 'b'):
                 soft(obs[role], lambda t: len(APPLIED.findall(t[changed[role]:])) >= 2, 100)
             rows = {role: where(obs, role) for role in ('a', 'b')}
@@ -186,6 +219,8 @@ def main():
                 humans = [p for p in players if p > 0]
                 checks[f'{role}_sees_both_players_alive'] = len(humans) >= 2 and all(
                     p in sprites and sprites[p][5] > 0 and sprites[p][6] == 0 for p in humans)
+                if args.episode:   # a new episode starts with the pistol (weapon 1) and full health
+                    checks[f'{role}_starting_loadout'] = all(players[p][6] == 1 and sprites[p][5] == 100 for p in humans)
             pa, pb = rows['a'][0], rows['b'][0]
             agree = [math.hypot(pa[p][2] - pb[p][2], pa[p][3] - pb[p][3]) for p in pa if p > 0 and p in pb]
             result['client_disagreement_units'] = [round(d) for d in agree]

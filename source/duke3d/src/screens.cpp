@@ -53,13 +53,23 @@ int32_t g_noLogoAnim = 0;
 int32_t g_noLogo = 0;
 
 ////////// OFTEN-USED FEW-LINERS //////////
+// For screens that wait without drawing: in VR, the headset keeps showing the screen and the
+// controllers keep being read.
+static void G_HandleWaitEvents(void)
+{
+    gameHandleEvents();
+#ifdef USE_OPENXR
+    G_XRHoldFlatFrame();
+#endif
+}
+
 #ifndef EDUKE32_STANDALONE
 static void G_HandleEventsWhileNoInput(void)
 {
     I_ClearAllInput();
 
     while (!I_GeneralTrigger())
-        gameHandleEvents();
+        G_HandleWaitEvents();
 
     I_ClearAllInput();
 }
@@ -70,7 +80,7 @@ static int32_t G_PlaySoundWhileNoInput(int32_t soundnum)
     I_ClearAllInput();
     while (FX_SoundActive(voice))
     {
-        gameHandleEvents();
+        G_HandleWaitEvents();
         if (I_GeneralTrigger())
         {
             I_ClearAllInput();
@@ -1531,7 +1541,7 @@ void gameDisplayTENScreen()
     rotatesprite_fs(160 << 16, 100 << 16, 65536L, 0, TENSCREEN, 0, 0, 2 + 8 + 64 + BGSTRETCH);
     fadepaltile(0, 0, 0, 252, 0, -28, TENSCREEN);
     while (!I_GeneralTrigger() && totalclock < 2400)
-        gameHandleEvents();
+        G_HandleWaitEvents();
 
     fadepaltile(0, 0, 0, 0, 252, 28, TENSCREEN);
     I_ClearAllInput();
@@ -1554,14 +1564,14 @@ void gameDisplaySharewareScreens()
     rotatesprite_fs(160 << 16, 100 << 16, 65536L, 0, 3291, 0, 0, 2 + 8 + 64 + BGSTRETCH);
     fadepaltile(0, 0, 0, 252, 0, -28, 3291);
     while (!I_GeneralTrigger())
-        gameHandleEvents();
+        G_HandleWaitEvents();
 
     fadepaltile(0, 0, 0, 0, 252, 28, 3291);
     I_ClearAllInput();
     rotatesprite_fs(160 << 16, 100 << 16, 65536L, 0, 3290, 0, 0, 2 + 8 + 64 + BGSTRETCH);
     fadepaltile(0, 0, 0, 252, 0, -28, 3290);
     while (!I_GeneralTrigger())
-        gameHandleEvents();
+        G_HandleWaitEvents();
 
 #ifdef __ANDROID__
     inExtraScreens = 0;
@@ -1841,7 +1851,7 @@ void G_DoOrderScreen(void)
         rotatesprite_fs(160<<16, 100<<16, 65536L, 0, ORDERING+i, 0, 0, 2+8+64+BGSTRETCH);
         fadepal(0, 0, 0, 252, 0, -28);
         while (!I_CheckAllInput())
-            gameHandleEvents();
+            G_HandleWaitEvents();
     }
 
     I_ClearAllInput();
@@ -1850,8 +1860,12 @@ void G_DoOrderScreen(void)
 
 static void G_BonusCutscenes(void)
 {
-    if (!(numplayers < 2 && ud.eog && ud.from_bonus == 0))
+    // Co-op clients see the episode's ending too: the cutscene loop keeps polling the network
+    // (gameHandleEvents), and the server waits for them as for a level load. A server that is
+    // also a player never does (it would stop the game for everyone).
+    if (!((numplayers < 2 || g_netClient) && ud.eog && ud.from_bonus == 0))
         return;
+    LOG_F(INFO, "Episode ending cutscene: E%d.", ud.volume_number + 1);
 
     switch (ud.volume_number)
     {
@@ -2094,7 +2108,7 @@ static void G_BonusCutscenes(void)
             I_ClearAllInput();
             ototalclock = totalclock+200;
             while (totalclock < ototalclock)
-                gameHandleEvents();
+                G_HandleWaitEvents();
             videoClearScreen(0L);
             videoNextPage();
 
@@ -2122,7 +2136,7 @@ static void G_BonusCutscenes(void)
         if (PLUTOPAK || (G_GetLogoFlags() & LOGO_NODUKETEAMPIC))
         {
             while (totalclock < 120 && !I_GeneralTrigger())
-                gameHandleEvents();
+                G_HandleWaitEvents();
 
             I_ClearAllInput();
         }

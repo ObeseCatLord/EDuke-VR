@@ -4824,7 +4824,7 @@ static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
 
     // Around a level change the server and this client briefly sit on different maps: a snapshot
     // of the other map would be decoded against the wrong baseline (corrupt actors, then a crash).
-    if (NetBuffer_ReadDWord(bufferPtr) != Net_MapTag())
+    if (NetBuffer_ReadDWord(bufferPtr) != Net_MapTag() || g_netLevelLoading)
     {
         ++g_netStatOtherMap;
         return;
@@ -5020,9 +5020,12 @@ void Net_SendEndLevel(void)
 {
     if (!g_netServer)
         return;
-    uint8_t packet[3] = { PACKET_END_LEVEL, uint8_t(ud.volume_number), uint8_t(ud.level_number) };
+    // [3]: the episode ended (ud.eog): every machine moves on to the next episode the same way.
+    // [4]: at the end of an episode, the episode the server goes on to (clients follow its choice).
+    uint8_t packet[5] = { PACKET_END_LEVEL, uint8_t(ud.volume_number), uint8_t(ud.level_number), uint8_t(ud.eog ? 1 : 0),
+                          uint8_t(ud.eog ? G_NextEpisode(ud.volume_number) : 0) };
     enet_host_broadcast(g_netServer, CHAN_GAMESTATE, enet_packet_create(packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE));
-    LOG_F(INFO, "Level end sent: next E%dL%d.", ud.volume_number + 1, ud.level_number + 1);
+    LOG_F(INFO, "Level end sent: next E%dL%d%s.", ud.volume_number + 1, ud.level_number + 1, ud.eog ? " (end of episode)" : "");
 }
 
 static void Net_ReceiveEndLevel(ENetEvent const *event)
@@ -5039,6 +5042,11 @@ static void Net_ReceiveEndLevel(ENetEvent const *event)
     ud.volume_number = ud.m_volume_number = volume;
     ud.level_number = ud.m_level_number = level;
     ud.from_bonus = 0;
+    if (event->packet->dataLength >= 5 && event->packet->data[3])
+    {
+        ud.eog = 1;   // G_EndOfLevel moves on to the episode the server chose
+        g_netNextEpisode = event->packet->data[4] < MAXVOLUMES ? event->packet->data[4] : -1;
+    }
 }
 
 void Net_SendNewGame(int32_t frommenu, ENetPeer *peer)

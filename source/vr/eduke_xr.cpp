@@ -2537,7 +2537,7 @@ XrPosef Runtime::anchoredScreen(XrPosef const &head)
     return impl.screenAnchor;
 }
 
-bool Runtime::presentNativeFrame(uint32_t width, uint32_t height, std::string &error, char const *capturePrefix)
+bool Runtime::presentNativeFrame(uint32_t width, uint32_t height, std::string &error, char const *capturePrefix, bool held)
 {
     // The swapchain image is read or drawn: blend a pending foveated world into it first.
     if (m_impl && (m_impl->foveationPending || m_impl->foveateNow) && !m_impl->resolveFoveation(error)) return false;
@@ -2549,8 +2549,14 @@ bool Runtime::presentNativeFrame(uint32_t width, uint32_t height, std::string &e
     bool const located=XR_SUCCEEDED(result) && (head.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT|XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
         == (XR_SPACE_LOCATION_POSITION_VALID_BIT|XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
     GLState state; state.save();
-    bool good=m_impl->ensureMenuCapture(width,height,error);
-    if (good)
+    bool good;
+    if (held)
+    {
+        good=m_impl->menuFbo && m_impl->menuWidth==width && m_impl->menuHeight==height;
+        if (!good) error="no flat screen to show again";
+    }
+    else good=m_impl->ensureMenuCapture(width,height,error);
+    if (good && !held)
     {
         // The flat frame was drawn into the native back buffer: copy it into the UI texture.
         glBindFramebuffer(GL_READ_FRAMEBUFFER,state.drawFbo);

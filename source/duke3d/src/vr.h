@@ -12,6 +12,8 @@ constexpr int32_t XRHeldModelTileBase=30020;
 void G_XRBeginFrame();
 void G_XREndFrame();
 void G_XRClearInput();
+// A flat screen waiting for a button without drawing: show it again and poll the controllers.
+void G_XRHoldFlatFrame();
 void G_XRResetAim(int playerNum);
 bool G_XRBeginWeapon();
 void G_XREndWeapon(bool captured);

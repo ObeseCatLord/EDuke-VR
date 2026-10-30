@@ -6590,6 +6590,24 @@ void G_BackToMenu(void)
     G_UpdateAppTitle();
 }
 
+// The episode after `volume` in a played-through campaign: the next one whose first map this
+// machine can open, wrapping to episode 1 after the last (World Tour's fifth episode needs its own
+// map files, which a server may not have).
+int G_NextEpisode(int volume)
+{
+    int next = volume;
+    for (int tries = 0; tries < MAXVOLUMES; tries++)
+    {
+        next = (next + 1 < g_volumeCnt) ? next + 1 : 0;
+        char const *const map = g_mapInfo[next * MAXLEVELS].filename;
+        if (map && testkopen(map, 0))
+            return next;
+    }
+    return 0;
+}
+int g_netLevelLoading;
+int g_netNextEpisode = -1;   // client: the next episode the server chose (PACKET_END_LEVEL)
+
 static int G_EndOfLevel(void)
 {
     auto &p = *g_player[myconnectindex].ps;
@@ -6634,8 +6652,24 @@ static int G_EndOfLevel(void)
             }
             else
             {
+                // Multiplayer plays the campaign through: the end of an episode goes on to the
+                // next one (wrapping after the last), a new game for everyone in it: starting
+                // weapons and items, full health. User maps restart from their first level.
                 ud.m_level_number = 0;
                 ud.level_number = 0;
+                if (!G_HaveUserMap())
+                {
+                    int const next = (g_netClient && g_netNextEpisode >= 0) ? g_netNextEpisode : G_NextEpisode(ud.volume_number);
+                    g_netNextEpisode = -1;
+                    ud.volume_number = ud.m_volume_number = next;
+                    for (int TRAVERSE_CONNECT(playerNum))
+                    {
+                        P_ResetWeapons(playerNum);
+                        P_ResetInventory(playerNum);
+                        g_player[playerNum].ps->last_extra = g_player[playerNum].ps->max_player_health;
+                    }
+                    LOG_F(INFO, "End of episode: next E%dL1.", next + 1);
+                }
             }
         }
     }

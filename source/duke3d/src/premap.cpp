@@ -1920,6 +1920,11 @@ static void G_CheckIfStateless()
 
 int G_EnterLevel(int gameMode)
 {
+    struct LevelLoading
+    {
+        LevelLoading() { g_netLevelLoading = 1; }
+        ~LevelLoading() { g_netLevelLoading = 0; }
+    } const loading;
     G_VRResetShots();
     G_VRResetBodyPoses();
     vote_map = vote_episode = voting = -1;
@@ -2137,6 +2142,7 @@ int G_EnterLevel(int gameMode)
         Net_InitMapStateHistory();
         Net_AddWorldToInitialSnapshot();
     }
+    g_netLevelLoading = 0;
 
     Net_WaitForServer();
     return 0;

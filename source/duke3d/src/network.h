@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
 // net packet specification/compatibility version
-#define NETVERSION    12 // server-announced level ends (PACKET_END_LEVEL), VR shot sample (hand, head, use yaw), map-tagged world updates, voice and VR body pose channels; no older peers
+#define NETVERSION    13 // server-announced level and episode ends (PACKET_END_LEVEL), VR shot sample (hand, head, use yaw), map-tagged world updates, voice and VR body pose channels; no older peers
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;
@@ -277,6 +277,11 @@ void    Net_NotifyNewGame();
 void    Net_SendNewGame(int32_t frommenu, ENetPeer *peer);
 // Server: the level ended (exit, nuke button, timed exit); clients end it too and go to the same level.
 void    Net_SendEndLevel(void);
+int     G_NextEpisode(int volume);   // game.cpp
+extern int g_netNextEpisode;
+// Client: a level is loading. World updates are ignored until its initial snapshot is taken, so
+// the snapshot is the clean map the server's deltas are based on.
+extern int g_netLevelLoading;
 
 void    Net_FillNewGame(newgame_t *newgame, int32_t frommenu);
 

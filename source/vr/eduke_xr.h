@@ -168,7 +168,9 @@ class Runtime
     bool        completeMenuPresentation(std::string &error, char const *capturePrefix = nullptr);
     // Show the finished native back buffer (a flat screen the game drew without a menu
     // presentation: intermissions, logos, cutscenes) on a world-locked virtual screen and submit.
-    bool        presentNativeFrame(uint32_t width, uint32_t height, std::string &error, char const *capturePrefix = nullptr);
+    // held: show the last presented flat screen again (the game is waiting without drawing).
+    bool        presentNativeFrame(uint32_t width, uint32_t height, std::string &error, char const *capturePrefix = nullptr,
+                                   bool held = false);
     bool        cancelMenuPresentation(std::string &error, bool mirror = true);
     bool        captureFrame(char const *outputPrefix, bool requireDistinct, std::string &error, bool captureDepth = false);
     bool        mirrorEye(uint32_t eye, std::string &error);

@@ -5165,6 +5165,10 @@ void G_XRBeginFrame()
 // cutscenes, loading) never reach the headset on their own. After two swaps without an XR
 // submission, show each swapped frame on the world-locked virtual screen (and keep controller
 // input flowing so "press any button" works).
+static uint64_t flatSerial;   // the XR submission of the last flat screen shown (0: none)
+
+static void presentFlatFrame(bool held);
+
 static void G_XRFlatFrame()
 {
     auto *runtime=sdlayer_xr_worldRuntime();
@@ -5175,8 +5179,24 @@ static void G_XRFlatFrame()
     static uint64_t lastSerial;
     static unsigned idleSwaps;
     uint64_t const serial=runtime->lastSubmittedSerial();
-    if (serial!=lastSerial) { lastSerial=serial; idleSwaps=0; return; }
+    if (serial!=lastSerial) { lastSerial=serial; idleSwaps=0; if (serial!=flatSerial) flatSerial=0; return; }
     if (++idleSwaps<2 || runtime->menuPresentationActive()) return;
+    presentFlatFrame(false);
+    lastSerial=runtime->lastSubmittedSerial();
+}
+
+// Screens that wait for a button without drawing ("press any key" after an episode's ending)
+// never swap, so neither the headset image nor controller input would update: keep showing the
+// last flat screen, which also polls the controllers.
+void G_XRHoldFlatFrame()
+{
+    auto *runtime=sdlayer_xr_worldRuntime();
+    if (!runtime || !flatSerial || runtime->lastSubmittedSerial()!=flatSerial || runtime->menuPresentationActive()) return;
+    presentFlatFrame(true);
+}
+
+static void presentFlatFrame(bool held)
+{
     G_XRBeginFrame();
     auto *ready=pendingRuntime;
     pendingRuntime=nullptr;
@@ -5193,18 +5213,22 @@ static void G_XRFlatFrame()
             if (!requested.empty()) LOG_F(INFO,"OpenXR capture request: flat screen prefix=%s.",requested.c_str());
         }
     std::string error;
-    if (!ready->presentNativeFrame(xdim,ydim,error,requested.empty() ? nullptr : requested.c_str()))
+    if (!ready->presentNativeFrame(xdim,ydim,error,requested.empty() ? nullptr : requested.c_str(),held))
     {
         static bool reported;
         if (!reported) LOG_F(WARNING,"OpenXR flat screen: %s",error.c_str());
         reported=true;
+        flatSerial=0;
+        return;
     }
-    else if (std::getenv("EDUKE32_XR_TEST_HELD"))
+    flatSerial=ready->lastSubmittedSerial();
+    if (std::getenv("EDUKE32_XR_TEST_HELD"))
     {
         static unsigned shown;
         if (shown++%90==0) LOG_F(INFO,"OpenXR flat screen: presented %u frames.",shown);
     }
-    lastSerial=ready->lastSubmittedSerial();
+    static bool heldLogged;
+    if (held && !heldLogged) { LOG_F(INFO,"OpenXR flat screen: holding a waiting screen."); heldLogged=true; }
 }
 
 static bool testArtClock()
