@@ -164,6 +164,11 @@ class Runtime
     bool        flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfHeight, bool visible,
                                  std::string &error, char const *capturePrefix = nullptr, float const *worldClipMatrices = nullptr,
                                  float const *uvRect = nullptr, bool keep = false);
+    // Menu laser pointer: while enabled, every full menu panel drawn (not HUD crops or world
+    // panels) shows a beam from the aim pose and a dot where it meets the panel, and records the
+    // hit as panel texture coordinates (u right, v down, 0..1) for the game's menu mouse.
+    void        setMenuPointer(bool enabled, XrPosef const &aim);
+    bool        menuPointerHit(float &u, float &v) const;
     bool        tintMenuWorld(float const *rgba, float const *correction, std::string &error);
     bool        completeMenuPresentation(std::string &error, char const *capturePrefix = nullptr);
     // Show the finished native back buffer (a flat screen the game drew without a menu
@@ -188,6 +193,7 @@ class Runtime
 
   private:
     XrPosef anchoredScreen(XrPosef const &head);
+    bool drawMenuPointer(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error);
     bool drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices = nullptr,
                          float const *uvRect = nullptr);
     struct Impl;

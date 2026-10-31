@@ -7782,6 +7782,7 @@ void dorotspr_handle_bit2(int32_t *sxptr, int32_t *syptr, int32_t *z, int32_t da
 
         int32_t zoomsc, sx=*sxptr, sy=*syptr;
         int32_t ouryxaspect = yxaspect, ourxyaspect = xyaspect;
+        bool const letterbox = rotatesprite_letterbox && !(dastat & RS_STRETCH) && 4*ydim > 3*xdim;
 
         sy += rotatesprite_y_offset;
 
@@ -7795,6 +7796,12 @@ void dorotspr_handle_bit2(int32_t *sxptr, int32_t *syptr, int32_t *z, int32_t da
             else
                 xdim = scale(ydim, 4, 3);
 
+            ouryxaspect = (12<<16)/10;
+            ourxyaspect = (10<<16)/12;
+        }
+        else if (letterbox)
+        {
+            ydim = scale(xdim, 3, 4);
             ouryxaspect = (12<<16)/10;
             ourxyaspect = (10<<16)/12;
         }
@@ -7815,7 +7822,7 @@ void dorotspr_handle_bit2(int32_t *sxptr, int32_t *syptr, int32_t *z, int32_t da
 
             sx = ((twice_midcx)<<15) + scaledxofs;
 
-            zoomsc = xdimenscale;   //= scale(xdimen,yxaspect,320);
+            zoomsc = letterbox ? scale(xdimen, (12<<16)/10, 320) : xdimenscale;   //= scale(xdimen,yxaspect,320);
             zoomsc = mulscale16(zoomsc, rotatesprite_yxaspect);
 
             if ((dastat & RS_ALIGN_MASK) == RS_ALIGN_MASK)
@@ -7833,7 +7840,7 @@ void dorotspr_handle_bit2(int32_t *sxptr, int32_t *syptr, int32_t *z, int32_t da
             zoomsc = scale(xdim, ouryxaspect, 320);
             sy = (ydim<<15)+32768 + mulscale16(normyofs, zoomsc);
 
-            if ((dastat & RS_ALIGN_MASK) == RS_ALIGN_MASK)
+            if ((dastat & RS_ALIGN_MASK) == RS_ALIGN_MASK || letterbox)
                 sy += (oydim-ydim)<<15;
             else
                 sx += (oxdim-xdim)<<15;

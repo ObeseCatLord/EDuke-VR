@@ -322,6 +322,7 @@ uint8_t g_mouseClickState;
 bool g_mouseEnabled;
 bool g_mouseGrabbed;
 bool g_mouseInsideWindow   = 1;
+bool g_mouseExternal;
 bool g_mouseLockedToWindow = 1;
 
 void (*g_mouseCallback)(int32_t, int32_t);
@@ -355,13 +356,16 @@ void mouseReadPos(int32_t *x, int32_t *y)
 
 int32_t mouseReadAbs(vec2_t * const pResult, vec2_t const * const pInput)
 {
-    if (!g_mouseEnabled || !appactive || !g_mouseInsideWindow || (osd && osd->flags & OSD_CAPTURE))
+    if (!g_mouseExternal && (!g_mouseEnabled || !appactive || !g_mouseInsideWindow || (osd && osd->flags & OSD_CAPTURE)))
         return 0;
 
     int32_t const xwidth = max(scale(240<<16, xdim, ydim), 320<<16);
 
     pResult->x = scale(pInput->x, xwidth, xres) - ((xwidth>>1) - (320<<15));
-    pResult->y = scale(pInput->y, 200<<16, yres);
+    if (rotatesprite_letterbox && 4*ydim > 3*xdim)   // the centred 4:3 band (dorotspr_handle_bit2)
+        pResult->y = scale(pInput->y - (yres>>1), 200<<16, scale(xres, 3, 4)) + (100<<16);
+    else
+        pResult->y = scale(pInput->y, 200<<16, yres);
 
     pResult->y = divscale16(pResult->y - (200<<15), rotatesprite_yxaspect) + (200<<15) - rotatesprite_y_offset;
 

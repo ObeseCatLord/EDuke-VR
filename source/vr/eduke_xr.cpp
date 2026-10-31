@@ -546,6 +546,10 @@ struct Runtime::Impl
     uint64_t                                actionGeneration = 0;
     uint64_t                                nextMenuOwner = 0, menuOwner = 0;
     uint32_t                                menuWidth = 0, menuHeight = 0;
+    bool                                    pointerEnabled = false, pointerHit = false;
+    XrPosef                                 pointerAim {};
+    float                                   pointerU = 0.f, pointerV = 0.f;
+    XrTime                                  pointerDrawnAt = 0;
     // World-locked virtual screen for full-screen 2D (menus, intermissions, cutscenes): placed in
     // front of the head (yaw only, upright) and re-centred when you look well away or it was unused.
     // EDUKE32_XR_PERF accumulators (see Runtime::takePerf).
@@ -624,7 +628,7 @@ struct Runtime::Impl
                                "layout(location=1) in vec2 uv; uniform mat4 uViewProj[2]; uniform int uMode; uniform vec4 uUvRect; out vec2 texcoord; void main(){ gl_Position=uMode==2 ? vec4(p,1) : uViewProj[gl_ViewID_OVR]*vec4(p,1); texcoord=mix(uUvRect.xy,uUvRect.zw,uv); }";
         std::string const fragment = std::string("#version 410 compatibility\nin vec2 texcoord; uniform sampler2D uTexture; uniform int uMode; uniform vec4 uTint, uCorrection; out vec4 outColor; ")
             + eduke_native_glsl::ColorCorrection
-            + "void main(){ if(uMode==2) outColor=edukeColorCorrection(uTint,uCorrection); else { outColor=texture(uTexture,texcoord); if(uMode==0) outColor.a=1; } }";
+            + "void main(){ if(uMode==2) outColor=edukeColorCorrection(uTint,uCorrection); else if(uMode==3) outColor=uTint; else { outColor=texture(uTexture,texcoord); if(uMode==0) outColor.a=1; } }";
         char const *menuFrag=fragment.c_str();
         GLuint menuVs = compile(GL_VERTEX_SHADER, menuVert, shaderError), menuFs = menuVs ? compile(GL_FRAGMENT_SHADER, menuFrag, shaderError) : 0;
         if (menuVs && menuFs)
@@ -2410,6 +2414,21 @@ bool Runtime::cancelMenuPresentation(std::string &error, bool mirror)
     return good;
 }
 
+void Runtime::setMenuPointer(bool enabled, XrPosef const &aim)
+{
+    if (!m_impl) return;
+    m_impl->pointerEnabled=enabled;
+    m_impl->pointerAim=aim;
+    if (!enabled) m_impl->pointerHit=false;
+}
+
+bool Runtime::menuPointerHit(float &u, float &v) const
+{
+    if (!m_impl || !m_impl->pointerEnabled || !m_impl->pointerHit) return false;
+    u=m_impl->pointerU; v=m_impl->pointerV;
+    return true;
+}
+
 bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error, float const *worldClipMatrices,
                               float const *uvRect)
 {
@@ -2464,9 +2483,84 @@ bool Runtime::drawMenuCapture(XrPosef const &pose, float halfWidth, float halfHe
         glBindVertexArray(m_impl->menuVao);
         glDrawArrays(GL_TRIANGLES, 0, 6);
         rendered = glSucceeded("drawing menu presentation", error);
+        if (rendered && m_impl->pointerEnabled && !worldClipMatrices && !uvRect)
+            rendered = drawMenuPointer(pose, halfWidth, halfHeight, error);
     }
     state.restore();
     return rendered;
+}
+
+// The menu laser: the aim ray meets the panel plane (front side, inside the panel) or ends 1.5 m out.
+bool Runtime::drawMenuPointer(XrPosef const &pose, float halfWidth, float halfHeight, std::string &error)
+{
+    auto &impl=*m_impl;
+    float panel[16], aim[16];
+    poseMatrix(pose,panel); poseMatrix(impl.pointerAim,aim);
+    auto const dot=[](float const *a, float const *b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; };
+    float const origin[3]={impl.pointerAim.position.x,impl.pointerAim.position.y,impl.pointerAim.position.z};
+    float const dir[3]={-aim[8],-aim[9],-aim[10]};                    // aim forward: -Z
+    float const rel[3]={origin[0]-pose.position.x,origin[1]-pose.position.y,origin[2]-pose.position.z};
+    float const height=dot(rel,panel+8), approach=dot(dir,panel+8);  // along the panel normal (+Z, towards the viewer)
+    float length=1.5f;
+    impl.pointerHit=false;
+    if (height>0.f && approach<-1e-4f)
+    {
+        float const t=-height/approach;
+        float const hit[3]={rel[0]+dir[0]*t,rel[1]+dir[1]*t,rel[2]+dir[2]*t};
+        float const x=dot(hit,panel), y=dot(hit,panel+4);
+        if (std::fabs(x)<=halfWidth && std::fabs(y)<=halfHeight)
+        {
+            impl.pointerHit=true; length=t;
+            impl.pointerU=.5f+.5f*x/halfWidth; impl.pointerV=.5f-.5f*y/halfHeight;
+        }
+    }
+    // One beam per displayed frame, however many panels draw.
+    if (impl.pointerDrawnAt==impl.frameState.predictedDisplayTime) return true;
+    impl.pointerDrawnAt=impl.frameState.predictedDisplayTime;
+    float const end[3]={origin[0]+dir[0]*length,origin[1]+dir[1]*length,origin[2]+dir[2]*length};
+    float const centre[3]={(origin[0]+end[0])*.5f,(origin[1]+end[1])*.5f,(origin[2]+end[2])*.5f};
+    float eye[3]={0,0,0};
+    for (uint32_t i=0;i<kViewCount;++i)
+    { eye[0]+=impl.views[i].pose.position.x/kViewCount; eye[1]+=impl.views[i].pose.position.y/kViewCount; eye[2]+=impl.views[i].pose.position.z/kViewCount; }
+    float toEye[3]={eye[0]-centre[0],eye[1]-centre[1],eye[2]-centre[2]};
+    float side[3]={dir[1]*toEye[2]-dir[2]*toEye[1],dir[2]*toEye[0]-dir[0]*toEye[2],dir[0]*toEye[1]-dir[1]*toEye[0]};
+    float sl=std::sqrt(dot(side,side));
+    if (sl<1e-5f) { side[0]=panel[0]; side[1]=panel[1]; side[2]=panel[2]; sl=1.f; }
+    for (float &c : side) c/=sl;
+    struct Quad { float x[3], y[3], c[3]; float rgba[4]; };
+    Quad quads[2]; int count=0;
+    float const half=length*.5f, thick=.0015f;
+    quads[count++]={{dir[0]*half,dir[1]*half,dir[2]*half},{side[0]*thick,side[1]*thick,side[2]*thick},
+                    {centre[0],centre[1],centre[2]},{1.f,.38f,.18f,1.f}};
+    if (impl.pointerHit)
+    {
+        float const r=.007f, lift=.003f;
+        quads[count++]={{panel[0]*r,panel[1]*r,panel[2]*r},{panel[4]*r,panel[5]*r,panel[6]*r},
+                        {end[0]+panel[8]*lift,end[1]+panel[9]*lift,end[2]+panel[10]*lift},{1.f,.92f,.35f,1.f}};
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glUniform1i(glGetUniformLocation(impl.menuProgram,"uMode"),3);
+    for (int q=0;q<count;++q)
+    {
+        auto const &quad=quads[q];
+        float const normal[3]={quad.x[1]*quad.y[2]-quad.x[2]*quad.y[1],quad.x[2]*quad.y[0]-quad.x[0]*quad.y[2],quad.x[0]*quad.y[1]-quad.x[1]*quad.y[0]};
+        float const model[16]={quad.x[0],quad.x[1],quad.x[2],0, quad.y[0],quad.y[1],quad.y[2],0, normal[0],normal[1],normal[2],0,
+                               quad.c[0],quad.c[1],quad.c[2],1};
+        float matrices[kViewCount][16];
+        for (uint32_t i=0;i<kViewCount;++i)
+        {
+            float projection[16], view[16], viewProjection[16];
+            projectionMatrix(impl.views[i].fov,projection);
+            viewMatrix(impl.views[i].pose,view);
+            multiply(viewProjection,projection,view);
+            multiply(matrices[i],viewProjection,model);
+        }
+        glUniformMatrix4fv(glGetUniformLocation(impl.menuProgram,"uViewProj[0]"),kViewCount,GL_FALSE,&matrices[0][0]);
+        glUniform4fv(glGetUniformLocation(impl.menuProgram,"uTint"),1,quad.rgba);
+        glDrawArrays(GL_TRIANGLES,0,6);
+    }
+    return glSucceeded("drawing the menu pointer",error);
 }
 
 bool Runtime::flushMenuOverlay(XrPosef const &pose, float halfWidth, float halfHeight, bool visible,

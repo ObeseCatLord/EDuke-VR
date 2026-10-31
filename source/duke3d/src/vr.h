@@ -46,7 +46,7 @@ int G_XRListenerAngle(int fallback);
 // VR 3D models on (vr_models cvar, EDUKE32_XR_MODELS, usemodels); off = native 2D sprites.
 bool G_XRModelsEnabled();
 // VR settings (cvars) and model sets for the settings menu.
-extern int32_t vr_models, vr_laser, vr_fullbody, vr_lefttrigger, vr_ptt_button, vr_twohand;
+extern int32_t vr_models, vr_laser, vr_fullbody, vr_lefttrigger, vr_ptt_button, vr_twohand, vr_menupointer;
 extern int32_t vr_foveation, vr_foveation_level;
 char const *G_XRFoveationAutoName();   // "Auto (eye-tracked)" on a Steam Frame, else "Auto (off)"
 int G_XRModelSetCount();

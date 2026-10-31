@@ -221,6 +221,7 @@ extern uint8_t g_mouseClickState;
 extern bool    g_mouseGrabbed;
 extern bool    g_mouseEnabled;
 extern bool    g_mouseInsideWindow;
+extern bool    g_mouseExternal;   // g_mouseAbs/g_mouseClickState come from another pointer (a VR controller)
 extern bool    g_mouseLockedToWindow;
 
 enum

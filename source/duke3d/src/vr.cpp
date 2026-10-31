@@ -29,7 +29,7 @@
 #include <vector>
 
 // VR settings (cvars; vr.h).
-int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1;
+int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1;
 int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
@@ -192,6 +192,7 @@ void G_XRRegisterCvars()
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
         { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
+        { "vr_menupointer", "VR: point at menu items with a laser from the controller; its trigger selects", (void *)&vr_menupointer, CVAR_BOOL, 0, 1 },
         { "vr_physicalcrouch", "VR: ducking for real (head ~40 cm below your standing height) crouches", (void *)&vr_physicalcrouch, CVAR_BOOL, 0, 1 },
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
@@ -833,6 +834,57 @@ static int aimHand();
 static unsigned tipWadHand() { return aimHand()>=0 ? unsigned(1-aimHand()) : 0u; }
 static bool physicallyDucking();
 
+// Menu laser pointer (vr_menupointer): while a menu is up, the pointing hand's aim ray drives the
+// native menu mouse (hover highlights, the trigger clicks, sliders drag); the other hand's trigger
+// takes the pointer over. The runtime draws the beam and finds where it meets the panel.
+static int menuPointerHand=1;
+static bool menuPointerPressed;
+static bool updateMenuPointer(uint32_t const down[2])
+{
+    using namespace eduke_xr;
+    static uint32_t previous[2];
+    auto *const runtime=inputRuntime;
+    bool const open=vr_menupointer && runtime && (g_player[myconnectindex].ps->gm & MODE_MENU);
+    for (int hand=0;hand<2;++hand)
+    {
+        bool const pressed=(down[hand] & ~previous[hand]) & ButtonSelect;
+        auto const &h=rawInput.hands[hand];
+        if (open && pressed && hand!=menuPointerHand && h.aimValid && validPose(h.aimPose)) menuPointerHand=hand;
+        previous[hand]=down[hand];
+    }
+    auto const &h=rawInput.hands[menuPointerHand];
+    if (!open || !h.aimValid || !validPose(h.aimPose))
+    {
+        if (runtime) runtime->setMenuPointer(false,{});
+        if (menuPointerPressed) { g_mouseClickState=MOUSE_RELEASED; menuPointerPressed=false; }
+        g_mouseExternal=false;
+        return false;
+    }
+    runtime->setMenuPointer(true,h.aimPose);
+    float u, v;
+    bool const trigger=down[menuPointerHand] & ButtonSelect;
+    if (runtime->menuPointerHit(u,v))
+    {
+        g_mouseExternal=true;
+        g_mouseAbs={int32_t(u*xres),int32_t(v*yres)};
+        if (trigger && !menuPointerPressed) { g_mouseClickState=MOUSE_PRESSED; menuPointerPressed=true; }
+    }
+    if (!trigger && menuPointerPressed) { g_mouseClickState=MOUSE_RELEASED; menuPointerPressed=false; }
+    if (std::getenv("EDUKE32_XR_TEST_MENU_POINTER"))
+    {
+        static double last;
+        double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+        if (now-last>.5)
+        {
+            last=now;
+            bool const hit=runtime->menuPointerHit(u,v);
+            LOG_F(INFO,"VR menu pointer: hand=%d hit=%d u=%.3f v=%.3f mouse=%d,%d click=%d menu=%d entry=%d.",menuPointerHand,int(hit),
+                  hit ? u : -1.f,hit ? v : -1.f,g_mouseAbs.x,g_mouseAbs.y,int(g_mouseClickState),int(g_currentMenu),Menu_CurrentEntry());
+        }
+    }
+    return true;   // the trigger belongs to the pointer, not to "select the highlighted item"
+}
+
 static void publishInput()
 {
     using namespace eduke_xr;
@@ -958,7 +1010,8 @@ static void publishInput()
         }
     }
     UserInput menu{false,false,false,dir_None};
-    menu.b_advance=(down[0]|down[1])&(ButtonSelect|ButtonPrimary);
+    bool const menuPointing=updateMenuPointer(down);
+    menu.b_advance=(down[0]|down[1])&(menuPointing ? ButtonPrimary : (ButtonSelect|ButtonPrimary));
     menu.b_return=(down[0]|down[1])&ButtonSecondary;
     menu.b_escape=(down[0]|down[1])&ButtonMenu;
     auto const nav=std::hypot(move.x,move.y) > .6f ? move : turn;
@@ -3269,7 +3322,7 @@ static void rotatespriteUnitPixels(float &across, float &down)
 {
     bool const wide=4*ydim<=3*xdim;
     float const width=wide ? ydim*4.f/3.f : float(xdim);
-    float const aspect=(wide ? 1.2f : yxaspect/65536.f)*(rotatesprite_yxaspect/65536.f);
+    float const aspect=(wide || rotatesprite_letterbox ? 1.2f : yxaspect/65536.f)*(rotatesprite_yxaspect/65536.f);
     across=width/320.f; down=width*aspect/320.f;
 }
 
@@ -4070,9 +4123,12 @@ bool G_XRCrosshairPosition(vec2_t &position)
     float const y=-eduke_xr::PanelDistance*tracked.y/tracked.z;
     if (std::fabs(x)>eduke_xr::PanelHalfWidth || std::fabs(y)>eduke_xr::PanelHalfWidth*ydim/xdim) return false;
     float const flatX=-eduke_xr::PanelDistance*flat.x/flat.z, flatY=-eduke_xr::PanelDistance*flat.y/flat.z;
-    // Native 320x200 ART coordinates use a 4:3 subregion of a wide window.
-    position.x+=fix16_from_float((x-flatX)*float(xdim)/ydim*120.f/eduke_xr::PanelHalfWidth);
-    position.y-=fix16_from_float((y-flatY)*float(xdim)/ydim*100.f/eduke_xr::PanelHalfWidth);
+    // Native 320x200 ART coordinates use a 4:3 subregion of a wide window, or the full width of a
+    // narrower one (a centred 4:3 band, rotatesprite_letterbox).
+    float const aspect=float(xdim)/ydim;
+    float const unitsX=aspect>=4.f/3.f ? 120.f*aspect : 160.f, unitsY=aspect>=4.f/3.f ? 100.f*aspect : 400.f/3.f;
+    position.x+=fix16_from_float((x-flatX)*unitsX/eduke_xr::PanelHalfWidth);
+    position.y-=fix16_from_float((y-flatY)*unitsY/eduke_xr::PanelHalfWidth);
     if (worldFrames==59 && std::getenv("EDUKE32_XR_TEST_AIM"))
         LOG_F(INFO,"OpenXR aim crosshair: nativeX=%.6f nativeY=%.6f panelX=%.6f panelY=%.6f.",
               fix16_to_float(position.x),fix16_to_float(position.y),x,y);
@@ -5055,6 +5111,8 @@ char const *G_XRFoveationAutoName()
 
 void G_XRBeginFrame()
 {
+    // Square or tall eye images: 2D art (menus, crosshair, HUD) keeps its proportions.
+    rotatesprite_letterbox=sdlayer_xr_worldRuntime()!=nullptr;
     runConsoleRequest();
     precacheVRModels();
     crosshairViews={};

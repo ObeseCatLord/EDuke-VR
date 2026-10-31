@@ -764,6 +764,9 @@ extern int32_t oxyaspect;
 EXTERN intptr_t *ylookup;
 
 EXTERN int32_t rotatesprite_y_offset;
+// Screens narrower than 4:3 (VR eyes: square, or taller than wide) show auto-scaled 320x200 art
+// in a centred 4:3 band at its true proportions, instead of stretching it to the full height.
+EXTERN int32_t rotatesprite_letterbox;
 EXTERN int32_t rotatesprite_yxaspect;
 
 #ifndef GEKKO

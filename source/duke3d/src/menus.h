@@ -482,6 +482,7 @@ typedef struct MenuAnimation_t
 extern MenuAnimation_t m_animation;
 
 extern MenuID_t g_currentMenu;
+int32_t Menu_CurrentEntry(void);   // highlighted entry of the current list menu (-1: none)
 extern Menu_t *m_currentMenu;
 
 extern int32_t g_quitDeadline;

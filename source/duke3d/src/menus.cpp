@@ -1433,6 +1433,8 @@ static char const *MEOSN_VR_LEFTTRIGGER[] = { "Mighty foot", "Alt fire", };
 static MenuOptionSet_t MEOS_VR_LEFTTRIGGER = MAKE_MENUOPTIONSET( MEOSN_VR_LEFTTRIGGER, NULL, 0x2 );
 static MenuOption_t MEO_VR_LEFTTRIGGER = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_LEFTTRIGGER, &vr_lefttrigger );
 static MenuEntry_t ME_VR_LEFTTRIGGER = MAKE_MENUENTRY( "Left trigger", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_LEFTTRIGGER, Option );
+static MenuOption_t MEO_VR_MENUPOINTER = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_menupointer );
+static MenuEntry_t ME_VR_MENUPOINTER = MAKE_MENUENTRY( "Menu laser pointer", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_MENUPOINTER, Option );
 static MenuOption_t MEO_VR_NAMETAGS = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &cl_nametags );
 static MenuEntry_t ME_VR_NAMETAGS = MAKE_MENUENTRY( "Name tags (multiplayer)", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_NAMETAGS, Option );
 #ifdef USE_VOICECHAT
@@ -1448,6 +1450,7 @@ static MenuEntry_t *MEL_VRSETUP[] = {
     &ME_VR_FOVEATIONLEVEL,
     &ME_VR_LASER,
     &ME_VR_LEFTTRIGGER,
+    &ME_VR_MENUPOINTER,
     &ME_VR_NAMETAGS,
 #ifdef USE_VOICECHAT
     &ME_VR_VOICE,
@@ -5810,6 +5813,11 @@ static inline int32_t Menu_UpdateScreenOK(MenuID_t cm)
 */
 
 int32_t m_mouselastactivity;
+
+int32_t Menu_CurrentEntry(void)
+{
+    return (m_currentMenu && m_currentMenu->type == Menu) ? ((MenuMenu_t *)m_currentMenu->object)->currentEntry : -1;
+}
 #if !defined EDUKE32_TOUCH_DEVICES
 int32_t m_mousewake_watchpoint, m_menuchange_watchpoint;
 #endif
