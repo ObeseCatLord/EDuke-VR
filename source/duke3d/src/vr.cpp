@@ -909,16 +909,16 @@ static bool radioGesture(bool talkMode)
             if (distance<(held && h==heldHand ? .25f : .19f) && -local.z<.12f && local.y>-.22f) hand=h;
         }
     }
-    bool const near=hand>=0;
-    if (near!=held)
+    bool const raised=hand>=0;
+    if (raised!=held)
     {
-        held=near;
-        int const buzz=near ? hand : heldHand;
-        if (near) heldHand=hand;
-        Voice_RadioBeep(near);
+        held=raised;
+        int const buzz=raised ? hand : heldHand;
+        if (raised) heldHand=hand;
+        Voice_RadioBeep(raised);
         if (inputRuntime && buzz>=0) inputRuntime->vibrate(unsigned(buzz),.35f,.04f);
         if (std::getenv("EDUKE32_XR_TEST_INPUT") || std::getenv("EDUKE32_XR_TEST_RADIO"))
-            LOG_F(INFO,"VR radio push-to-talk: %s (hand %d).",near ? "on" : "off",buzz);
+            LOG_F(INFO,"VR radio push-to-talk: %s (hand %d).",raised ? "on" : "off",buzz);
     }
     return held;
 }
