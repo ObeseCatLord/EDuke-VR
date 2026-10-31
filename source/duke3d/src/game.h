@@ -346,6 +346,10 @@ static FORCE_INLINE int dukeMaybeDrawFrame(void)
 extern int32_t g_BenchmarkMode;
 extern int32_t g_Debug;
 extern int32_t g_Shareware;
+extern int32_t mp_sharekeys, cl_nametags;
+extern uint8_t g_sharedAccess;
+// Co-op keycard sharing (mp_sharekeys): a key one player picks up goes to everyone.
+bool G_SharingKeys(void);
 extern int32_t g_cameraClock;
 extern int32_t g_cameraDistance;
 extern int32_t g_crosshairSum;

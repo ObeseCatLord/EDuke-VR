@@ -4876,9 +4876,9 @@ static void runConsoleRequest()
                 auto const &body=sprite[q->i];
                 LOG_F(INFO,"VR where: player=%d local=%d pos=%d,%d,%d ang=%d weapon=%d sprite=%d,%d,%d,%d.",i,int(i==myconnectindex),
                       q->pos.x,q->pos.y,q->pos.z,fix16_to_int(q->q16ang),q->curr_weapon,body.x,body.y,body.z,body.ang);
-                LOG_F(INFO,"VR where sprite: player=%d index=%d picnum=%d cstat=%d xrepeat=%d extra=%d dead=%d floorz=%d.",i,q->i,
+                LOG_F(INFO,"VR where sprite: player=%d index=%d picnum=%d cstat=%d xrepeat=%d extra=%d dead=%d floorz=%d access=%d.",i,q->i,
                       body.picnum,body.cstat,body.xrepeat,body.extra,int(q->dead_flag),
-                      (unsigned)body.sectnum<(unsigned)numsectors ? getflorzofslope(body.sectnum,body.x,body.y) : 0);
+                      (unsigned)body.sectnum<(unsigned)numsectors ? getflorzofslope(body.sectnum,body.x,body.y) : 0,q->got_access);
             }
             continue;
         }

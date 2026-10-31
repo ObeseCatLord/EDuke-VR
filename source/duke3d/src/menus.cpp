@@ -1433,6 +1433,8 @@ static char const *MEOSN_VR_LEFTTRIGGER[] = { "Mighty foot", "Alt fire", };
 static MenuOptionSet_t MEOS_VR_LEFTTRIGGER = MAKE_MENUOPTIONSET( MEOSN_VR_LEFTTRIGGER, NULL, 0x2 );
 static MenuOption_t MEO_VR_LEFTTRIGGER = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_LEFTTRIGGER, &vr_lefttrigger );
 static MenuEntry_t ME_VR_LEFTTRIGGER = MAKE_MENUENTRY( "Left trigger", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_LEFTTRIGGER, Option );
+static MenuOption_t MEO_VR_NAMETAGS = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &cl_nametags );
+static MenuEntry_t ME_VR_NAMETAGS = MAKE_MENUENTRY( "Name tags (multiplayer)", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_NAMETAGS, Option );
 #ifdef USE_VOICECHAT
 static MenuLink_t MEO_VR_VOICE = { MENU_VOICE, MA_Advance, };
 static MenuEntry_t ME_VR_VOICE = MAKE_MENUENTRY( "Voice Chat Setup", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_VOICE, Link );
@@ -1446,6 +1448,7 @@ static MenuEntry_t *MEL_VRSETUP[] = {
     &ME_VR_FOVEATIONLEVEL,
     &ME_VR_LASER,
     &ME_VR_LEFTTRIGGER,
+    &ME_VR_NAMETAGS,
 #ifdef USE_VOICECHAT
     &ME_VR_VOICE,
 #endif
@@ -1597,6 +1600,8 @@ static MenuOption_t MEO_NETOPTIONS_MAPEXITS = MAKE_MENUOPTION( &MF_Bluefont, &ME
 static MenuEntry_t ME_NETOPTIONS_MAPEXITS = MAKE_MENUENTRY( "Map Exits", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_MAPEXITS, Option );
 static MenuOption_t MEO_NETOPTIONS_FRFIRE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &ud.m_ffire );
 static MenuEntry_t ME_NETOPTIONS_FRFIRE = MAKE_MENUENTRY( "Fr. Fire", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_FRFIRE, Option );
+static MenuOption_t MEO_NETOPTIONS_SHAREKEYS = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &mp_sharekeys );
+static MenuEntry_t ME_NETOPTIONS_SHAREKEYS = MAKE_MENUENTRY( "Share Keys", &MF_Redfont, &MEF_NetSetup, &MEO_NETOPTIONS_SHAREKEYS, Option );
 static MenuEntry_t ME_NETOPTIONS_ACCEPT = MAKE_MENUENTRY( "Accept", &MF_Redfont, &MEF_NetSetup_Confirm, &MEO_NETWORK_HOSTGAME, Link );
 
 static MenuEntry_t *MEL_NETOPTIONS[] = {
@@ -1606,6 +1611,7 @@ static MenuEntry_t *MEL_NETOPTIONS[] = {
     &ME_NETOPTIONS_MONSTERS,
     &ME_NETOPTIONS_MARKERS,
     &ME_NETOPTIONS_MAPEXITS,
+    &ME_NETOPTIONS_SHAREKEYS,
     &ME_NETOPTIONS_ACCEPT,
 };
 
@@ -2987,6 +2993,7 @@ static void Menu_Pre(MenuID_t cm)
             ME_NETOPTIONS_MARKERS.flags &= ~MEF_Disabled;
         }
         MEL_NETOPTIONS[5] = (g_gametypeFlags[ud.m_coop] & (GAMETYPE_PLAYERSFRIENDLY|GAMETYPE_TDM)) ? &ME_NETOPTIONS_FRFIRE : &ME_NETOPTIONS_MAPEXITS;
+        MenuEntry_DisableOnCondition(&ME_NETOPTIONS_SHAREKEYS, !(g_gametypeFlags[ud.m_coop] & GAMETYPE_COOP));
         break;
 
     case MENU_OPTIONS:

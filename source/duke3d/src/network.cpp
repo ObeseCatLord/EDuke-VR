@@ -189,6 +189,7 @@ typedef struct serverplayerupdate_s
     uint8_t  reloading;
     uint8_t  hbomb_on, hbomb_hold_delay, rapid_fire_hold;
     uint8_t  tipincs; // tipping a dancer runs in the server's actor code (the hand with the wad of bills)
+    uint8_t  got_access; // keycards: picked up in the server's actor code (and shared, mp_sharekeys)
     uint8_t  frags[MAXPLAYERS];
     int16_t  inv_amount[GET_MAX];
     int16_t  ammo_amount[MAX_WEAPONS];
@@ -2708,6 +2709,7 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
         g_player[player].ps->hbomb_hold_delay = playerupdate.hbomb_hold_delay;
         g_player[player].ps->rapid_fire_hold = playerupdate.rapid_fire_hold;
         g_player[player].ps->tipincs = playerupdate.tipincs;
+        g_player[player].ps->got_access = playerupdate.got_access;
 
         Bmemcpy(g_player[player].frags, playerupdate.frags, sizeof(playerupdate.frags));
         Bmemcpy(g_player[player].ps->inv_amount, playerupdate.inv_amount, sizeof(playerupdate.inv_amount));
@@ -5537,7 +5539,10 @@ void Net_SendServerUpdates(void)
         playerupdate.hbomb_on = g_player[i].ps->hbomb_on;
         playerupdate.hbomb_hold_delay = g_player[i].ps->hbomb_hold_delay;
         playerupdate.rapid_fire_hold = g_player[i].ps->rapid_fire_hold;
+        if (G_SharingKeys())
+            g_player[i].ps->got_access |= g_sharedAccess;
         playerupdate.tipincs = g_player[i].ps->tipincs;
+        playerupdate.got_access = uint8_t(g_player[i].ps->got_access);
         Bmemcpy(playerupdate.frags, g_player[i].frags, sizeof(playerupdate.frags));
         Bmemcpy(playerupdate.inv_amount, g_player[i].ps->inv_amount, sizeof(playerupdate.inv_amount));
         Bmemcpy(playerupdate.ammo_amount, g_player[i].ps->ammo_amount, sizeof(playerupdate.ammo_amount));

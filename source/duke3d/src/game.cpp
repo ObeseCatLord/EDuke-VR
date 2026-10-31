@@ -51,6 +51,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "vfs.h"
 #include "vr.h"
 #include "voice.h"
+#include "vrshoot.h"
 #ifdef USE_OPENGL
 # include "mdsprite.h"
 #endif
@@ -102,6 +103,14 @@ static const char *defaultrtsfilename[GAMECOUNT] = { "DUKE.RTS", "NAM.RTS", "NAP
 #endif
 
 int32_t g_Shareware = 0;
+int32_t mp_sharekeys = 1;   // co-op: a keycard one player picks up is everyone's (the server decides)
+int32_t cl_nametags = 1;    // multiplayer: other players' names over their heads
+uint8_t g_sharedAccess;     // keycards found on this level, while mp_sharekeys
+
+bool G_SharingKeys(void)
+{
+    return mp_sharekeys && (g_netServer || ud.multimode > 1) && (g_gametypeFlags[ud.coop] & GAMETYPE_COOP);
+}
 
 // This was 32 for a while, but I think lowering it to 24 will help things like the Dingoo.
 // Ideally, we would look at our memory usage on our most cramped platform and figure out
@@ -3823,6 +3832,108 @@ static void G_PlaceHeldWeapons(void)
 }
 #endif
 
+// Name tags (cl_nametags), after Quakespasm VR's co-op ones: the player's name over their head in
+// their colour, ((in brackets)) while they talk. Each is a tile drawn in the game's small font,
+// shown as a facing sprite, so walls and bodies hide it like anything else in the world.
+static constexpr int NametagTileBase = 30400;   // two per player: plain and talking
+
+static void G_NametagColour(int pal, int rgb[3])
+{
+    rgb[0] = rgb[1] = rgb[2] = 235;
+    if (pal <= 0 || pal >= MAXPALOOKUPS || !palookup[pal] || !palookup[0])
+        return;
+    // The colours the player's palette swap changes, brightest first.
+    int best = -1;
+    for (int i = 0; i < 256; i++)
+    {
+        int const to = (uint8_t)palookup[pal][i];
+        if (to == (uint8_t)palookup[0][i])
+            continue;
+        int const level = max(max(palette[to*3], palette[to*3+1]), palette[to*3+2]);
+        if (best < 0 || level > max(max(palette[best*3], palette[best*3+1]), palette[best*3+2]))
+            best = to;
+    }
+    if (best < 0)
+        return;
+    int const level = max(max(palette[best*3], palette[best*3+1]), palette[best*3+2]);
+    for (int c = 0; c < 3; c++)
+        rgb[c] = level > 0 ? min(255, palette[best*3+c] * 255 / level) : 235;
+}
+
+static int G_NametagTile(int playerNum, bool talking)
+{
+    int const tile = NametagTileBase + playerNum * 2 + talking;
+    char name[32], label[40];
+    int n = 0;
+    for (char const *s = g_player[playerNum].user_name; *s && n < (int)sizeof(name) - 1; s++)
+    {
+        if (*s == '^') { while (isdigit((uint8_t)s[1])) s++; continue; }   // colour codes
+        name[n++] = *s;
+    }
+    name[n] = 0;
+    if (!n)
+        return -1;
+    Bsnprintf(label, sizeof(label), talking ? "((%s))" : "%s", name);
+    int const pal = g_player[playerNum].ps->palookup;
+
+    static char made[MAXPLAYERS * 2][40];
+    static int madePal[MAXPLAYERS * 2];
+    int const slot = playerNum * 2 + talking;
+    if (waloff[tile] && madePal[slot] == pal && !Bstrcmp(made[slot], label))
+        return tile;
+
+    auto glyph = [](char c) { return (c > ' ' && c <= '~') ? STARTALPHANUM + c - '!' : -1; };
+    int width = 0, height = 1;
+    for (char const *c = label; *c; c++)
+    {
+        int const g = glyph(*c);
+        if (g < 0 || !tileLoad(g)) { width += 5; continue; }
+        width += tilesiz[g].x + 1;
+        height = max<int>(height, tilesiz[g].y);
+    }
+    int const w = width + 2, h = height + 2;
+    auto const pixels = (uint8_t *)tileCreate(tile, w, h);
+    if (!pixels)
+        return -1;
+    Bmemset(pixels, 255, w * h);
+    picanm[tile].xofs = picanm[tile].yofs = 0;
+
+    int rgb[3];
+    G_NametagColour(pal, rgb);
+    uint8_t shade[256];
+    for (int i = 0; i < 256; i++)
+    {
+        int const light = (palette[i*3] + palette[i*3+1] + palette[i*3+2]) / 3;   // 0..255
+        int const scale = 140 + light * 3 / 4;                                     // the font's shading, kept
+        shade[i] = paletteGetClosestColorUpToIndex(min(255, rgb[0] * scale / 255), min(255, rgb[1] * scale / 255),
+                                                   min(255, rgb[2] * scale / 255), 254);
+    }
+    uint8_t const black = paletteGetClosestColorUpToIndex(0, 0, 0, 254);
+
+    int x = 0;
+    for (char const *c = label; *c; c++)
+    {
+        int const g = glyph(*c);
+        if (g < 0 || !waloff[g]) { x += 5; continue; }
+        auto const src = (uint8_t const *)waloff[g];
+        for (int gx = 0; gx < tilesiz[g].x; gx++)
+            for (int gy = 0; gy < tilesiz[g].y; gy++)
+            {
+                uint8_t const p = src[gx * tilesiz[g].y + gy];
+                if (p == 255) continue;
+                uint8_t &under = pixels[(x + gx + 1) * h + gy + 1];
+                if (under == 255) under = black;                        // drop shadow
+                pixels[(x + gx) * h + gy] = shade[p];
+            }
+        x += tilesiz[g].x + 1;
+    }
+    tileInvalidate(tile, -1, -1);
+    LOG_F(INFO, "Name tag: player=%d \"%s\" colour=%d,%d,%d tile=%d %dx%d.", playerNum, label, rgb[0], rgb[1], rgb[2], tile, w, h);
+    Bstrcpy(made[slot], label);
+    madePal[slot] = pal;
+    return tile;
+}
+
 void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura, int32_t smoothratio)
 {
 #ifdef USE_OPENXR
@@ -4316,6 +4427,44 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                     playerTyping->xrepeat = 32;
                     playerTyping->yrepeat = 32;
                     playerTyping->pal     = 20;
+
+#ifdef USE_OPENXR
+                    G_XRInheritSprite(spritesortcnt,j);
+#endif
+                    spritesortcnt++;
+                }
+
+                int const nametag = (cl_nametags && !display_mirror && screenpeek != playerNum && pSprite->owner >= 0
+                                     && sprite[g_player[playerNum].ps->i].extra > 0
+                                     && !(playerNum == 0 && g_networkMode == NET_DEDICATED_CLIENT)   // the server's slot
+                                     && !(sprite[g_player[playerNum].ps->i].cstat & 32768))
+                                    ? G_NametagTile(playerNum, Voice_IsTalking(playerNum)) : -1;
+                if (nametag >= 0
+#ifdef USE_OPENXR
+                    && G_XRCanAppendSprite(maxspritesonscreen))
+#else
+                    && spritesortcnt < maxspritesonscreen)
+#endif
+                {
+                    auto const tag = &tsprite[spritesortcnt];
+                    auto const ps  = g_player[playerNum].ps;
+
+                    *tag = *t;
+                    tag->statnum = TSPR_TEMP;
+                    tag->cstat   = 0;
+                    tag->picnum  = nametag;
+                    tag->pal     = 0;
+                    tag->shade   = -8;
+                    tag->xrepeat = tag->yrepeat = 16;
+                    tag->clipdist |= TSPR_FLAGS_NO_SHADOW;
+                    // Over the head: a VR player's tracked eye, else the view height.
+                    vec3_t eye = { t->x, t->y, ps->pos.z };
+                    VRBodyPose pose;
+                    if (G_VRGetBodyPose(playerNum, pose, .5) && (pose.flags & VRBodyHead))
+                        eye = { t->x + pose.eye[0], t->y + pose.eye[1], ps->pos.z + pose.eye[2] };
+                    tag->x = eye.x;
+                    tag->y = eye.y;
+                    tag->z = eye.z - (6 << 8);
 
 #ifdef USE_OPENXR
                     G_XRInheritSprite(spritesortcnt,j);

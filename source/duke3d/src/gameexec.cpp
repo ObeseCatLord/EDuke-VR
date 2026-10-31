@@ -1033,13 +1033,23 @@ static void VM_AddInventory(DukePlayer_t * const pPlayer, int const itemNum, int
     }
 
     case GET_ACCESS:
+    {
+        int key = 0;
         switch (vm.pSprite->pal)
         {
-                case 0: pPlayer->got_access |= 1; break;
-                case 21: pPlayer->got_access |= 2; break;
-                case 23: pPlayer->got_access |= 4; break;
+                case 0: key = 1; break;
+                case 21: key = 2; break;
+                case 23: key = 4; break;
+        }
+        pPlayer->got_access |= key;
+        if (key && G_SharingKeys())
+        {
+            g_sharedAccess |= key;
+            for (int TRAVERSE_CONNECT(playerNum))
+                g_player[playerNum].ps->got_access |= key;
         }
         break;
+    }
 
         default: CON_ERRPRINTF("invalid inventory item %d", itemNum); break;
     }

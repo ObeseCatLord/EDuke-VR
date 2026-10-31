@@ -1925,6 +1925,7 @@ int G_EnterLevel(int gameMode)
         LevelLoading() { g_netLevelLoading = 1; }
         ~LevelLoading() { g_netLevelLoading = 0; }
     } const loading;
+    g_sharedAccess = 0;
     G_VRResetShots();
     G_VRResetBodyPoses();
     vote_map = vote_episode = voting = -1;

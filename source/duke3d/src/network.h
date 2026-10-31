@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
 // net packet specification/compatibility version
-#define NETVERSION    13 // server-announced level and episode ends (PACKET_END_LEVEL), VR shot sample (hand, head, use yaw), map-tagged world updates, voice and VR body pose channels; no older peers
+#define NETVERSION    14 // keycards synced (and shared), server-announced level and episode ends (PACKET_END_LEVEL), VR shot sample (hand, head, use yaw), map-tagged world updates, voice and VR body pose channels; no older peers
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;
