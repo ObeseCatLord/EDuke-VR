@@ -257,6 +257,11 @@ In multiplayer the mic state (`MIC READY` / `MIC LIVE`) and who is talking sit o
 the left watch, just above health. Game messages and menus stay on the panel in
 front of you.
 
+## Menus
+
+- **Menu laser pointer** (`vr_menupointer 1`, default; VR Setup **Menu laser pointer**): with a menu up, a beam from the controller shows where it points. The item under it highlights and the trigger selects it (sliders drag). The other hand's trigger takes the pointer over. A / X still select the highlighted item, and the sticks still move through menus.
+- Menus, the crosshair and other 2D art keep their true proportions on square or tall eye images (Bigscreen Beyond, Index), shown in a centred 4:3 band as on a 4:3 monitor.
+
 ## Aiming, 3D models and the 2D fallback
 
 - **Projected crosshair**: Duke's own crosshair is placed on whatever surface
@@ -318,6 +323,7 @@ Everything below is in **Options > Sound Setup > Voice Chat Setup** (also linked
 - **Transmit**: voice activation or push-to-talk.
 - **Push-to-talk key**: opens Key Configuration on the new **Push To Talk** action (default `V`; it is also assignable to mouse and controller buttons).
 - **VR push-to-talk button**: left Y / Index left B (instead of next weapon), left X / Index left A (instead of previous weapon), or right B (instead of crouch).
+- **Hand to head talks (radio)** (on by default): in push-to-talk mode, hold either hand up by your ear or at your mouth, as with a walkie-talkie. A chirp and a light buzz mark the microphone opening and closing. A hand held out in front (aiming down the sights) does not count.
 - activation sensitivity, microphone and voice volumes, distant talkers;
 - **Hear myself** (mic test) and the talker HUD.
 
@@ -328,6 +334,7 @@ A live microphone level meter at the bottom shows whether your voice opens the g
 | `voice_transmit` | 2 | 0 off, 1 on, 2 auto (VR on, desktop off) |
 | `voice_mode` | 0 | 0 voice activation, 1 push-to-talk (the Push_To_Talk binding; VR: `vr_ptt_button`) |
 | `vr_ptt_button` | 0 | VR talk button: 0 left Y (Index left B), 1 left X (Index left A), 2 right B |
+| `vr_ptt_radio` | 1 | in push-to-talk mode, a hand held up to your head talks |
 | `voice_vad_sensitivity` | 55 | 0-100 |
 | `voice_input_gain` / `voice_volume` | 1 / 1 | |
 | `voice_radio_volume` | 0.45 | distant talkers |
@@ -364,9 +371,15 @@ On a dedicated server, the server's own player 0 is not in the game: it is invis
 
 Verified across a real network with `tools/vr/smoke_xr_remote_coop.py`. That test uses two independent simulated headsets (`software_xr_lab.py --share-net --second-runtime`) against a dedicated aarch64 server on another machine.
 
+## Co-op
+
+- **Shared keycards** (`mp_sharekeys 1`, default; host menu **Share Keys**; set on the server): a keycard one player picks up opens doors for everyone, including players who join or respawn later on that level.
+- **Name tags** (`cl_nametags 1`, default; VR Setup **Name tags (multiplayer)**): other players' names over their heads, in their colour, shown as ((Name)) while they talk. Walls hide them. Multiplayer only.
+- **The whole campaign**: the end of an episode goes on to the next episode (wrapping to the first after the last one the server has), every player back to the pistol and full health. Each player sees the episode's ending; the server does not wait.
+
 ## Multiplayer compatibility
 
-Only identical, current builds play together. The network protocol (NETVERSION 9) always carries the VR shot sample (hand ray and head direction) in every input update; flat clients send it inactive. It also has voice and VR body pose channels. There is no negotiation and no support for older clients or servers, which are refused at connect.
+Only identical, current builds play together. The network protocol (NETVERSION 14) always carries the VR shot sample (hand ray and head direction) in every input update; flat clients send it inactive. It also has voice and VR body pose channels. There is no negotiation and no support for older clients or servers, which are refused at connect.
 
 ## Known limits
 

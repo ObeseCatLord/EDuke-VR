@@ -1383,6 +1383,8 @@ static char const *MEOSN_VOICE_VRBUTTON[] = { "Left Y / B", "Left X / A", "Right
 static MenuOptionSet_t MEOS_VOICE_VRBUTTON = MAKE_MENUOPTIONSET( MEOSN_VOICE_VRBUTTON, NULL, 0x2 );
 static MenuOption_t MEO_VOICE_VRBUTTON = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VOICE_VRBUTTON, &vr_ptt_button );
 static MenuEntry_t ME_VOICE_VRBUTTON = MAKE_MENUENTRY( "VR talk button", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_VRBUTTON, Option );
+static MenuOption_t MEO_VOICE_VRRADIO = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_ptt_radio );
+static MenuEntry_t ME_VOICE_VRRADIO = MAKE_MENUENTRY( "Hand to head talks (radio)", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_VRRADIO, Option );
 #endif
 static MenuOption_t MEO_VOICE_LOOPBACK = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &voice_loopback );
 static MenuEntry_t ME_VOICE_LOOPBACK = MAKE_MENUENTRY( "Hear myself (mic test)", &MF_Bluefont, &MEF_SmallOptions, &MEO_VOICE_LOOPBACK, Option );
@@ -1397,6 +1399,7 @@ static MenuEntry_t *MEL_VOICE[] = {
     &ME_VOICE_PTTKEY,
 #ifdef USE_OPENXR
     &ME_VOICE_VRBUTTON,
+    &ME_VOICE_VRRADIO,
 #endif
     &ME_VOICE_SENSITIVITY,
     &ME_VOICE_GAIN,

@@ -29,7 +29,7 @@
 #include <vector>
 
 // VR settings (cvars; vr.h).
-int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1;
+int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1;
 int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
@@ -192,6 +192,7 @@ void G_XRRegisterCvars()
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
         { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
+        { "vr_ptt_radio", "VR push-to-talk (voice_mode 1) also by holding a hand up to your head, like a radio", (void *)&vr_ptt_radio, CVAR_BOOL, 0, 1 },
         { "vr_menupointer", "VR: point at menu items with a laser from the controller; its trigger selects", (void *)&vr_menupointer, CVAR_BOOL, 0, 1 },
         { "vr_physicalcrouch", "VR: ducking for real (head ~40 cm below your standing height) crouches", (void *)&vr_physicalcrouch, CVAR_BOOL, 0, 1 },
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
@@ -885,6 +886,43 @@ static bool updateMenuPointer(uint32_t const down[2])
     return true;   // the trigger belongs to the pointer, not to "select the highlighted item"
 }
 
+// Radio push-to-talk (vr_ptt_radio, in push-to-talk mode): a hand held up by the head, at the
+// ear or the mouth as with a walkie-talkie, keys the microphone; a chirp and a light buzz as it
+// opens and closes. Not a hand held out in front (aiming down the sights).
+static bool radioGesture(bool talkMode)
+{
+    static bool held;
+    static int heldHand=-1;
+    int hand=-1;
+    if (talkMode && vr_ptt_radio && rawInput.headValid && validPose(rawInput.headPose))
+    {
+        auto const &head=rawInput.headPose;
+        XrQuaternionf const inverse={-head.orientation.x,-head.orientation.y,-head.orientation.z,head.orientation.w};
+        for (int h=0;h<2 && hand<0;++h)
+        {
+            auto const &in=rawInput.hands[h];
+            if (!in.gripValid || !validPose(in.gripPose)) continue;
+            XrVector3f const rel={in.gripPose.position.x-head.position.x,in.gripPose.position.y-head.position.y,
+                                  in.gripPose.position.z-head.position.z};
+            XrVector3f const local=rotate(inverse,rel);   // x right, y up, -z ahead
+            float const distance=std::sqrt(dot(rel,rel));
+            if (distance<(held && h==heldHand ? .25f : .19f) && -local.z<.12f && local.y>-.22f) hand=h;
+        }
+    }
+    bool const near=hand>=0;
+    if (near!=held)
+    {
+        held=near;
+        int const buzz=near ? hand : heldHand;
+        if (near) heldHand=hand;
+        Voice_RadioBeep(near);
+        if (inputRuntime && buzz>=0) inputRuntime->vibrate(unsigned(buzz),.35f,.04f);
+        if (std::getenv("EDUKE32_XR_TEST_INPUT") || std::getenv("EDUKE32_XR_TEST_RADIO"))
+            LOG_F(INFO,"VR radio push-to-talk: %s (hand %d).",near ? "on" : "off",buzz);
+    }
+    return held;
+}
+
 static void publishInput()
 {
     using namespace eduke_xr;
@@ -973,7 +1011,8 @@ static void publishInput()
         bool const ducking=physicallyDucking();
         button((talkFree(1,ButtonSecondary) && (down[1]&ButtonSecondary)) || ducking,gamefunc_Crouch);
     }
-    Voice_SetPushToTalk(talkMode && (down[talkHand]&talkBit));
+    bool const radio=radioGesture(talkMode);
+    Voice_SetPushToTalk(talkMode && ((down[talkHand]&talkBit) || radio));
     if (physicalThrowEnabled() && aimHand()>=0)
     {
         int const hand=aimHand();

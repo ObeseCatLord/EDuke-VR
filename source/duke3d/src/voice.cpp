@@ -641,6 +641,35 @@ bool Voice_PushToTalkMode(void) { return voice_enable && voice_mode==1; }
 
 void Voice_SetPushToTalk(bool held) { vrPushToTalk = held; }
 
+void Voice_RadioBeep(bool on)
+{
+    // Two short tones, like a walkie-talkie key-up / key-down: 8-bit unsigned mono for FX_PlayRaw.
+    constexpr int rate = 22050, tone = rate * 55 / 1000, gap = rate * 15 / 1000;
+    static char sound[2][2 * tone + gap];
+    static bool made;
+    if (!made)
+    {
+        made = true;
+        float const pitch[2][2] = { { 1000.f, 900.f }, { 1100.f, 1500.f } };   // off: falling; on: rising
+        for (int s = 0; s < 2; s++)
+            for (int i = 0; i < 2 * tone + gap; i++)
+            {
+                int const part = i < tone ? 0 : i < tone + gap ? -1 : 1, at = part == 1 ? i - tone - gap : i;
+                float value = 0.f;
+                if (part >= 0)
+                {
+                    float const envelope = std::min(1.f, std::min(at, tone - at) / (rate * .004f));
+                    value = .55f * envelope * std::sin(2.f * float(M_PI) * pitch[s][part] * at / rate);
+                }
+                sound[s][i] = char(uint8_t(std::lround(128.f + 127.f * value)));
+            }
+    }
+    if (!ud.config.SoundToggle)
+        return;
+    int const volume = std::max(1, std::min(255, int(ud.config.FXVolume)));
+    FX_PlayRaw(sound[on], sizeof(sound[on]), rate, 0, volume, volume, volume, FX_MUSIC_PRIORITY, fix16_one, MUSIC_ID);
+}
+
 int Voice_CaptureDevices(char const ***names)
 {
     static std::vector<std::string> list;
