@@ -1047,6 +1047,10 @@ extern int32_t usevoxels, voxscale[MAXVOXELS];
 // Voxel replacements of sprites farther than this from the camera (Build units; 0: no limit) draw
 // as their flat sprites. Voxel sprites with no flat form (slabs) always draw as voxels.
 extern int32_t r_voxeldistance;
+// Floor and slope sprites lie in the plane of the floor under them; on a depth buffer they fight
+// with it (decals flicker, and differently in each eye of a headset). When set, they are drawn
+// lifted toward the camera by 1/N of their horizontal distance (Build z units; 0: off).
+extern int32_t r_floorspritelift;
 extern uint8_t voxflags[MAXVOXELS];
 extern char g_haveVoxels;
 

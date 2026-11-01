@@ -88,6 +88,7 @@ int16_t pskybits_override = -1;
 int16_t tiletovox[MAXTILES];
 int32_t usevoxels = 1;
 int32_t r_voxeldistance;
+int32_t r_floorspritelift;
 #ifdef USE_OPENGL
 static char *voxfilenames[MAXVOXELS];
 #endif

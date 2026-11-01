@@ -5199,6 +5199,8 @@ void G_XRBeginFrame()
     // Voxel detail distance (vr_voxeldistance): far voxels cost a lot on standalone headsets and
     // look like their sprites at that range.
     r_voxeldistance=rotatesprite_letterbox ? int32_t(vr_voxeldistance*UnitsPerMetre) : 0;
+    // Floor decals: lift 1/128 z unit per Build unit away (0.5 mm at 1 m, 15 mm at 30 m).
+    r_floorspritelift=rotatesprite_letterbox ? 128 : 0;
     runConsoleRequest();
     precacheVRModels();
     crosshairViews={};

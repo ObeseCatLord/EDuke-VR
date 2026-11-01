@@ -11196,6 +11196,13 @@ void polymost_drawsprite(int32_t snum)
 
         case CSTAT_SPRITE_ALIGNMENT_FLOOR:  // Floor sprite
         case CSTAT_SPRITE_ALIGNMENT_SLOPE:  // Sloped sprite
+            if (r_floorspritelift > 0)
+            {
+                // tsprite is this pass's copy: lift it off the floor plane toward the camera.
+                int64_t const dx = tspr->x - globalposx, dy = tspr->y - globalposy;
+                int32_t const lift = 1 + int32_t(Bsqrtf(float(dx*dx + dy*dy)) / r_floorspritelift);
+                tspr->z += (globalposz < tspr->z) ? -lift : lift;
+            }
             globvis2 = globalhisibility2;
             if (sector[tspr->sectnum].visibility != 0)
                 globvis2 = mulscale4(globvis2, (uint8_t)(sector[tspr->sectnum].visibility + 16));
