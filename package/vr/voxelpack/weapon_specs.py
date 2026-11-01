@@ -26,8 +26,10 @@ SPECS = {
     # handle half way along (Duke's 2D HUD holds that one, but in VR it is the support)
     'rpg': dict(kvx='23_RPG', **STD, grip=dict(x=(68, 76), y=(6, 12), z=(12, 20)),
                 support=dict(x=(28, 30), y=(19, 26), z=(16, 18))),
-    'freezer': dict(kvx='24_FREEZE', **STD, grip=dict(x=(31, 35), y=(23, 29), z=(10, 14)), handlebar=True,
-                    support=dict(x=(26, 36), y=(0, 22), z=(3, 8))),
+    # trigger hand around the rear end (the stock-like block behind the tank); off hand on the side
+    # handle (Duke's 2D HUD holds that one, but in VR it is the support), as for the RPG
+    'freezer': dict(kvx='24_FREEZE', **STD, grip=dict(x=(64, 69), y=(8, 16), z=(14, 21)),
+                    support=dict(x=(31, 35), y=(23, 29), z=(10, 14))),
     'shrinker': dict(kvx='25_SHRINK', **STD, grip=dict(x=(65, 78), z=(19, 25)), grip_axis=(0.0, 1.0),
                      support=dict(x=(38, 48), z=(12, 17)), glow='green'),
     'expander': dict(kvx='32_EXPANDER', **STD, grip=dict(x=(65, 78), z=(43, 49)), grip_axis=(0.0, 1.0),
