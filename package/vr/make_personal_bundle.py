@@ -175,7 +175,16 @@ mkdir "$tmp/x"
 tar -xzf "$archive" -C "$tmp/x"
 new=$(find "$tmp/x" -maxdepth 2 -name play.sh -printf '%h\n' | head -n1)
 [[ -n $new && -x $new/$dir/eduke32-vr ]] || { echo "update: $archive is not an EDuke VR archive for $(uname -m)" >&2; exit 1; }
-cp -a "$new/." "$here/"
+# Each file is copied in beside its old copy and renamed over it: a running game's executable and
+# libraries are replaced too (they stay valid for the running game). VERSION is written last, so an
+# update that fails part way is retried in full next time.
+(cd "$new" && find . -type d -print0) | while IFS= read -r -d '' d; do mkdir -p "$here/$d"; done
+while IFS= read -r -d '' f; do
+    [[ $f == ./VERSION ]] && continue
+    cp -a "$new/$f" "$here/$f.update-new" && mv -f "$here/$f.update-new" "$here/$f" \
+        || { rm -f "$here/$f.update-new"; echo "update: could not replace $f" >&2; exit 1; }
+done < <(cd "$new" && find . \( -type f -o -type l \) -print0)
+cp -a "$new/VERSION" "$here/VERSION"
 echo "EDuke VR is now $(cat "$here/VERSION" 2>/dev/null || echo updated)."
 exit 0
 }
@@ -306,8 +315,10 @@ try {
     Expand-Archive -Path $Archive -DestinationPath "$tmp\x"
     $new = Get-ChildItem "$tmp\x" -Recurse -Filter play.bat | Select-Object -First 1
     if (-not $new -or -not (Test-Path (Join-Path $new.DirectoryName 'windows\eduke32-vr.exe'))) { throw "$Archive is not an EDuke VR archive" }
-    robocopy $new.DirectoryName $here /E /IS /IT /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "Copying the update failed (robocopy exit $LASTEXITCODE)." }
+    # VERSION last, so an update that fails part way is retried in full next time.
+    robocopy $new.DirectoryName $here /E /IS /IT /XF VERSION /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Copying the update failed (robocopy exit $LASTEXITCODE). Close EDuke VR and run the update again." }
+    Copy-Item -Force (Join-Path $new.DirectoryName 'VERSION') (Join-Path $here 'VERSION')
     Write-Host ('EDuke VR is now ' + (Get-Content "$here\VERSION" -Raw).Trim() + '.')
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
