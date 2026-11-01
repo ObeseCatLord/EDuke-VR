@@ -1,0 +1,8 @@
+[
+ {"pose": {"head": [0, 1.6, 0, 0, -20, 0], "left": [-0.2, 1.25, -0.35, 0, 0, 0], "right": [0.12, 1.3, -0.32, 25, 0, 0]}},
+ {"console": "xr_weapons"}, {"wait": 3},
+ {"console": "xr_select 9"}, {"wait": 3},
+ {"capture": "freezer"},
+ {"pose": {"head": [0, 1.6, 0, 60, -25, 0], "right": [0.12, 1.3, -0.32, 25, 0, 0]}}, {"wait": 2},
+ {"capture": "freezer-side"}
+]
