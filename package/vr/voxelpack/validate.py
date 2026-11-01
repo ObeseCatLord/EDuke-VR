@@ -21,6 +21,16 @@ V6 = Path(os.environ.get('EDUKE32_VR_ASSETS', ROOT.parent)) / 'v6-original'
 EXP = ROOT / 'exports/eduke32'
 
 
+
+# vr_duke / vr_duke_body are stored with +Y to the right (build_duke_skinned.py) and the engine draws
+# these sprite models mirrored back, keeping their triangle order: they are outward-facing as drawn,
+# so their volume is measured as drawn (in file coordinates it is negative by design).
+ENGINE_MIRRORED = ('vr_duke', 'vr_duke_body')
+
+
+def engine_mirror(stem):
+    return np.array([1.0, -1.0, 1.0]) if Path(stem).name in ENGINE_MIRRORED else np.ones(3)
+
 def check(stem):
     m = read(EXP / f'{stem}.md3')
     v = read(V6 / 'exports/eduke32' / f'{stem}.md3')
@@ -56,7 +66,7 @@ def check(stem):
         ext = [np.ptp(s['xyz'][fi], 0).max() for fi in range(len(fn))]
         fi = int(np.argmax(ext))
         P = s['xyz'][fi] * 64
-        vol = signed_volume(P, s['tris'].astype(np.int64))
+        vol = signed_volume(P * engine_mirror(stem), s['tris'].astype(np.int64))
         if vol <= 0:
             vol_ok = False
         wc = weld_check(P, s['tris'].astype(np.int64))
