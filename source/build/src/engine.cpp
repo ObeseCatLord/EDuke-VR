@@ -87,6 +87,7 @@ int16_t pskybits_override = -1;
 //void loadvoxel(int32_t voxindex) { UNREFERENCED_PARAMATER(voxindex); }
 int16_t tiletovox[MAXTILES];
 int32_t usevoxels = 1;
+int32_t r_voxeldistance;
 #ifdef USE_OPENGL
 static char *voxfilenames[MAXVOXELS];
 #endif

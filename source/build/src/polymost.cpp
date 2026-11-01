@@ -4046,7 +4046,15 @@ static inline bool polymost_spriteIsLegacyVoxel(tspritetype const * const tspr)
 static inline bool polymost_spriteIsModernVoxel(tspritetype const * const tspr)
 {
     auto const picnum = tspr->picnum;
-    return !polymost_spriteIsLegacyVoxel(tspr) && usevoxels && (unsigned)tiletovox[picnum] < MAXVOXELS && voxmodels[tiletovox[picnum]];
+    if (polymost_spriteIsLegacyVoxel(tspr) || !usevoxels || (unsigned)tiletovox[picnum] >= MAXVOXELS || !voxmodels[tiletovox[picnum]])
+        return false;
+    if (r_voxeldistance > 0)
+    {
+        int64_t const dx = tspr->x - globalposx, dy = tspr->y - globalposy, dz = (tspr->z - globalposz) >> 4;
+        if (dx*dx + dy*dy + dz*dz > int64_t(r_voxeldistance) * r_voxeldistance)
+            return false;
+    }
+    return true;
 }
 
 #ifdef USE_OPENXR

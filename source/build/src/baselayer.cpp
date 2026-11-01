@@ -817,6 +817,7 @@ int32_t baselayer_init(void)
         { "r_novoxmips","turn off/on the use of mipmaps when rendering 8-bit voxels",(void *) &novoxmips, CVAR_BOOL, 0, 1 },
         { "r_rotatespriteinterp", "interpolate repeated rotatesprite calls", (void *)&r_rotatespriteinterp, CVAR_BOOL, 0, 1 },
         { "r_voxels","enable/disable automatic sprite->voxel rendering",(void *) &usevoxels, CVAR_BOOL, 0, 1 },
+        { "r_voxeldistance","sprite->voxel replacements farther than this (Build units, 0: unlimited) draw as flat sprites",(void *) &r_voxeldistance, CVAR_INT, 0, 1<<20 },
         { "r_maxfps", "limit the frame rate", (void *)&r_maxfps, CVAR_INT | CVAR_FUNCPTR, -2, 1000 },
 #ifdef YAX_ENABLE
         { "r_tror_nomaskpass", "enable/disable additional pass in TROR software rendering", (void *)&r_tror_nomaskpass, CVAR_BOOL, 0, 1 },

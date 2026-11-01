@@ -2451,6 +2451,11 @@ void P_DisplayScuba(void)
 
         if (VM_OnEvent(EVENT_DISPLAYSCUBA, pPlayer->i, screenpeek) != 0)
             return;
+#ifdef USE_OPENXR
+        // A flat mask outline stuck to both eyes; in VR the underwater view says enough.
+        if (sdlayer_xr_worldRuntime())
+            return;
+#endif
 
         int const scubaPal = P_GetHudPal(pPlayer);
         int scubaY = 200 - tilesiz[SCUBAMASK].y;

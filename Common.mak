@@ -1028,6 +1028,8 @@ ifeq ($(USE_OPENXR),1)
         endif
         COMPILERFLAGS += -DUSE_OPENXR $(shell pkg-config --cflags openxr gl x11)
         LIBS += $(shell pkg-config --libs openxr gl x11)
+        # The driver trace-marker guard's open() wrappers (vr.cpp) must be visible to drivers.
+        LIBS += -Wl,--dynamic-list=$(abspath package/vr/linux-exports.list)
     endif
 endif
 

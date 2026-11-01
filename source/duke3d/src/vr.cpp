@@ -27,9 +27,16 @@
 #include <cmath>
 #include <cstdlib>
 #include <vector>
+#ifdef __linux__
+#include <cerrno>
+#include <cstdarg>
+#include <fcntl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 // VR settings (cvars; vr.h).
-int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1;
+int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=0;
 int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
@@ -192,6 +199,7 @@ void G_XRRegisterCvars()
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
         { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
+        { "vr_voxeldistance", "VR: voxel objects farther than this many metres draw as flat sprites (0: all voxels; performance)", (void *)&vr_voxeldistance, CVAR_INT, 0, 200 },
         { "vr_ptt_radio", "VR push-to-talk (voice_mode 1) also by holding a hand up to your head, like a radio", (void *)&vr_ptt_radio, CVAR_BOOL, 0, 1 },
         { "vr_menupointer", "VR: point at menu items with a laser from the controller; its trigger selects", (void *)&vr_menupointer, CVAR_BOOL, 0, 1 },
         { "vr_physicalcrouch", "VR: ducking for real (head ~40 cm below your standing height) crouches", (void *)&vr_physicalcrouch, CVAR_BOOL, 0, 1 },
@@ -5148,10 +5156,49 @@ char const *G_XRFoveationAutoName()
     return runtime->foveation().steamFrame ? "Auto (eye-tracked)" : "Auto (off)";
 }
 
+// Some Mesa builds (SteamOS on the Steam Frame) write a kernel trace marker for almost every GL
+// call while kernel tracing is on, which is the default: a formatted string and a write() system
+// call per call, about a sixth of the CPU time in big maps (~700,000 writes a second). The
+// driver writes only if it can open trace_marker, so this executable exports its own open()
+// (package/vr/linux-exports.list; the dynamic linker binds the drivers' open() calls here) that
+// refuses kernel trace_marker files and passes everything else straight to the kernel.
+// EDUKE32_KEEP_TRACE_MARKERS=1 lets them through (GPU traces with gpuvis).
+#ifdef __linux__
+static bool traceMarkerPath(char const *path)
+{
+    if (!path) return false;
+    static int const keep=std::getenv("EDUKE32_KEEP_TRACE_MARKERS") ? 1 : 0;
+    size_t const n=std::strlen(path);
+    static char const tail[]="tracing/trace_marker";
+    return !keep && n>=sizeof(tail)-1 && !std::strcmp(path+n-(sizeof(tail)-1),tail);
+}
+static int openThrough(int dir, char const *path, int flags, mode_t mode)
+{
+    if (traceMarkerPath(path)) { errno=EACCES; return -1; }
+    return int(syscall(SYS_openat,dir,path,flags,mode));
+}
+static mode_t openMode(int flags, va_list args)
+{
+    return (flags & O_CREAT) || (flags & __O_TMPFILE)==__O_TMPFILE ? mode_t(va_arg(args,int)) : 0;
+}
+extern "C"
+{
+int open(char const *path, int flags, ...) { va_list a; va_start(a,flags); mode_t const m=openMode(flags,a); va_end(a); return openThrough(AT_FDCWD,path,flags,m); }
+int open64(char const *path, int flags, ...) { va_list a; va_start(a,flags); mode_t const m=openMode(flags,a); va_end(a); return openThrough(AT_FDCWD,path,flags,m); }
+int openat(int dir, char const *path, int flags, ...) { va_list a; va_start(a,flags); mode_t const m=openMode(flags,a); va_end(a); return openThrough(dir,path,flags,m); }
+int openat64(int dir, char const *path, int flags, ...) { va_list a; va_start(a,flags); mode_t const m=openMode(flags,a); va_end(a); return openThrough(dir,path,flags,m); }
+int __open_2(char const *path, int flags) { return openThrough(AT_FDCWD,path,flags,0); }
+int __open64_2(char const *path, int flags) { return openThrough(AT_FDCWD,path,flags,0); }
+}
+#endif
+
 void G_XRBeginFrame()
 {
     // Square or tall eye images: 2D art (menus, crosshair, HUD) keeps its proportions.
     rotatesprite_letterbox=sdlayer_xr_worldRuntime()!=nullptr;
+    // Voxel detail distance (vr_voxeldistance): far voxels cost a lot on standalone headsets and
+    // look like their sprites at that range.
+    r_voxeldistance=rotatesprite_letterbox ? int32_t(vr_voxeldistance*UnitsPerMetre) : 0;
     runConsoleRequest();
     precacheVRModels();
     crosshairViews={};

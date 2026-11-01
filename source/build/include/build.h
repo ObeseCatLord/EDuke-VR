@@ -1044,6 +1044,9 @@ extern float debug1, debug2;
 
 extern int16_t tiletovox[MAXTILES];
 extern int32_t usevoxels, voxscale[MAXVOXELS];
+// Voxel replacements of sprites farther than this from the camera (Build units; 0: no limit) draw
+// as their flat sprites. Voxel sprites with no flat form (slabs) always draw as voxels.
+extern int32_t r_voxeldistance;
 extern uint8_t voxflags[MAXVOXELS];
 extern char g_haveVoxels;
 
