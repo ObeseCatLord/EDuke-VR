@@ -36,7 +36,7 @@
 #endif
 
 // VR settings (cvars; vr.h).
-int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=0;
+int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=24;
 int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
@@ -199,7 +199,7 @@ void G_XRRegisterCvars()
         { "vr_laser", "VR laser pointer from the weapon to the aim point", (void *)&vr_laser, CVAR_BOOL, 0, 1 },
         { "vr_fullbody", "VR true full body (IK arms/legs; hands attached); 0 = floating hands and foot", (void *)&vr_fullbody, CVAR_BOOL, 0, 1 },
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
-        { "vr_voxeldistance", "VR: voxel objects farther than this many metres draw as flat sprites (0: all voxels; performance)", (void *)&vr_voxeldistance, CVAR_INT, 0, 200 },
+        { "vr_voxeldistance", "VR: voxel objects farther than this many metres draw as flat sprites (0: all; distant detailed voxels cost a lot of GPU on standalone headsets)", (void *)&vr_voxeldistance, CVAR_INT, 0, 200 },
         { "vr_ptt_radio", "VR push-to-talk (voice_mode 1) also by holding a hand up to your head, like a radio", (void *)&vr_ptt_radio, CVAR_BOOL, 0, 1 },
         { "vr_menupointer", "VR: point at menu items with a laser from the controller; its trigger selects", (void *)&vr_menupointer, CVAR_BOOL, 0, 1 },
         { "vr_physicalcrouch", "VR: ducking for real (head ~40 cm below your standing height) crouches", (void *)&vr_physicalcrouch, CVAR_BOOL, 0, 1 },
