@@ -4758,6 +4758,14 @@ skip:
                         tsprShadow->cstat  |= 2;
                         tsprShadow->z       = shadowZ;
                         tsprShadow->pal     = ud.shadow_pal;
+                        if (r_floorspritelift > 0)
+                        {
+                            // Shadows lie on the floor and fight it on the depth buffer (in a headset,
+                            // differently in each eye): lift them like floor sprites (polymost).
+                            auto const &eye = g_player[screenpeek].ps->pos;
+                            float const dx = float(t->x - eye.x), dy = float(t->y - eye.y);
+                            tsprShadow->z -= 1 + int32_t(Bsqrtf(dx*dx + dy*dy) / r_floorspritelift);
+                        }
 
 #ifdef USE_OPENGL
                         if (videoGetRenderMode() >= REND_POLYMOST)

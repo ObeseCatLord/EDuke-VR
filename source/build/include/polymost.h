@@ -120,6 +120,10 @@ bool polymost_xrReplaySubmitted();
 void polymost_xrObserveMaskInput(int eye, bool reference);
 void polymost_xrMeasureNativeMasks(int eye, uint32_t frame);
 bool polymost_xrCollectingModels();
+// Room-over-room levels interleave each layer's rooms and sprites in one traversal: while a stereo
+// collection records rooms, switch it to the sprite (masks) phase and back, keeping one stream.
+bool polymost_xrCollectingRooms();
+void polymost_xrSwitchCollectionPhase(polymost_xr_collect_phase phase);
 void polymost_xrRejectModel(char const *reason);
 void polymost_xrBeginModelInstance(int32_t instance, int32_t model, int32_t surfaces);
 void polymost_xrEndModelInstance();

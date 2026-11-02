@@ -394,6 +394,19 @@ static bool polymost_xrCollectingMasks()
 }
 
 bool polymost_xrCollectingModels() { return xrOpaque.active && xrOpaque.phase==POLYMOST_XR_MODELS; }
+bool polymost_xrCollectingRooms() { return xrOpaque.active && !xrOpaque.rejected && xrOpaque.phase==POLYMOST_XR_OPAQUE; }
+
+void polymost_xrSwitchCollectionPhase(polymost_xr_collect_phase const phase)
+{
+    if (!xrOpaque.active || xrOpaque.rejected) return;
+    if ((phase!=POLYMOST_XR_OPAQUE && phase!=POLYMOST_XR_MASKS)
+        || (xrOpaque.phase!=POLYMOST_XR_OPAQUE && xrOpaque.phase!=POLYMOST_XR_MASKS))
+    { polymost_xrRejectOpaque("unsupported collection phase switch"); return; }
+    if (xrOpaque.transport.pending) { polymost_xrRejectOpaque("collection phase switch inside a draw"); return; }
+    if (phase!=POLYMOST_XR_OPAQUE && (editstatus || r_polygonmode))
+    { polymost_xrRejectOpaque("unsupported mask editor or polygon mode"); return; }
+    xrOpaque.phase=phase;
+}
 void polymost_xrRejectModel(char const *reason) { polymost_xrRejectOpaque(reason); }
 
 void polymost_xrBeginModelInstance(int32_t instance, int32_t model, int32_t surfaces)

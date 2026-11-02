@@ -447,8 +447,12 @@ static struct
     bool hideNative=false; // whole native weapon segment hidden (see nativeWeaponHidden)
 } handModelReceipt;
 
+// Per performance window (EDUKE32_XR_PERF): world frames whose rooms / sprites replayed single-pass.
+static unsigned perfWorldFrames, perfOpaqueSingle, perfMasksSingle;
+
 static void accountWorldFrame(bool opaque, bool masks, bool fixture, bool models=true, bool handModels=false)
 {
+    ++perfWorldFrames; perfOpaqueSingle+=opaque; perfMasksSingle+=masks;
     ++worldFrames;
     if (opaque) ++worldMultiviewFrames; else ++worldOracleFrames;
     if (masks) ++worldMaskMultiviewFrames; else ++worldMaskOracleFrames;
@@ -5046,10 +5050,12 @@ static void logPerf(eduke_xr::Runtime *runtime)
     auto const p=runtime->takePerf();
     double const n=std::max(1u,frameCount), world=std::max(1u,xrTiming.frames);
     double const gpu=p.gpuFrames ? p.gpuMs/p.gpuFrames : -1.;
-    LOG_F(INFO,"OpenXR perf: fps=%.1f frame=%.2f (max %.2f) ms; wait=%.2f render-cpu=%.2f [world=%.2f: opaque=%.2f anim=%.2f models=%.2f masks=%.2f; flushes=%.2f x%.1f] gpu=%.2f ms.",
+    LOG_F(INFO,"OpenXR perf: fps=%.1f frame=%.2f (max %.2f) ms; wait=%.2f render-cpu=%.2f [world=%.2f: opaque=%.2f anim=%.2f models=%.2f masks=%.2f; flushes=%.2f x%.1f] gpu=%.2f ms; single-pass rooms=%u/%u sprites=%u/%u.",
           frameCount*1000./(now-windowStart),frameSum/n,frameMax,p.waitMs/std::max(1u,p.frames),p.renderMs/std::max(1u,p.frames),
           xrTiming.total/world,xrTiming.opaque/world,xrTiming.animate/world,xrTiming.models/world,xrTiming.masks/world,
-          p.flushMs/std::max(1u,p.frames),double(p.flushes)/std::max(1u,p.frames),gpu);
+          p.flushMs/std::max(1u,p.frames),double(p.flushes)/std::max(1u,p.frames),gpu,
+          perfOpaqueSingle,perfWorldFrames,perfMasksSingle,perfWorldFrames);
+    perfWorldFrames=perfOpaqueSingle=perfMasksSingle=0;
     xrTiming={};
     windowStart=now; frameSum=frameMax=0.; frameCount=0;
 }
@@ -5781,8 +5787,11 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     char const *singleValue=sdlayer_xr_option("EDUKE32_XR_SINGLE_PASS");
     // Split full-pitch eyes carry two camera rotations per eye; their replay
     // uses the per-eye reference path until multiview can pair split passes.
-    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1") && !eyes[0].split && !eyes[1].split && !numyaxbunches
-        && !mirrorSeen;
+    // Room-over-room layers are collected into the same stereo stream (each layer's sprites in the
+    // masks phase, polymost_xrSwitchCollectionPhase); EDUKE32_XR_TEST_YAX_TWOPASS keeps the per-eye path.
+    static bool const yaxTwoPass=std::getenv("EDUKE32_XR_TEST_YAX_TWOPASS")!=nullptr;
+    bool const singlePass=singleValue && !Bstrcmp(singleValue,"1") && !eyes[0].split && !eyes[1].split
+        && !(numyaxbunches && yaxTwoPass) && !mirrorSeen;
     if (eyes[0].split || eyes[1].split)
     {
         static unsigned splitFrames;

@@ -66,6 +66,8 @@ def main():
     parser.add_argument('--poses', help='comma-separated subset of pose names')
     parser.add_argument('--play', action='store_true', help='launch through package/vr/eduke32-vr-play')
     parser.add_argument('--fail', help='EDUKE32_XR_TEST_FAIL injection point (one shot)')
+    parser.add_argument('--env', action='append', default=[], help='extra KEY=VALUE for the game')
+    parser.add_argument('--cfg', action='append', default=[], help='console line for the game\'s autoexec.cfg')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='pitch-', dir=args.work_dir.resolve()))
@@ -81,6 +83,11 @@ def main():
             env.pop(key)
     if args.fail:
         env['EDUKE32_XR_TEST_FAIL'] = args.fail
+    if args.cfg:
+        (lab / 'autoexec.cfg').write_text('\n'.join(args.cfg) + '\n')
+    for pair in args.env:
+        key, _, value = pair.partition('=')
+        env[key] = value
     log_path = lab / 'game.log'
     command = [str(args.binary.resolve()), '-usecwd', '-nosetup', '-noautoload']
     if args.play:

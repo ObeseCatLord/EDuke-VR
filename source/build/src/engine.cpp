@@ -1189,8 +1189,18 @@ void yax_drawrooms(void (*SpriteAnimFunc)(int32_t,int32_t,int32_t,int32_t,int32_
                          yax_globallev-YAX_MAXDRAWS, j, k, spritesortcnt,
                          (double)(1000*(timerGetPerformanceCounter()-t))/u64tickspersec);
 
+#ifdef USE_OPENXR
+                // A stereo collection records this layer's sprites in its masks phase, in order.
+                bool const xrRooms = videoGetRenderMode() == REND_POLYMOST && polymost_xrCollectingRooms();
+                if (xrRooms)
+                    polymost_xrSwitchCollectionPhase(POLYMOST_XR_MASKS);
+#endif
                 SpriteAnimFunc(globalposx, globalposy, globalposz, globalang, smoothr);
                 renderDrawMasks();
+#ifdef USE_OPENXR
+                if (xrRooms)
+                    polymost_xrSwitchCollectionPhase(POLYMOST_XR_OPAQUE);
+#endif
             }
 
             if (lev < maxlev[cf])
