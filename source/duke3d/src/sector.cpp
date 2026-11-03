@@ -264,6 +264,23 @@ int __fastcall A_FindPlayer(const spritetype *pSprite, int32_t *dist)
     return closestPlayer;
 }
 
+// Multiplayer clients: drop this game's own moves of a sector (lifts, doors) when the server says it
+// is at rest elsewhere.
+void G_StopSectorAnimations(int sectNum)
+{
+    for (int animNum = g_animateCnt - 1; animNum >= 0; animNum--)
+    {
+        if (g_animateSect[animNum] != sectNum)
+            continue;
+        G_StopInterpolation(g_animatePtr[animNum]);
+        g_animateCnt--;
+        g_animatePtr[animNum]  = g_animatePtr[g_animateCnt];
+        g_animateGoal[animNum] = g_animateGoal[g_animateCnt];
+        g_animateVel[animNum]  = g_animateVel[g_animateCnt];
+        g_animateSect[animNum] = g_animateSect[g_animateCnt];
+    }
+}
+
 void G_DoSectorAnimations(void)
 {
     for (bssize_t animNum=g_animateCnt-1; animNum>=0; animNum--)

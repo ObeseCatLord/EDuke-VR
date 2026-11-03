@@ -4816,15 +4816,30 @@ static void Net_CopySnapshotToGameArrays(netmapstate_t* srv_snapshot, netmapstat
 
         int status = memcmp(srvSector, clSector, sizeof(netSector_t));
 
-        if(status == 0)
+        // A sector the server has left unchanged for three updates (about a second) is at rest. If
+        // this game still has it elsewhere (its own move of a lift or door went another way), it
+        // takes the server's: unchanged sectors are not copied, so it stayed wrong for good (E1L1's
+        // lift kept going up and down for the other players). A move this player just started
+        // keeps running until the server's own begins.
+        static uint8_t restingUpdates[MAXSECTORS];
+        sectortype* const gameSector = &(sector[index]);
+        if (status == 0)
         {
+            if (restingUpdates[index] < UINT8_MAX)
+                ++restingUpdates[index];
+            if (restingUpdates[index] >= 3 && (gameSector->floorz != srvSector->floorz || gameSector->ceilingz != srvSector->ceilingz))
+            {
+                G_StopSectorAnimations(index);
+                Net_CopySectorFromNet(srvSector, gameSector);
+                continue;
+            }
             if(g_enableClientInterpolationCheck)
             {
                 continue;
             }
         }
-
-        sectortype*   gameSector = &(sector[index]);
+        else
+            restingUpdates[index] = 0;
 
         Net_CopySectorFromNet(srvSector, gameSector);
     }

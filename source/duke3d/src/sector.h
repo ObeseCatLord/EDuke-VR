@@ -145,6 +145,7 @@ void Sect_DamageFloor(int spriteNum, int sectNum);
 void Sect_DamageCeiling_Internal(int spriteNum, int sectNum);
 void Sect_DamageCeiling(int spriteNum, int sectNum);
 int SetAnimation(int sectNum,int32_t *animPtr,int goalVal,int animVel);
+void G_StopSectorAnimations(int sectNum);
 
 #define FORCEFIELD_CSTAT (64+16+4+1)
 
