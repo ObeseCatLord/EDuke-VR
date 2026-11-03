@@ -16,6 +16,7 @@ agree or should not happen:
   desync-sprite   a lasting sprite (crane, door part, effector...) is elsewhere on a player's game
   crane-off-rail  a crane left the line between its rest place and its pole (server or a player)
   crane-stuck     a crane that took the actor did not get back to its rest place
+  actor-died      the actor was dead after using the thing (it is respawned and the sweep goes on)
 
 Progression things are tested their own way: cranes (stand under the pole and ride it there and
 back), lifts and elevators (Use from inside), teleporters and touch plates (step in).
@@ -212,7 +213,8 @@ def compare(server, client, who):
             issues.append(('desync-sector', who, s, (fz, cz), other))
     for w, pics in server['walls'].items():
         other = client['walls'].get(w)
-        if other and other != pics:
+        # Switches only (animated walls such as force fields are sampled at different moments).
+        if other and other != pics and (set(pics) | set(other)) & SWITCH_TILES:
             issues.append(('desync-switch', who, w, pics, other))
     for i, spr in server['sprites'].items():
         other = client['sprites'].get(i)
@@ -310,7 +312,7 @@ def main():
 
         def states(tag):
             files = {'server': host / f'{tag}.state'}
-            server_command(f'net_state {files["server"]}')
+            server_command(f'net_state {tag}.state')   # relative to its directory: its console reads short lines
             for name in bots:
                 files[name] = bots[name][0] / f'{tag}.state'
                 console(name, f'net_state {files[name]}')
@@ -385,6 +387,12 @@ def main():
             if me is None:
                 me = first['actor']['local']
             server_me, own_me = second['server']['players'].get(me), second['actor']['players'].get(me)
+            if own_me and (own_me['dead'] or own_me['extra'] <= 0):
+                issues.append(('actor-died', 'actor', me, (x, y), own_me['pos']))
+                result['issues'].append({'target': target, 'issues': [list(map(str, i)) for i in issues]})
+                console('actor', 'test_use')   # respawn
+                time.sleep(3)
+                continue
             if server_me and own_me:
                 if own_me['newowner'] < 0 and math.dist(server_me['pos'][:2], own_me['pos'][:2]) > 512:
                     issues.append(('desync-player', 'actor', me, server_me['pos'], own_me['pos']))

@@ -4994,7 +4994,11 @@ static void runConsoleRequest()
             {
                 int16_t sect=p->cursectnum;
                 if (z!=INT32_MIN) { sect=0; updatesectorz(x,y,z,&sect); if (sect<0) for (int s=0;s<numsectors && sect<0;++s) if (inside(x,y,s)==1 && z>=sector[s].ceilingz && z<=sector[s].floorz) sect=s; }
-                else updatesector(x,y,&sect);
+                else
+                {
+                    updatesector(x,y,&sect);
+                    if (sect<0) for (int s=0;s<numsectors && sect<0;++s) if (inside(x,y,s)==1) sect=s;   // from nowhere
+                }
                 if (sect>=0)
                 {
                     p->pos={x,y,getflorzofslope(sect,x,y)-PHEIGHT}; p->opos=p->pos;
