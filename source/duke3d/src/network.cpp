@@ -3186,6 +3186,8 @@ typedef struct NetBuffer_s
     int32_t     MaxSize; // set in NetBuffer_Init to the size of the byte array that this struct referrs to in Data
 } NetBuffer_t;
 
+static void Net_WriteAnimations(NetBuffer_t *netBuffer);
+
 // NOTE: does NOT fill byteArray with zeros
 static void NetBuffer_Init(NetBuffer_t *buffer, uint8_t *byteArray, int32_t arrayLength)
 {
@@ -4758,6 +4760,7 @@ static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevision
     // Same native codec/layout, including legacy readers; later revisions delta.
     bool const completeActors=fromRevisionNumberToSend==cInitialMapStateRevisionNumber;
     Net_WriteWorldToBuffer(bufferPtr, fromMapState, toMapState, completeActors);
+    Net_WriteAnimations(bufferPtr);
 
     if (sendToPlayerIndex > ((int32_t) g_netServer->peerCount))
     {
@@ -4774,6 +4777,75 @@ static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevision
     Dbg_PacketSent(PACKET_WORLD_UPDATE);
 
 
+}
+
+// Sector moves in progress (doors, lifts, platforms: g_animate*) ride with every world update, so a
+// client moves them the server's way between updates. Not sending them left each client to guess:
+// a client whose own door or lift move went another way kept it there (E1L4's ceiling door after
+// its touch plate, E1L1's lift; found by the multiplayer sweep).
+enum { NetAnimFloor, NetAnimCeiling, NetAnimWallX, NetAnimWallY };
+
+static void Net_WriteAnimations(NetBuffer_t *netBuffer)
+{
+    int32_t kinds[MAXANIMATES], indices[MAXANIMATES], count = 0;
+    for (int i = 0; i < g_animateCnt; i++)
+    {
+        int32_t const *const ptr  = g_animatePtr[i];
+        int const            sect = g_animateSect[i];
+        intptr_t const       off  = (char const *)ptr - (char const *)wall;
+        if ((unsigned)sect < (unsigned)numsectors && ptr == &sector[sect].floorz)
+            kinds[i] = NetAnimFloor, indices[i] = sect;
+        else if ((unsigned)sect < (unsigned)numsectors && ptr == &sector[sect].ceilingz)
+            kinds[i] = NetAnimCeiling, indices[i] = sect;
+        else if (off >= 0 && off < intptr_t(numwalls * sizeof(walltype)) && (off % sizeof(walltype)) == offsetof(walltype, x))
+            kinds[i] = NetAnimWallX, indices[i] = int32_t(off / sizeof(walltype));
+        else if (off >= 0 && off < intptr_t(numwalls * sizeof(walltype)) && (off % sizeof(walltype)) == offsetof(walltype, y))
+            kinds[i] = NetAnimWallY, indices[i] = int32_t(off / sizeof(walltype));
+        else
+        {
+            kinds[i] = -1;
+            continue;
+        }
+        count++;
+    }
+    NetBuffer_WriteDword(netBuffer, count);
+    for (int i = 0; i < g_animateCnt; i++)
+    {
+        if (kinds[i] < 0)
+            continue;
+        NetBuffer_WriteDword(netBuffer, (kinds[i] << 24) | (indices[i] & 0xffffff));
+        NetBuffer_WriteDword(netBuffer, g_animateSect[i]);
+        NetBuffer_WriteDword(netBuffer, g_animateGoal[i]);
+        NetBuffer_WriteDword(netBuffer, klabs(g_animateVel[i]));
+    }
+}
+
+static int32_t NetBuffer_ReadDWord(NetBuffer_t *netBuffer);
+
+// Clients: the server's sector moves replace this game's own.
+static void Net_ReadAnimations(NetBuffer_t *netBuffer)
+{
+    int const count = NetBuffer_ReadDWord(netBuffer);
+    if ((unsigned)count > MAXANIMATES)
+        return;
+    for (int i = 0; i < g_animateCnt; i++)
+        G_StopInterpolation(g_animatePtr[i]);
+    g_animateCnt = 0;
+    for (int i = 0; i < count; i++)
+    {
+        int32_t const what = NetBuffer_ReadDWord(netBuffer);
+        int const     sect = NetBuffer_ReadDWord(netBuffer);
+        int32_t const goal = NetBuffer_ReadDWord(netBuffer);
+        int32_t const vel  = NetBuffer_ReadDWord(netBuffer);
+        int const     kind = (what >> 24) & 0xff, index = what & 0xffffff;
+        int32_t *ptr = nullptr;
+        if ((kind == NetAnimFloor || kind == NetAnimCeiling) && index < numsectors)
+            ptr = kind == NetAnimFloor ? &sector[index].floorz : &sector[index].ceilingz;
+        else if ((kind == NetAnimWallX || kind == NetAnimWallY) && index < numwalls)
+            ptr = kind == NetAnimWallX ? &wall[index].x : &wall[index].y;
+        if (ptr && (unsigned)sect < (unsigned)numsectors)
+            SetAnimation(sect, ptr, goal, vel);
+    }
 }
 
 static void Net_CopySnapshotToGameArrays(netmapstate_t* srv_snapshot, netmapstate_t* cl_snapshot)
@@ -4953,6 +5025,7 @@ static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
     ++g_netStatUpdates;
 
     Net_CopySnapshotToGameArrays(toMapState, clMapState);
+    Net_ReadAnimations(bufferPtr);
 
 }
 

@@ -36,6 +36,9 @@ DOOR_LOTAGS = {9, 20, 21, 22, 23, 25, 26, 29}   # doors used with Use from outsi
 LIFT_LOTAGS = {15, 16, 17, 18, 19}               # elevators and platforms used with Use from inside
 CRANE, CRANEPOLE, TOUCHPLATE, SECTOREFFECTOR = 1222, 1221, 3, 1
 SE_TELEPORT = 7
+# Effectors that move their sector all the time (rotating sectors, subways, pistons, waves): sampled
+# at slightly different moments on the server and the players, they never compare.
+CONTINUOUS_SE = {0, 6, 14, 25, 29}
 CAMERA_TOLERANCE = 256
 
 
@@ -205,9 +208,11 @@ def parse_state(path):
     return state
 
 
-def compare(server, client, who):
+def compare(server, client, who, moving=frozenset()):
     issues = []
     for s, (fz, cz) in server['sectors'].items():
+        if s in moving:
+            continue
         other = client['sectors'].get(s)
         if other and (abs(other[0] - fz) > 512 or abs(other[1] - cz) > 512):
             issues.append(('desync-sector', who, s, (fz, cz), other))
@@ -248,6 +253,8 @@ def main():
         print(json.dumps({'passed': False, 'error': f'no E{episode}L{level}.MAP in the GRP'}))
         return 1
     sectors, walls, sprites = read_map(data)
+    teleporters = frozenset(spr['sectnum'] for spr in sprites if spr['picnum'] == SECTOREFFECTOR and spr['lotag'] == SE_TELEPORT)
+    moving = frozenset(spr['sectnum'] for spr in sprites if spr['picnum'] == SECTOREFFECTOR and spr['lotag'] in CONTINUOUS_SE)
     every = [t for t in targets(sectors, walls, sprites) if not args.only or t['kind'] in args.only.split(',')]
     todo = every[args.start:args.start + args.limit] if args.limit else every[args.start:]
     args.work_dir.mkdir(parents=True, exist_ok=True)
@@ -336,7 +343,7 @@ def main():
 
         before = states('baseline')
         for name in bots:
-            result['baseline'] += [list(map(str, i)) for i in compare(before['server'], before[name], name)][:20]
+            result['baseline'] += [list(map(str, i)) for i in compare(before['server'], before[name], name, moving)][:20]
         me = None
         for n, target in enumerate(todo):
             if time.monotonic() > deadline - 30:
@@ -396,7 +403,8 @@ def main():
             if server_me and own_me:
                 if own_me['newowner'] < 0 and math.dist(server_me['pos'][:2], own_me['pos'][:2]) > 512:
                     issues.append(('desync-player', 'actor', me, server_me['pos'], own_me['pos']))
-                if math.dist(own_me['pos'][:2], (x, y)) > 1536 and own_me['newowner'] < 0 and kind not in ('door', 'teleport', 'lift'):
+                if math.dist(own_me['pos'][:2], (x, y)) > 1536 and own_me['newowner'] < 0 and kind not in ('door', 'teleport', 'lift') \
+                        and find_sector(sectors, walls, x, y) not in teleporters:
                     issues.append(('moved', 'actor', me, (x, y), own_me['pos']))
                 if own_me['newowner'] >= 0 or target['kind'] == 'viewscreen':
                     # A camera: leave it, and the actor must be back where it stood.
@@ -412,8 +420,8 @@ def main():
             for name in bots:
                 # Only what stays wrong: the server's value held still between the two samples and the
                 # player's still differs (a lift or door still moving is sampled at different moments).
-                a = {tuple(map(str, i[:3])) for i in compare(first['server'], first[name], name)}
-                for issue in compare(second['server'], second[name], name):
+                a = {tuple(map(str, i[:3])) for i in compare(first['server'], first[name], name, moving)}
+                for issue in compare(second['server'], second[name], name, moving):
                     kind, _, key = issue[0], issue[1], issue[2]
                     table = {'desync-sector': 'sectors', 'desync-switch': 'walls', 'desync-sprite': 'sprites'}[kind]
                     steady = first['server'][table].get(key) == second['server'][table].get(key)
