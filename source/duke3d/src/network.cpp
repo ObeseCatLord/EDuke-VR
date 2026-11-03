@@ -3580,7 +3580,7 @@ EDUKE32_UNUSED static void NetBuffer_ReadData(NetBuffer_t *netBuffer, void *data
 // net struct -> Buffer functions
 //----------------------------------------------------------------------------------------------------------
 
-static void NetBuffer_WriteDeltaNetWall(NetBuffer_t *netBuffer, const netWall_t *from, const netWall_t *to)
+static void NetBuffer_WriteDeltaNetWall(NetBuffer_t *netBuffer, const netWall_t *from, const netWall_t *to, bool forceFields)
 {
     const   int32_t         cMaxStructs = MAXWALLS;
     const   int32_t         cFieldsInStruct = ARRAY_SIZE(WallFields);
@@ -3607,14 +3607,14 @@ static void NetBuffer_WriteDeltaNetWall(NetBuffer_t *netBuffer, const netWall_t 
         return;
     }
 
-    maxChgIndex = 0;
+    maxChgIndex = forceFields ? cFieldsInStruct : 0;
 
     for (fieldIndex = 0, fieldPtr = WallFields; fieldIndex < cFieldsInStruct; fieldIndex++, fieldPtr++)
     {
         fromField   = (int32_t const *)((int8_t const *)from  + fieldPtr->offset);
         toField     = (int32_t const *)((int8_t const *)to    + fieldPtr->offset);
 
-        if (*fromField != *toField)
+        if (!forceFields && *fromField != *toField)
         {
             maxChgIndex = fieldIndex + 1;
         }
@@ -3636,7 +3636,7 @@ static void NetBuffer_WriteDeltaNetWall(NetBuffer_t *netBuffer, const netWall_t 
 
         //                                                              // Bit(s) meaning
         //                                                              //-------------------
-        if (*fromField == *toField)
+        if (!forceFields && *fromField == *toField)
         {
             NetBuffer_WriteBits(netBuffer, 0, 1);                       // field not changed
             continue;
@@ -3657,7 +3657,7 @@ static void NetBuffer_WriteDeltaNetWall(NetBuffer_t *netBuffer, const netWall_t 
     }
 }
 
-static void NetBuffer_WriteDeltaNetSector(NetBuffer_t *netBuffer, const netSector_t *from, const netSector_t *to)
+static void NetBuffer_WriteDeltaNetSector(NetBuffer_t *netBuffer, const netSector_t *from, const netSector_t *to, bool forceFields)
 {
     const   int32_t         cMaxStructs = MAXSECTORS;
     const   int32_t         cFieldsInStruct = ARRAY_SIZE(SectorFields);
@@ -3684,14 +3684,14 @@ static void NetBuffer_WriteDeltaNetSector(NetBuffer_t *netBuffer, const netSecto
         return;
     }
 
-    maxChgIndex = 0;
+    maxChgIndex = forceFields ? cFieldsInStruct : 0;
 
     for (fieldIndex = 0, fieldPtr = SectorFields; fieldIndex < cFieldsInStruct; fieldIndex++, fieldPtr++)
     {
         fromField   = (int32_t const *)((int8_t const *)from    + fieldPtr->offset);
         toField     = (int32_t const *)((int8_t const *)to      + fieldPtr->offset);
 
-        if (*fromField != *toField)
+        if (!forceFields && *fromField != *toField)
         {
             maxChgIndex = fieldIndex + 1;
         }
@@ -3713,7 +3713,7 @@ static void NetBuffer_WriteDeltaNetSector(NetBuffer_t *netBuffer, const netSecto
 
         //                                                              // Bit(s) meaning
         //                                                              //-------------------
-        if (*fromField == *toField)
+        if (!forceFields && *fromField == *toField)
         {
             NetBuffer_WriteBits(netBuffer, 0, 1);                       // field not changed
             continue;
@@ -3932,7 +3932,7 @@ static void Net_WriteWorldToBuffer(NetBuffer_t* netBuffer, const netmapstate_t* 
         const netWall_t* fromWall = &fromSnapshot->wall[index];
         const netWall_t* toWall = &toSnapshot->wall[index];
 
-        NetBuffer_WriteDeltaNetWall(netBuffer, fromWall, toWall);
+        NetBuffer_WriteDeltaNetWall(netBuffer, fromWall, toWall, completeActors);
 
     }
 
@@ -3947,7 +3947,7 @@ static void Net_WriteWorldToBuffer(NetBuffer_t* netBuffer, const netmapstate_t* 
         const netSector_t* fromSector = &fromSnapshot->sector[index];
         const netSector_t* toSector = &toSnapshot->sector[index];
 
-        NetBuffer_WriteDeltaNetSector(netBuffer, fromSector, toSector);
+        NetBuffer_WriteDeltaNetSector(netBuffer, fromSector, toSector, completeActors);
     }
 
     NetBuffer_WriteBits(netBuffer, cSTOP_PARSING_CODE, NETINDEX_BITS);
@@ -4758,6 +4758,9 @@ static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevision
     // Initial/rebase actor fields must be self-contained; an unchanged server
     // field cannot be decoded against a different client-side initial actor.
     // Same native codec/layout, including legacy readers; later revisions delta.
+    // Walls and sectors too: the server's map-start copy is taken after its first ticks, so a door
+    // that closed then (E2L8's, by its auto-close effector) "had not changed" and a client joining
+    // later kept it open for good (multiplayer sweep).
     bool const completeActors=fromRevisionNumberToSend==cInitialMapStateRevisionNumber;
     Net_WriteWorldToBuffer(bufferPtr, fromMapState, toMapState, completeActors);
     Net_WriteAnimations(bufferPtr);
