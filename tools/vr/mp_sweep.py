@@ -14,6 +14,11 @@ agree or should not happen:
   desync-sector   a sector's floor or ceiling differs between the server and a player (both samples)
   desync-switch   a switch wall's picture differs (on/off) between the server and a player
   desync-sprite   a lasting sprite (crane, door part, effector...) is elsewhere on a player's game
+  crane-off-rail  a crane left the line between its rest place and its pole (server or a player)
+  crane-stuck     a crane that took the actor did not get back to its rest place
+
+Progression things are tested their own way: cranes (stand under the pole and ride it there and
+back), lifts and elevators (Use from inside), teleporters and touch plates (step in).
 
 Level-ending things (nuke buttons, end-of-level sectors) are left out. Prints a JSON report.
 """
@@ -26,7 +31,10 @@ SWITCH_TILES = SWITCHES | {t + 1 for t in SWITCHES} | {147, 148, 149}
 ACCESS = {130, 131, 170, 171}
 VIEWSCREENS = {502, 499}
 NUKEBUTTON = {142, 143, 144, 145}
-DOOR_LOTAGS = {9, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 29}   # sector operators used with Use
+DOOR_LOTAGS = {9, 20, 21, 22, 23, 25, 26, 29}   # doors used with Use from outside
+LIFT_LOTAGS = {15, 16, 17, 18, 19}               # elevators and platforms used with Use from inside
+CRANE, CRANEPOLE, TOUCHPLATE, SECTOREFFECTOR = 1222, 1221, 3, 1
+SE_TELEPORT = 7
 CAMERA_TOLERANCE = 256
 
 
@@ -105,6 +113,20 @@ def wall_spot(sectors, walls, w, sector, distance=192):
     return None
 
 
+def interior(sectors, walls, s):
+    """A point inside sector s: its vertex centroid, else just inside its first wall."""
+    sec = sectors[s]
+    pts = [(walls[w]['x'], walls[w]['y']) for w in range(sec['wallptr'], sec['wallptr'] + sec['wallnum'])]
+    x, y = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+    if inside(sectors, walls, s, x, y):
+        return int(x), int(y)
+    for w in range(sec['wallptr'], sec['wallptr'] + sec['wallnum']):
+        spot = wall_spot(sectors, walls, w, s, 96)
+        if spot:
+            return spot[0], spot[1]
+    return None
+
+
 def targets(sectors, walls, sprites):
     found = []
     end_sectors = {s for s, sec in enumerate(sectors) if sec['lotag'] in (-1, 65535)}
@@ -128,6 +150,26 @@ def targets(sectors, walls, sprites):
             if s >= 0 and s not in end_sectors:
                 found.append(dict(kind=kind, id=i, tile=spr['picnum'], spot=(int(x), int(y), build_angle(spr['x'] - x, spr['y'] - y))))
                 break
+    for s, sec in enumerate(sectors):
+        if (sec['lotag'] & 0x7fff) in LIFT_LOTAGS and s not in end_sectors:
+            spot = interior(sectors, walls, s)
+            if spot:
+                found.append(dict(kind='lift', id=s, tile=sec['lotag'], spot=(*spot, 0)))
+    for i, spr in enumerate(sprites):
+        if not (0 <= spr['sectnum'] < len(sectors)) or spr['sectnum'] in end_sectors:
+            continue
+        if spr['picnum'] == CRANE:
+            pole = next((p for p in sprites if p['picnum'] == CRANEPOLE and p['hitag'] == spr['hitag']), None)
+            if pole:
+                found.append(dict(kind='crane', id=i, tile=CRANE, spot=(pole['x'], pole['y'], 0),
+                                  rail=((spr['x'], spr['y']), (pole['x'], pole['y']))))
+        elif spr['picnum'] == TOUCHPLATE:
+            spot = interior(sectors, walls, spr['sectnum'])
+            if spot:
+                found.append(dict(kind='touchplate', id=i, tile=TOUCHPLATE, spot=(*spot, 0)))
+        elif spr['picnum'] == SECTOREFFECTOR and spr['lotag'] == SE_TELEPORT and sectors[spr['sectnum']]['lotag'] not in (1, 2):
+            # (SE 7 in above/under water sectors links the water layers: not a teleporter)
+            found.append(dict(kind='teleport', id=i, tile=SE_TELEPORT, spot=(spr['x'], spr['y'], 0)))
     for s, sec in enumerate(sectors):
         if (sec['lotag'] & 0x7fff) in DOOR_LOTAGS:
             # From the far side of the door's first two-sided wall, facing it.
@@ -188,9 +230,12 @@ def main():
     parser.add_argument('--display', default=':105')
     parser.add_argument('--port', type=int, default=24691)
     parser.add_argument('--settle', type=float, default=3.5, help='seconds after a use before sampling')
+    parser.add_argument('--only', default='', help='only these kinds (comma separated, e.g. crane,lift)')
     parser.add_argument('--start', type=int, default=0, help='skip the first targets (chunked runs)')
     parser.add_argument('--limit', type=int, default=0, help='at most this many targets (0: all)')
     parser.add_argument('--timeout', type=int, default=560)
+    parser.add_argument('--server-wrap', default='', help='command the server runs under (e.g. a debugger)')
+    parser.add_argument('--server-binary', type=Path, help='another binary for the server (e.g. a debug build)')
     args = parser.parse_args()
     episode, level = map(int, args.level.split(','))
     deadline = time.monotonic() + args.timeout
@@ -199,7 +244,7 @@ def main():
         print(json.dumps({'passed': False, 'error': f'no E{episode}L{level}.MAP in the GRP'}))
         return 1
     sectors, walls, sprites = read_map(data)
-    every = targets(sectors, walls, sprites)
+    every = [t for t in targets(sectors, walls, sprites) if not args.only or t['kind'] in args.only.split(',')]
     todo = every[args.start:args.start + args.limit] if args.limit else every[args.start:]
     args.work_dir.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix=f'sweep-e{episode}l{level}-', dir=args.work_dir.resolve()))
@@ -232,7 +277,9 @@ def main():
         binary = str(args.binary.resolve())
         common = ['-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm']
         host = lab('server')
-        server = subprocess.Popen([binary, *common, '-dedicated', '-port', str(args.port), '-c2', f'-v{episode}', f'-l{level}', '-m'],
+        # --server-wrap, e.g. "gdb -batch -ex run -ex bt --args": the server under a debugger.
+        server = subprocess.Popen([*args.server_wrap.split(), str(args.server_binary.resolve()) if args.server_binary else binary,
+                                   *common, '-dedicated', '-port', str(args.port), '-c2', f'-v{episode}', f'-l{level}', '-m'],
                                   cwd=host, env=env, stdin=subprocess.PIPE, stdout=(host / 'game.log').open('w'), stderr=subprocess.STDOUT)
         processes.append(server)
         if not wait(lambda: 'Multiplayer server initialized.' in log_text(host), 60):
@@ -278,22 +325,54 @@ def main():
                 result['stopped_early'] = n
                 break
             x, y, ang = target['spot']
+            kind = target['kind']
             console('actor', f'xr_goto {x} {y} {ang}')
             time.sleep(1.0)
-            console('actor', 'test_use')
-            time.sleep(args.settle)
+            issues = []
+            if kind == 'crane':
+                # Stand under the pole: the crane comes, lifts the actor, carries them to its rest
+                # place and lets go. It must stay on its rail everywhere, and come back.
+                (hx, hy), (px, py) = target['rail']
+                length = math.hypot(px - hx, py - hy) or 1
+
+                def off_rail(sx, sy):
+                    t = max(0, min(1, ((sx - hx) * (px - hx) + (sy - hy) * (py - hy)) / length ** 2))
+                    return math.hypot(sx - (hx + t * (px - hx)), sy - (hy + t * (py - hy)))
+                worst, back = 0, False
+                for k in range(10):
+                    time.sleep(4)
+                    sample = states(f't{n}r{k}')
+                    for who, st in sample.items():
+                        crane = st['sprites'].get(target['id'])
+                        if crane:
+                            d = off_rail(crane[2], crane[3])
+                            worst = max(worst, d)
+                            if d > 128:
+                                issues.append(('crane-off-rail', who, target['id'], (crane[2], crane[3]), int(d)))
+                    srv = sample['server']['sprites'].get(target['id'])
+                    if k >= 4 and srv and math.hypot(srv[2] - hx, srv[3] - hy) < 256:
+                        back = True
+                        break
+                if not back:
+                    issues.append(('crane-stuck', 'server', target['id'], (hx, hy), srv[2:4] if srv else None))
+                result['used'] += 1
+                if issues:
+                    result['issues'].append({'target': target, 'issues': [list(map(str, i)) for i in issues][:30]})
+                continue
+            if kind not in ('teleport', 'touchplate'):
+                console('actor', 'test_use')
+            time.sleep(args.settle + (3 if kind == 'lift' else 0))
             first = states(f't{n}a')
             time.sleep(1.5)
             second = states(f't{n}b')
             result['used'] += 1
             if me is None:
                 me = first['actor']['local']
-            issues = []
             server_me, own_me = second['server']['players'].get(me), second['actor']['players'].get(me)
             if server_me and own_me:
                 if math.dist(server_me['pos'][:2], own_me['pos'][:2]) > 512:
                     issues.append(('desync-player', 'actor', me, server_me['pos'], own_me['pos']))
-                if math.dist(own_me['pos'][:2], (x, y)) > 1536 and own_me['newowner'] < 0 and target['kind'] != 'door':
+                if math.dist(own_me['pos'][:2], (x, y)) > 1536 and own_me['newowner'] < 0 and kind not in ('door', 'teleport', 'lift'):
                     issues.append(('moved', 'actor', me, (x, y), own_me['pos']))
                 if own_me['newowner'] >= 0 or target['kind'] == 'viewscreen':
                     # A camera: leave it, and the actor must be back where it stood.

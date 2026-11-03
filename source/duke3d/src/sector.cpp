@@ -3291,7 +3291,10 @@ static void G_ClearCameras(DukePlayer_t *p)
 {
     G_ClearCameraView(p);
 
-    if (I_EscapeTrigger())
+    // Only this machine's own player leaves a camera with the Escape key: a dedicated server has no
+    // input at all (reading it called a null function and crashed the server whenever a player
+    // left a security camera), and another player's camera is not ours to clear the key for.
+    if (g_networkMode != NET_DEDICATED_SERVER && p == g_player[myconnectindex].ps && I_EscapeTrigger())
         I_EscapeTriggerClear();
 }
 
