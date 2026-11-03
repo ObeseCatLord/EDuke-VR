@@ -1,0 +1,234 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 4
+},
+{
+"console": "xr_goto 26112 32384 512"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 1
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"capture": "crane10"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"capture": "crane18"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"capture": "crane24"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_where"
+}
+]

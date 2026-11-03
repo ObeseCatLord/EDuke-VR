@@ -329,6 +329,11 @@ Everything below is in **Options > Sound Setup > Voice Chat Setup** (also linked
 
 A live microphone level meter at the bottom shows whether your voice opens the gate (or push-to-talk is held). It works outside a game too.
 
+Voice chat sits over the game: its level (`voice_volume`) is independent of the sound effects
+volume, and the first time the game runs in VR, sound effects and music still at their stock
+levels come down (effects 170, music 130 of 255) so talkers stay clear. A volume you set yourself is
+left alone.
+
 | Command / cvar | Default | |
 | --- | --- | --- |
 | `voice_transmit` | 2 | 0 off, 1 on, 2 auto (VR on, desktop off) |
@@ -336,7 +341,7 @@ A live microphone level meter at the bottom shows whether your voice opens the g
 | `vr_ptt_button` | 0 | VR talk button: 0 left Y (Index left B), 1 left X (Index left A), 2 right B |
 | `vr_ptt_radio` | 1 | in push-to-talk mode, a hand held up to your head talks |
 | `voice_vad_sensitivity` | 55 | 0-100 |
-| `voice_input_gain` / `voice_volume` | 1 / 1 | |
+| `voice_input_gain` / `voice_volume` | 1 / 1 | voice chat has its own level, not the sound effects' |
 | `voice_radio_volume` | 0.45 | distant talkers |
 | `voice_device` | "" | recording device (`voice_devices` lists them) |
 | `voice_enable`, `voice_hud` | 1 | |
@@ -346,6 +351,15 @@ A live microphone level meter at the bottom shows whether your voice opens the g
 Opus 24 kbps (~3 kB/s per talker) on its own unreliable channel, relayed by
 the server to every other client. Opus is BSD-licensed (system library). Verified with
 `tools/vr/smoke_voice.py` (test tone, relay, 440 Hz decode, head-tracked pan).
+
+## Duke-sized world
+
+Everyone sees the world from Duke's height, whatever their own: the game measures how high your
+eyes are above the floor when you stand (from the headset's floor level) and scales your head
+movement, eye separation, hands and held weapons so your standing eyes are at Duke's (about
+1.58 m). A tall and a short player get the same view, and every player's body is Duke-sized to
+the others. Sitting down for more than a few seconds is taken as your new standing height. With no
+floor level from the runtime the world is 1:1 real metres.
 
 ## VR bodies in multiplayer
 
@@ -375,11 +389,26 @@ Verified across a real network with `tools/vr/smoke_xr_remote_coop.py`. That tes
 
 - **Shared keycards** (`mp_sharekeys 1`, default; host menu **Share Keys**; set on the server): a keycard one player picks up opens doors for everyone, including players who join or respawn later on that level.
 - **Name tags** (`cl_nametags 1`, default; VR Setup **Name tags (multiplayer)**): other players' names over their heads, in their colour, shown as ((Name)) while they talk. Walls hide them. Multiplayer only.
+- **Friendly fire** is off by default in co-op (and between teammates in team games): players' shots and explosions do not hurt each other. `-ffire` on the server's command line, or `mp_friendlyfire 1` in its console, turns it on (clients follow from the next level); the host menu's **Friendly Fire** sets it for a game started from the menu.
+- **Server commands** (dedicated server console, e.g. `echo net_givekeys > console.fifo`): `net_givekeys` (every player gets all three keycards), `net_giveall` (all weapons, ammo and items), `net_kill N`, `net_endlevel [episode]`.
+- **Security cameras** show the camera's view to the player using the screen; their body stays at the screen.
+- **Cranes** (Toxic Dump) run on their rails through players and ride smoothly between server updates.
 - **The whole campaign**: the end of an episode goes on to the next episode (wrapping to the first after the last one the server has), every player back to the pistol and full health. Each player sees the episode's ending; the server does not wait.
 
 ## Multiplayer compatibility
 
-Only identical, current builds play together. The network protocol (NETVERSION 14) always carries the VR shot sample (hand ray and head direction) in every input update; flat clients send it inactive. It also has voice and VR body pose channels. There is no negotiation and no support for older clients or servers, which are refused at connect.
+Only identical, current builds play together. The network protocol (NETVERSION 15) always carries the VR shot sample (hand ray and head direction) in every input update; flat clients send it inactive. It also has voice and VR body pose channels. There is no negotiation and no support for older clients or servers, which are refused at connect.
+
+## Hit Feedback mod
+
+A small gameplay mod shipped with the game and loaded by default (play/join scripts and the
+launcher): enemies taking damage throw extra blood (more for harder hits), now and then a scrap of
+gibs and a splat on a nearby wall; machines (drones, recon cars, tanks, turrets) throw sparks and
+smoke, ricochet and sometimes shed scrap. Damage, health and AI are unchanged. Set
+`EDUKE32_VR_HITFEEDBACK=0` to play without it. It is an ordinary EDuke32 CON module
+(`mods/hitfeedback/hitfeedback.con`, `-mx hitfeedback.con`), so it also works in other EDuke32
+builds. In multiplayer the server decides damage and must load it too; the brief sparks and puffs may not
+reach other players before they fade; the gibs, splats and scrap reach everyone.
 
 ## Known limits
 

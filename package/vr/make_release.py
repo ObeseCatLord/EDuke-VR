@@ -62,6 +62,7 @@ def main():
     # Code only: the Voxel Duke pack is built on the player's machine from their own download.
     shutil.copytree(REPO / 'package/vr/voxelpack', game / 'package/vr/voxelpack', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     shutil.copytree(REPO / 'package/vr/aa566', game / 'package/vr/aa566')
+    shutil.copytree(REPO / 'package/vr/mods', game / 'package/vr/mods')
     (game / 'docs/vr').mkdir(parents=True)
     for doc in ('PLAYING.md', 'FULL_PITCH.md'):
         if (REPO / 'docs/vr' / doc).is_file():

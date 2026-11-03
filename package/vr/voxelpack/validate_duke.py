@@ -234,8 +234,8 @@ def check_frames(exp, v7, stem, nv):
     for fi, name in enumerate(fn):
         P = s['xyz'][fi] * 64
         wc, ok = closed(P, tris)
-        # stored with +Y to the right and drawn mirrored back by the engine (validate.ENGINE_MIRRORED)
-        vol = signed_volume(P * np.array([1.0, -1.0, 1.0]), tris)
+        # outward as stored (positive volume), like v7's vr_duke.md3
+        vol = signed_volume(P, tris)
         if not ok or vol <= 0:
             bad.append(f'{name}: {wc} volume {vol:.1f}')
     if bad:

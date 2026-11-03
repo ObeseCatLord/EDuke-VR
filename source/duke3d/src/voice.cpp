@@ -444,8 +444,9 @@ void updatePlayback(int index, double now)
         left = (1.f - blend) * positional * (1.f - .5f * pan) + blend * voice_radio_volume;
         right = (1.f - blend) * positional * (1.f + .5f * pan) + blend * voice_radio_volume;
     }
-    // Headroom so a nearby talker can pan fully (0.5x..1.5x per side) without clipping the 0-255 range.
-    float const gain = .66f * voice_volume * playerVolume[index] * ud.config.FXVolume / 255.f;
+    // Voice chat has its own level (voice_volume), not the sound effects': talkers stay clear over
+    // the game. A nearby talker's pan (0.5x..1.5x per side) saturates near full volume.
+    float const gain = .85f * voice_volume * playerVolume[index];
     int const l = clamp(int(left * gain * 255.f), 0, 255), r = clamp(int(right * gain * 255.f), 0, 255);
     // Our voice only while the handle still is it (a finished voice's handle is reused by game
     // sounds). MUSIC_ID: the game's sound callback ignores this voice ending.

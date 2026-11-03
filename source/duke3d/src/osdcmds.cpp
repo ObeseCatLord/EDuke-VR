@@ -1229,6 +1229,77 @@ static int osdcmd_listplayers(osdcmdptr_t parm)
 
 // Test servers: every connected player gets all weapons, full ammo and a full inventory. The
 // server is authoritative for these, so its player updates carry them to the clients.
+// Test hooks for multiplayer sweeps (any side): press Use for a moment, and write the world state that
+// must agree between the server and its clients (players, sector heights, switch walls, the sprites
+// that stay in the world) to a file, one line each.
+int32_t g_testUseTics;
+
+static int osdcmd_test_use(osdcmdptr_t UNUSED(parm))
+{
+    UNREFERENCED_CONST_PARAMETER(parm);
+    g_testUseTics = 4;
+    return OSDCMD_OK;
+}
+
+static int osdcmd_net_state(osdcmdptr_t parm)
+{
+    if (!parm || parm->numparms != 1)
+        return OSDCMD_SHOWHELP;
+    FILE *const file = Bfopen(parm->parms[0], "w");
+    if (!file)
+    {
+        LOG_F(INFO, "net_state: cannot write %s.", parm->parms[0]);
+        return OSDCMD_OK;
+    }
+    fprintf(file, "map %s tick %d\nlocal %d\n", currentboardfilename, (int32_t)totalclock, myconnectindex);
+    for (int TRAVERSE_CONNECT(i))
+    {
+        auto const p = g_player[i].ps;
+        if ((unsigned)p->i >= MAXSPRITES)
+            continue;
+        fprintf(file, "player %d pos %d %d %d ang %d sect %d newowner %d crane %d extra %d dead %d\n", i, p->pos.x, p->pos.y, p->pos.z,
+                fix16_to_int(p->q16ang), p->cursectnum, p->newowner, p->on_crane, sprite[p->i].extra, p->dead_flag);
+    }
+    for (int s = 0; s < numsectors; s++)
+        fprintf(file, "sector %d %d %d %d\n", s, sector[s].floorz, sector[s].ceilingz, sector[s].lotag);
+    for (int w = 0; w < numwalls; w++)
+        if (wall[w].lotag || wall[w].hitag)
+            fprintf(file, "wall %d %d %d %d %d\n", w, wall[w].picnum, wall[w].overpicnum, wall[w].x, wall[w].y);
+    for (int j = 0; j < MAXSPRITES; j++)
+    {
+        auto const &spr = sprite[j];
+        // Sprites that stay: map things, actors, effectors, standables (not effects or projectiles).
+        if (spr.statnum == STAT_DEFAULT || spr.statnum == STAT_ACTOR || spr.statnum == STAT_ZOMBIEACTOR || spr.statnum == STAT_EFFECTOR
+            || spr.statnum == STAT_STANDABLE)
+            fprintf(file, "sprite %d %d %d %d %d %d %d %d %d\n", j, spr.picnum, spr.statnum, spr.x, spr.y, spr.z, spr.ang, spr.cstat,
+                    spr.sectnum);
+    }
+    Bfclose(file);
+    LOG_F(INFO, "net_state: wrote %s.", parm->parms[0]);
+    return OSDCMD_OK;
+}
+
+static int osdcmd_net_givekeys(osdcmdptr_t parm)
+{
+    if (parm && parm->numparms != 0)
+        return OSDCMD_SHOWHELP;
+
+    if (!g_netServer)
+    {
+        LOG_F(INFO, "Only the server can give keys to players.");
+        return OSDCMD_OK;
+    }
+
+    // Every keycard, for everyone (players joining later too, while keys are shared).
+    if (G_SharingKeys())
+        g_sharedAccess = 7;
+    for (int TRAVERSE_CONNECT(i))
+        if (!(g_networkMode == NET_DEDICATED_SERVER && i == myconnectindex))
+            g_player[i].ps->got_access = 7;
+    LOG_F(INFO, "Gave every player the blue, red and yellow keycards.");
+    return OSDCMD_OK;
+}
+
 static int osdcmd_net_giveall(osdcmdptr_t parm)
 {
     if (parm && parm->numparms != 0)
@@ -1398,7 +1469,9 @@ static int osdcmd_cvar_set_game(osdcmdptr_t parm)
 
     if (r != OSDCMD_OK || parm->numparms < 1) return r;
 
-    if (!Bstrcasecmp(parm->name, "r_upscalefactor"))
+    if (!Bstrcasecmp(parm->name, "mp_friendlyfire"))
+        ud.m_ffire = ud.ffire;   // and for the next levels
+    else if (!Bstrcasecmp(parm->name, "r_upscalefactor"))
     {
         if (in3dmode())
         {
@@ -1656,6 +1729,7 @@ int32_t registerosdcommands(void)
         { "cl_runmode", "run key behavior with cl_autorun enabled:\n 0: walk\n 1: do nothing", (void *)&ud.runkey_mode, CVAR_BOOL, 0, 1 },
 
         { "cl_nametags", "multiplayer: other players' names over their heads, ((in brackets)) while they talk", (void *)&cl_nametags, CVAR_BOOL, 0, 1 },
+        { "mp_friendlyfire", "co-op and team games: players' shots hurt teammates (set on the server; clients follow from the next level)", (void *)&ud.ffire, CVAR_BOOL|CVAR_FUNCPTR|CVAR_NOSAVE, 0, 1 },
         { "mp_sharekeys", "co-op: a keycard one player picks up opens doors for everyone (set on the server)", (void *)&mp_sharekeys, CVAR_BOOL, 0, 1 },
         { "cl_showcoords", "DEBUG: coordinate display", (void *)&ud.coords, CVAR_INT, 0,
 #ifdef USE_OPENGL
@@ -1826,6 +1900,9 @@ int32_t registerosdcommands(void)
     OSD_RegisterFunction("listplayers","listplayers: lists currently connected multiplayer clients", osdcmd_listplayers);
     OSD_RegisterFunction("net_endlevel","net_endlevel [episode]: (test) ends the level here as the exit button does (or the episode, as its boss does)", osdcmd_net_endlevel);
     OSD_RegisterFunction("net_kill","net_kill <player>: (server) kills that player, as from damage", osdcmd_net_kill);
+    OSD_RegisterFunction("test_use","test_use: (test hook) presses Use for a moment", osdcmd_test_use);
+    OSD_RegisterFunction("net_state","net_state FILE: (test hook) writes players, sectors, switch walls and lasting sprites to FILE", osdcmd_net_state);
+    OSD_RegisterFunction("net_givekeys","net_givekeys: (server) gives every connected player all three keycards", osdcmd_net_givekeys);
     OSD_RegisterFunction("net_giveall","net_giveall: (server) gives every connected player all weapons, ammo and items", osdcmd_net_giveall);
     OSD_RegisterFunction("name","name: change your multiplayer nickname", osdcmd_name);
     OSD_RegisterFunction("password","password: sets multiplayer game password", osdcmd_password);

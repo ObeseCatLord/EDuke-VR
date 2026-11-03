@@ -141,6 +141,9 @@ PY
     [[ -n $default_pack ]] && export EDUKE32_XR_DEFAULT_PACK="$(pack_name "$default_pack")"
     if [[ -n $aa ]]; then
         cmd+=(-j "$aa" -j "$here/aa566" -g "$aa/AA.grp" -x eduke32_vr_aa566.con)
+    elif [[ ${EDUKE32_VR_HITFEEDBACK:-1} != 0 && -f $here/mods/hitfeedback/hitfeedback.con ]]; then
+        # Hit Feedback mod (extra blood and sparks on hits); EDUKE32_VR_HITFEEDBACK=0 leaves it out.
+        cmd+=(-j "$here/mods/hitfeedback" -mx hitfeedback.con)
     fi
     # EDuke32 matches -gamegrp against the scanned GRP names, so pass a bare name
     # (a full path never matches and silently falls back to the first GRP found,

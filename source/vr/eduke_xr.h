@@ -75,6 +75,8 @@ struct ActionInput
     bool      focused = false;
     XrPosef   headPose {};
     bool      headValid = false;
+    float     eyeAboveFloor = 0;    // metres above the STAGE floor, where the runtime has one
+    bool      floorValid = false;
     HandInput hands[2] {};
 };
 

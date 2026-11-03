@@ -1935,6 +1935,11 @@ ACTOR_STATIC void G_MoveStandables(void)
             //t[0] = state
             //t[1] = checking sector number
 
+            // Multiplayer: the crane runs on its rail through players. A carried player's position comes
+            // from their own game a round trip late, and bumping into it pushed the crane off the rail
+            // for good (Toxic Dump: it never reached anyone again).
+            int32_t const craneClip = (g_netServer || g_netClient || ud.multimode > 1) ? (CLIPMASK0 & 0xffff) : CLIPMASK0;
+
             if (pSprite->xvel) A_GetZLimits(spriteNum);
 
             if (pData[0] == 0)   //Waiting to check the sector
@@ -1966,7 +1971,7 @@ ACTOR_STATIC void G_MoveStandables(void)
                     pSprite->picnum = CRANE+1;
                     pSprite->xvel += 8;
                 }
-                A_SetSprite(spriteNum,CLIPMASK0);
+                A_SetSprite(spriteNum,craneClip);
                 if (sectNum == pData[1])
                     pData[0]++;
             }
@@ -2063,7 +2068,7 @@ ACTOR_STATIC void G_MoveStandables(void)
                 if (pSprite->xvel < 192)
                     pSprite->xvel += 8;
                 pSprite->ang = getangle(g_origins[pData[4]].x - pSprite->x, g_origins[pData[4]].y - pSprite->y);
-                A_SetSprite(spriteNum,CLIPMASK0);
+                A_SetSprite(spriteNum,craneClip);
                 if (((pSprite->x-g_origins[pData[4]].x)*(pSprite->x-g_origins[pData[4]].x)+(pSprite->y-g_origins[pData[4]].y)*(pSprite->y-g_origins[pData[4]].y)) < (128*128))
                     pData[0]++;
             }
@@ -2076,6 +2081,11 @@ ACTOR_STATIC void G_MoveStandables(void)
                 vect.z -= (34<<8);
                 setsprite(g_origins[pData[4]+2].y, &vect);
             }
+
+            static bool const craneTrace = std::getenv("EDUKE32_TEST_CRANE") != nullptr;
+            if (craneTrace)
+                LOG_F(INFO, "Crane: tick=%d sprite=%d state=%d pos=%d,%d,%d owner=%d.", (int32_t)totalclock, spriteNum, pData[0],
+                      pSprite->x, pSprite->y, pSprite->z, pSprite->owner);
 
 
             if (pSprite->owner != -1)

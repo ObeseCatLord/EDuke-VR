@@ -70,15 +70,25 @@ run() {   # run MODE(vr|desktop) [game arguments...]
     local restart; restart=$(mktemp -t eduke32-vr-restart.XXXXXX)
     trap 'rm -f "$restart"' EXIT
     export EDUKE32_XR_RESTART_REQUEST="$restart"
-    local pack=() status
+    local pack=() mods=() status
+    # Hit Feedback mod (extra blood and sparks on hits): EDUKE32_VR_HITFEEDBACK=0 leaves it out.
+    [[ ${EDUKE32_VR_HITFEEDBACK:-1} != 0 && -f $data/mods/hitfeedback/hitfeedback.con ]] \
+        && mods=(-j "$data/mods/hitfeedback" -mx hitfeedback.con)
     while :; do
         : > "$restart"; status=0
-        "$bin/eduke32-vr" -j "$data" -j "$data/local/duke3d" -mh vr-local.def "${pack[@]}" -nosetup "$@" || status=$?
+        "$bin/eduke32-vr" -j "$data" -j "$data/local/duke3d" -mh vr-local.def "${mods[@]}" "${pack[@]}" -nosetup "$@" || status=$?
         [[ -s $restart ]] || return "$status"
         pack=(-vrpack "$(head -n1 "$restart")")   # the VR Setup menu switched model sets
     done
 }
 '''
+
+def copy_mods(dest):
+    """The gameplay mods shipped with the game (package/vr/mods/NAME/), loaded by play/join."""
+    for mod in sorted((HERE / 'mods').iterdir()):
+        if mod.is_dir():
+            shutil.copytree(mod, dest / mod.name)
+
 
 def sh_script(body):
     return SH_COMMON + body
@@ -215,10 +225,13 @@ shift
 goto collect
 :collected
 if /i "%MODE%"=="vr" (set "EDUKE32_XR=play") else (set "EDUKE32_XR=")
+rem Hit Feedback mod (extra blood and sparks on hits): set EDUKE32_VR_HITFEEDBACK=0 to leave it out.
+set "MODS="
+if not "%EDUKE32_VR_HITFEEDBACK%"=="0" if exist "%DATA%\mods\hitfeedback\hitfeedback.con" set MODS=-j "%DATA%\mods\hitfeedback" -mx hitfeedback.con
 set "PACK="
 :again
 type nul > "%EDUKE32_XR_RESTART_REQUEST%"
-"%EXE%" -j "%DATA%" -j "%DATA%\local\duke3d" -mh vr-local.def !PACK! -nosetup !ARGS!
+"%EXE%" -j "%DATA%" -j "%DATA%\local\duke3d" -mh vr-local.def !MODS! !PACK! -nosetup !ARGS!
 for %%F in ("%EDUKE32_XR_RESTART_REQUEST%") do if %%~zF GTR 0 (
     set /p NEXT=<"%EDUKE32_XR_RESTART_REQUEST%"
     set "PACK=-vrpack !NEXT!"
@@ -408,9 +421,10 @@ def main():
         shutil.copytree(args.linux_arm64_dir, out / 'linux-arm64', symlinks=False)
     copy_windows_build(args.windows_dir, out / 'windows')
 
-    # Model sets and generated extras.
+    # Model sets, mods and generated extras.
     for pack in PACKS:
         copy_pack(args.packs / pack, data / 'vrpacks' / pack)
+    copy_mods(data / 'mods')
     local = data / 'local/duke3d'
     local.mkdir(parents=True)
     sys.path.insert(0, str(HERE))

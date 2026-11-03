@@ -3896,6 +3896,12 @@ void P_GetInput(int const playerNum)
 
     localInput.bits |= (BUTTON(gamefunc_Fire) << SK_FIRE);
     localInput.bits |= (BUTTON(gamefunc_Open) << SK_OPEN);
+    extern int32_t g_testUseTics;   // test_use console hook
+    if (g_testUseTics > 0)
+    {
+        localInput.bits |= 1 << SK_OPEN;
+        --g_testUseTics;
+    }
 
     int const sectorLotag = pPlayer->cursectnum != -1 ? sector[pPlayer->cursectnum].lotag : 0;
     int const crouchable = sectorLotag != 2 && (sectorLotag != 1 || pPlayer->spritebridge) && !pPlayer->jetpack_on;

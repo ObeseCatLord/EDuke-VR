@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Hit Feedback: a little more to see when enemies take damage. Flesh-and-blood enemies throw
+// extra blood (more for harder hits), now and then a scrap of gibs and a splat on a nearby wall;
+// machines (drones, recon cars, tanks, turrets) throw sparks and smoke, ricochet, and sometimes
+// shed a piece of scrap. Nothing about how the game plays changes: no damage, health or AI.
+//
+// A CON module for EDuke32 (needs the game's own GAME.CON first): load it with
+//   -mx hitfeedback.con        (EDuke32 VR: play.sh/play.bat and the launcher load it by default)
+// In multiplayer the server decides damage, so the server must load it too; the longer-lived
+// pieces (gibs, splats, scrap) reach every player, the briefest puffs may only show where the hit
+// was worked out.
+
+gamevar hfx_hurt 0 0     // damage of this hit
+gamevar hfx_kind 0 0     // 0 not ours, 1 flesh, 2 machine
+gamevar hfx_n 0 0
+gamevar hfx_tile 0 0
+gamevar hfx_v 0 0
+gamevar hfx_p 0 0
+
+// Moves the sprite just spawned (RETURN) by up to +-hfx_p Build units sideways and puts it
+// hfx_v z units higher; scatters each puff over the body instead of stacking them.
+state hfx_scatter
+  getactor[RETURN].x hfx_tile
+  randvarvar hfx_n hfx_p
+  mulvar hfx_n 2
+  subvarvar hfx_n hfx_p
+  addvarvar hfx_tile hfx_n
+  setactor[RETURN].x hfx_tile
+  getactor[RETURN].y hfx_tile
+  randvarvar hfx_n hfx_p
+  mulvar hfx_n 2
+  subvarvar hfx_n hfx_p
+  addvarvar hfx_tile hfx_n
+  setactor[RETURN].y hfx_tile
+  getactor[RETURN].z hfx_tile
+  subvarvar hfx_tile hfx_v
+  setactor[RETURN].z hfx_tile
+ends
+
+state hfx_flesh
+  // One puff, plus one for every 10 damage: 1-4.
+  setvarvar hfx_kind hfx_hurt
+  divvar hfx_kind 10
+  addvar hfx_kind 1
+  ifvarg hfx_kind 4
+    setvar hfx_kind 4
+  whilevarn hfx_kind 0
+  {
+    espawn BLOOD
+    setvar hfx_p 112
+    randvar hfx_v 4096
+    subvar hfx_v 2048
+    state hfx_scatter
+    randvar hfx_v 20
+    addvar hfx_v 18
+    setactor[RETURN].xrepeat hfx_v
+    setactor[RETURN].yrepeat hfx_v
+    subvar hfx_kind 1
+  }
+  ifvarg hfx_hurt 9
+    ifrnd 80
+      guts JIBS6 1
+  ifrnd 40
+    state random_wall_jibs
+ends
+
+state hfx_machine
+  // Two sparks, plus one for every 10 damage: 2-5.
+  setvarvar hfx_kind hfx_hurt
+  divvar hfx_kind 10
+  addvar hfx_kind 2
+  ifvarg hfx_kind 5
+    setvar hfx_kind 5
+  whilevarn hfx_kind 0
+  {
+    espawn SHOTSPARK1
+    setvar hfx_p 160
+    randvar hfx_v 6144
+    addvar hfx_v 1024
+    state hfx_scatter
+    subvar hfx_kind 1
+  }
+  ifrnd 160
+  {
+    espawn SMALLSMOKE
+    setvar hfx_p 96
+    randvar hfx_v 4096
+    addvar hfx_v 2048
+    state hfx_scatter
+  }
+  ifrnd 72
+    debris SCRAP1 1
+  ifrnd 96
+    sound PISTOL_RICOCHET
+ends
+
+onevent EVENT_PREACTORDAMAGE
+  getactor[THISACTOR].htextra hfx_hurt
+  ifvarg hfx_hurt 0
+  {
+    setvar hfx_kind 0
+    getactor[THISACTOR].picnum hfx_tile
+    switch hfx_tile
+      case LIZTROOP
+      case LIZTROOPRUNNING
+      case LIZTROOPSTAYPUT
+      case LIZTROOPSHOOT
+      case LIZTROOPJETPACK
+      case LIZTROOPONTOILET
+      case LIZTROOPJUSTSIT
+      case LIZTROOPDUCKING
+      case PIGCOP
+      case PIGCOPSTAYPUT
+      case PIGCOPDIVE
+      case LIZMAN
+      case LIZMANSTAYPUT
+      case LIZMANSPITTING
+      case LIZMANFEEDING
+      case LIZMANJUMP
+      case OCTABRAIN
+      case OCTABRAINSTAYPUT
+      case COMMANDER
+      case COMMANDERSTAYPUT
+      case NEWBEAST
+      case NEWBEASTSTAYPUT
+      case NEWBEASTHANG
+      case NEWBEASTJUMP
+      case BOSS1
+      case BOSS1STAYPUT
+      case BOSS2
+      case BOSS3
+      case BOSS4
+      case BOSS4STAYPUT
+      case GREENSLIME
+      case SHARK
+        setvar hfx_kind 1
+        break
+      case DRONE
+      case RECON
+      case TANK
+      case ROTATEGUN
+        setvar hfx_kind 2
+        break
+    endswitch
+    ifvare hfx_kind 1
+      state hfx_flesh
+    else ifvare hfx_kind 2
+      state hfx_machine
+  }
+  // espawn leaves the new sprite in RETURN, and a non-zero RETURN here would cancel the damage.
+  setvar RETURN 0
+endevent

@@ -1,0 +1,92 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 4
+},
+{
+"console": "xr_goto 2528 4480 1024"
+},
+{
+"bot": 0,
+"bot_console": "xr_goto 2228 4150 1024"
+},
+{
+"bot": 1,
+"bot_console": "xr_goto 2228 4810 1024"
+},
+{
+"wait": 4
+},
+{
+"console": "xr_where"
+},
+{
+"wait": 1
+},
+{
+"capture": "mirror"
+},
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+15,
+-5,
+0
+]
+}
+},
+{
+"wait": 3
+},
+{
+"capture": "mirror-left"
+},
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+-15,
+-5,
+0
+]
+}
+},
+{
+"wait": 3
+},
+{
+"capture": "mirror-right"
+}
+]

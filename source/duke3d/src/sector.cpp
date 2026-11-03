@@ -3280,7 +3280,11 @@ static int P_FindWall(DukePlayer_t *pPlayer, int *hitWall, int angle)
 // returns 1 if sprite i should not be considered by neartag
 static int32_t our_neartag_blacklist(int32_t spriteNum)
 {
-    return sprite[spriteNum].picnum >= SECTOREFFECTOR__ && sprite[spriteNum].picnum <= GPSPEED__;
+    // Players are never "used": in multiplayer they keep the lotag of their map start (E1L2's are
+    // 1), and a player standing by a switch caught everyone else's use before it reached the switch
+    // (two players at E1L2's yellow scanner could not open it).
+    return (sprite[spriteNum].picnum >= SECTOREFFECTOR__ && sprite[spriteNum].picnum <= GPSPEED__)
+           || sprite[spriteNum].picnum == APLAYER;
 }
 
 static void G_ClearCameras(DukePlayer_t *p)

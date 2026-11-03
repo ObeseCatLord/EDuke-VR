@@ -1,0 +1,14 @@
+[
+ {"pose": {"head": [0, 1.6, 0, 0, 0, 0], "left": [-0.15, 1.3, -0.35, 0, 0, 0], "right": [0.2, 1.2, -0.3, 0, 0, 0]}},
+ {"wait": 4},
+ {"console": "give keys"}, {"wait": 1},
+ {"console": "xr_goto 2400 30272 1024"}, {"wait": 2},
+ {"capture": "facing"},
+ {"buttons": {"left": {"squeeze_value": 1.0}}}, {"wait": 0.4},
+ {"buttons": {"left": {"squeeze_value": 0.0}}}, {"wait": 2},
+ {"console": "xr_where"}, {"wait": 1},
+ {"pose": {"left": [-0.1, 1.15, -0.4, 0, -20, 0]}}, {"wait": 0.5},
+ {"buttons": {"left": {"squeeze_value": 1.0}}}, {"wait": 0.4},
+ {"buttons": {"left": {"squeeze_value": 0.0}}}, {"wait": 2},
+ {"capture": "after"}
+]

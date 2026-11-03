@@ -254,10 +254,10 @@ def main():
     names = [f['name'] for f in v7m['frames']]
     tags = [{t: (tuple(v['origin']), tuple(v['axis'])) for t, v in ft.items()} for ft in v7m['tags']]
     Sy = np.array([1.0, -1.0, 1.0])
-    # Same triangle order as the IK body: with the +Y-right flip the engine draws these sprite models
-    # mirrored as well, so swapping the winding here turned them inside out (back faces shown: Duke
-    # seen from behind in mirrors and by other players).
-    TM = T
+    # The +Y-right flip mirrors the mesh, so the winding is swapped to keep the faces outward (as v7's
+    # vr_duke.md3: positive volume). Keeping the IK body's order drew other players and corpses inside
+    # out (their backs seen through their fronts).
+    TM = T[:, [0, 2, 1]]
     neck = sk.bi['neck']
     rec_frames = {}
     for stem_out, surf, hide in (('vr_duke', 'duke', None), ('vr_duke_body', 'body', fp)):

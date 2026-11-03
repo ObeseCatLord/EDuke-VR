@@ -57,6 +57,7 @@ void G_ShowParameterHelp(void)
         "-mh [file.def]\tInclude an additional definitions module\n"
         "-mx [file.con]\tInclude an additional CON script module\n"
         "-m\t\tDisable enemies\n"
+        "-ffire\t\tEnable friendly fire (co-op and team games; off by default)\n"
         "-noffire\t\tDisable friendly fire\n"
 #ifndef EDUKE32_STANDALONE
         "-nam\t\tRun in NAM compatibility mode\n"
@@ -161,7 +162,7 @@ void G_CheckCommandLine(int32_t argc, char const * const * argv)
     ud.m_respawn_monsters = 0;
     ud.m_respawn_inventory = 0;
     ud.warp_on = 0;
-    ud.m_ffire = 1;
+    ud.m_ffire = 0;   // co-op and team games: players do not hurt teammates unless -ffire
     ud.m_player_skill = ud.player_skill = 2;
     g_player[0].wchoice[0] = 3;
     g_player[0].wchoice[1] = 4;
@@ -425,6 +426,12 @@ void G_CheckCommandLine(int32_t argc, char const * const * argv)
                         CommandMap = argv[i+1];
                         i++;
                     }
+                    i++;
+                    continue;
+                }
+                if (!Bstrcasecmp(c+1, "ffire"))
+                {
+                    ud.m_ffire = 1;
                     i++;
                     continue;
                 }

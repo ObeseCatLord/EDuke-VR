@@ -444,6 +444,8 @@ struct Runtime::Impl
     XrSpace                                 space    = XR_NULL_HANDLE;
     std::vector<XrEventDataReferenceSpaceChangePending> referenceChanges;
     XrSpace                                 viewSpace = XR_NULL_HANDLE;
+    XrSpace                                 stageSpace = XR_NULL_HANDLE;   // floor level (eye height for the world scale)
+    bool                                    stageTried = false;
     XrActionSet                             actionSet = XR_NULL_HANDLE;
     std::array<XrAction, 8>                 buttonActions {};
     XrAction                                stickAction = XR_NULL_HANDLE, gripPoseAction = XR_NULL_HANDLE, aimPoseAction = XR_NULL_HANDLE;
@@ -611,6 +613,23 @@ struct Runtime::Impl
         if (XR_SUCCEEDED(result)) return true;
         error=xrError(instance,result,"xrCreateReferenceSpace view");
         return false;
+    }
+
+    // The STAGE space, once, where the runtime offers one (floor height for the world scale).
+    bool ensureStageSpace()
+    {
+        if (stageSpace!=XR_NULL_HANDLE) return true;
+        if (stageTried) return false;
+        stageTried=true;
+        uint32_t count=0;
+        if (XR_FAILED(xrEnumerateReferenceSpaces(session,0,&count,nullptr)) || !count) return false;
+        std::vector<XrReferenceSpaceType> types(count);
+        if (XR_FAILED(xrEnumerateReferenceSpaces(session,count,&count,types.data()))) return false;
+        if (std::find(types.begin(),types.end(),XR_REFERENCE_SPACE_TYPE_STAGE)==types.end()) return false;
+        XrReferenceSpaceCreateInfo info {XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        info.referenceSpaceType=XR_REFERENCE_SPACE_TYPE_STAGE;
+        info.poseInReferenceSpace.orientation.w=1;
+        return XR_SUCCEEDED(xrCreateReferenceSpace(session,&info,&stageSpace));
     }
 
     bool ensureMenuProgram(std::string &error)
@@ -1366,6 +1385,10 @@ struct Runtime::Impl
             xrDestroySpace(space);
         if (viewSpace != XR_NULL_HANDLE)
             xrDestroySpace(viewSpace);
+        if (stageSpace != XR_NULL_HANDLE)
+            xrDestroySpace(stageSpace);
+        stageSpace = XR_NULL_HANDLE;
+        stageTried = false;
         if (session != XR_NULL_HANDLE)
             xrDestroySession(session);
         if (actionSet != XR_NULL_HANDLE)
@@ -3056,6 +3079,16 @@ bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &erro
         sample.headValid=(head.locationFlags & (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT))
             == (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT);
         if (sample.headValid) sample.headPose=head.pose;
+        if (sample.headValid && m_impl->ensureStageSpace())
+        {
+            XrSpaceLocation stage {XR_TYPE_SPACE_LOCATION};
+            if (XR_SUCCEEDED(xrLocateSpace(m_impl->viewSpace,m_impl->stageSpace,atTime,&stage))
+                && (stage.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) && std::isfinite(stage.pose.position.y))
+            {
+                sample.eyeAboveFloor=stage.pose.position.y;
+                sample.floorValid=true;
+            }
+        }
     }
     auto boolean = [&](XrAction action, XrPath hand, XrActionStateBoolean &state)
     {

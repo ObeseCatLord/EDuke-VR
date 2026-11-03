@@ -2346,7 +2346,10 @@ static int32_t polymost_md3draw(md3model_t *m, tspriteptr_t tspr, md3drawcontext
         float const *a=explicitContext ? ctx->modelToEye : mat;
         clockwise=(a[0]*(a[5]*a[10]-a[9]*a[6])-a[4]*(a[1]*a[10]-a[9]*a[2])+a[8]*(a[1]*a[6]-a[5]*a[2]))>0.f;
     }
-    else clockwise=(grhalfxdown10x >= 0) ^((globalorientation&8) != 0) ^((globalorientation&4) != 0);
+    // Mirror passes: the reflection is already in mat (and the reflected view), so it is not counted
+    // again here; counting it culled the front faces and showed every model inside out in mirrors (the
+    // player's own Duke seen from behind).
+    else clockwise=!((globalorientation&8) != 0) ^ ((globalorientation&4) != 0);
     glFrontFace(clockwise ? GL_CW : GL_CCW);
     buildgl_setEnabled(GL_CULL_FACE);
     glCullFace(GL_BACK);

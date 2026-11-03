@@ -7816,6 +7816,11 @@ int G_DoMoveThings(void)
 
         P_HandleSharedKeys(i);
 
+        // The dedicated server's own player stands still at the first start, outside the game: on
+        // E1L3 that is the electric chair, whose hurting floor made it groan in pain forever.
+        if (i == 0 && (g_networkMode == NET_DEDICATED_SERVER || g_networkMode == NET_DEDICATED_CLIENT))
+            continue;
+
         if (ud.pause_on == 0)
         {
             P_ProcessInput(i);

@@ -36,7 +36,7 @@
 #endif
 
 // VR settings (cvars; vr.h).
-int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=24;
+int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=24, vr_audiomix=0;
 int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
@@ -46,7 +46,11 @@ namespace
 {
 constexpr float Pi = 3.14159265358979323846f;
 // RazeXR's 24 world units/metre; Build horizontal and Z scales are 16 and 256.
-constexpr float UnitsPerMetre = 384.f, ZUnitsPerMetre = 6144.f;
+// Build units per metre of Duke's world (his body, speeds, distances), and per metre of this
+// player's tracked space: the world scale puts every player's eyes at Duke's, so a
+// tall and a short player see the same world from his height.
+constexpr float DukeUnitsPerMetre = 384.f, DukeZUnitsPerMetre = 6144.f;
+static float UnitsPerMetre = DukeUnitsPerMetre, ZUnitsPerMetre = DukeZUnitsPerMetre;
 struct Camera
 {
     vec3_t pos;
@@ -201,6 +205,7 @@ void G_XRRegisterCvars()
         { "vr_ptt_button", "VR push-to-talk button (voice_mode 1): 0 = left Y / Index left B, 1 = left X / Index left A, 2 = right B", (void *)&vr_ptt_button, CVAR_INT, 0, 2 },
         { "vr_voxeldistance", "VR: voxel objects farther than this many metres draw as flat sprites (0: all; distant detailed voxels cost a lot of GPU on standalone headsets)", (void *)&vr_voxeldistance, CVAR_INT, 0, 200 },
         { "vr_ptt_radio", "VR push-to-talk (voice_mode 1) also by holding a hand up to your head, like a radio", (void *)&vr_ptt_radio, CVAR_BOOL, 0, 1 },
+        { "vr_audiomix", "VR audio mix applied (internal: 1 once VR lowered untouched default effect and music volumes under voice chat)", (void *)&vr_audiomix, CVAR_INT, 0, 1 },
         { "vr_menupointer", "VR: point at menu items with a laser from the controller; its trigger selects", (void *)&vr_menupointer, CVAR_BOOL, 0, 1 },
         { "vr_physicalcrouch", "VR: ducking for real (head ~40 cm below your standing height) crouches", (void *)&vr_physicalcrouch, CVAR_BOOL, 0, 1 },
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
@@ -1118,6 +1123,44 @@ static bool physicallyDucking()
 }
 static XrPosef lastHeadPose;
 
+// World scale: this player's tracked metres become Duke's so their standing eye
+// height is his (PHEIGHT); head movement, eye separation, hands and held weapons all follow, and
+// every player sees the world at Duke's size. The standing height is the highest the eyes have
+// been above the STAGE floor, easing down 2 cm/s within 30 cm of it (a stretch on tiptoe does not
+// stick) and taken anew after 8 s more than 30 cm lower (sitting down). No floor: 1:1 metres.
+static float worldScale=1.f;
+static void updateWorldScale()
+{
+    static float standing;
+    static bool valid;
+    static double lowSince, last;
+    double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+    float const dt=float(std::max(0.,std::min(.1,now-last)));
+    last=now;
+    float target=worldScale;
+    if (rawInput.headValid && rawInput.floorValid && rawInput.eyeAboveFloor>.5f && rawInput.eyeAboveFloor<2.6f)
+    {
+        float const height=rawInput.eyeAboveFloor;
+        if (!valid || height>standing) { standing=height; valid=true; }
+        bool const low=standing-height>.3f;
+        if (!low) { standing=std::max(height,standing-.02f*dt); lowSince=now; }
+        else if (now-lowSince>8.0) { standing=height; lowSince=now; }
+        target=std::max(.6f,std::min(1.6f,(float(PHEIGHT)/DukeZUnitsPerMetre)/standing));
+    }
+    float const before=worldScale;
+    worldScale+=(target-worldScale)*std::min(1.f,dt*2.f);
+    if (std::fabs(worldScale-target)<1e-4f) worldScale=target;
+    UnitsPerMetre=DukeUnitsPerMetre*worldScale; ZUnitsPerMetre=DukeZUnitsPerMetre*worldScale;
+    static float logged;
+    static bool loggedValid;
+    if ((std::fabs(worldScale-logged)>.02f || valid!=loggedValid) && std::fabs(worldScale-before)<1e-3f)
+    {
+        logged=worldScale; loggedValid=valid;
+        LOG_F(INFO,"OpenXR world scale: %.3f (standing eye height %.2f m, Duke's %.2f m).",worldScale,valid ? standing : 0.f,
+              float(PHEIGHT)/DukeZUnitsPerMetre);
+    }
+}
+
 static void setTrackingReference(XrPosef const &head)
 {
     auto const forward=rotate(head.orientation,{0,0,-1});
@@ -1606,7 +1649,7 @@ struct WalkSpeed
         if (moved>0.f)
         {
             float const span=float(std::max(1./120.,now-lastMove));
-            target=moved<4.f*UnitsPerMetre ? moved/span : 0.f;   // a teleport is not a step
+            target=moved<4.f*DukeUnitsPerMetre ? moved/span : 0.f;   // a teleport is not a step
             lastPos=pos; lastMove=now;
         }
         else if (now-lastMove>.15)
@@ -1614,7 +1657,7 @@ struct WalkSpeed
         if (dt>0.f)
         {
             speed+=(target-speed)*(1.f-std::exp(-dt/.12f));
-            if (speed<.05f*UnitsPerMetre && target==0.f) speed=0.f;
+            if (speed<.05f*DukeUnitsPerMetre && target==0.f) speed=0.f;
         }
         return dt;
     }
@@ -1648,7 +1691,7 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     if (std::hypot(headForward.x,headForward.z)<1e-3f) return false;
     float const headYaw=std::atan2(headForward.x,-headForward.z);
     float const dt=walk.update(p->pos);
-    bool const moving=walk.speed>.25f*UnitsPerMetre;
+    bool const moving=walk.speed>.25f*DukeUnitsPerMetre;
     if (!yawValid) { bodyYaw=headYaw; stride=0.f; yawValid=true; }
     float const lag=wrapRadians(headYaw-bodyYaw), limit=Pi/4.f;
     if (lag>limit) bodyYaw=headYaw-limit; else if (lag<-limit) bodyYaw=headYaw+limit;
@@ -1666,10 +1709,10 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     float const fx=std::cos(facing), fy=std::sin(facing);
     float const eyeX=body.pos.x+head.x, eyeY=body.pos.y+head.y, eyeZ=body.pos.z+head.z;
     float const feetZ=float(sprite[p->i].z);
-    float const eyeHeight=(feetZ-eyeZ)/ZUnitsPerMetre;
+    float const eyeHeight=(feetZ-eyeZ)/DukeZUnitsPerMetre;
     bool const airborne=!p->on_ground && p->jumping_counter;
     bool const crouched=!airborne && eyeHeight<1.15f;
-    stride+=walk.speed*dt/(1.4f*UnitsPerMetre);
+    stride+=walk.speed*dt/(1.4f*DukeUnitsPerMetre);
     stride-=std::floor(stride);
     // Frames of the shared third-person Duke model (4-step cycles), falling
     // back to a dedicated body's 8-step names, then the rest pose.
@@ -1685,7 +1728,7 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     else if (crouched) { if (moving) tryFrame("crouch_walk_%02d",step); tryFrame("crouch",0); }
     else if (moving)
     {
-        if (walk.speed>3.f*UnitsPerMetre) tryFrame("run_%02d",step);
+        if (walk.speed>3.f*DukeUnitsPerMetre) tryFrame("run_%02d",step);
         tryFrame("walk_%02d",step);
         tryFrame("walk_%02d",1+int(stride*8.f)%8);
     }
@@ -1708,16 +1751,16 @@ bool prepareBodyModel(BodyModelSample &sample, Camera const &body, eduke_xr::Run
     constexpr float NeckBehind=.24f, NeckBelow=.32f;
     float const neckMetres=neck.z/64.f;
     float const sink=std::max(0.f,neckMetres-(eyeHeight-NeckBelow));
-    sample.root={int32_t(std::lround(eyeX-fx*NeckBehind*UnitsPerMetre)),int32_t(std::lround(eyeY-fy*NeckBehind*UnitsPerMetre)),
-                 int32_t(std::lround(feetZ+sink*ZUnitsPerMetre))};
+    sample.root={int32_t(std::lround(eyeX-fx*NeckBehind*DukeUnitsPerMetre)),int32_t(std::lround(eyeY-fy*NeckBehind*DukeUnitsPerMetre)),
+                 int32_t(std::lround(feetZ+sink*DukeZUnitsPerMetre))};
     sample.pivot={0,0,0};
     sample.sector=body.sector;
     updatesector(sample.root.x,sample.root.y,&sample.sector);
     if (sample.sector<0) sample.sector=body.sector;
-    float const scale=UnitsPerMetre/64.f;
+    float const scale=DukeUnitsPerMetre/64.f;
     sample.basis[0]={fx*scale,fy*scale,0};
     sample.basis[1]={-fy*scale,fx*scale,0};
-    sample.basis[2]={0,0,-ZUnitsPerMetre/64.f};
+    sample.basis[2]={0,0,-DukeZUnitsPerMetre/64.f};
     return true;
 }
 
@@ -2700,7 +2743,7 @@ struct IkInput
     int16_t sector=-1;
     int32_t shade=0, instance=4;
 };
-struct IkState { float bodyYaw=0.f, stride=0.f, standingHeight=0.f; WalkSpeed walk; bool yawValid=false; };
+struct IkState { float bodyYaw=0.f, stride=0.f; WalkSpeed walk; bool yawValid=false; };
 
 // Skins the IK body to the input into buffers (0: as drawn, 1: always with the head, for mirrors).
 static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &state, bool showHead,
@@ -2714,7 +2757,7 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
               handB[2]={bone("hand_l"),bone("hand_r")};
     int const thigh[2]={bone("thigh_l"),bone("thigh_r")}, calf[2]={bone("calf_l"),bone("calf_r")}, foot[2]={bone("foot_l"),bone("foot_r")};
     auto const &bind=ik.bones;
-    float &bodyYaw=state.bodyYaw, &stride=state.stride, &standingHeight=state.standingHeight;
+    float &bodyYaw=state.bodyYaw, &stride=state.stride;
 
     // Facing: head yaw with a 45 degree deadzone; lines up with the head while moving.
     if (std::hypot(in.headForward.x,in.headForward.y)<1e-3f) return false;
@@ -2722,11 +2765,11 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
     if (!state.yawValid) { bodyYaw=headYaw; stride=0.f; state.walk.valid=false; state.yawValid=true; }
     // A second solve in the same frame (e.g. for a mirror) leaves the walk as it is.
     float const dt=state.walk.update(in.pos);
-    float const walk=std::min(1.f,state.walk.speed/(1.2f*UnitsPerMetre));   // full stride from 1.2 m/s
+    float const walk=std::min(1.f,state.walk.speed/(1.2f*DukeUnitsPerMetre));   // full stride from 1.2 m/s
     float const lag=wrapRadians(headYaw-bodyYaw), limit=Pi/4.f;
     if (lag>limit) bodyYaw=headYaw-limit; else if (lag<-limit) bodyYaw=headYaw+limit;
     if (walk>.25f) bodyYaw+=wrapRadians(headYaw-bodyYaw)*(1.f-std::exp(-dt/.08f));
-    stride+=state.walk.speed*dt/(1.4f*UnitsPerMetre);
+    stride+=state.walk.speed*dt/(1.4f*DukeUnitsPerMetre);
     stride-=std::floor(stride);
 
     float const facing=in.angle+bodyYaw, fx=std::cos(facing), fy=std::sin(facing);
@@ -2734,15 +2777,14 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
     bool const yLeft=bind[upper[0]].position.y>bind[upper[1]].position.y;
     float const yx=yLeft ? fy : -fy, yy=yLeft ? -fx : fx;   // Build direction of model +Y
 
-    // Uniform scale to the player's standing eye height (remembered, slowly relaxing).
+    // Every player is Duke-sized: the model's eye at Duke's standing eye height, whatever the
+    // player's own height (the view starts at Duke's eye too). Scaling to the tracked height made
+    // tall players, and anyone who had just jumped or fallen, a bigger Duke.
     float const *const eye=in.eye;
     float const feetZ=in.feetZ;
-    float const eyeHeight=(feetZ-eye[2])/ZUnitsPerMetre;   // metres
-    standingHeight=std::max(eyeHeight,standingHeight*.9995f);
-    if (!(standingHeight>.5f)) standingHeight=eyeHeight;
     float const bindEye=(bind[head].position.z+ik.eyeUp)/64.f;
-    float const scale=std::max(.8f,std::min(1.25f,standingHeight/std::max(.5f,bindEye)));
-    float const unitXY=UnitsPerMetre/64.f*scale, unitZ=ZUnitsPerMetre/64.f*scale;
+    float const scale=(float(PHEIGHT)/DukeZUnitsPerMetre)/std::max(.5f,bindEye);
+    float const unitXY=DukeUnitsPerMetre/64.f*scale, unitZ=DukeZUnitsPerMetre/64.f*scale;
 
     // Head bone target and orientation in model space (the bind eye offset, measured from the head mesh).
     auto const dirToModel=[&](XrVector3f v) { return XrVector3f{v.x*fx+v.y*fy,v.x*yx+v.y*yy,v.z}; };
@@ -3001,7 +3043,7 @@ static bool solveIkBody(HandSegmentSample &sample, IkInput const &in, IkState &s
             LOG_F(INFO,"OpenXR IK body: scale=%.2f eye=%.1f,%.1f drop=%.1f head=%.1f,%.1f,%.1f hands=%d,%d kick=%.2f ownHands=%d indexBend=%.0f walk=%.2fm/s stride=%.2f.",scale,
                   ik.eyeForward,ik.eyeUp,drop,
                   headTarget.x,headTarget.y,headTarget.z,int(in.hand[0]),int(in.hand[1]),kickExtend,int(ik.hands),bend,
-                  state.walk.speed/UnitsPerMetre,stride);
+                  state.walk.speed/DukeUnitsPerMetre,stride);
         }
     }
     return true;
@@ -3074,9 +3116,9 @@ static VRBodyFrame encodeFrame(HandFrame const &frame, vec3_t const &ref)
     for (unsigned k=0;k<3;++k) wire.root[k]=clampShort(frame.root[k]-float(k==0 ? ref.x : k==1 ? ref.y : ref.z));
     for (unsigned k=0;k<3;++k)
     {
-        wire.axes[k*3]=clampShort(frame.axes[k].x/UnitsPerMetre*VRBodyAxisScale);
-        wire.axes[k*3+1]=clampShort(frame.axes[k].y/UnitsPerMetre*VRBodyAxisScale);
-        wire.axes[k*3+2]=clampShort(frame.axes[k].z/ZUnitsPerMetre*VRBodyAxisScale);
+        wire.axes[k*3]=clampShort(frame.axes[k].x/DukeUnitsPerMetre*VRBodyAxisScale);
+        wire.axes[k*3+1]=clampShort(frame.axes[k].y/DukeUnitsPerMetre*VRBodyAxisScale);
+        wire.axes[k*3+2]=clampShort(frame.axes[k].z/DukeZUnitsPerMetre*VRBodyAxisScale);
     }
     return wire;
 }
@@ -3086,8 +3128,8 @@ static HandFrame decodeFrame(VRBodyFrame const &wire, float const ref[3])
     HandFrame frame;
     for (unsigned k=0;k<3;++k) frame.root[k]=ref[k]+wire.root[k];
     for (unsigned k=0;k<3;++k)
-        frame.axes[k]={wire.axes[k*3]*UnitsPerMetre/VRBodyAxisScale,wire.axes[k*3+1]*UnitsPerMetre/VRBodyAxisScale,
-                       wire.axes[k*3+2]*ZUnitsPerMetre/VRBodyAxisScale};
+        frame.axes[k]={wire.axes[k*3]*DukeUnitsPerMetre/VRBodyAxisScale,wire.axes[k*3+1]*DukeUnitsPerMetre/VRBodyAxisScale,
+                       wire.axes[k*3+2]*DukeZUnitsPerMetre/VRBodyAxisScale};
     return frame;
 }
 
@@ -3138,12 +3180,15 @@ static void publishBodyPose(Camera const &body, eduke_xr::Runtime *runtime, Hand
 }
 
 static struct RemoteBody { IkState ik; std::vector<vec3f_t> body[2], hands[2]; } remoteBodies[MAXPLAYERS];
+// Player sprites whose VR body was drawn this frame (their native sprite hidden).
+static std::vector<int16_t> remoteBodySprites;
 
 // Remote VR players in view: IK body, hand shells and held model from their latest pose, and their
 // native player sprite (with its attached weapon) hidden. Players without a fresh pose stay native.
 static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smoothRatio, bool desktop=false)
 {
     auto const *rig=handRig();
+    if (!desktop) remoteBodySprites.clear();
     if ((!g_netServer && !g_netClient) || !fullBodyAvailable(desktop)) return;
     char const *const named[]={nullptr,"relaxed","trigger","point","fist"};
     float const sr=float(smoothRatio)/65536.f;
@@ -3236,6 +3281,7 @@ static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smo
         out.push_back(bodySample);
         for (int j=0;j<spritesortcnt;++j)
             if (tsprite[j].owner==ps->i) tsprite[j].xrepeat=tsprite[j].yrepeat=0;
+        if (!desktop) remoteBodySprites.push_back(ps->i);
         if (std::getenv("EDUKE32_XR_TEST_BODY_POSES"))
         {
             static uint32_t logged[MAXPLAYERS];
@@ -5204,9 +5250,18 @@ void G_XRBeginFrame()
     rotatesprite_letterbox=sdlayer_xr_worldRuntime()!=nullptr;
     // Voxel detail distance (vr_voxeldistance): far voxels cost a lot on standalone headsets and
     // look like their sprites at that range.
-    r_voxeldistance=rotatesprite_letterbox ? int32_t(vr_voxeldistance*UnitsPerMetre) : 0;
+    r_voxeldistance=rotatesprite_letterbox ? int32_t(vr_voxeldistance*DukeUnitsPerMetre) : 0;
     // Floor decals: lift 1/128 z unit per Build unit away (0.5 mm at 1 m, 15 mm at 30 m).
     r_floorspritelift=rotatesprite_letterbox ? 128 : 0;
+    // VR mix, once: voice chat over the game. Effects and music still at their stock defaults
+    // come down (a volume the player set is left alone).
+    if (rotatesprite_letterbox && !vr_audiomix)
+    {
+        vr_audiomix=1;
+        if (ud.config.FXVolume==255) ud.config.FXVolume=170;
+        if (ud.config.MusicVolume==195) S_MusicVolume(ud.config.MusicVolume=130);
+        LOG_F(INFO,"OpenXR audio mix: effects %d, music %d, voice chat %.2f.",ud.config.FXVolume,ud.config.MusicVolume,voice_volume);
+    }
     runConsoleRequest();
     precacheVRModels();
     crosshairViews={};
@@ -5303,6 +5358,7 @@ void G_XRBeginFrame()
                   (long long)change.changeTime,(long long)pendingFrame.predictedDisplayTime,int(change.poseValid));
     }
     inputRuntime=runtime; inputGeneration=pendingGeneration; rawInput=sample;
+    updateWorldScale();
     if (rawInput.headValid && validPose(rawInput.headPose))
     {
         if (trackingRebase) setTrackingReference(rawInput.headPose);
@@ -5491,6 +5547,7 @@ static bool mirrorSeen;
 // Last frame's VR models (body, hands, held weapon, ...), drawn reflected inside mirrors: you see your
 // own full body in a mirror. One frame old, which a reflection never shows.
 static std::vector<WorldModelSample> mirrorModels;
+static std::vector<int16_t> mirrorRemoteSprites;   // remote players drawn as VR bodies in mirrorModels
 static bool mirrorHasBody;
 
 static void drawMirrorModels(Eye const &eye, int mirrorWall)
@@ -5562,11 +5619,19 @@ static void drawEyeMirror(Camera const &cam, int32_t smoothRatio, Eye const *eye
     display_mirror=1;
     G_DoSpriteAnimations(tposx,tposy,cam.pos.z,fix16_to_int(tang),smoothRatio);
     display_mirror=0;
-    // Your VR body replaces your own native player sprite in the reflection.
-    // (Removed from the list: drawmasks does not look at CSTAT_SPRITE_INVISIBLE.)
-    if (eye && mirrorHasBody)
-        for (int k=spritesortcnt-1;k>=0;--k)
-            if (tsprite[k].owner==g_player[myconnectindex].ps->i) tsprite[k]=tsprite[--spritesortcnt];
+    // Your VR body, and other VR players' bodies, replace those players' native sprites in the
+    // reflection (the reflected models are drawn below; keeping the native sprites showed every VR
+    // player twice: a stiff Duke beside the moving body). Invisible sprites stay out too (the
+    // dedicated server's own player). Removed from the list: drawmasks does not look at
+    // CSTAT_SPRITE_INVISIBLE.
+    for (int k=spritesortcnt-1;k>=0;--k)
+    {
+        int const owner=tsprite[k].owner;
+        bool const body=eye && mirrorHasBody && (owner==g_player[myconnectindex].ps->i
+                        || std::find(mirrorRemoteSprites.begin(),mirrorRemoteSprites.end(),owner)!=mirrorRemoteSprites.end());
+        if (body || ((unsigned)owner<MAXSPRITES && (sprite[owner].cstat & CSTAT_SPRITE_INVISIBLE)))
+            tsprite[k]=tsprite[--spritesortcnt];
+    }
     renderDrawMasks();
     if (eye) drawMirrorModels(*eye,g_mirrorWall[best]);
     renderCompleteMirror();
@@ -6290,6 +6355,7 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         }
         // Keep this frame's models for next frame's mirrors (the body with its head shown).
         mirrorModels.clear(); mirrorHasBody=false;
+        mirrorRemoteSprites=remoteBodySprites;
         for (unsigned index=0;index<modelCount;++index)
         {
             mirrorModels.push_back(*models[index]);

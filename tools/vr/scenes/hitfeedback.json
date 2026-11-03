@@ -1,0 +1,244 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.15,
+1.45,
+-0.4,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 4
+},
+{
+"console": "xr_weapons"
+},
+{
+"wait": 1
+},
+{
+"console": "xr_select 2"
+},
+{
+"wait": 2
+},
+{
+"console": "xr_spawn 1680 900"
+},
+{
+"wait": 1.5
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.12
+},
+{
+"capture": "troop0"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 0.9
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.12
+},
+{
+"capture": "troop1"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 0.9
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.12
+},
+{
+"capture": "troop2"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 0.9
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.12
+},
+{
+"capture": "troop3"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 0.9
+},
+{
+"wait": 2
+},
+{
+"console": "xr_spawn 1880 1000"
+},
+{
+"wait": 1.5
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.12
+},
+{
+"capture": "drone0"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 0.9
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.12
+},
+{
+"capture": "drone1"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 0.9
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.12
+},
+{
+"capture": "drone2"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 0.9
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.12
+},
+{
+"capture": "drone3"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 0.9
+}
+]

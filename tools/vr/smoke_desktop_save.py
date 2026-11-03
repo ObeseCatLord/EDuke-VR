@@ -21,7 +21,8 @@ def main():
     parser.add_argument('--binary', required=True, type=Path)
     parser.add_argument('--grp', required=True, type=Path)
     parser.add_argument('--work-dir', required=True, type=Path)
-    parser.add_argument('--save', required=True, type=Path)
+    parser.add_argument('--save', type=Path, help='a saved game to load (else the level or --map as it starts)')
+    parser.add_argument('--map', type=Path, help='a user map instead of a level')
     parser.add_argument('--level', default='1,2')
     parser.add_argument('--pack', default='voxel')
     parser.add_argument('--display', default=':105')
@@ -37,8 +38,13 @@ def main():
                EDUKE32_TEST_FLAT_CAPTURE=str(lab / 'capture-request'), EDUKE32_XR_CONSOLE_REQUEST=str(lab / 'console-request'))
     env.update(kv.split('=', 1) for kv in args.env)
     episode, level = args.level.split(',')
+    start = [f'-v{episode}', f'-l{level}']
+    if args.map:
+        (lab / args.map.name).write_bytes(args.map.read_bytes())
+        start = ['-map', args.map.name]
+    saves = ['-j', str(args.save.resolve().parent)] if args.save else []
     command = [str(LAUNCHER), '--desktop', '--no-voxel-build', '--pack', args.pack, '--binary', str(args.binary.resolve()), '--',
-               '-usecwd', '-nosetup', '-noautoload', '-nologo', '-j', str(args.save.resolve().parent), f'-v{episode}', f'-l{level}', '-s2']
+               '-usecwd', '-nosetup', '-noautoload', '-nologo', *saves, *start, '-s2']
     log = lab / 'game.log'
     result = {'passed': False, 'lab': str(lab)}
     with log.open('w') as out:
@@ -46,11 +52,13 @@ def main():
     text = lambda: log.read_text(errors='replace')
     try:
         deadline = time.monotonic() + 120
-        while time.monotonic() < deadline and f'E{episode}L{level}' not in text().upper():
+        started = 'USER MAP' if args.map else f'E{episode}L{level}'
+        while time.monotonic() < deadline and started not in text().upper():
             time.sleep(.5)
         time.sleep(4)
-        (lab / 'console-request').write_text(f'r_precache 0\nxr_load {args.save.name}\n')
-        time.sleep(12)
+        if args.save:
+            (lab / 'console-request').write_text(f'r_precache 0\nxr_load {args.save.name}\n')
+            time.sleep(12)
         if args.console:
             (lab / 'console-request').write_text(args.console.replace(';', '\n') + '\n')
             time.sleep(3)

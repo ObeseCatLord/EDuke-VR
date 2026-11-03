@@ -1101,9 +1101,9 @@ static void Net_CopySpriteExtFromNet(const netactor_t* netActor, spriteext_t* ga
     Bassert(netActor);
     Bassert(gameSprExt);
 
-    gameSprExt->mdanimtims = netActor->ext_mdanimtims;
-
-    gameSprExt->mdanimcur = netActor->ext_mdanimcur;
+    // mdanimtims/mdanimcur (a 3D model's animation clock) are this client's own drawing state: a
+    // dedicated server never draws, so its values are always zero, and taking them restarted every
+    // model's animation three times a second (a dying player's model played its death again and again).
     gameSprExt->mdangoff = netActor->ext_angoff;
     gameSprExt->mdpitch = netActor->ext_pitch;
     gameSprExt->mdroll = netActor->ext_roll;
@@ -1131,10 +1131,7 @@ static void Net_CopySpriteSmoothFromNet(const netactor_t* netActor, spritesmooth
 
     gameSprSmooth->smoothduration = netActor->sm_smoothduration;
 
-    gameSprSmooth->mdcurframe = netActor->sm_mdcurframe;
-    gameSprSmooth->mdoldframe = netActor->sm_mdoldframe;
-
-    gameSprSmooth->mdsmooth = netActor->sm_mdsmooth;
+    // The frame blend in progress (mdcurframe/mdoldframe/mdsmooth) is drawing state too, kept here.
 }
 
 static void Net_CopyAllActorDataFromNet(const netactor_t* netActor, spritetype* gameSprite, actor_t* gameActor, spriteext_t* gameSprExt, spritesmooth_t* gameSprSmooth)
@@ -1235,6 +1232,31 @@ static void Net_RebuildSpriteLists()
     }
 }
 
+// A crane (and its pole) this client moves in step with the server keeps its own position: world
+// snapshots come three times a second from a tick or two earlier, and taking them jerked the crane
+// (1.5 metres a second) back each time, and the player riding it with it. A crane in another state,
+// or further off, still takes the server's.
+static bool Net_KeepPredictedCrane(int32_t actorIndex, const netactor_t* srvActor)
+{
+#ifndef EDUKE32_STANDALONE
+    if (FURY || !g_netClient)
+        return false;
+    auto const& own = sprite[actorIndex];
+    bool const crane = srvActor->spr_picnum >= CRANE && srvActor->spr_picnum <= CRANE + 3;
+    if ((!crane && srvActor->spr_picnum != CRANEPOLE) || own.statnum != srvActor->spr_statnum)
+        return false;
+    if (crane && (own.picnum < CRANE || own.picnum > CRANE + 3 || actor[actorIndex].t_data[0] != srvActor->t_data_0
+                  || own.owner != int16_t(srvActor->spr_owner)))
+        return false;
+    if (!crane && own.picnum != CRANEPOLE)
+        return false;
+    return klabs(own.x - srvActor->spr_x) < 1024 && klabs(own.y - srvActor->spr_y) < 1024 && klabs(own.z - srvActor->spr_z) < 8192;
+#else
+    UNREFERENCED_PARAMETER(actorIndex); UNREFERENCED_PARAMETER(srvActor);
+    return false;
+#endif
+}
+
 static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const netmapstate_t* cl_snapshot)
 {
     int32_t actorIndex = 0;
@@ -1305,6 +1327,13 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
                             // this will also need updating when we support a dynamic number of player sprites...
             Net_CopyPlayerActorDataFromNet(snapshotActor, gameSprite, gameActor, gameExt, gameSm);
             Net_UpdateSpriteLinkedLists(actorIndex,snapshotActor);
+            continue;
+        }
+
+        if (Net_KeepPredictedCrane(actorIndex, snapshotActor))
+        {
+            if (!snapSpriteIsDeleted)
+                actorCount++;
             continue;
         }
 
@@ -2746,7 +2775,11 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
         g_player[player].ping               = playerupdate.ping;
 
 
-        g_player[player].ps->newowner = playerupdate.newowner;
+        // A security camera is this client's own view: the server's copy lags a round trip, and
+        // taking it back (entering without the saved position, or leaving without restoring it)
+        // left the player standing where the camera is.
+        if (player != myconnectindex)
+            g_player[player].ps->newowner = playerupdate.newowner;
     }
 }
 
@@ -3028,7 +3061,9 @@ static void Net_FillPlayerUpdate(playerupdate_t *update, int32_t player)
 {
     update->playerindex = player;
 
-    update->pos = g_player[player].ps->pos;
+    // Watching a security camera moves the view (pos) to the camera; the body stays at opos.
+    bool const viewingCamera = g_player[player].ps->newowner >= 0;
+    update->pos = viewingCamera ? g_player[player].ps->opos : g_player[player].ps->pos;
     update->opos = g_player[player].ps->opos;
     update->vel = g_player[player].ps->vel;
     update->q16ang = g_player[player].ps->q16ang;

@@ -10,12 +10,21 @@ step list against the Monado remote (a Valve Index pair), capturing both eyes wh
    {"console": "xr_weapons"}, {"wait": 2}, {"until": "regex", "timeout": 20},
    {"capture": "name"}]
 
+With --server PORT the level runs on a dedicated co-op server (same binary, flat) that the VR game
+joins; {"server": "net_givekeys"} types a server console command and "until" with
+"log": "server" waits on the server's log. --bots N adds N flat players (no input) who join after
+the VR player; {"face_player": P, "distance": 640} puts the VR player that far from player P,
+facing them (positions from xr_where); {"bot": N, "bot_console": "xr_goto x y ang"} runs a console
+command in bot N's game.
+
 Poses are metres in the LOCAL space (y up, -z forward) and degrees. Buttons are Hand fields of
 monado_remote (a_click, b_click, thumbstick_click, trackpad_touch, trackpad_force, trigger_value,
 squeeze_value, thumbstick=[x, y] ...); they stay set until changed. Prints a JSON result with
 the capture paths; captures are <work>/<name>-left.ppm / -right.ppm.
 """
 import argparse, json, math, os, re, subprocess, tempfile, time
+
+WHERE = re.compile(r'VR where: player=(\d+) local=(\d) pos=(-?\d+),(-?\d+),(-?\d+) ang=(-?\d+)')
 from pathlib import Path
 from monado_remote import Remote, Quat, Vec2
 from smoke_world import CONFIG
@@ -50,6 +59,8 @@ def main():
     parser.add_argument('--level', default='1,1', help='episode,level when no --map is given (default E1L1)')
     parser.add_argument('--env', action='append', default=[], help='extra KEY=VALUE for the game')
     parser.add_argument('--args', default='', help='extra EDuke32 arguments (space separated)')
+    parser.add_argument('--server', type=int, default=0, help='play on a dedicated co-op server on this port')
+    parser.add_argument('--bots', type=int, default=0, help='with --server: flat players who join after the VR player')
     parser.add_argument('--pack', default='original-lowres', help='model pack (launcher --pack); "default": the game\'s own choice')
     args = parser.parse_args()
     steps = json.loads(args.script.read_text())
@@ -70,8 +81,28 @@ def main():
         args.map = Path(args.map).name
     level = ['-map', args.map] if args.map else ['-v' + args.level.split(',')[0], '-l' + args.level.split(',')[1]]
     pack = [] if args.pack == 'default' else ['--pack', args.pack]
+    server, bots, flat = None, [], None
+    if args.server:
+        # Dedicated co-op server, flat, in its own directory; the VR game joins it.
+        host = lab / 'server'; host.mkdir()
+        (host / 'eduke32.cfg').write_text(CONFIG)
+        (host / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
+        if args.map and (lab / args.map).is_file():
+            (host / args.map).write_bytes((lab / args.map).read_bytes())
+        flat = {k: v for k, v in env.items() if not k.startswith('XR_') and k not in
+                ('EDUKE32_XR', 'EDUKE32_XR_CAPTURE_REQUEST', 'EDUKE32_XR_CONSOLE_REQUEST', 'EDUKE32_XR_TEST_HELD')}
+        server_log = (host / 'game.log').open('w')
+        server = subprocess.Popen([str(args.binary.resolve()), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-dedicated',
+                                   '-port', str(args.server), '-c2', *level, '-s1', *args.args.split()],
+                                  cwd=host, env=flat, stdin=subprocess.PIPE, stdout=server_log, stderr=subprocess.STDOUT)
+        server_text = lambda: (host / 'game.log').read_text(errors='replace')
+        limit = time.monotonic() + 60
+        while 'Multiplayer server initialized.' not in server_text() and time.monotonic() < limit and server.poll() is None:
+            time.sleep(.2)
+        time.sleep(3)
+        level = ['-connect', f'127.0.0.1:{args.server}']
     command = [str(launcher), '--no-voxel-build', '--binary', str(args.binary.resolve()), *pack, '--',
-               '-usecwd', '-noautoload', '-nologo', *level, '-s1', *args.args.split()]
+               '-usecwd', '-noautoload', '-nologo', *level, *([] if args.server else ['-s1']), *args.args.split()]
     log_path = lab / 'game.log'
     text = lambda: log_path.read_text(errors='replace')
     deadline = time.monotonic() + args.timeout
@@ -113,6 +144,21 @@ def main():
         try:
             if not wait(lambda: 'OpenXR world oracle: 60 frames' in text(), 300):
                 raise RuntimeError('world did not start')
+            for n in range(args.bots if args.server else 0):
+                # Flat players: the plain binary in its own directory (no launcher, no input).
+                bot = lab / f'bot{n}'; bot.mkdir()
+                (bot / 'eduke32.cfg').write_text(CONFIG + f'\n[Comm Setup]\nPlayerName = "Bot{n}"\n')
+                (bot / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
+                if args.map and (lab / args.map).is_file():
+                    (bot / args.map).write_bytes((lab / args.map).read_bytes())
+                bots.append(subprocess.Popen([str(args.binary.resolve()), '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',
+                                              '-connect', f'127.0.0.1:{args.server}', *args.args.split()],
+                                             cwd=bot, env=dict(flat, EDUKE32_XR_CONSOLE_REQUEST=str(bot / 'console-request')), stdin=subprocess.DEVNULL, stdout=(bot / 'game.log').open('w'),
+                                             stderr=subprocess.STDOUT))
+                limit = time.monotonic() + 90
+                while 'Multiplayer client level synchronization complete.' not in (bot / 'game.log').read_text(errors='replace') \
+                        and time.monotonic() < limit and bots[-1].poll() is None:
+                    time.sleep(.2)
             remote = Remote(args.remote_port).__enter__()
             packet = remote.packet
             for side in ('left', 'right'):
@@ -121,7 +167,7 @@ def main():
                 hand.pose.orientation = quat()
             remote.send()
             time.sleep(4)
-            console_mark = None
+            console_mark = server_mark = None
             for step in steps:
                 if 'pose' in step:
                     for name, value in step['pose'].items():
@@ -165,7 +211,31 @@ def main():
                         if process.poll() is not None:
                             raise RuntimeError('game exited')
                         remote.send(); time.sleep(.05)
-                if 'until' in step:
+                if 'face_player' in step:
+                    mark = len(text())
+                    console.write_text('xr_where\n'); wait(lambda: not console.exists(), 30)
+                    wait(lambda: len(WHERE.findall(text()[mark:])) >= 2, 30)
+                    rows = {int(m[0]): m for m in WHERE.findall(text()[mark:])}
+                    target = rows.get(int(step['face_player']))
+                    if target is None:
+                        raise RuntimeError(f'no player {step["face_player"]} in xr_where')
+                    x, y, ang = int(target[2]), int(target[3]), int(target[5])
+                    distance = step.get('distance', 640)
+                    # In front of them, facing them.
+                    gx = int(x + distance * math.cos(ang * math.pi / 1024)); gy = int(y + distance * math.sin(ang * math.pi / 1024))
+                    console.write_text(f'xr_goto {gx} {gy} {(ang + 1024) & 2047}\n'); wait(lambda: not console.exists(), 30)
+                if 'bot' in step:
+                    # {"bot": N, "console": "xr_goto x y ang"}: a console command in bot N's game.
+                    request = lab / f'bot{step["bot"]}' / 'console-request'
+                    request.write_text(step['bot_console'] + '\n'); wait(lambda: not request.exists(), 30)
+                if 'server' in step:
+                    server_mark = len(server_text())
+                    server.stdin.write((step['server'] + '\n').encode()); server.stdin.flush()
+                if 'until' in step and step.get('log') == 'server':
+                    start = 0 if step.get('from_start') else (server_mark or 0)
+                    ok = wait(lambda: re.search(step['until'], server_text()[start:]) is not None, step.get('timeout', 20))
+                    result.setdefault('until', []).append({'server: ' + step['until']: ok})
+                elif 'until' in step:
                     start = 0 if step.get('from_start') else min(len(text()), console_mark if console_mark is not None else len(text()))
                     console_mark = None
                     ok = wait(lambda: re.search(step['until'], text()[start:]) is not None, step.get('timeout', 20))
@@ -189,6 +259,19 @@ def main():
         finally:
             if remote:
                 remote.close()
+            for bot in bots:
+                if bot.poll() is None:
+                    bot.terminate()
+                    try:
+                        bot.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        bot.kill(); bot.wait()
+            if server and server.poll() is None:
+                server.terminate()
+                try:
+                    server.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    server.kill(); server.wait()
             if process.poll() is None:
                 process.terminate()
                 try:

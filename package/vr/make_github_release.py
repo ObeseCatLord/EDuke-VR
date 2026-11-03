@@ -144,6 +144,7 @@ def tree(root, version, platform, binary, windir, packs, arm64dir=None):
     data = out / 'data'
     for pack in PUBLIC_PACKS:
         mpb.copy_pack(packs / pack, data / 'vrpacks' / pack)
+    mpb.copy_mods(data / 'mods')
     (data / 'grp').mkdir(parents=True)
     (data / 'grp/PUT DUKE3D.GRP HERE.txt').write_text('Optional: put your DUKE3D.GRP here (else an installed copy is found).\n')
     mpb.write(out / 'VERSION', version + '\n')
