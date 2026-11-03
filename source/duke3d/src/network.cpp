@@ -4821,6 +4821,9 @@ static void Net_WriteAnimations(NetBuffer_t *netBuffer)
         NetBuffer_WriteDword(netBuffer, g_animateGoal[i]);
         NetBuffer_WriteDword(netBuffer, klabs(g_animateVel[i]));
     }
+    // A client counts the update one byte short (the packet type byte is taken off twice): keep
+    // the last value read inside what it counts.
+    NetBuffer_WriteBits(netBuffer, 0, 8);
 }
 
 static int32_t NetBuffer_ReadDWord(NetBuffer_t *netBuffer);
