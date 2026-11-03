@@ -22,6 +22,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #define game_c_
 
+#if defined __linux__ && !defined __ANDROID__
+# include <execinfo.h>
+# include <csignal>
+# include <unistd.h>
+#endif
 #include "anim.h"
 #include "cheats.h"
 #include "cmdline.h"
@@ -7573,6 +7578,21 @@ MAIN_LOOP_RESTART:
         {
             // Test hook (EDUKE32_TEST_STALL): why a game stops drawing frames.
             static bool const stallTest = getenv("EDUKE32_TEST_STALL") != nullptr;
+#if defined __linux__ && !defined __ANDROID__
+            // ... and where it is stuck: SIGUSR1 prints this thread's stack.
+            static bool stackHook;
+            if (stallTest && !stackHook)
+            {
+                stackHook = true;
+                signal(SIGUSR1, [](int) {
+                    void *frames[48];
+                    int const count = backtrace(frames, 48);
+                    static char const head[] = "Stall stack:\n";
+                    if (write(2, head, sizeof(head) - 1) < 0) {}
+                    backtrace_symbols_fd(frames, count, 2);
+                });
+            }
+#endif
             static uint64_t lastFrame, lastLog;
             static int32_t seenFrames;
             if (stallTest && g_networkMode != NET_DEDICATED_SERVER)

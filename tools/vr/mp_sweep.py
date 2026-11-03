@@ -334,10 +334,16 @@ def main():
             time.sleep(.3)
             silent = [k for k, f in files.items() if not f.is_file()]
             if silent:
-                # A game that stopped answering: interrupt it (under a debugger this shows where).
+                # A game that stopped answering: it prints its stack (SIGUSR1, EDUKE32_TEST_STALL), and
+                # is interrupted (under a debugger this shows where).
                 for k in silent:
                     if k in bots:
                         pid = bots[k][2].pid
+                        try:
+                            os.kill(pid, 10)
+                        except OSError:
+                            pass
+                        time.sleep(1)
                         for entry in Path('/proc').iterdir():
                             try:
                                 if entry.name.isdigit() and int((entry / 'stat').read_text().rsplit(') ', 1)[1].split()[1]) == pid:
