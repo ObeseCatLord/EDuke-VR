@@ -264,6 +264,11 @@ int __fastcall A_FindPlayer(const spritetype *pSprite, int32_t *dist)
     return closestPlayer;
 }
 
+bool G_DedicatedHostPlayer(int playerNum)
+{
+    return playerNum == 0 && (g_networkMode == NET_DEDICATED_SERVER || g_networkMode == NET_DEDICATED_CLIENT);
+}
+
 // Multiplayer clients: drop this game's own moves of a sector (lifts, doors) when the server says it
 // is at rest elsewhere.
 void G_StopSectorAnimations(int sectNum)
@@ -372,6 +377,11 @@ int SetAnimation(int sectNum, int32_t *animPtr, int goalVal, int animVel)
 {
     if (g_animateCnt >= MAXANIMATES)
         return -1;
+
+    static char const *const animTest = getenv("EDUKE32_TEST_ANIM");   // test hook: "SECTOR" to trace
+    if (animTest && sectNum == atoi(animTest))
+        LOG_F(INFO, "Animation: sector=%d goal=%d vel=%d now=%d caller=%p base=%p.", sectNum, goalVal, animVel, *animPtr,
+              __builtin_return_address(0), (void *)&SetAnimation);
 
     int animNum = g_animateCnt;
 
@@ -612,6 +622,10 @@ int G_ActivateWarpElevators(int spriteNum, int warpDir)
 
 void G_OperateSectors(int sectNum, int spriteNum)
 {
+    static char const *const animTest = getenv("EDUKE32_TEST_ANIM");   // test hook: who operates SECTOR
+    if (animTest && sectNum == atoi(animTest))
+        LOG_F(INFO, "Operate: sector=%d sprite=%d caller=%p base=%p.", sectNum, spriteNum, __builtin_return_address(0),
+              (void *)&G_OperateSectors);
     int32_t j=0;
     int32_t i;
     sectortype *const pSector = &sector[sectNum];

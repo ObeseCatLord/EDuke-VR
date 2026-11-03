@@ -168,6 +168,9 @@ static inline vec3_t G_GetCameraPosition(int32_t const i, int32_t const smoothra
              ca->bpos.z + mulscale16(cs->z - ca->bpos.z, smoothratio) };
 }
 
+// The dedicated server's own player (0, on the server and its clients): not in the game, though its
+// sprite stands at the first start (E1L4's touch plate there never fired for the real players).
+bool G_DedicatedHostPlayer(int playerNum);
 EXTERN_INLINE_HEADER int32_t G_GetPlayerInSector(int32_t const sect);
 
 #ifdef __cplusplus
@@ -179,7 +182,7 @@ EXTERN_INLINE_HEADER int32_t G_GetPlayerInSector(int32_t const sect);
 EXTERN_INLINE int32_t G_GetPlayerInSector(int32_t const sect)
 {
     for (int TRAVERSE_CONNECT(i))
-        if ((unsigned)g_player[i].ps->i < MAXSPRITES && sprite[g_player[i].ps->i].sectnum == sect)
+        if ((unsigned)g_player[i].ps->i < MAXSPRITES && sprite[g_player[i].ps->i].sectnum == sect && !G_DedicatedHostPlayer(i))
             return i;
     return -1;
 }

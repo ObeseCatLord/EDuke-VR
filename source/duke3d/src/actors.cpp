@@ -1946,6 +1946,8 @@ ACTOR_STATIC void G_MoveStandables(void)
             {
                 for (SPRITES_OF_SECT_SAFE(pData[1], j, nextj))
                 {
+                    if (sprite[j].statnum == STAT_PLAYER && G_DedicatedHostPlayer(P_Get(j)))
+                        continue;   // the dedicated server's own player is not in the game
                     switch (sprite[j].statnum)
                     {
                         case STAT_ACTOR:
@@ -2675,6 +2677,10 @@ DETONATE:
                         {
                             if (pData[0] == 0 && !G_CheckActivatorMotion(pSprite->lotag))
                             {
+                                static char const *const touchTest = getenv("EDUKE32_TEST_ANIM");
+                                if (touchTest)
+                                    LOG_F(INFO, "Touch plate fires: sprite=%d lotag=%d hitag=%d data=%d,%d,%d,%d player=%d.", spriteNum,
+                                          pSprite->lotag, pSprite->hitag, pData[0], pData[1], pData[3], pData[5], p);
                                 pData[0] = 1;
                                 pData[1] = 1;
                                 pData[3] = !pData[3];

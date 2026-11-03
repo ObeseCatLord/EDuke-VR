@@ -243,6 +243,7 @@ def main():
     parser.add_argument('--timeout', type=int, default=560)
     parser.add_argument('--server-wrap', default='', help='command the server runs under (e.g. a debugger)')
     parser.add_argument('--server-binary', type=Path, help='another binary for the server (e.g. a debug build)')
+    parser.add_argument('--client-env', action='append', default=[], help='KEY=VALUE for the players\' games')
     parser.add_argument('--client-wrap', default='', help='command the players run under (e.g. gdb); a player that stops '
                         'answering is interrupted (SIGINT) so a debugger shows where')
     args = parser.parse_args()
@@ -289,9 +290,10 @@ def main():
         common = ['-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm']
         host = lab('server')
         # --server-wrap, e.g. "gdb -batch -ex run -ex bt --args": the server under a debugger.
+        server_env = dict(env, **dict(kv.split('=', 1) for kv in args.client_env))
         server = subprocess.Popen([*args.server_wrap.split(), str(args.server_binary.resolve()) if args.server_binary else binary,
                                    *common, '-dedicated', '-port', str(args.port), '-c2', f'-v{episode}', f'-l{level}', '-m'],
-                                  cwd=host, env=env, stdin=subprocess.PIPE, stdout=(host / 'game.log').open('w'), stderr=subprocess.STDOUT)
+                                  cwd=host, env=server_env, stdin=subprocess.PIPE, stdout=(host / 'game.log').open('w'), stderr=subprocess.STDOUT)
         processes.append(server)
         if not wait(lambda: 'Multiplayer server initialized.' in log_text(host), 60):
             raise RuntimeError('server did not start')
@@ -301,7 +303,7 @@ def main():
             d = lab(name)
             request = d / 'console-request'
             p = subprocess.Popen([*args.client_wrap.split(), binary, *common, '-connect', f'127.0.0.1:{args.port}'], cwd=d,
-                                 env=dict(env, EDUKE32_XR_CONSOLE_REQUEST=str(request), EDUKE32_TEST_STALL='1'), stdin=subprocess.DEVNULL,
+                                 env=dict(env, EDUKE32_XR_CONSOLE_REQUEST=str(request), EDUKE32_TEST_STALL='1', **dict(kv.split('=', 1) for kv in args.client_env)), stdin=subprocess.DEVNULL,
                                  stdout=(d / 'game.log').open('w'), stderr=subprocess.STDOUT)
             processes.append(p)
             if not wait(lambda: 'Multiplayer client level synchronization complete.' in log_text(d), 120):
