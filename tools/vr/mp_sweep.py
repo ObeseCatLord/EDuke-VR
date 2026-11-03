@@ -17,6 +17,7 @@ agree or should not happen:
   crane-off-rail  a crane left the line between its rest place and its pole (server or a player)
   crane-stuck     a crane that took the actor did not get back to its rest place
   actor-died      the actor was dead after using the thing (it is respawned and the sweep goes on)
+  level-ended     the thing ended the level (an exit): the rest of the chunk is not run
 
 Progression things are tested their own way: cranes (stand under the pole and ride it there and
 back), lifts and elevators (Use from inside), teleporters and touch plates (step in).
@@ -189,12 +190,14 @@ def targets(sectors, walls, sprites):
 
 
 def parse_state(path):
-    state = dict(players={}, sectors={}, walls={}, sprites={}, local=-1)
+    state = dict(players={}, sectors={}, walls={}, sprites={}, local=-1, map='')
     for line in path.read_text().splitlines():
         f = line.split()
         if not f:
             continue
-        if f[0] == 'local':
+        if f[0] == 'map':
+            state['map'] = f[1].upper()
+        elif f[0] == 'local':
             state['local'] = int(f[1])
         elif f[0] == 'player':
             state['players'][int(f[1])] = dict(pos=(int(f[3]), int(f[4]), int(f[5])), newowner=int(f[11]), crane=int(f[13]),
@@ -268,7 +271,9 @@ def main():
 
     def lab(name):
         d = root / name; d.mkdir()
-        (d / 'eduke32.cfg').write_text(CONFIG + f'\n[Comm Setup]\nPlayerName = "{name}"\n')
+        # Small windows: three software-rendered games share the lab's X server.
+        config = CONFIG.replace('ScreenWidth = 960', 'ScreenWidth = 320').replace('ScreenHeight = 600', 'ScreenHeight = 200')
+        (d / 'eduke32.cfg').write_text(config + f'\n[Comm Setup]\nPlayerName = "{name}"\n')
         (d / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
         return d
 
@@ -395,6 +400,11 @@ def main():
             result['used'] += 1
             if me is None:
                 me = first['actor']['local']
+            maps = {st['map'] for st in (first['server'], second['server'])}
+            if not any(f'E{episode}L{level}.MAP' in m for m in maps):
+                result['issues'].append({'target': target, 'issues': [['level-ended', 'server', str(sorted(maps))]]})
+                result['stopped_early'] = n
+                break
             server_me, own_me = second['server']['players'].get(me), second['actor']['players'].get(me)
             if own_me and (own_me['dead'] or own_me['extra'] <= 0):
                 issues.append(('actor-died', 'actor', me, (x, y), own_me['pos']))

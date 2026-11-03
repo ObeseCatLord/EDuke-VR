@@ -3494,7 +3494,7 @@ static int32_t NetBuffer_ReadBits(NetBuffer_t *netBuffer, int32_t numberOfBits)
 {
     int32_t    value = GetBits(netBuffer->Data, &netBuffer->Bit, numberOfBits);
 
-    netBuffer->ReadCurByte = (netBuffer->Bit >> 3) + 1;
+    netBuffer->ReadCurByte = (netBuffer->Bit + 7) >> 3;   // bytes read (a value ending on the last byte is in bounds)
 
     return value;
 }
@@ -4808,6 +4808,9 @@ static void Net_WriteAnimations(NetBuffer_t *netBuffer)
         }
         count++;
     }
+    static bool const trace = getenv("EDUKE32_TEST_ANIMNET") != nullptr;
+    if (trace)
+        LOG_F(INFO, "Animations written at byte %d: %d.", netBuffer->CurSize, count);
     NetBuffer_WriteDword(netBuffer, count);
     for (int i = 0; i < g_animateCnt; i++)
     {
@@ -4825,7 +4828,12 @@ static int32_t NetBuffer_ReadDWord(NetBuffer_t *netBuffer);
 // Clients: the server's sector moves replace this game's own.
 static void Net_ReadAnimations(NetBuffer_t *netBuffer)
 {
+    static bool const trace = getenv("EDUKE32_TEST_ANIMNET") != nullptr;
+    if (trace)
+        LOG_F(INFO, "Animations at byte %d of %d.", netBuffer->ReadCurByte, netBuffer->CurSize);
     int const count = NetBuffer_ReadDWord(netBuffer);
+    if (trace)
+        LOG_F(INFO, "Animations: %d.", count);
     if ((unsigned)count > MAXANIMATES)
         return;
     for (int i = 0; i < g_animateCnt; i++)

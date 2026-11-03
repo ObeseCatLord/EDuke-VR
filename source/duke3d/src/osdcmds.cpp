@@ -1251,7 +1251,8 @@ static int osdcmd_net_state(osdcmdptr_t parm)
         LOG_F(INFO, "net_state: cannot write %s.", parm->parms[0]);
         return OSDCMD_OK;
     }
-    fprintf(file, "map %s tick %d\nlocal %d\n", currentboardfilename, (int32_t)totalclock, myconnectindex);
+    fprintf(file, "map %s tick %d\nlocal %d\n", G_HaveUserMap() ? currentboardfilename : (Bsprintf(tempbuf, "E%dL%d.MAP", ud.volume_number + 1, ud.level_number + 1), tempbuf),
+            (int32_t)totalclock, myconnectindex);
     for (int TRAVERSE_CONNECT(i))
     {
         auto const p = g_player[i].ps;
