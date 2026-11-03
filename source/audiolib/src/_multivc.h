@@ -177,6 +177,7 @@ typedef struct VoiceNode
 
     int handle;
     int priority;
+    bool sidechain;   // voice chat: mixed after the game, which it ducks (MV_SetSidechainKey)
 
     async::task<int> task;
 } VoiceNode;

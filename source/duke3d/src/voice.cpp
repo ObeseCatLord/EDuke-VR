@@ -41,6 +41,9 @@ float voice_volume = 1.f;
 int32_t voice_agc = 1;            // automatic gain control of each talker (received audio)
 float voice_agc_max_gain = 8.f;   // most a quiet microphone is raised (x)
 float voice_radio_volume = .45f;
+// Ducking under voice chat (a sidechain): how far a talker turns the game's speech band down, and
+// the whole game a little (dB; 0 turns it off).
+float voice_duck = 10.f, voice_duck_overall = 3.f;
 int32_t voice_spatial_distance = 9216;  // Build units (~24 m) where a talker becomes "radio"
 char voice_device[128] = "";
 
@@ -451,7 +454,11 @@ void updatePlayback(int index, double now)
     // Our voice only while the handle still is it (a finished voice's handle is reused by game
     // sounds). MUSIC_ID: the game's sound callback ignores this voice ending.
     if (!MV_VoiceOwnedBy(sp.handle, &sp) || !FX_SoundValidAndActive(sp.handle))
+    {
         sp.handle = FX_StartDemandFeedPlayback(demandFeed, 16, 1, Rate, 0, std::max(l, r), l, r, 255, fix16_one, MUSIC_ID, &sp);
+        if (sp.handle > 0)
+            FX_SetSidechainKey(sp.handle);   // the game ducks under it (voice_duck)
+    }
     else
         FX_SetPan(sp.handle, std::max(l, r), l, r);
     if (std::getenv("EDUKE32_VOICE_TEST_DUMP"))
@@ -528,6 +535,8 @@ void Voice_Init(void)
         { "voice_volume", "voice chat volume (0-2)", (void *)&voice_volume, CVAR_FLOAT, 0, 2 },
         { "voice_agc", "automatic gain control: every talker at one loudness, quiet microphones raised (0/1)", (void *)&voice_agc, CVAR_BOOL, 0, 1 },
         { "voice_agc_max_gain", "most the automatic gain control raises a quiet microphone (1-16x)", (void *)&voice_agc_max_gain, CVAR_FLOAT, 1, 16 },
+        { "voice_duck", "while someone talks, the game's speech frequencies duck by this many dB (0: off)", (void *)&voice_duck, CVAR_FLOAT, 0, 30 },
+        { "voice_duck_overall", "while someone talks, the whole game ducks by this many dB (0: off)", (void *)&voice_duck_overall, CVAR_FLOAT, 0, 30 },
         { "voice_radio_volume", "volume of distant talkers (centred radio level, 0-1)", (void *)&voice_radio_volume, CVAR_FLOAT, 0, 1 },
         { "voice_spatial_distance", "distance (Build units) at which a talker is heard as radio", (void *)&voice_spatial_distance, CVAR_INT, 512, 65536 },
         { "voice_device", "recording device name (\"\" = system default; see voice_devices)", (void *)voice_device, CVAR_STRING, 0, sizeof(voice_device) },
@@ -709,6 +718,18 @@ bool Voice_InputGateOpen(void) { return gateOpen; }
 void Voice_Frame(void)
 {
     if (g_networkMode == NET_DEDICATED_SERVER) return;
+    FX_SetVoiceDucking(voice_duck, voice_duck_overall);
+    static bool const duckTest = std::getenv("EDUKE32_TEST_DUCK") != nullptr;   // test hook
+    if (duckTest)
+    {
+        static double lastLog;
+        double const now = double(timerGetNanoTicks()) / double(timerGetNanoTickRate());
+        if (now - lastLog > .25)
+        {
+            lastLog = now;
+            LOG_F(INFO, "Voice duck: %.2f.", MV_GetDuckAmount());
+        }
+    }
     // Push-to-talk: the bound Push_To_Talk keys (or a mouse/controller button), not while typing.
     {
         auto const &keys = ud.config.KeyboardKeys[gamefunc_Push_To_Talk];

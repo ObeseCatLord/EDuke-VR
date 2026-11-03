@@ -113,6 +113,8 @@ static FORCE_INLINE void FX_SetReverseStereo(int setting) { MV_SetReverseStereo(
 static FORCE_INLINE int FX_GetReverseStereo(void) { return MV_GetReverseStereo(); }
 #endif
 static FORCE_INLINE void FX_SetReverb(int reverb) { MV_SetReverb(reverb); }
+static FORCE_INLINE int FX_SetSidechainKey(int handle) { return FX_CheckMVErr(MV_SetSidechainKey(handle)); }
+static FORCE_INLINE void FX_SetVoiceDucking(float speechDb, float overallDb) { MV_SetVoiceDucking(speechDb, overallDb); }
 static FORCE_INLINE int FX_GetMaxReverbDelay(void) { return MV_GetMaxReverbDelay(); }
 static FORCE_INLINE int FX_GetReverbDelay(void) { return MV_GetReverbDelay(); }
 static FORCE_INLINE void FX_SetReverbDelay(int delay) { MV_SetReverbDelay(delay); }

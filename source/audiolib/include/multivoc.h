@@ -99,6 +99,9 @@ int  MV_EndLooping(int handle);
 int  MV_SetPan(int handle, int vol, int left, int right);
 int  MV_Pan3D(int handle, int angle, int distance);
 void MV_SetReverb(int reverb);
+int  MV_SetSidechainKey(int handle);                     // voice chat: ducks the rest of the mix
+void MV_SetVoiceDucking(float speechDb, float overallDb); // how far (0 dB: off)
+float MV_GetDuckAmount(void);                            // 0..1, how hard the game is ducked now
 int  MV_GetMaxReverbDelay(void);
 int  MV_GetReverbDelay(void);
 void MV_SetReverbDelay(int delay);

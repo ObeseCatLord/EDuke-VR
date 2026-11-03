@@ -49,7 +49,7 @@ def main():
     talker_env = dict(native, EDUKE32_VOICE_TEST_TONE=f'{TONE:.0f}:700:500')
     console = labs['xr'] / 'console-request'
     dump = labs['xr'] / 'voice'
-    xr_env = dict(base, EDUKE32_XR='play', EDUKE32_XR_CONSOLE_REQUEST=str(console), EDUKE32_VOICE_TEST_DUMP=str(dump),
+    xr_env = dict(base, EDUKE32_XR='play', EDUKE32_XR_CONSOLE_REQUEST=str(console), EDUKE32_VOICE_TEST_DUMP=str(dump), EDUKE32_TEST_DUCK='1',
                   XDG_DATA_HOME=str(labs['xr'] / 'data'))
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
     common = ['-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-x', 'coop_vr.con']

@@ -107,7 +107,10 @@ static void (*MV_MusicCallback)(void);
 
 static VoiceNode **MV_Handles;
 
-static bool MV_Mix(VoiceNode * const voice, int const buffer)
+static bool MV_MixTo(VoiceNode * const voice, char *destination);
+static bool MV_Mix(VoiceNode * const voice, int const buffer) { return MV_MixTo(voice, MV_MixBuffer[buffer]); }
+
+static bool MV_MixTo(VoiceNode * const voice, char *destination)
 {
     if (voice->task.valid())
     {
@@ -135,7 +138,7 @@ static bool MV_Mix(VoiceNode * const voice, int const buffer)
     uint32_t       bufsiz = voice->FixedPointBufferSize;
     uint32_t const rate   = voice->RateScale;
 
-    MV_MixDestination = MV_MixBuffer[buffer];
+    MV_MixDestination = destination;
 
     // Add this voice to the mix
     do
@@ -247,6 +250,63 @@ void MV_StopVoice(VoiceNode *voice, bool useCallBack)
         locking in the user-space functions of MultiVoc. The call
         to MV_ServiceVoc is synchronised in the driver.
 ---------------------------------------------------------------------*/
+// Voice chat ducking ("sidechain"): voices marked as the key (MV_SetSidechainKey, voice chat) are
+// mixed apart, after the game; their level drives a cut of the game's speech band (a wide peaking
+// EQ at 1.4 kHz) and a smaller cut of everything, so talkers stay clear over gunfire and music.
+// Attack 5 ms, release 300 ms; the full cut from a voice at -25 dBFS, none below -45 dBFS.
+static float MV_DuckSpeechDb = 10.f, MV_DuckOverallDb = 3.f;
+static char *MV_KeyBuffer;
+static float MV_DuckEnvelope, MV_DuckAmount;
+static float MV_DuckState[2][2];   // biquad state per channel (transposed direct form II)
+
+float MV_GetDuckAmount(void) { return MV_DuckAmount; }
+
+void MV_SetVoiceDucking(float speechDb, float overallDb)
+{
+    MV_DuckSpeechDb  = max(0.f, min(speechDb, 30.f));
+    MV_DuckOverallDb = max(0.f, min(overallDb, 30.f));
+}
+
+static void MV_DuckAndAddKey(int16_t *out, int16_t const *key, int frames)
+{
+    int const channels = min(MV_Channels, 2);
+    float const rate = (float)MV_MixRate;
+    float const attack = 1.f - expf(-1.f / (0.005f * rate)), release = 1.f - expf(-1.f / (0.300f * rate));
+    for (int i = 0; i < frames; i++)
+    {
+        float level = 0.f;
+        for (int c = 0; c < channels; c++)
+            level = max(level, fabsf((float)key[i * channels + c]));
+        MV_DuckEnvelope += (level - MV_DuckEnvelope) * (level > MV_DuckEnvelope ? attack : release);
+    }
+    float const db = 20.f * log10f(max(MV_DuckEnvelope, 1.f) / 32768.f);
+    float const target = max(0.f, min(1.f, (db + 45.f) / 20.f));
+    MV_DuckAmount = target;
+
+    // Peaking EQ (RBJ), recomputed per buffer (a few milliseconds).
+    float const gainDb = -MV_DuckSpeechDb * MV_DuckAmount;
+    float const A = powf(10.f, gainDb / 40.f), w0 = 2.f * 3.14159265f * 1400.f / rate, alpha = sinf(w0) / (2.f * 0.6f), cw = cosf(w0);
+    float const a0 = 1.f + alpha / A;
+    float const b0 = (1.f + alpha * A) / a0, b1 = -2.f * cw / a0, b2 = (1.f - alpha * A) / a0;
+    float const a1 = -2.f * cw / a0, a2 = (1.f - alpha / A) / a0;
+    float const overall = powf(10.f, -MV_DuckOverallDb * MV_DuckAmount / 20.f);
+    bool const flat = gainDb > -0.01f && overall > 0.999f;
+
+    for (int i = 0; i < frames; i++)
+        for (int c = 0; c < channels; c++)
+        {
+            int16_t &sample = out[i * channels + c];
+            float x = (float)sample, y = x;
+            float *st = MV_DuckState[c];
+            y    = b0 * x + st[0];
+            st[0] = b1 * x - a1 * y + st[1];
+            st[1] = b2 * x - a2 * y;
+            if (flat) y = x;   // (the filter keeps running so it is primed when a talker starts)
+            int const mixed = (int)lrintf(y * overall) + key[i * channels + c];
+            sample = (int16_t)clamp(mixed, INT16_MIN, INT16_MAX);
+        }
+}
+
 static void MV_ServiceVoc(void)
 {
     // Toggle which buffer we'll mix next
@@ -286,6 +346,7 @@ static void MV_ServiceVoc(void)
     }
 
     VoiceNode *MusicVoice = nullptr;
+    bool keyMixed = false;
 
     if (VoiceList.next && VoiceList.next != &VoiceList)
     {
@@ -302,6 +363,19 @@ static void MV_ServiceVoc(void)
             if (voice->priority == FX_MUSIC_PRIORITY)
             {
                 MusicVoice = voice;
+                continue;
+            }
+
+            if (voice->sidechain && MV_KeyBuffer)
+            {
+                if (!keyMixed)
+                    Bmemset(MV_KeyBuffer, 0, MV_BufferSize);
+                keyMixed = true;
+                if (!MV_MixTo(voice, MV_KeyBuffer))
+                {
+                    MV_CleanupVoice(voice);
+                    MV_FreeHandle(voice);
+                }
                 continue;
             }
 
@@ -332,6 +406,15 @@ static void MV_ServiceVoc(void)
     {
         MV_CleanupVoice(MusicVoice);
         MV_FreeHandle(MusicVoice);
+    }
+
+    // Voice chat on top of the ducked game (the envelope also releases while nobody talks).
+    if (MV_KeyBuffer)
+    {
+        if (!keyMixed)
+            Bmemset(MV_KeyBuffer, 0, MV_BufferSize);
+        MV_DuckAndAddKey((int16_t *)MV_MixBuffer[MV_MixPage + MV_NumberOfBuffers], (int16_t const *)MV_KeyBuffer,
+                         MV_BufferSize / MV_SampleSize);
     }
 }
 
@@ -522,6 +605,7 @@ VoiceNode *MV_AllocVoice(int priority, uint32_t allocsize /* = 0 */)
 
     voice->length = 0;
     voice->BlockLength = 0;
+    voice->sidechain = false;
     voice->handle = handle;
     voice->next = voice->prev = nullptr;
     MV_Unlock();
@@ -725,6 +809,18 @@ int MV_EndLooping(int handle)
     return MV_Ok;
 }
 
+int MV_SetSidechainKey(int handle)
+{
+    auto voice = MV_BeginService(handle);
+
+    if (voice == nullptr)
+        return MV_Error;
+
+    voice->sidechain = true;
+    MV_EndService();
+    return MV_Ok;
+}
+
 int MV_SetPan(int handle, int vol, int left, int right)
 {
     auto voice = MV_BeginService(handle);
@@ -921,6 +1017,12 @@ int MV_Init(int soundcard, int MixRate, int Voices, int numchannels, void *initd
     }
 
     MV_MusicBuffer = ptr;
+
+    // The voice chat key buffer (MV_DuckAndAddKey), as big as a mix buffer.
+    Xfree(MV_KeyBuffer);
+    MV_KeyBuffer = (char *)Xcalloc(1, MV_BufferSize);
+    MV_DuckEnvelope = MV_DuckAmount = 0.f;
+    Bmemset(MV_DuckState, 0, sizeof(MV_DuckState));
 
     // Calculate pan table
     MV_CalcPanTable();

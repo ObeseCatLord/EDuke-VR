@@ -329,8 +329,12 @@ Everything below is in **Options > Sound Setup > Voice Chat Setup** (also linked
 
 A live microphone level meter at the bottom shows whether your voice opens the gate (or push-to-talk is held). It works outside a game too.
 
-Voice chat sits over the game: its level (`voice_volume`) is independent of the sound effects
-volume, and the first time the game runs in VR, sound effects and music still at their stock
+Voice chat sits over the game, which ducks under it like a radio mix with a sidechain
+compressor: while someone talks, the game's speech frequencies (a wide cut centred on 1.4 kHz,
+about 10 dB at the centre, little below 250 Hz or above 6 kHz, so explosions keep their weight)
+and, a little, the whole game come down, quickly as the talker starts and smoothly after they stop
+(`voice_duck` 10 dB and `voice_duck_overall` 3 dB; 0 turns either off). Its level (`voice_volume`)
+is independent of the sound effects volume, and the first time the game runs in VR, sound effects and music still at their stock
 levels come down (effects 170, music 130 of 255) so talkers stay clear. A volume you set yourself is
 left alone.
 
@@ -343,6 +347,7 @@ left alone.
 | `voice_vad_sensitivity` | 55 | 0-100 |
 | `voice_input_gain` / `voice_volume` | 1 / 1 | voice chat has its own level, not the sound effects' |
 | `voice_radio_volume` | 0.45 | distant talkers |
+| `voice_duck` / `voice_duck_overall` | 10 / 3 | dB the game's speech band / whole game ducks while someone talks (0 off) |
 | `voice_device` | "" | recording device (`voice_devices` lists them) |
 | `voice_enable`, `voice_hud` | 1 | |
 | `voice_loopback` | 0 | hear yourself (mic test) |
