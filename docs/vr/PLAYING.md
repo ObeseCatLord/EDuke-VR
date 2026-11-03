@@ -391,7 +391,9 @@ Verified across a real network with `tools/vr/smoke_xr_remote_coop.py`. That tes
 - **Name tags** (`cl_nametags 1`, default; VR Setup **Name tags (multiplayer)**): other players' names over their heads, in their colour, shown as ((Name)) while they talk. Walls hide them. Multiplayer only.
 - **Friendly fire** is off by default in co-op (and between teammates in team games): players' shots and explosions do not hurt each other. `-ffire` on the server's command line, or `mp_friendlyfire 1` in its console, turns it on (clients follow from the next level); the host menu's **Friendly Fire** sets it for a game started from the menu.
 - **Server commands** (dedicated server console, e.g. `echo net_givekeys > console.fifo`): `net_givekeys` (every player gets all three keycards), `net_giveall` (all weapons, ammo and items), `net_kill N`, `net_endlevel [episode]`.
-- **Security cameras** show the camera's view to the player using the screen; their body stays at the screen.
+- **Security cameras** show the camera's view to the player using the screen; their body stays at the screen. In multiplayer, Use while watching leaves the camera (single player cycles the screen's cameras first).
+- **Doors, lifts and platforms** move the server's way on every player's game (the moves in progress ride with each world update).
+- **Tested by bots:** `tools/vr/mp_sweep.py` (`mp_sweep_all.py` for many levels) has a player walk up to every switch, keycard scanner, security screen, door, lift, teleporter, touch plate and crane of a level on a dedicated server and use it, while the server and both players' games are compared (positions, cameras, doors and lifts, switch states, cranes on their rails). Episode 1 passes.
 - **Cranes** (Toxic Dump) run on their rails through players and ride smoothly between server updates.
 - **The whole campaign**: the end of an episode goes on to the next episode (wrapping to the first after the last one the server has), every player back to the pistol and full health. Each player sees the episode's ending; the server does not wait.
 
