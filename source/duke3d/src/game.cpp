@@ -7570,6 +7570,26 @@ MAIN_LOOP_RESTART:
             quitevent = 0;
         }
 
+        {
+            // Test hook (EDUKE32_TEST_STALL): why a game stops drawing frames.
+            static bool const stallTest = getenv("EDUKE32_TEST_STALL") != nullptr;
+            static uint64_t lastFrame, lastLog;
+            static int32_t seenFrames;
+            if (stallTest && g_networkMode != NET_DEDICATED_SERVER)
+            {
+                uint64_t const now = timerGetNanoTicks(), rate = timerGetNanoTickRate();
+                if (g_frameCounter != seenFrames) { seenFrames = g_frameCounter; lastFrame = now; }
+                else if (now - lastFrame > 2 * rate && now - lastLog > rate)
+                {
+                    lastLog = now;
+                    auto const &me = *g_player[myconnectindex].ps;
+                    LOG_F(INFO, "Stall: no frame for %.1f s: gm=0x%x ready2send=%d clock=%d/%d save=%d dead=%d extra=%d.",
+                          double(now - lastFrame) / rate, me.gm, ready2send, (int32_t)totalclock, (int32_t)ototalclock,
+                          int(g_saveRequested), me.dead_flag, (unsigned)me.i < MAXSPRITES ? sprite[me.i].extra : -1);
+                }
+            }
+        }
+
         Voice_Frame();   // voice chat: capture/send, decode, spatialize (every frame)
 
         //if (g_restartFrameRoutine)

@@ -3399,6 +3399,16 @@ void P_CheckSectors(int playerNum)
         pPlayer->toggle_key_flag = 1;
         foundWall = -1;
 
+        // Multiplayer: Use while watching a security camera leaves it. (Single player cycles through
+        // the screen's free cameras first, by their shared "in use" flag; the server's snapshots keep
+        // resetting that flag on clients, so Use always found a "free" camera and never left: the
+        // player stayed at the camera.)
+        if (pPlayer->newowner >= 0 && (g_netServer || g_netClient || ud.multimode > 1))
+        {
+            G_ClearCameras(pPlayer);
+            return;
+        }
+
         // VR: use where the off hand points (its yaw rides the hand shot sample).
         int const useAng = G_VRUseAngle(playerNum, fix16_to_int(pPlayer->q16ang));
         int wallDist = P_FindWall(pPlayer, &foundWall, useAng);

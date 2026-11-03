@@ -236,6 +236,8 @@ def main():
     parser.add_argument('--timeout', type=int, default=560)
     parser.add_argument('--server-wrap', default='', help='command the server runs under (e.g. a debugger)')
     parser.add_argument('--server-binary', type=Path, help='another binary for the server (e.g. a debug build)')
+    parser.add_argument('--client-wrap', default='', help='command the players run under (e.g. gdb); a player that stops '
+                        'answering is interrupted (SIGINT) so a debugger shows where')
     args = parser.parse_args()
     episode, level = map(int, args.level.split(','))
     deadline = time.monotonic() + args.timeout
@@ -289,17 +291,17 @@ def main():
         for name in ('actor', 'watcher'):
             d = lab(name)
             request = d / 'console-request'
-            p = subprocess.Popen([binary, *common, '-connect', f'127.0.0.1:{args.port}'], cwd=d,
-                                 env=dict(env, EDUKE32_XR_CONSOLE_REQUEST=str(request)), stdin=subprocess.DEVNULL,
+            p = subprocess.Popen([*args.client_wrap.split(), binary, *common, '-connect', f'127.0.0.1:{args.port}'], cwd=d,
+                                 env=dict(env, EDUKE32_XR_CONSOLE_REQUEST=str(request), EDUKE32_TEST_STALL='1'), stdin=subprocess.DEVNULL,
                                  stdout=(d / 'game.log').open('w'), stderr=subprocess.STDOUT)
             processes.append(p)
             if not wait(lambda: 'Multiplayer client level synchronization complete.' in log_text(d), 120):
                 raise RuntimeError(f'{name} did not join')
-            bots[name] = (d, request)
+            bots[name] = (d, request, p)
             time.sleep(2)
 
         def console(name, command):
-            d, request = bots[name]
+            d, request, _ = bots[name]
             request.write_text(command + '\n')
             return wait(lambda: not request.exists(), 30)
 
@@ -314,6 +316,20 @@ def main():
                 console(name, f'net_state {files[name]}')
             wait(lambda: all(f.is_file() and f.stat().st_size for f in files.values()), 20)
             time.sleep(.3)
+            silent = [k for k, f in files.items() if not f.is_file()]
+            if silent:
+                # A game that stopped answering: interrupt it (under a debugger this shows where).
+                for k in silent:
+                    if k in bots:
+                        pid = bots[k][2].pid
+                        for entry in Path('/proc').iterdir():
+                            try:
+                                if entry.name.isdigit() and int((entry / 'stat').read_text().rsplit(') ', 1)[1].split()[1]) == pid:
+                                    os.kill(int(entry.name), 2)
+                            except (OSError, ValueError, IndexError):
+                                pass
+                time.sleep(5)
+                raise RuntimeError(f'{",".join(silent)} stopped answering at {tag}')
             return {k: parse_state(f) for k, f in files.items()}
 
         before = states('baseline')
@@ -370,7 +386,7 @@ def main():
                 me = first['actor']['local']
             server_me, own_me = second['server']['players'].get(me), second['actor']['players'].get(me)
             if server_me and own_me:
-                if math.dist(server_me['pos'][:2], own_me['pos'][:2]) > 512:
+                if own_me['newowner'] < 0 and math.dist(server_me['pos'][:2], own_me['pos'][:2]) > 512:
                     issues.append(('desync-player', 'actor', me, server_me['pos'], own_me['pos']))
                 if math.dist(own_me['pos'][:2], (x, y)) > 1536 and own_me['newowner'] < 0 and kind not in ('door', 'teleport', 'lift'):
                     issues.append(('moved', 'actor', me, (x, y), own_me['pos']))
@@ -386,9 +402,14 @@ def main():
                     if back and srv and math.dist(back['pos'][:2], srv['pos'][:2]) > 512:
                         issues.append(('desync-player', 'actor-after-camera', me, srv['pos'], back['pos']))
             for name in bots:
+                # Only what stays wrong: the server's value held still between the two samples and the
+                # player's still differs (a lift or door still moving is sampled at different moments).
                 a = {tuple(map(str, i[:3])) for i in compare(first['server'], first[name], name)}
                 for issue in compare(second['server'], second[name], name):
-                    if tuple(map(str, issue[:3])) in a:
+                    kind, _, key = issue[0], issue[1], issue[2]
+                    table = {'desync-sector': 'sectors', 'desync-switch': 'walls', 'desync-sprite': 'sprites'}[kind]
+                    steady = first['server'][table].get(key) == second['server'][table].get(key)
+                    if tuple(map(str, issue[:3])) in a and steady:
                         issues.append(issue)
             if issues:
                 result['issues'].append({'target': target, 'issues': [list(map(str, i)) for i in issues][:30]})
