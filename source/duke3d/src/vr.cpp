@@ -3279,8 +3279,13 @@ static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smo
         HandSegmentSample bodySample;
         if (!solveIkBody(bodySample,in,remote.ik,true,remote.body)) { out.resize(before); continue; }
         out.push_back(bodySample);
-        for (int j=0;j<spritesortcnt;++j)
-            if (tsprite[j].owner==ps->i) tsprite[j].xrepeat=tsprite[j].yrepeat=0;
+        int tags=0;
+        for (int j=0;j<spritesortcnt;++j)   // keeps their name tag
+            if (tsprite[j].owner==ps->i)
+            {
+                if (G_IsNametagTile(tsprite[j].picnum)) ++tags;
+                else tsprite[j].xrepeat=tsprite[j].yrepeat=0;
+            }
         if (!desktop) remoteBodySprites.push_back(ps->i);
         if (std::getenv("EDUKE32_XR_TEST_BODY_POSES"))
         {
@@ -3306,6 +3311,7 @@ static void prepareRemoteBodies(std::vector<HandSegmentSample> &out, int32_t smo
                       weapon ? int(pose.weaponTile) : -1,out.size()-before,unsigned(pose.kick),
                       wrapRadians(std::atan2(in.headForward.y,in.headForward.x)-in.angle)*180.f/Pi,
                       w[0][0],w[0][1],w[0][2],w[1][0],w[1][1],w[1][2]);
+                LOG_F(INFO,"VR remote body name tags: player=%d shown=%d.",k,tags);
             }
         }
     }

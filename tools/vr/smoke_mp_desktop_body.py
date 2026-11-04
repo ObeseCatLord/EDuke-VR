@@ -5,7 +5,7 @@
 Private dedicated server, a desktop peer (eduke32-vr-play --desktop with a model set that has
 the IK body) and a VR peer (eduke32-vr-play, play preset) on two starts facing each other. The VR
 peer raises its hands; the desktop peer must draw the VR player's IK body from the received poses
-(its own native player sprite hidden) and captures its flat view for inspection.
+(its own native player sprite hidden, its name tag kept) and captures its flat view for inspection.
 
 Run inside tools/vr/software_xr_lab.py.
 """
@@ -132,8 +132,11 @@ def main():
             result['desktop_view'] = str(shot)
             result['remote_body_logs'] = re.findall(r'VR remote body: [^\n]*', do.text())[-2:]
             result['desktop_body_logs'] = re.findall(r'VR desktop bodies: [^\n]*', do.text())[-2:]
+            result['name_tag_logs'] = re.findall(r'VR remote body name tags: [^\n]*', do.text())[-2:]
         result['checks'] = {
             'desktop draws the VR body': bool(result['desktop_body_logs']),
+            # Its name tag stays over the body (the body hides the VR player's other sprites).
+            'VR player name tag shown': any(not l.endswith('shown=0.') for l in result['name_tag_logs']),
             'desktop has no OpenXR session': 'OpenXR world' not in do.text(),
             'desktop view captured': Path(result['desktop_view']).is_file(),
             'desktop faces the VR player': abs(result['turn_errors_deg'][-1]) < 10,

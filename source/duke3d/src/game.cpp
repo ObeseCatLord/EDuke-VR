@@ -3840,7 +3840,7 @@ static void G_PlaceHeldWeapons(void)
 // Name tags (cl_nametags), after Quakespasm VR's co-op ones: the player's name over their head in
 // their colour, ((in brackets)) while they talk. Each is a tile drawn in the game's small font,
 // shown as a facing sprite, so walls and bodies hide it like anything else in the world.
-static constexpr int NametagTileBase = 30400;   // two per player: plain and talking
+static constexpr int NametagTileBase = NAMETAG_TILE_BASE;
 
 static void G_NametagColour(int pal, int rgb[3])
 {

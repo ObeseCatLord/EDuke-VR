@@ -393,7 +393,7 @@ Verified across a real network with `tools/vr/smoke_xr_remote_coop.py`. That tes
 ## Co-op
 
 - **Shared keycards** (`mp_sharekeys 1`, default; host menu **Share Keys**; set on the server): a keycard one player picks up opens doors for everyone, including players who join or respawn later on that level.
-- **Name tags** (`cl_nametags 1`, default; VR Setup **Name tags (multiplayer)**): other players' names over their heads, in their colour, shown as ((Name)) while they talk. Walls hide them. Multiplayer only.
+- **Name tags** (`cl_nametags 1`, default; VR Setup **Name tags (multiplayer)**): other players' names over their heads, in their colour, shown as ((Name)) while they talk, also over VR players' tracked bodies. Walls hide them. Multiplayer only. The name is your multiplayer name: **Options > Player Setup > Name**, the console's `name NEWNAME`, or `-name NEWNAME` after the Linux join command (`./join.sh HOST vr -name NEWNAME`). A new install is called `Player`.
 - **Friendly fire** is off by default in co-op (and between teammates in team games): players' shots and explosions do not hurt each other. `-ffire` on the server's command line, or `mp_friendlyfire 1` in its console, turns it on (clients follow from the next level); the host menu's **Friendly Fire** sets it for a game started from the menu.
 - **Server commands** (dedicated server console, e.g. `echo net_givekeys > console.fifo`): `net_givekeys` (every player gets all three keycards), `net_giveall` (all weapons, ammo and items), `net_kill N`, `net_endlevel [episode]`.
 - **Security cameras** show the camera's view to the player using the screen; their body stays at the screen. In multiplayer, Use while watching leaves the camera (single player cycles the screen's cameras first).
