@@ -41,7 +41,7 @@ sys.path.insert(0, str(HERE))
 import make_personal_bundle as mpb  # noqa: E402  (shared scripts and copy helpers)
 
 # The Voxel Duke builder and the original-set files it reads (skeleton, hand rig, poses).
-BUILDER_SCRIPTS = ('build_voxel_pack.py', 'build_vr_pack.py', 'build_vr_def.py')
+BUILDER_SCRIPTS = ('build_voxel_pack.py', 'build_vr_pack.py', 'build_vr_def.py', 'money_wad.py')
 BUILDER_ASSETS = ('v6-original', 'v7-original')
 # Third-party license texts on the build host (Arch Linux packages), by bundled component.
 LINUX_LICENSES = {
