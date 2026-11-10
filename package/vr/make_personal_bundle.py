@@ -59,8 +59,36 @@ case $(uname -m) in aarch64|arm64) bin="$here/linux-arm64" ;; *) bin="$here/linu
 export LD_LIBRARY_PATH="$bin/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # The bundled GRP when there is one; otherwise EDuke32 finds an installed copy (Steam, GOG...).
 grp=(); [[ -f $data/grp/DUKE3D.GRP ]] && grp=(-j "$data/grp" -gamegrp DUKE3D.GRP)
+# Voxel Duke (Duke's 3D full body, hands and weapons): built once on this machine from your copy of
+# Voxel Duke Nukem 3D, voxel_duke3d.zip, put next to play.sh, in data/ or in ~/Downloads. A release
+# carries the builder (voxelbuilder/); EDUKE32_VR_VOXEL_BUILD=0 skips it.
+voxel_build() {
+    local builder="$here/voxelbuilder/package/vr/build_voxel_pack.py" packs="$data/vrpacks" zip="" c want have="" stamp
+    [[ -f $builder && ${EDUKE32_VR_VOXEL_BUILD:-1} != 0 && ! -d $packs/voxel ]] || return 0
+    for c in "$here/voxel_duke3d.zip" "$data/voxel_duke3d.zip" "$HOME/Downloads/voxel_duke3d.zip"; do
+        [[ -f $c ]] && { zip=$c; break; }
+    done
+    [[ -n $zip ]] || return 0
+    command -v python3 >/dev/null \
+        || { echo "EDuke VR: install Python 3 with numpy, scipy and Pillow to build Voxel Duke from $zip" >&2; return 0; }
+    want=$(python3 "$builder" --version) || return 0
+    [[ -f $packs/voxel.built ]] && have=$(cat "$packs/voxel.built")
+    [[ $have == "$want" && -f $packs/voxel.zip ]] && return 0
+    stamp="$want $(stat -c %s "$zip")"
+    [[ -f $packs/voxel.failed && $(cat "$packs/voxel.failed") == "$stamp" ]] && return 0
+    mkdir -p "$packs"
+    echo "EDuke VR: building Voxel Duke from $zip (once, about half an hour)..." >&2
+    command -v notify-send >/dev/null && notify-send "EDuke VR" "Building Voxel Duke (once, about half an hour); the game starts after." || true
+    if python3 "$builder" "$zip" --assets "$here/voxelbuilder/duke-vr-assets" --out "$packs" --zip >&2; then
+        echo "$want" > "$packs/voxel.built"; rm -f "$packs/voxel.failed"
+    else
+        echo "$stamp" > "$packs/voxel.failed"
+        echo "EDuke VR: the Voxel Duke build failed (above); playing without it. It is tried again when the zip or the builder changes." >&2
+    fi
+}
 run() {   # run MODE(vr|desktop) [game arguments...]
     local mode=$1; shift
+    voxel_build
     if [[ $mode == vr ]]; then
         export EDUKE32_XR="${EDUKE32_XR:-play}" SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
         export __GL_SYNC_TO_VBLANK=0 __GL_THREADED_OPTIMIZATIONS=0 mesa_glthread=false
@@ -139,8 +167,8 @@ echo "Installed in $dest (app menu: Duke Nukem 3D VR)."
 '''
 SH_UPDATE = r'''#!/usr/bin/env bash
 # ./update.sh              update to the latest Linux release on GitHub (github.com/@REPO@):
-#                          tags vX.Y.Z-linux on x86_64, vX.Y.Z-linux-arm64 on 64-bit ARM (Steam
-#                          Frame); Windows has its own vX.Y.Z-windows releases
+#                          a vX.Y.Z release for every platform, or (older) tags vX.Y.Z-linux on
+#                          x86_64 and vX.Y.Z-linux-arm64 on 64-bit ARM (Steam Frame)
 # ./update.sh FILE.tar.gz  update from a downloaded release (or personal bundle) archive
 # ./update.sh --force      reinstall the latest release even when it is the installed version
 # Only files the release carries are replaced: game data, the Voxel Duke pack, extras, settings and
@@ -158,7 +186,8 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 if [[ $# -gt 0 && $1 != --force ]]; then
     archive=$1
 else
-    # Releases come newest first. Take the first release for this machine: a tag ending in $suffix, not a
+    # Releases come newest first. Take the first release for this machine: a tag ending in $suffix (or a
+    # plain vX.Y.Z release for every platform), not a
     # pre-release, with this machine's archive. Each release lists tag_name, then prerelease, then its
     # assets' download URLs, so one pass over those fields in order finds it.
     api=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$repo/releases?per_page=100") \
@@ -170,7 +199,7 @@ else
             '"tag_name"'*) release=$value pre= ;;
             '"prerelease"'*) pre=$value ;;
             '"browser_download_url"'*)
-                if [[ $release == *"$suffix" && $pre == false && $value == *"$file" ]]; then
+                if [[ ($release == *"$suffix" || $release =~ ^v[0-9.]+$) && $pre == false && $value == *"$file" ]]; then
                     url=$value tag=${release%"$suffix"}; break
                 fi ;;
         esac
@@ -224,6 +253,7 @@ set "ARGS=!ARGS! "%~1""
 shift
 goto collect
 :collected
+call :voxel
 if /i "%MODE%"=="vr" (set "EDUKE32_XR=play") else (set "EDUKE32_XR=")
 rem Hit Feedback mod (extra blood and sparks on hits): set EDUKE32_VR_HITFEEDBACK=0 to leave it out.
 set "MODS="
@@ -238,6 +268,47 @@ for %%F in ("%EDUKE32_XR_RESTART_REQUEST%") do if %%~zF GTR 0 (
     goto again
 )
 exit /b
+
+rem Voxel Duke (Duke's 3D full body, hands and weapons): built once on this machine from your copy of
+rem Voxel Duke Nukem 3D, voxel_duke3d.zip, put next to play.bat, in data\ or in Downloads. Needs Python 3
+rem with numpy, scipy and Pillow. A release carries the builder (voxelbuilder\); EDUKE32_VR_VOXEL_BUILD=0 skips it.
+:voxel
+set "VB=%HERE%voxelbuilder\package\vr\build_voxel_pack.py"
+set "VP=%DATA%\vrpacks"
+if not exist "%VB%" exit /b 0
+if "%EDUKE32_VR_VOXEL_BUILD%"=="0" exit /b 0
+if exist "%VP%\voxel\" exit /b 0
+set "VZ="
+for %%Z in ("%HERE%voxel_duke3d.zip" "%DATA%\voxel_duke3d.zip" "%USERPROFILE%\Downloads\voxel_duke3d.zip") do if not defined VZ if exist "%%~Z" set "VZ=%%~Z"
+if not defined VZ exit /b 0
+set "PY="
+where py >nul 2>nul && set "PY=py -3"
+if not defined PY where python >nul 2>nul && set "PY=python"
+if not defined PY (
+    echo EDuke VR: install Python 3 with numpy, scipy and Pillow to build Voxel Duke from !VZ!
+    exit /b 0
+)
+set "WANT="
+for /f "delims=" %%V in ('!PY! "%VB%" --version 2^>nul') do set "WANT=%%V"
+if not defined WANT exit /b 0
+set "HAVE="
+if exist "%VP%\voxel.built" set /p HAVE=<"%VP%\voxel.built"
+if "!HAVE!"=="!WANT!" if exist "%VP%\voxel.zip" exit /b 0
+for %%Z in ("!VZ!") do set "STAMP=!WANT! %%~zZ"
+set "FAILED="
+if exist "%VP%\voxel.failed" set /p FAILED=<"%VP%\voxel.failed"
+if "!FAILED!"=="!STAMP!" exit /b 0
+if not exist "%VP%" mkdir "%VP%"
+echo EDuke VR: building Voxel Duke from !VZ!, once, about half an hour...
+!PY! "%VB%" "!VZ!" --assets "%HERE%voxelbuilder\duke-vr-assets" --out "%VP%" --zip
+if errorlevel 1 goto voxelfailed
+>"%VP%\voxel.built" echo !WANT!
+if exist "%VP%\voxel.failed" del "%VP%\voxel.failed"
+exit /b 0
+:voxelfailed
+>"%VP%\voxel.failed" echo !STAMP!
+echo EDuke VR: the Voxel Duke build failed, see above; playing without it. It is tried again when the zip or the builder changes.
+exit /b 0
 '''
 
 def bat(body):
@@ -292,7 +363,7 @@ foreach ($s in $links) {
 Write-Host "Installed in $Dest (Start menu: EDuke32 VR)."
 '''
 PS_UPDATE = r'''# update.ps1              update to the latest Windows release on GitHub (github.com/@REPO@,
-#                         tags vX.Y.Z-windows; Linux has its own vX.Y.Z-linux releases)
+#                         a vX.Y.Z release for every platform, or (older) a vX.Y.Z-windows one)
 # update.ps1 FILE.zip     update from a downloaded release (or personal bundle) archive
 # update.ps1 -Force       reinstall the latest release even when it is the installed version
 # Run:  powershell -ExecutionPolicy Bypass -File update.ps1
@@ -313,9 +384,10 @@ try {
         # Releases come newest first; take the first one with the Windows download.
         $releases = Invoke-RestMethod -UseBasicParsing -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=100"
         $asset = $null; $tag = $null
-        # Only Windows releases: a tag ending in -windows, not a pre-release, with the Windows archive.
+        # Windows releases (a tag ending in -windows, or a plain vX.Y.Z one for every platform), not
+        # pre-releases, with the Windows archive.
         foreach ($r in $releases) {
-            if ($r.draft -or $r.prerelease -or $r.tag_name -notlike '*-windows') { continue }
+            if ($r.draft -or $r.prerelease -or ($r.tag_name -notlike '*-windows' -and $r.tag_name -notmatch '^v[0-9.]+$')) { continue }
             $a = $r.assets | Where-Object { $_.name -like '*-windows-x64.zip' } | Select-Object -First 1
             if ($a) { $asset = $a; $tag = $r.tag_name -replace '-windows$', ''; break }
         }

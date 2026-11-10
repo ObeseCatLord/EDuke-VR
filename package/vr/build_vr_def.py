@@ -20,6 +20,7 @@ hands, 30020 mighty foot boot, 30060 aiming laser, 30061-30064 wheel parts, 3006
 30200+side*32+segment finger-tracking hand segments, 30264+side single-shell hands.
 """
 import json
+import shutil
 import struct
 import sys
 from pathlib import Path
@@ -103,7 +104,10 @@ def main():
         target = data / name
         if target.is_symlink() or target.exists():
             target.unlink()
-        target.symlink_to(source)
+        try:
+            target.symlink_to(source)
+        except OSError:   # Windows without symlink rights: a copy (build_vr_pack.py takes either)
+            shutil.copy2(source, target)
 
     def model(md3, png, tile, name, frame='rest'):
         link(md3, name + '.md3')

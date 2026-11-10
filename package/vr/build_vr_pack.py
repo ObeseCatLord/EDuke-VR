@@ -74,7 +74,7 @@ def main():
         (pack / def_name).write_text(f'// EDuke32 VR model pack "{name}" ({"Alien Armageddon" if aa else "Duke Nukem 3D"}); '
                                      'built by build_vr_pack.py\n' + text)
         for entry in sorted(data.iterdir()):
-            if entry.name in SPECIAL or not entry.is_symlink():
+            if entry.name in SPECIAL or not (entry.is_symlink() or entry.is_file()):
                 continue
             files.setdefault(entry.name, entry.resolve())
         if (data / 'hand-rig.txt').is_file():

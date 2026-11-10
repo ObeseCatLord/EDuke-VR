@@ -12,12 +12,14 @@ OUT receives
   EDuke-VR-<version>-linux-arm64.tar.gz    (with --linux-arm64-dir) EDuke-VR/ with linux-arm64/ (the
                                            64-bit ARM build: Steam Frame, other arm64 Linux) and
                                            the .sh scripts
-each published as its own GitHub release (tags vX.Y.Z-linux, vX.Y.Z-linux-arm64 and vX.Y.Z-windows; update.sh/ps1
-take the newest release carrying their platform's archive). Both have data/vrpacks/ (the original and original-lowres model sets, without the Alien
-Armageddon files), licenses/, README.txt and VERSION (read by update.sh/ps1).
+all three published as one GitHub release, tag vX.Y.Z (update.sh/ps1 take the newest release carrying
+their platform's archive). Each has voxelbuilder/ (build_voxel_pack.py and what it reads: the
+original sets' skeleton, hand rig and poses, never offered as a model set), licenses/, README.txt
+and VERSION (read by update.sh/ps1). No model set is included: play.sh/play.bat build Voxel Duke
+from the player's own voxel_duke3d.zip.
 
-No game data and no private model sets. The model sets come from make_release.py (run here unless
---release names its output), which copies only the original sets and enforces their release
+No game data and no private model sets. The builder's assets come from make_release.py (run here
+unless --release names its output), which copies only the original sets and enforces their release
 excludes. The money wad (cut from the player's GRP) is not included. The archives have the
 personal bundle's layout, so update.sh/ps1 in either lays a release over an install and keeps
 everything else (GRPs, expansions, Voxel Duke, settings, saves).
@@ -31,7 +33,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -39,7 +40,9 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import make_personal_bundle as mpb  # noqa: E402  (shared scripts and copy helpers)
 
-PUBLIC_PACKS = ('original', 'original-lowres')
+# The Voxel Duke builder and the original-set files it reads (skeleton, hand rig, poses).
+BUILDER_SCRIPTS = ('build_voxel_pack.py', 'build_vr_pack.py', 'build_vr_def.py')
+BUILDER_ASSETS = ('v6-original', 'v7-original')
 # Third-party license texts on the build host (Arch Linux packages), by bundled component.
 LINUX_LICENSES = {
     'OpenXR-loader-Apache-2.0.txt': '/usr/share/licenses/spdx/Apache-2.0.txt',
@@ -79,8 +82,10 @@ Update:  {update}
          does not carry stay: your game data, other model sets, settings and saved games.
 
 In VR: Options > VR Setup (model set, snap turn, hand used for weapons, voice chat...).
-Model sets: original and original-lowres. The Voxel Duke set can be built from your copy of that
-mod with package/vr/build_voxel_pack.py from the source code.
+Duke's full body, hands and 3D weapons: put your copy of Voxel Duke Nukem 3D (voxel_duke3d.zip,
+https://www.moddb.com/mods/voxel-duke-nukem-3d) next to the play script, in data/ or in Downloads.
+The play script builds them from it once (about half an hour; needs Python 3 with numpy, scipy and
+Pillow). Without it the game uses Duke's original sprites.
 Multiplayer: all players need the same version (the server too) and the same game data.
 
 Licenses: EDuke32 and EDuke VR are under the GNU GPL version 2 (licenses/gpl-2.0.txt). The Build
@@ -138,12 +143,17 @@ def licenses(dest, table, items, version):
     (dest / 'THIRD-PARTY.txt').write_text(THIRD_PARTY.format(version=version, items=items))
 
 
-def tree(root, version, platform, binary, windir, packs, arm64dir=None):
+def tree(root, version, platform, binary, windir, release, arm64dir=None):
     """One platform's EDuke-VR/ folder."""
     out = root / 'EDuke-VR'
     data = out / 'data'
-    for pack in PUBLIC_PACKS:
-        mpb.copy_pack(packs / pack, data / 'vrpacks' / pack)
+    builder = out / 'voxelbuilder'
+    (builder / 'package/vr').mkdir(parents=True)
+    for name in BUILDER_SCRIPTS:
+        shutil.copy2(release / 'eduke32-vr/package/vr' / name, builder / 'package/vr' / name)
+    shutil.copytree(release / 'eduke32-vr/package/vr/voxelpack', builder / 'package/vr/voxelpack')
+    for name in BUILDER_ASSETS:
+        shutil.copytree(release / 'duke-vr-assets' / name, builder / 'duke-vr-assets' / name)
     mpb.copy_mods(data / 'mods')
     (data / 'grp').mkdir(parents=True)
     (data / 'grp/PUT DUKE3D.GRP HERE.txt').write_text('Optional: put your DUKE3D.GRP here (else an installed copy is found).\n')
@@ -197,17 +207,13 @@ def main():
             release = scratch / 'release'
             subprocess.run([sys.executable, str(HERE / 'make_release.py'), str(release), '--no-source',
                             '--binary', str(args.linux_binary)], check=True, stdout=subprocess.DEVNULL)
-        packs = scratch / 'packs'
-        for pack in PUBLIC_PACKS:
-            with zipfile.ZipFile(release / 'eduke32-vr/vrpacks' / f'{pack}.zip') as z:
-                z.extractall(packs / pack)
         name = f'EDuke-VR-{args.version}'
-        lin = tree(scratch / 'linux', args.version, 'linux', args.linux_binary, None, packs)
+        lin = tree(scratch / 'linux', args.version, 'linux', args.linux_binary, None, release)
         subprocess.run(['tar', '-czf', str(out / f'{name}-linux-x86_64.tar.gz'), '-C', str(lin.parent), lin.name], check=True)
         if args.linux_arm64_dir:
-            arm = tree(scratch / 'arm64', args.version, 'linux-arm64', None, None, packs, args.linux_arm64_dir)
+            arm = tree(scratch / 'arm64', args.version, 'linux-arm64', None, None, release, args.linux_arm64_dir)
             subprocess.run(['tar', '-czf', str(out / f'{name}-linux-arm64.tar.gz'), '-C', str(arm.parent), arm.name], check=True)
-        win = tree(scratch / 'windows', args.version, 'windows', None, args.windows_dir, packs)
+        win = tree(scratch / 'windows', args.version, 'windows', None, args.windows_dir, release)
         subprocess.run(['zip', '-qr', str(out / f'{name}-windows-x64.zip'), win.name], cwd=win.parent, check=True)
     archives = sorted(str(p) for p in out.iterdir())
     print(json.dumps({'version': args.version, 'archives': archives}, indent=1))

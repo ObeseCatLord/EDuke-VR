@@ -20,7 +20,7 @@ game data is included.
 - A full Duke body that you and other players can see.
 - Co-op and DukeMatch with voice chat. VR and desktop players can play together.
 - Weapon and gadget wheels, and a wrist HUD.
-- 3D models for Duke, his hands and weapons, including Voxel Duke if you have that mod.
+- Duke's full 3D body, hands and weapons, made from Voxel Duke (see below).
 - Snap or smooth turning and room-scale movement.
 - Windows, Linux and Steam Frame.
 
@@ -34,6 +34,16 @@ game data is included.
 To join a server, run `join.bat HOST` or `./join.sh HOST`. To update, run `./update.sh`, or on
 Windows right-click `update.ps1` > **Run with PowerShell**. Your settings, saves and model sets are
 kept.
+
+## Full body with Voxel Duke
+
+Duke's 3D full body, hands and weapons are made on your computer from
+[Voxel Duke Nukem 3D](https://www.moddb.com/mods/voxel-duke-nukem-3d/addons/voxel-duke-3d), which is
+not included. Download `voxel_duke3d.zip` and put it next to `play.sh`/`play.bat` (or leave it in
+Downloads). The next time you start the game it builds them once, which takes about half an hour,
+and the game world becomes voxels too. It needs [Python 3](https://www.python.org/downloads/) with
+numpy, scipy and Pillow (`pip install numpy scipy pillow`). Without it you play with Duke's
+original sprites.
 
 ## Co-op
 
