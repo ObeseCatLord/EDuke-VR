@@ -22,6 +22,7 @@ game data is included.
 - Weapon and gadget wheels, and a wrist HUD.
 - Duke's full 3D body, hands and weapons, made from Voxel Duke (see below).
 - Snap or smooth turning and room-scale movement.
+- Supports most EDuke32 mods, including Alien Armageddon and Voxel Duke
 - Windows, Linux and Steam Frame.
 
 ## Installation
