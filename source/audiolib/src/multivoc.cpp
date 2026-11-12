@@ -279,24 +279,36 @@ static void MV_DuckAndAddKey(int16_t *out, int16_t const *key, int frames)
             level = max(level, fabsf((float)key[i * channels + c]));
         MV_DuckEnvelope += (level - MV_DuckEnvelope) * (level > MV_DuckEnvelope ? attack : release);
     }
+    if (MV_DuckEnvelope < 1e-3f) MV_DuckEnvelope = 0.f;   // no denormals after a long silence
     float const db = 20.f * log10f(max(MV_DuckEnvelope, 1.f) / 32768.f);
     float const target = max(0.f, min(1.f, (db + 45.f) / 20.f));
+    float const from = MV_DuckAmount;
     MV_DuckAmount = target;
 
-    // Peaking EQ (RBJ), recomputed per buffer (a few milliseconds).
-    float const gainDb = -MV_DuckSpeechDb * MV_DuckAmount;
-    float const A = powf(10.f, gainDb / 40.f), w0 = 2.f * 3.14159265f * 1400.f / rate, alpha = sinf(w0) / (2.f * 0.6f), cw = cosf(w0);
-    float const a0 = 1.f + alpha / A;
-    float const b0 = (1.f + alpha * A) / a0, b1 = -2.f * cw / a0, b2 = (1.f - alpha * A) / a0;
-    float const a1 = -2.f * cw / a0, a2 = (1.f - alpha / A) / a0;
-    float const overall = powf(10.f, -MV_DuckOverallDb * MV_DuckAmount / 20.f);
-    bool const flat = gainDb > -0.01f && overall > 0.999f;
+    // Peaking EQ (RBJ) at 1.4 kHz and the overall cut, both ramped across the buffer from the last
+    // buffer's amount to this one's (a step at the buffer boundary clicks).
+    float const w0 = 2.f * 3.14159265f * 1400.f / rate, alpha = sinf(w0) / (2.f * 0.6f), cw = cosf(w0);
+    struct Coeffs { float b0, b1, b2, a1, a2, overall; };
+    auto const coeffs = [&](float amount) {
+        float const A = powf(10.f, -MV_DuckSpeechDb * amount / 40.f);
+        float const a0 = 1.f + alpha / A;
+        return Coeffs{ (1.f + alpha * A) / a0, -2.f * cw / a0, (1.f - alpha * A) / a0, -2.f * cw / a0,
+                       (1.f - alpha / A) / a0, powf(10.f, -MV_DuckOverallDb * amount / 20.f) };
+    };
+    Coeffs const c0 = coeffs(from), c1 = coeffs(target);
+    bool const flat = max(from, target) * max(MV_DuckSpeechDb, MV_DuckOverallDb) < 0.01f;
+    float const step = frames > 0 ? 1.f / frames : 0.f;
 
     for (int i = 0; i < frames; i++)
+    {
+        float const t = (i + 1) * step;
+        float const b0 = c0.b0 + (c1.b0 - c0.b0) * t, b1 = c0.b1 + (c1.b1 - c0.b1) * t, b2 = c0.b2 + (c1.b2 - c0.b2) * t;
+        float const a1 = c0.a1 + (c1.a1 - c0.a1) * t, a2 = c0.a2 + (c1.a2 - c0.a2) * t;
+        float const overall = c0.overall + (c1.overall - c0.overall) * t;
         for (int c = 0; c < channels; c++)
         {
             int16_t &sample = out[i * channels + c];
-            float x = (float)sample, y = x;
+            float x = (float)sample, y;
             float *st = MV_DuckState[c];
             y    = b0 * x + st[0];
             st[0] = b1 * x - a1 * y + st[1];
@@ -305,6 +317,10 @@ static void MV_DuckAndAddKey(int16_t *out, int16_t const *key, int frames)
             int const mixed = (int)lrintf(y * overall) + key[i * channels + c];
             sample = (int16_t)clamp(mixed, INT16_MIN, INT16_MAX);
         }
+    }
+    for (auto &state : MV_DuckState)
+        for (float &v : state)
+            if (fabsf(v) < 1e-15f) v = 0.f;
 }
 
 static void MV_ServiceVoc(void)

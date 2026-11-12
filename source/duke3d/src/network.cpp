@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 /// PACKET_RECV_PRINT:  Print all received packets
 /// NETCODE_DISABLE:    Remove pretty much all of the game's interaction with the code in this file.
 
+#include "sdlayer.h"
 #include "duke3d.h"
 #include "game.h"
 #include "gamedef.h"
@@ -68,7 +69,26 @@ typedef TYPE_PUNNED int32_t NetChunk32;
 void faketimerhandler(void) { ; }
 
 #ifndef NETCODE_DISABLE
+// enet_peer_send() keeps the packet only when it queues it: a peer that dropped meanwhile left the
+// packet to leak.
+int Net_PeerSend(ENetPeer *peer, enet_uint8 channel, ENetPacket *packet)
+{
+    if (!packet)
+        return -1;
+    int const result = enet_peer_send(peer, channel, packet);
+    if (result < 0 && packet->referenceCount == 0)
+        enet_packet_destroy(packet);
+    return result;
+}
+
 static void Net_Disconnect(void);
+// Packets a client may send to the other clients through the server.
+static bool Net_ClientMayRelay(uint8_t type)
+{
+    return type == PACKET_RTS || type == PACKET_CLIENT_INFO || type == PACKET_MESSAGE || type == PACKET_USER_MAP
+        || type == PACKET_MAP_VOTE || type == PACKET_MAP_VOTE_INITIATE || type == PACKET_MAP_VOTE_CANCEL;
+}
+
 static void Net_HandleClientPackets(void);
 static void Net_HandleServerPackets(void);
 static void Net_ReceiveEndLevel(ENetEvent const *event);
@@ -1287,14 +1307,14 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
         // a stale cached player index must never classify a projectile as player.
         if (isPlayerSprite)
         {
-            if (g_player[player].ps->i!=actorIndex && std::getenv("EDUKE32_XR_TEST_SHOTS"))
+            if (g_player[player].ps->i!=actorIndex && sdlayer_getenv_cached("EDUKE32_XR_TEST_SHOTS"))
                 LOG_F(INFO,"VR snapshot player binding restored: player=%d oldSprite=%d snapshotSprite=%d cstat=%d owner=%d repeat=%d,%d.",
                       player,g_player[player].ps->i,actorIndex,srvActor->spr_cstat,srvActor->spr_owner,srvActor->spr_xrepeat,srvActor->spr_yrepeat);
             g_player[player].ps->i=actorIndex;
         }
         int status = memcmp(srvActor, clActor, sizeof(netactor_t));
-        bool const traceRPG=srvActor->spr_picnum==RPG && srvActor->spr_statnum==4 && std::getenv("EDUKE32_XR_TEST_SHOTS");
-        bool const traceFireball=srvActor->spr_picnum==FIREBALL && srvActor->spr_statnum==4 && std::getenv("EDUKE32_XR_TEST_SHOTS");
+        bool const traceRPG=srvActor->spr_picnum==RPG && srvActor->spr_statnum==4 && sdlayer_getenv_cached("EDUKE32_XR_TEST_SHOTS");
+        bool const traceFireball=srvActor->spr_picnum==FIREBALL && srvActor->spr_statnum==4 && sdlayer_getenv_cached("EDUKE32_XR_TEST_SHOTS");
 
         if(status == 0)
         {
@@ -1366,7 +1386,7 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
     // instead of hanging the client.
     static int32_t snapshots, repairs;
     ++snapshots;
-    if (auto at=std::getenv("EDUKE32_TEST_BREAK_SPRITE_LIST"))   // test hook: close a sector list into a loop
+    if (auto at=sdlayer_getenv_cached("EDUKE32_TEST_BREAK_SPRITE_LIST"))   // test hook: close a sector list into a loop
         if (snapshots==Batoi(at))
             for (int s=0; s<numsectors; s++)
                 if (headspritesect[s]>=0 && nextspritesect[headspritesect[s]]>=0)
@@ -1383,7 +1403,7 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
         if (++repairs<=20) LOG_F(ERROR,"Sprite lists: %s (snapshot %d); rebuilt them.",problem,snapshots);
         Net_RebuildSpriteLists();
     }
-    if (std::getenv("EDUKE32_TEST_SPRITE_LISTS") && (snapshots==1 || snapshots%300==0))
+    if (sdlayer_getenv_cached("EDUKE32_TEST_SPRITE_LISTS") && (snapshots==1 || snapshots%300==0))
         LOG_F(INFO,"Sprite lists: %d snapshots checked, %d errors.",snapshots,repairs);
 }
 
@@ -1742,7 +1762,7 @@ static void Net_SendPlayerIndex(int32_t index, ENetPeer *peer)
     packbuf[0] = PACKET_PLAYER_INDEX;
     packbuf[1] = index;
     packbuf[2] = myconnectindex;
-    enet_peer_send(peer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 3, ENET_PACKET_FLAG_RELIABLE));
+    Net_PeerSend(peer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 3, ENET_PACKET_FLAG_RELIABLE));
 
     Dbg_PacketSent(PACKET_PLAYER_INDEX);
 }
@@ -1855,6 +1875,9 @@ static void Net_Disconnect(void)
         g_netClientPeer = NULL;
         enet_host_destroy(g_netClient);
         g_netClient = NULL;
+        // A later game must not treat its player 0 as a dedicated server's invisible slot.
+        if (g_networkMode == NET_DEDICATED_CLIENT)
+            g_networkMode = NET_CLIENT;
         return;
     }
 
@@ -1892,6 +1915,8 @@ static void Net_Disconnect(void)
 static void Net_ReceiveDisconnect(ENetEvent *event)
 {
     g_netDisconnect = 1;
+    if (g_networkMode == NET_DEDICATED_CLIENT)
+        g_networkMode = NET_CLIENT;
     numplayers = g_mostConcurrentPlayers = ud.multimode = 1;
     myconnectindex = screenpeek = 0;
     G_BackToMenu();
@@ -1933,7 +1958,7 @@ static void Net_SendAcknowledge(ENetPeer *client)
     tempnetbuf[0] = PACKET_ACK;
     tempnetbuf[1] = myconnectindex;
 
-    enet_peer_send(client, CHAN_GAMESTATE, enet_packet_create(&tempnetbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
+    Net_PeerSend(client, CHAN_GAMESTATE, enet_packet_create(&tempnetbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
 
     Dbg_PacketSent(PACKET_ACK);
 }
@@ -2023,7 +2048,7 @@ static void Net_ReceiveClientUpdate(ENetEvent *event)
 {
     int const playeridx=int(intptr_t(event->peer->data));
     auto const reject=[&](char const *reason) {
-        if (std::getenv("EDUKE32_XR_TEST_SHOTS")) LOG_F(INFO,"VR update rejected: player=%d reason=%s.",playeridx,reason);
+        if (sdlayer_getenv_cached("EDUKE32_XR_TEST_SHOTS")) LOG_F(INFO,"VR update rejected: player=%d reason=%s.",playeridx,reason);
     };
     if (playeridx<=0 || playeridx>=MAXPLAYERS || !g_player[playeridx].playerquitflag) { reject("peer"); return; }
     if (event->channelID!=CHAN_MOVE) { reject("channel"); return; }
@@ -2041,7 +2066,7 @@ static void Net_ReceiveClientUpdate(ENetEvent *event)
     // Never let a new pose/input extension name another player's authority.
     if (update.player.playerindex!=playeridx) { reject("identity"); return; }
     g_player[playeridx].revision=update.RevisionNumber;
-    P_AccumulateInput(&inputfifo[0][playeridx], &update.nsyn);
+    P_AccumulateInput(&inputfifo[0][playeridx], &update.nsyn, playeridx);
     Net_ExtractPlayerUpdate(&update.player,PACKET_SLAVE_TO_MASTER);
     G_VRSetShotInput(playeridx,shot); // a base update explicitly leaves VR mode
 }
@@ -2070,7 +2095,7 @@ static void Net_RelayVoice(int source, uint8_t const *body, uint32_t length)
         ENetPeer *const peer=&g_netServer->peers[i];
         int const player=int(intptr_t(peer->data));
         if (peer->state!=ENET_PEER_STATE_CONNECTED || player<=0 || player>=MAXPLAYERS || player==source) continue;
-        enet_peer_send(peer,CHAN_VOICE,enet_packet_create(buffer,length+2,ENET_PACKET_FLAG_UNSEQUENCED));
+        Net_PeerSend(peer,CHAN_VOICE, enet_packet_create(buffer,length+2,ENET_PACKET_FLAG_UNSEQUENCED));
     }
     if (g_networkMode!=NET_DEDICATED_SERVER && source!=myconnectindex) Voice_ReceivePacket(source,body,length);
 }
@@ -2106,7 +2131,7 @@ void Net_SendVoice(uint8_t const *body, uint32_t length)
         uint8_t buffer[1+VoiceHeaderBytes+VoiceMaxPayload];
         buffer[0]=PACKET_VOICE;
         Bmemcpy(buffer+1,body,length);
-        enet_peer_send(g_netClientPeer,CHAN_VOICE,enet_packet_create(buffer,length+1,ENET_PACKET_FLAG_UNSEQUENCED));
+        Net_PeerSend(g_netClientPeer,CHAN_VOICE, enet_packet_create(buffer,length+1,ENET_PACKET_FLAG_UNSEQUENCED));
     }
     else if (g_netServer && g_networkMode!=NET_DEDICATED_SERVER)
         Net_RelayVoice(myconnectindex,body,length);
@@ -2129,7 +2154,7 @@ static void Net_RelayVRBodyPose(int source, uint8_t const *pose)
         ENetPeer *const peer=&g_netServer->peers[i];
         int const player=int(intptr_t(peer->data));
         if (peer->state!=ENET_PEER_STATE_CONNECTED || player<=0 || player>=MAXPLAYERS || player==source) continue;
-        enet_peer_send(peer,CHAN_VRPOSE,enet_packet_create(buffer,sizeof(buffer),ENET_PACKET_FLAG_UNSEQUENCED));
+        Net_PeerSend(peer,CHAN_VRPOSE, enet_packet_create(buffer,sizeof(buffer),ENET_PACKET_FLAG_UNSEQUENCED));
     }
 }
 
@@ -2157,7 +2182,7 @@ static void Net_ReceiveVRBodyPose(ENetEvent *event, bool server)
              && G_VRDecodeBodyPose(data+2,VRBodyWireSize,pose))
     {
         G_VRStoreBodyPose(data[1],pose);
-        if (std::getenv("EDUKE32_XR_TEST_BODY_POSES"))
+        if (sdlayer_getenv_cached("EDUKE32_XR_TEST_BODY_POSES"))
         {
             static uint32_t logged[MAXPLAYERS];
             if (logged[data[1]]++%150==0)
@@ -2176,7 +2201,7 @@ void Net_SendVRBodyPose(void)
     if (g_netClient && g_netClientPeer && myconnectindex>0)
     {
         bytes[0]=PACKET_VR_POSE;
-        enet_peer_send(g_netClientPeer,CHAN_VRPOSE,enet_packet_create(bytes,sizeof(bytes),ENET_PACKET_FLAG_UNSEQUENCED));
+        Net_PeerSend(g_netClientPeer,CHAN_VRPOSE, enet_packet_create(bytes,sizeof(bytes),ENET_PACKET_FLAG_UNSEQUENCED));
     }
     else if (g_netServer && g_networkMode!=NET_DEDICATED_SERVER)
         Net_RelayVRBodyPose(myconnectindex,bytes+1);
@@ -2217,7 +2242,7 @@ static void Net_Server_SetupPlayer(int playerindex)
     }
 
     Net_SpawnPlayer(playerindex);
-    if (std::getenv("EDUKE32_TEST_PLAYER_DEATH"))
+    if (sdlayer_getenv_cached("EDUKE32_TEST_PLAYER_DEATH"))
     {
         auto const &p = *g_player[playerindex].ps;
         LOG_F(INFO, "Player setup: player=%d sprite=%d extra=%d dead=%d pos=%d,%d,%d sect=%d spawns=%d.", playerindex, p.i, sprite[p.i].extra,
@@ -2524,7 +2549,12 @@ static void Net_ParseClientPacket(ENetEvent *event)
     uint8_t *pbuf        = event->packet->data;
     int32_t  packbufleng = event->packet->dataLength;
 
-    int32_t other = pbuf[--packbufleng];
+    if (packbufleng < 1)
+        return;
+    --packbufleng;   // the last byte is the sender's claimed player number
+    // The sender is the player its peer was admitted as, never what the packet says (a client could
+    // otherwise respawn another player, or index past g_player with a ping).
+    int32_t const other = event->peer->data ? int32_t(intptr_t(event->peer->data)) : -1;
 
     NET_DEBUG_VAR enum DukePacket_t packetType = (enum DukePacket_t)pbuf[0];
 
@@ -2547,7 +2577,7 @@ static void Net_ParseClientPacket(ENetEvent *event)
 
         case PACKET_PLAYER_READY:
         {
-            if ((other == 0) || (other == myconnectindex) || (other >= MAXPLAYERS))
+            if ((other <= 0) || (other == myconnectindex) || (other >= MAXPLAYERS))
             {
                 break;
             }
@@ -2572,11 +2602,12 @@ static void Net_ParseClientPacket(ENetEvent *event)
             {
                 packbuf[0] = PACKET_PLAYER_PING;
                 packbuf[1] = myconnectindex;
-                enet_peer_send(event->peer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
+                Net_PeerSend(event->peer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
 
                 Dbg_PacketSent(PACKET_PLAYER_PING);
             }
-            g_player[other].pingcnt++;
+            if (other > 0 && other < MAXPLAYERS)
+                g_player[other].pingcnt++;
             break;
 
         case PACKET_AUTH:
@@ -2637,7 +2668,9 @@ static void Net_HandleClientPackets(void)
             // broadcast takes care of enet_packet_destroy itself
             // we set the state to disconnected so enet_host_broadcast
             // doesn't send the player back his own packets
-            if ((event.channelID == CHAN_GAMESTATE && event.packet->data[0] > PACKET_BROADCAST)
+            // Only what clients may send to each other (never NEW_GAME or END_LEVEL: a client could
+            // end the level for the others while the server played on).
+            if ((event.channelID == CHAN_GAMESTATE && event.packet->dataLength > 0 && Net_ClientMayRelay(event.packet->data[0]))
                 || event.channelID == CHAN_CHAT)
             {
                 const ENetPacket *pak = event.packet;
@@ -2700,7 +2733,7 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
 
     // Owned integration tests can delay player snapshots independently of
     // native world snapshots to exercise the two channels' real ordering.
-    if (auto marker=std::getenv("EDUKE32_TEST_DROP_SERVER_PLAYERS"))
+    if (auto marker=sdlayer_getenv_cached("EDUKE32_TEST_DROP_SERVER_PLAYERS"))
     {
         static bool dropping=false;
         if (buildvfs_exists(marker))
@@ -2716,7 +2749,7 @@ static void Net_ReceiveServerUpdate(ENetEvent *event)
     Bmemcpy(&serverupdate, updatebuf, sizeof(serverupdate_t));
     if (records>MAXPLAYERS || serverupdate.numplayers!=records) return;
     updatebuf += sizeof(serverupdate_t);
-    P_AccumulateInput(&inputfifo[0][0], &serverupdate.nsyn);
+    P_AccumulateInput(&inputfifo[0][0], &serverupdate.nsyn, 0);
     ud.pause_on     = serverupdate.pause_on;
 
     ticrandomseed = serverupdate.seed;
@@ -2797,7 +2830,7 @@ static void Net_SendChallenge()
     B_BUF32(&tempnetbuf[5], Bcrc32((uint8_t *)g_netPassword, Bstrlen(g_netPassword), 0));
     tempnetbuf[9] = myconnectindex;
 
-    enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&tempnetbuf[0], 10, ENET_PACKET_FLAG_RELIABLE));
+    Net_PeerSend(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&tempnetbuf[0], 10, ENET_PACKET_FLAG_RELIABLE));
 
     Dbg_PacketSent(PACKET_AUTH);
 }
@@ -2828,7 +2861,7 @@ static void Net_ReceiveNewGame(ENetEvent *event)
 
     if (g_netClientPeer)
     {
-        enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
+        Net_PeerSend(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
         Dbg_PacketSent(PACKET_PLAYER_READY);
 
         if (g_netClient)
@@ -2875,6 +2908,8 @@ static void Net_ReceiveNewPlayer(uint8_t *pbuf, int32_t packbufleng)
     {
         g_networkMode = NET_DEDICATED_CLIENT;
     }
+    else if (g_networkMode == NET_DEDICATED_CLIENT)
+        g_networkMode = NET_CLIENT;   // left over from an earlier dedicated server
 
     for (i = 0; i < g_mostConcurrentPlayers - 1; i++)
     {
@@ -4693,6 +4728,19 @@ static void NetBuffer_ReadWorldSnapshotFromBuffer(NetBuffer_t* netBuffer, netmap
 }
 
 
+// The connected peer a player was admitted on (peer slots and player numbers need not match: a peer
+// refused for a wrong version or password, or two joins admitted out of order).
+static ENetPeer *Net_PeerForPlayer(int32_t playerIndex)
+{
+    for (size_t i = 0; g_netServer && i < g_netServer->peerCount; i++)
+    {
+        ENetPeer *const peer = &g_netServer->peers[i];
+        if (peer->state == ENET_PEER_STATE_CONNECTED && peer->data && int(intptr_t(peer->data)) == playerIndex)
+            return peer;
+    }
+    return nullptr;
+}
+
 static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevisionNumber, int32_t sendToPlayerIndex)
 {
     if (sendToPlayerIndex == myconnectindex)
@@ -4762,21 +4810,26 @@ static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevision
     // that closed then (E2L8's, by its auto-close effector) "had not changed" and a client joining
     // later kept it open for good (multiplayer sweep).
     bool const completeActors=fromRevisionNumberToSend==cInitialMapStateRevisionNumber;
+    // A full snapshot (a joiner, everyone after a level change) is resent every map update until the
+    // player acknowledges one: at most one a second per player, so a slow link is not buried in them.
+    static uint32_t lastFullSnapshot[MAXPLAYERS];
+    if (completeActors && (unsigned)sendToPlayerIndex < MAXPLAYERS)
+    {
+        uint32_t const now = timerGetTicks();
+        if (lastFullSnapshot[sendToPlayerIndex] && now - lastFullSnapshot[sendToPlayerIndex] < 1000)
+            return;
+        lastFullSnapshot[sendToPlayerIndex] = now ? now : 1;
+    }
     Net_WriteWorldToBuffer(bufferPtr, fromMapState, toMapState, completeActors);
     Net_WriteAnimations(bufferPtr);
 
-    if (sendToPlayerIndex > ((int32_t) g_netServer->peerCount))
-    {
-        Net_Error_Disconnect("No peer for player.");
+    ENetPeer *const tCurrentPeer = Net_PeerForPlayer(sendToPlayerIndex);
+    if (!tCurrentPeer)
         return;
-    }
-
-    // in the future we could probably use these flags for enet_peer_send, for the world updates
-    EDUKE32_UNUSED const ENetPacketFlag optimizedFlags = (ENetPacketFlag)(ENET_PACKET_FLAG_UNSEQUENCED | ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT);
-
-    NET_75_CHECK++; // HACK: I Really need to keep the peer with the player instead of assuming that the peer index is the same as the (player index - 1)
-    ENetPeer *const tCurrentPeer = &g_netServer->peers[sendToPlayerIndex - 1];
-    enet_peer_send(tCurrentPeer, CHAN_GAMESTATE, enet_packet_create(tempnetbuf, bufferPtr->CurSize + 1, 0));
+    // (Not ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT: ENet's throttle drops single unreliable fragments,
+    // and a full snapshot is ~80 of them, so it never arrived. Updates over one MTU go as reliable
+    // fragments; full snapshots are limited to one a second per player above, so they cannot pile up.)
+    Net_PeerSend(tCurrentPeer, CHAN_GAMESTATE, enet_packet_create(tempnetbuf, bufferPtr->CurSize + 1, 0));
     Dbg_PacketSent(PACKET_WORLD_UPDATE);
 
 
@@ -4811,18 +4864,21 @@ static void Net_WriteAnimations(NetBuffer_t *netBuffer)
         }
         count++;
     }
-    static bool const trace = getenv("EDUKE32_TEST_ANIMNET") != nullptr;
+    static bool const trace = sdlayer_getenv_cached("EDUKE32_TEST_ANIMNET") != nullptr;
     if (trace)
         LOG_F(INFO, "Animations written at byte %d: %d.", netBuffer->CurSize, count);
-    NetBuffer_WriteDword(netBuffer, count);
+    // Packed (NETVERSION 16): kind 2 bits, wall/sector index NETINDEX_BITS, sector 16, goal 32,
+    // speed 16 (was four dwords each).
+    NetBuffer_WriteBits(netBuffer, count, 16);
     for (int i = 0; i < g_animateCnt; i++)
     {
         if (kinds[i] < 0)
             continue;
-        NetBuffer_WriteDword(netBuffer, (kinds[i] << 24) | (indices[i] & 0xffffff));
-        NetBuffer_WriteDword(netBuffer, g_animateSect[i]);
+        NetBuffer_WriteBits(netBuffer, kinds[i], 2);
+        NetBuffer_WriteBits(netBuffer, indices[i], NETINDEX_BITS);
+        NetBuffer_WriteBits(netBuffer, g_animateSect[i], 16);
         NetBuffer_WriteDword(netBuffer, g_animateGoal[i]);
-        NetBuffer_WriteDword(netBuffer, klabs(g_animateVel[i]));
+        NetBuffer_WriteBits(netBuffer, min<int32_t>(klabs(g_animateVel[i]), 0xffff), 16);
     }
     // A client counts the update one byte short (the packet type byte is taken off twice): keep
     // the last value read inside what it counts.
@@ -4832,26 +4888,53 @@ static void Net_WriteAnimations(NetBuffer_t *netBuffer)
 static int32_t NetBuffer_ReadDWord(NetBuffer_t *netBuffer);
 
 // Clients: the server's sector moves replace this game's own.
+uint32_t g_netLocalAnimationTime[MAXSECTORS];
+bool     g_netApplyingAnimations;
+static uint8_t restingUpdates[MAXSECTORS];   // world updates each sector's heights stayed unchanged
+
+// How long a move this client started itself is kept against the server's updates: a round trip
+// plus a little more than one world update (they come about every 333 ms).
+static uint32_t Net_LocalMoveGraceMs(void)
+{
+    uint32_t const rtt = g_netClientPeer ? g_netClientPeer->roundTripTime : 100;
+    return min<uint32_t>(rtt, 1000) + 450;
+}
+
 static void Net_ReadAnimations(NetBuffer_t *netBuffer)
 {
-    static bool const trace = getenv("EDUKE32_TEST_ANIMNET") != nullptr;
+    static bool const trace = sdlayer_getenv_cached("EDUKE32_TEST_ANIMNET") != nullptr;
     if (trace)
         LOG_F(INFO, "Animations at byte %d of %d.", netBuffer->ReadCurByte, netBuffer->CurSize);
-    int const count = NetBuffer_ReadDWord(netBuffer);
+    int const count = NetBuffer_ReadBits(netBuffer, 16) & 0xffff;
     if (trace)
         LOG_F(INFO, "Animations: %d.", count);
     if ((unsigned)count > MAXANIMATES)
         return;
+    // Moves this game started itself in the last moment (the player just opened a door) stay until
+    // the server's own move for that part arrives: the update may have left the server before the
+    // server saw the Use, and wiping the move snapped the door shut for a moment.
+    struct Kept { int32_t *ptr; int sect; int32_t goal, vel; };
+    static Kept kept[MAXANIMATES];
+    static int32_t *previous[MAXANIMATES];
+    int keptCount = 0, previousCount = g_animateCnt;
+    uint32_t const now = timerGetTicks();
     for (int i = 0; i < g_animateCnt; i++)
-        G_StopInterpolation(g_animatePtr[i]);
+    {
+        previous[i] = g_animatePtr[i];
+        int const sect = g_animateSect[i];
+        uint32_t const started = (unsigned)sect < MAXSECTORS ? g_netLocalAnimationTime[sect] : 0;
+        if (started && now - started < Net_LocalMoveGraceMs())
+            kept[keptCount++] = { g_animatePtr[i], sect, g_animateGoal[i], g_animateVel[i] };
+    }
     g_animateCnt = 0;
+    g_netApplyingAnimations = true;
     for (int i = 0; i < count; i++)
     {
-        int32_t const what = NetBuffer_ReadDWord(netBuffer);
-        int const     sect = NetBuffer_ReadDWord(netBuffer);
-        int32_t const goal = NetBuffer_ReadDWord(netBuffer);
-        int32_t const vel  = NetBuffer_ReadDWord(netBuffer);
-        int const     kind = (what >> 24) & 0xff, index = what & 0xffffff;
+        int const     kind  = NetBuffer_ReadBits(netBuffer, 2) & 3;
+        int const     index = NetBuffer_ReadBits(netBuffer, NETINDEX_BITS) & ((1 << NETINDEX_BITS) - 1);
+        int const     sect  = NetBuffer_ReadBits(netBuffer, 16) & 0xffff;
+        int32_t const goal  = NetBuffer_ReadDWord(netBuffer);
+        int32_t const vel   = NetBuffer_ReadBits(netBuffer, 16) & 0xffff;
         int32_t *ptr = nullptr;
         if ((kind == NetAnimFloor || kind == NetAnimCeiling) && index < numsectors)
             ptr = kind == NetAnimFloor ? &sector[index].floorz : &sector[index].ceilingz;
@@ -4859,6 +4942,31 @@ static void Net_ReadAnimations(NetBuffer_t *netBuffer)
             ptr = kind == NetAnimWallX ? &wall[index].x : &wall[index].y;
         if (ptr && (unsigned)sect < (unsigned)numsectors)
             SetAnimation(sect, ptr, goal, vel);
+    }
+    for (int k = 0; k < keptCount; k++)
+    {
+        bool server = false;
+        for (int i = 0; i < g_animateCnt && !server; i++)
+            server = g_animatePtr[i] == kept[k].ptr;
+        if (!server && g_animateCnt < MAXANIMATES)
+        {
+            g_animateSect[g_animateCnt] = kept[k].sect;
+            g_animatePtr[g_animateCnt]  = kept[k].ptr;
+            g_animateGoal[g_animateCnt] = kept[k].goal;
+            g_animateVel[g_animateCnt]  = kept[k].vel;   // (already signed toward the goal)
+            g_animateCnt++;
+        }
+    }
+    g_netApplyingAnimations = false;
+    // Interpolation stops only for parts no longer moving (stopping and restarting a moving one
+    // made it judder at each update).
+    for (int j = 0; j < previousCount; j++)
+    {
+        bool moving = false;
+        for (int i = 0; i < g_animateCnt && !moving; i++)
+            moving = g_animatePtr[i] == previous[j];
+        if (!moving)
+            G_StopInterpolation(previous[j]);
     }
 }
 
@@ -4908,7 +5016,6 @@ static void Net_CopySnapshotToGameArrays(netmapstate_t* srv_snapshot, netmapstat
         // lift kept going up and down for the other players). A move this player just started
         // keeps running until the server's own begins.
         // (Heights alone: a sector whose light or panning changes is still at rest.)
-        static uint8_t restingUpdates[MAXSECTORS];
         sectortype* const gameSector = &(sector[index]);
         if (srvSector->floorz == clSector->floorz && srvSector->ceilingz == clSector->ceilingz)
         {
@@ -4917,7 +5024,10 @@ static void Net_CopySnapshotToGameArrays(netmapstate_t* srv_snapshot, netmapstat
         }
         else
             restingUpdates[index] = 0;
-        if (restingUpdates[index] >= 3 && (gameSector->floorz != srvSector->floorz || gameSector->ceilingz != srvSector->ceilingz))
+        uint32_t const localMove = g_netLocalAnimationTime[index];
+        bool const recentLocalMove = localMove && timerGetTicks() - localMove < Net_LocalMoveGraceMs();
+        if (restingUpdates[index] >= 3 && !recentLocalMove
+            && (gameSector->floorz != srvSector->floorz || gameSector->ceilingz != srvSector->ceilingz))
         {
             G_StopSectorAnimations(index);
             Net_CopySectorFromNet(srvSector, gameSector);
@@ -5102,7 +5212,7 @@ void Net_SendMapVoteCancel(int32_t failed)
 
     if (g_netClient)
     {
-        enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&tempbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
+        Net_PeerSend(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&tempbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
     }
     else if (g_netServer)
     {
@@ -5125,7 +5235,7 @@ void Net_SendMapVote(int32_t votefor)
 
     if (g_netClient)
     {
-        enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&tempbuf[0], 4, ENET_PACKET_FLAG_RELIABLE));
+        Net_PeerSend(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&tempbuf[0], 4, ENET_PACKET_FLAG_RELIABLE));
     }
     else if (g_netServer)
     {
@@ -5152,7 +5262,7 @@ void Net_SendMapVoteInitiate(void)
 
     Dbg_PacketSent(PACKET_MAP_VOTE_INITIATE);
 
-    enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&newgame, sizeof(newgame_t), ENET_PACKET_FLAG_RELIABLE));
+    Net_PeerSend(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&newgame, sizeof(newgame_t), ENET_PACKET_FLAG_RELIABLE));
 }
 
 
@@ -5191,6 +5301,13 @@ static void Net_ReceiveEndLevel(ENetEvent const *event)
         ud.eog = 1;   // G_EndOfLevel moves on to the episode the server chose
         g_netNextEpisode = event->packet->data[4] < MAXVOLUMES ? event->packet->data[4] : -1;
     }
+    else
+    {
+        // The server says the episode goes on: an end of episode this client's own simulation
+        // flagged must not send it to another episode than everyone else.
+        ud.eog = 0;
+        g_netNextEpisode = -1;
+    }
 }
 
 void Net_SendNewGame(int32_t frommenu, ENetPeer *peer)
@@ -5204,7 +5321,7 @@ void Net_SendNewGame(int32_t frommenu, ENetPeer *peer)
 
     if (peer)
     {
-        enet_peer_send(peer, CHAN_GAMESTATE, enet_packet_create(&newgame, sizeof(newgame_t), ENET_PACKET_FLAG_RELIABLE));
+        Net_PeerSend(peer, CHAN_GAMESTATE, enet_packet_create(&newgame, sizeof(newgame_t), ENET_PACKET_FLAG_RELIABLE));
     }
     else
     {
@@ -5300,6 +5417,10 @@ void Net_SendMapUpdate(void)
             // there's no point in the server sending itself a snapshot.
             continue;
         }
+        // A player who left stays in the connect list until the slot is reused: no full snapshot
+        // for nobody (it was encoded and then leaked by enet_peer_send on the dead peer).
+        if (!g_player[playerIndex].playerquitflag || !Net_PeerForPlayer(playerIndex))
+            continue;
 
         uint32_t playerRevisionNumber = g_player[playerIndex].revision;
 
@@ -5350,7 +5471,7 @@ void Net_SpawnPlayer(int32_t player)
     byteOffset += sizeof(vec3_t) * 2;
 
     packbuf[byteOffset++] = 0;
-    if (std::getenv("EDUKE32_XR_TEST_PVP"))
+    if (sdlayer_getenv_cached("EDUKE32_XR_TEST_PVP"))
     {
         vec3_t packetPos, packetOld;
         Bmemcpy(&packetPos,packbuf+2,sizeof(packetPos)); Bmemcpy(&packetOld,packbuf+14,sizeof(packetOld));
@@ -5372,13 +5493,13 @@ void Net_WaitForServer(void)
     if (numplayers < 2 || g_netServer)
         return;
 
-    auto const wrapTest=std::getenv("EDUKE32_XR_TEST_READY_WRAP");
+    auto const wrapTest=sdlayer_getenv_cached("EDUKE32_XR_TEST_READY_WRAP");
     if (wrapTest && !Bstrcmp(wrapTest,"1"))
         g_player[0].pingcnt=std::numeric_limits<decltype(g_player[0].pingcnt)>::max();
     int32_t const serverReady = g_player[0].pingcnt;
 
     P_SetGamePalette(g_player[myconnectindex].ps, TITLEPAL, 8 + 2 + 1);
-    bool const trace=std::getenv("EDUKE32_XR_TEST_SHOTS");
+    bool const trace=sdlayer_getenv_cached("EDUKE32_XR_TEST_SHOTS");
     uint32_t const started=uint32_t(totalclock);
     uint32_t lastTrace=started, lastPing=started-TICSPERFRAME, requests=0;
     if (trace) LOG_F(INFO,"VR native readiness wait: begin baseline=%d.",serverReady);
@@ -5403,7 +5524,7 @@ void Net_WaitForServer(void)
             ++requests;
             packbuf[0] = PACKET_PLAYER_PING;
             packbuf[1] = myconnectindex;
-            enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
+            Net_PeerSend(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], 2, ENET_PACKET_FLAG_RELIABLE));
             Dbg_PacketSent(PACKET_PLAYER_PING);
         }
 
@@ -5546,7 +5667,7 @@ void Net_SendClientInfo(void)
 
     if (g_netClient)
     {
-        enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&tempnetbuf[0], l, ENET_PACKET_FLAG_RELIABLE));
+        Net_PeerSend(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&tempnetbuf[0], l, ENET_PACKET_FLAG_RELIABLE));
     }
     else if (g_netServer)
     {
@@ -5576,7 +5697,7 @@ void Net_SendUserMapName(void)
 
     if (g_netClient)
     {
-        enet_peer_send(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], j, ENET_PACKET_FLAG_RELIABLE));
+        Net_PeerSend(g_netClientPeer, CHAN_GAMESTATE, enet_packet_create(&packbuf[0], j, ENET_PACKET_FLAG_RELIABLE));
     }
     else if (g_netServer)
     {
@@ -5741,7 +5862,7 @@ void Net_SendClientUpdate(void)
         uint32_t const tag=Net_MapTag();
         for (int i=0;i<4;++i) bytes[sizeof(update)+VRShotWireSize+i]=uint8_t(tag>>(8*i));
         size_t length=sizeof(bytes); uint8_t channel=CHAN_MOVE;
-        if (auto test=std::getenv("EDUKE32_XR_TEST_BAD_SHOT"))
+        if (auto test=sdlayer_getenv_cached("EDUKE32_XR_TEST_BAD_SHOT"))
         {
             static unsigned samples; static bool injected;
             bool const known=!Bstrcmp(test,"version") || !Bstrcmp(test,"flags") || !Bstrcmp(test,"direction")
@@ -5763,7 +5884,7 @@ void Net_SendClientUpdate(void)
                 LOG_F(INFO,"VR negative update fixture: %s.",test);
             }
         }
-        enet_peer_send(g_netClientPeer,channel,enet_packet_create(bytes,length,0));
+        Net_PeerSend(g_netClientPeer,channel, enet_packet_create(bytes,length,0));
     }
 
     Dbg_PacketSent(PACKET_SLAVE_TO_MASTER);
@@ -5817,7 +5938,7 @@ void Net_SendMessage(void)
                 if (g_netServer)
                     enet_host_broadcast(g_netServer, CHAN_CHAT, enet_packet_create(&tempbuf[0], j + 2, 0));
                 else if (g_netClient)
-                    enet_peer_send(g_netClientPeer, CHAN_CHAT, enet_packet_create(&tempbuf[0], j + 2, 0));
+                    Net_PeerSend(g_netClientPeer, CHAN_CHAT, enet_packet_create(&tempbuf[0], j + 2, 0));
                 G_AddUserQuote(recbuf);
             }
             g_chatPlayer = -1;
@@ -5926,6 +6047,10 @@ void Net_SendMessage(void)
 void Net_InitMapStateHistory()
 {
     int32_t mapStateIndex = 0;
+
+    // Per-sector move tracking belongs to the map that just ended.
+    Bmemset(restingUpdates, 0, sizeof(restingUpdates));
+    Bmemset(g_netLocalAnimationTime, 0, sizeof(g_netLocalAnimationTime));
 
     for (mapStateIndex = 0; mapStateIndex < NET_REVISIONS; mapStateIndex++)
     {

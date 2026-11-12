@@ -188,13 +188,32 @@ static inline int32_t P_AddInputDelta(int32_t pending, int32_t incoming)
     return sum > INT32_MAX ? INT32_MAX : sum < INT32_MIN ? INT32_MIN : (int32_t)sum;
 }
 
-static inline void P_AccumulateInput(input_t *pending, input_t const *incoming)
+// Network input received but not yet run by a game tic, per player (set by P_AccumulateInput,
+// cleared where G_DoMoveThings takes the input).
+extern uint8_t g_inputUnconsumed[MAXPLAYERS];
+
+static inline void P_AccumulateInput(input_t *pending, input_t const *incoming, int playerNum)
 {
     int32_t const yaw = P_AddInputDelta(pending->q16avel, incoming->q16avel);
     int32_t const pitch = P_AddInputDelta(pending->q16horz, incoming->q16horz);
+    uint32_t const oldBits = pending->bits, oldExtBits = pending->extbits;
     *pending = *incoming; // Held controls retain the latest packet's values.
     pending->q16avel = yaw;
     pending->q16horz = pitch;
+    // Two packets in one tic (a client catching up after a hitch sends its tics in a burst): a
+    // button held for only the first one (a tap of Use, jump, kick or a weapon-wheel choice) still
+    // reaches the game for one tic. The 4-bit weapon number keeps the earlier choice unless the
+    // newer packet has one.
+    if (unsigned(playerNum) < MAXPLAYERS && g_inputUnconsumed[playerNum])
+    {
+        uint32_t const weaponMask = 0xfu << 8;   // SK_WEAPON_BITS..SK_WEAPON_BITS3 (macros.h)
+        pending->bits |= oldBits & ~weaponMask;
+        if (!(pending->bits & weaponMask))
+            pending->bits |= oldBits & weaponMask;
+        pending->extbits |= oldExtBits;
+    }
+    if (unsigned(playerNum) < MAXPLAYERS)
+        g_inputUnconsumed[playerNum] = 1;
 }
 
 #define MAX_LOOGIES 6

@@ -72,6 +72,9 @@ voxel_build() {
     command -v python3 >/dev/null \
         || { echo "EDuke VR: install Python 3 with numpy, scipy and Pillow to build Voxel Duke from $zip" >&2; return 0; }
     want=$(python3 "$builder" --version) || return 0
+    # Missing modules are not a failed build: it runs once they are installed.
+    python3 -c 'import numpy, scipy, PIL' 2>/dev/null \
+        || { echo "EDuke VR: to build Voxel Duke from $zip, install numpy, scipy and Pillow for Python 3 (pip install numpy scipy pillow)" >&2; return 0; }
     [[ -f $packs/voxel.built ]] && have=$(cat "$packs/voxel.built")
     [[ $have == "$want" && -f $packs/voxel.zip ]] && return 0
     stamp="$want $(stat -c %s "$zip")"
@@ -95,16 +98,18 @@ run() {   # run MODE(vr|desktop) [game arguments...]
     else
         unset EDUKE32_XR
     fi
-    local restart; restart=$(mktemp -t eduke32-vr-restart.XXXXXX)
+    restart=$(mktemp -t eduke32-vr-restart.XXXXXX)   # global: the EXIT trap runs after run() returned
     trap 'rm -f "$restart"' EXIT
     export EDUKE32_XR_RESTART_REQUEST="$restart"
-    local pack=() mods=() status
+    local pack=() mods=() local_data=() status
+    # Personal bundles carry data/local/duke3d (the money wad cut from your GRP); releases do not.
+    [[ -f $data/local/duke3d/vr-local.def ]] && local_data=(-j "$data/local/duke3d" -mh vr-local.def)
     # Hit Feedback mod (extra blood and sparks on hits): EDUKE32_VR_HITFEEDBACK=0 leaves it out.
     [[ ${EDUKE32_VR_HITFEEDBACK:-1} != 0 && -f $data/mods/hitfeedback/hitfeedback.con ]] \
         && mods=(-j "$data/mods/hitfeedback" -mx hitfeedback.con)
     while :; do
         : > "$restart"; status=0
-        "$bin/eduke32-vr" -j "$data" -j "$data/local/duke3d" -mh vr-local.def "${mods[@]}" "${pack[@]}" -nosetup "$@" || status=$?
+        "$bin/eduke32-vr" -j "$data" "${local_data[@]}" "${mods[@]}" "${pack[@]}" -nosetup "$@" || status=$?
         [[ -s $restart ]] || return "$status"
         pack=(-vrpack "$(head -n1 "$restart")")   # the VR Setup menu switched model sets
     done
@@ -212,7 +217,7 @@ else
 fi
 mkdir "$tmp/x"
 tar -xzf "$archive" -C "$tmp/x"
-new=$(find "$tmp/x" -maxdepth 2 -name play.sh -printf '%h\n' | head -n1)
+new=$(find "$tmp/x" -maxdepth 2 -name play.sh -printf '%h\n' -quit)
 [[ -n $new && -x $new/$dir/eduke32-vr ]] || { echo "update: $archive is not an EDuke VR archive for $(uname -m)" >&2; exit 1; }
 # Each file is copied in beside its old copy and renamed over it: a running game's executable and
 # libraries are replaced too (they stay valid for the running game). VERSION is written last, so an
@@ -231,18 +236,22 @@ exit 0
 
 # ---------------------------------------------------------------- scripts (Windows)
 BAT_COMMON = r'''@echo off
-setlocal EnableDelayedExpansion
+rem Paths are set before delayed expansion is on (a "!" in the folder name would be eaten) and used
+rem as !VAR! after (values expanded that way are not parsed again).
+setlocal DisableDelayedExpansion
 rem EDuke32 VR personal bundle. VR needs an OpenXR runtime (SteamVR, Oculus, WMR, Virtual Desktop...).
 set "HERE=%~dp0"
-set "DATA=%HERE%data"
-set "EXE=%HERE%windows\eduke32-vr.exe"
-set "EDUKE32_XR_RESTART_REQUEST=%TEMP%\eduke32-vr-restart.txt"
+set "DATA=%~dp0data"
+set "EXE=%~dp0windows\eduke32-vr.exe"
+rem One request file per game started (two games on one PC must not share it).
+set "EDUKE32_XR_RESTART_REQUEST=%TEMP%\eduke32-vr-restart-%RANDOM%%RANDOM%.txt"
+setlocal EnableDelayedExpansion
 rem The bundled GRP when there is one; otherwise EDuke32 finds an installed copy (Steam, GOG...).
 set GRP=
-if exist "%DATA%\grp\DUKE3D.GRP" set GRP=-j "%DATA%\grp" -gamegrp DUKE3D.GRP
+if exist "!DATA!\grp\DUKE3D.GRP" set GRP=-j "!DATA!\grp" -gamegrp DUKE3D.GRP
 '''
 BAT_RUN = r'''
-rem :run MODE args...  (MODE vr or desktop)
+rem :run MODE args...  (MODE vr or desktop). Paths go in XARGS, not through CALL (it drops a "!").
 :run
 set "MODE=%~1"
 shift
@@ -257,29 +266,33 @@ call :voxel
 if /i "%MODE%"=="vr" (set "EDUKE32_XR=play") else (set "EDUKE32_XR=")
 rem Hit Feedback mod (extra blood and sparks on hits): set EDUKE32_VR_HITFEEDBACK=0 to leave it out.
 set "MODS="
-if not "%EDUKE32_VR_HITFEEDBACK%"=="0" if exist "%DATA%\mods\hitfeedback\hitfeedback.con" set MODS=-j "%DATA%\mods\hitfeedback" -mx hitfeedback.con
+if not "%EDUKE32_VR_HITFEEDBACK%"=="0" if exist "!DATA!\mods\hitfeedback\hitfeedback.con" set MODS=-j "!DATA!\mods\hitfeedback" -mx hitfeedback.con
+rem Personal bundles carry data\local\duke3d (the money wad cut from your GRP); releases do not.
+set "LOCALDATA="
+if exist "!DATA!\local\duke3d\vr-local.def" set LOCALDATA=-j "!DATA!\local\duke3d" -mh vr-local.def
 set "PACK="
 :again
-type nul > "%EDUKE32_XR_RESTART_REQUEST%"
-"%EXE%" -j "%DATA%" -j "%DATA%\local\duke3d" -mh vr-local.def !MODS! !PACK! -nosetup !ARGS!
-for %%F in ("%EDUKE32_XR_RESTART_REQUEST%") do if %%~zF GTR 0 (
-    set /p NEXT=<"%EDUKE32_XR_RESTART_REQUEST%"
+type nul > "!EDUKE32_XR_RESTART_REQUEST!"
+"!EXE!" -j "!DATA!" !LOCALDATA! !MODS! !PACK! -nosetup !XARGS! !ARGS!
+for %%F in ("!EDUKE32_XR_RESTART_REQUEST!") do if %%~zF GTR 0 (
+    set /p NEXT=<"!EDUKE32_XR_RESTART_REQUEST!"
     set "PACK=-vrpack !NEXT!"
     goto again
 )
+del "!EDUKE32_XR_RESTART_REQUEST!" 2>nul
 exit /b
 
 rem Voxel Duke (Duke's 3D full body, hands and weapons): built once on this machine from your copy of
 rem Voxel Duke Nukem 3D, voxel_duke3d.zip, put next to play.bat, in data\ or in Downloads. Needs Python 3
 rem with numpy, scipy and Pillow. A release carries the builder (voxelbuilder\); EDUKE32_VR_VOXEL_BUILD=0 skips it.
 :voxel
-set "VB=%HERE%voxelbuilder\package\vr\build_voxel_pack.py"
-set "VP=%DATA%\vrpacks"
-if not exist "%VB%" exit /b 0
+set "VB=!HERE!voxelbuilder\package\vr\build_voxel_pack.py"
+set "VP=!DATA!\vrpacks"
+if not exist "!VB!" exit /b 0
 if "%EDUKE32_VR_VOXEL_BUILD%"=="0" exit /b 0
-if exist "%VP%\voxel\" exit /b 0
+if exist "!VP!\voxel\" exit /b 0
 set "VZ="
-for %%Z in ("%HERE%voxel_duke3d.zip" "%DATA%\voxel_duke3d.zip" "%USERPROFILE%\Downloads\voxel_duke3d.zip") do if not defined VZ if exist "%%~Z" set "VZ=%%~Z"
+for %%Z in ("!HERE!voxel_duke3d.zip" "!DATA!\voxel_duke3d.zip" "!USERPROFILE!\Downloads\voxel_duke3d.zip") do if not defined VZ if exist "%%~Z" set "VZ=%%~Z"
 if not defined VZ exit /b 0
 set "PY="
 where py >nul 2>nul && set "PY=py -3"
@@ -288,25 +301,31 @@ if not defined PY (
     echo EDuke VR: install Python 3 with numpy, scipy and Pillow to build Voxel Duke from !VZ!
     exit /b 0
 )
+rem Missing modules are not a failed build: it runs once they are installed.
+!PY! -c "import numpy, scipy, PIL" >nul 2>nul
+if errorlevel 1 (
+    echo EDuke VR: to build Voxel Duke from !VZ!, install numpy, scipy and Pillow for Python 3: pip install numpy scipy pillow
+    exit /b 0
+)
 set "WANT="
-for /f "delims=" %%V in ('!PY! "%VB%" --version 2^>nul') do set "WANT=%%V"
+for /f "delims=" %%V in ('!PY! "!VB!" --version 2^>nul') do set "WANT=%%V"
 if not defined WANT exit /b 0
 set "HAVE="
-if exist "%VP%\voxel.built" set /p HAVE=<"%VP%\voxel.built"
-if "!HAVE!"=="!WANT!" if exist "%VP%\voxel.zip" exit /b 0
+if exist "!VP!\voxel.built" set /p HAVE=<"!VP!\voxel.built"
+if "!HAVE!"=="!WANT!" if exist "!VP!\voxel.zip" exit /b 0
 for %%Z in ("!VZ!") do set "STAMP=!WANT! %%~zZ"
 set "FAILED="
-if exist "%VP%\voxel.failed" set /p FAILED=<"%VP%\voxel.failed"
+if exist "!VP!\voxel.failed" set /p FAILED=<"!VP!\voxel.failed"
 if "!FAILED!"=="!STAMP!" exit /b 0
-if not exist "%VP%" mkdir "%VP%"
+if not exist "!VP!" mkdir "!VP!"
 echo EDuke VR: building Voxel Duke from !VZ!, once, about half an hour...
-!PY! "%VB%" "!VZ!" --assets "%HERE%voxelbuilder\duke-vr-assets" --out "%VP%" --zip
+!PY! "!VB!" "!VZ!" --assets "!HERE!voxelbuilder\duke-vr-assets" --out "!VP!" --zip
 if errorlevel 1 goto voxelfailed
->"%VP%\voxel.built" echo !WANT!
-if exist "%VP%\voxel.failed" del "%VP%\voxel.failed"
+>"!VP!\voxel.built" echo !WANT!
+if exist "!VP!\voxel.failed" del "!VP!\voxel.failed"
 exit /b 0
 :voxelfailed
->"%VP%\voxel.failed" echo !STAMP!
+>"!VP!\voxel.failed" echo !STAMP!
 echo EDuke VR: the Voxel Duke build failed, see above; playing without it. It is tried again when the zip or the builder changes.
 exit /b 0
 '''
@@ -314,29 +333,43 @@ exit /b 0
 def bat(body):
     return BAT_COMMON + body + '\nexit /b\n' + BAT_RUN
 
-BAT_PLAY = bat(r'''rem play.bat [vr|desktop]   (default vr)
+BAT_PLAY = bat(r'''rem play.bat [vr|desktop] [extra EDuke32 arguments]   (default vr)
 set "M=%~1"
 if "%M%"=="" set "M=vr"
-call :run %M% %GRP%
+shift
+set "REST="
+:rest
+if "%~1"=="" goto restdone
+set REST=!REST! "%~1"
+shift
+goto rest
+:restdone
+set "XARGS=!GRP!"
+call :run %M% !REST!
 ''')
 BAT_JOIN_ANY = bat(r'''rem join.bat HOST[:PORT] [vr|desktop]   join a multiplayer server (default port 23513)
 set "S=%~1"
 set "M=%~2"
 if "%S%"=="" (echo usage: join.bat HOST[:PORT] [vr^|desktop] & exit /b 2)
 if "%M%"=="" set "M=vr"
-call :run %M% %GRP% -connect %S%
+set "XARGS=!GRP! -connect %S%"
+call :run %M%
 ''')
 BAT_JOIN = bat(r'''rem Join the marmot (foundry) Duke server ({mode}). Same game data as the server: the World Tour GRP.
-call :run {mode} %GRP% -connect {server}
+set "XARGS=!GRP! -connect {server}"
+call :run {mode}
 ''')
 BAT_EXPANSION = bat(r'''rem play-expansion.bat NAME [vr|desktop]   NAME: worldtour (episode 5), dc, caribbean, nuclearwinter
 set "N=%~1"
 set "M=%~2"
 if "%M%"=="" set "M=vr"
-if /i "%N%"=="worldtour" call :run %M% -j "%DATA%\grp" -j "%DATA%\worldtour" -j "%DATA%\worldtour\maps" -gamegrp DUKE3D.GRP -v5 -l1
-if /i "%N%"=="dc" call :run %M% -j "%DATA%\addons" -gamegrp DUKE3D.GRP -grp dukedc.grp
-if /i "%N%"=="caribbean" call :run %M% -j "%DATA%\addons" -gamegrp DUKE3D.GRP -grp vacation.grp
-if /i "%N%"=="nuclearwinter" call :run %M% -j "%DATA%\addons" -gamegrp DUKE3D.GRP -grp nwinter.grp -x NWINTER.CON
+set "XARGS="
+if /i "%N%"=="worldtour" set XARGS=-j "!DATA!\grp" -j "!DATA!\worldtour" -j "!DATA!\worldtour\maps" -gamegrp DUKE3D.GRP -v5 -l1
+if /i "%N%"=="dc" set XARGS=-j "!DATA!\addons" -gamegrp DUKE3D.GRP -grp dukedc.grp
+if /i "%N%"=="caribbean" set XARGS=-j "!DATA!\addons" -gamegrp DUKE3D.GRP -grp vacation.grp
+if /i "%N%"=="nuclearwinter" set XARGS=-j "!DATA!\addons" -gamegrp DUKE3D.GRP -grp nwinter.grp -x NWINTER.CON
+if not defined XARGS (echo play-expansion: unknown expansion %N% & exit /b 2)
+call :run %M%
 ''')
 PS_INSTALL = r'''# Install (or update to) this bundle: copies it to %LOCALAPPDATA%\EDuke32-VR and adds Start menu
 # shortcuts. Run:  powershell -ExecutionPolicy Bypass -File install.ps1
@@ -440,10 +473,18 @@ def copy_linux_build(binary, dest):
     (dest / 'lib').mkdir(parents=True)
     shutil.copy2(binary, dest / 'eduke32-vr')
     ldd = subprocess.run(['ldd', str(binary)], capture_output=True, text=True, check=True).stdout
+    copied = set()
     for line in ldd.splitlines():
         parts = line.split()
         if parts and parts[0] in LINUX_LIBS and '=>' in parts:
             shutil.copy2(Path(parts[2]).resolve(), dest / 'lib' / parts[0])
+            copied.add(parts[0])
+    # A library whose soname changed on the build host (an update to libvpx...) was silently left
+    # out, and the THIRD-PARTY list names these sonames.
+    missing = sorted(set(LINUX_LIBS) - copied)
+    if missing:
+        raise SystemExit(f'copy_linux_build: {binary} does not link {", ".join(missing)} (soname changed?); '
+                         'update LINUX_LIBS and the THIRD-PARTY list')
 
 
 def copy_windows_build(windir, dest):

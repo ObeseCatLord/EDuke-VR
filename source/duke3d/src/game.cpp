@@ -35,6 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "compat.h"
 #include "crc32.h"
 #include "demo.h"
+#include "sdlayer.h"
 #include "duke3d.h"
 #include "input.h"
 #include "menus.h"
@@ -775,7 +776,7 @@ static void G_ReadGLFrame(void)
     videoBeginDrawing();
     glReadPixels(0, 0, xdim, ydim, GL_RGBA, GL_UNSIGNED_BYTE, frame);
 #ifdef USE_OPENXR
-    if (auto path=Bgetenv("EDUKE32_XR_TEST_AUX_OUTPUT"))
+    if (auto path=sdlayer_getenv_cached("EDUKE32_XR_TEST_AUX_OUTPUT"))
     {
         GLint read=0,draw=0;
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read);
@@ -3799,7 +3800,7 @@ static void G_PlaceHeldWeapons(void)
         int32_t const held = md_tilehasmodel(w->picnum, 0);
         bool const ok = tagged && held >= 0 && o->xrepeat && !(o->cstat & 32768);
 #ifdef USE_OPENXR
-        if (Bgetenv("EDUKE32_XR_TEST_HELD"))
+        if (sdlayer_getenv_cached("EDUKE32_XR_TEST_HELD"))
         {
             static int reported, lastKey = -1;
             int const key = o->picnum * 64 + frame;
@@ -4348,7 +4349,7 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
             heldShown = false;
 #ifdef USE_OPENGL
 # ifdef USE_OPENXR
-            if (Bgetenv("EDUKE32_XR_TEST_HELD"))
+            if (sdlayer_getenv_cached("EDUKE32_XR_TEST_HELD"))
             {
                 static int reported;
                 if (reported < 8 && (display_mirror || screenpeek != playerNum))
@@ -4463,10 +4464,12 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                     tag->xrepeat = tag->yrepeat = 16;
                     tag->clipdist |= TSPR_FLAGS_NO_SHADOW;
                     // Over the head: a VR player's tracked eye, else the view height.
-                    vec3_t eye = { t->x, t->y, ps->pos.z };
+                    // (pos is the camera's while they watch a security screen; the body is at opos)
+                    int32_t const viewZ = ps->newowner >= 0 ? ps->opos.z : ps->pos.z;
+                    vec3_t eye = { t->x, t->y, viewZ };
                     VRBodyPose pose;
                     if (G_VRGetBodyPose(playerNum, pose, .5) && (pose.flags & VRBodyHead))
-                        eye = { t->x + pose.eye[0], t->y + pose.eye[1], ps->pos.z + pose.eye[2] };
+                        eye = { t->x + pose.eye[0], t->y + pose.eye[1], viewZ + pose.eye[2] };
                     tag->x = eye.x;
                     tag->y = eye.y;
                     tag->z = eye.z - (6 << 8);
@@ -4683,7 +4686,7 @@ PALONLY:
             if (actor[i].dispicnum >= 0)
                 actor[i].dispicnum = t->picnum;
 #ifdef USE_OPENXR
-            if (pSprite->picnum == APLAYER && pSprite->extra <= 0 && Bgetenv("EDUKE32_XR_TEST_DEAD"))
+            if (pSprite->picnum == APLAYER && pSprite->extra <= 0 && sdlayer_getenv_cached("EDUKE32_XR_TEST_DEAD"))
             {
                 // Test hook: how a dying player is drawn (frame, height, angle) frame by frame.
                 static int logged;
@@ -5288,7 +5291,7 @@ void G_HandleLocalKeys(void)
                 tempbuf[ridiculeNum++] = myconnectindex;
 
                 if (g_netClient)
-                    enet_peer_send(g_netClientPeer, CHAN_CHAT, enet_packet_create(&tempbuf[0], ridiculeNum, 0));
+                    Net_PeerSend(g_netClientPeer, CHAN_CHAT, enet_packet_create(&tempbuf[0], ridiculeNum, 0));
                 else if (g_netServer)
                     enet_host_broadcast(g_netServer, CHAN_CHAT, enet_packet_create(&tempbuf[0], ridiculeNum, 0));
 #endif
@@ -5309,7 +5312,7 @@ void G_HandleLocalKeys(void)
                     tempbuf[2] = myconnectindex;
 
                     if (g_netClient)
-                        enet_peer_send(g_netClientPeer, CHAN_CHAT, enet_packet_create(&tempbuf[0], 3, 0));
+                        Net_PeerSend(g_netClientPeer, CHAN_CHAT, enet_packet_create(&tempbuf[0], 3, 0));
                     else if (g_netServer)
                         enet_host_broadcast(g_netServer, CHAN_CHAT, enet_packet_create(&tempbuf[0], 3, 0));
                 }
@@ -7577,7 +7580,7 @@ MAIN_LOOP_RESTART:
 
         {
             // Test hook (EDUKE32_TEST_STALL): why a game stops drawing frames.
-            static bool const stallTest = getenv("EDUKE32_TEST_STALL") != nullptr;
+            static bool const stallTest = sdlayer_getenv_cached("EDUKE32_TEST_STALL") != nullptr;
 #if defined __linux__ && !defined __ANDROID__
             // ... and where it is stuck: SIGUSR1 prints this thread's stack.
             static bool stackHook;
@@ -7802,6 +7805,7 @@ int G_DoMoveThings(void)
     {
         auto &pending = inputfifo[(g_netServer && myconnectindex == i)][i];
         g_player[i].input = pending;
+        g_inputUnconsumed[i] = 0;
         // Remote angular input is an increment, unlike held buttons/movement.
         // Consume even while paused so unpausing cannot replay old motion.
         if ((g_netServer || g_netClient) && myconnectindex != i)
@@ -7879,7 +7883,10 @@ int G_DoMoveThings(void)
         }
     }
 
-    if (ud.pause_on == 0)
+    // A dedicated server with nobody on it holds the level still (it used to play on alone: timed
+    // doors and exits, enemies, a level that could even end before anyone joined).
+    bool const emptyServer = g_networkMode == NET_DEDICATED_SERVER && numplayers < 2;
+    if (ud.pause_on == 0 && !emptyServer)
         G_MoveWorld();
 
 //    Net_CorrectPrediction();

@@ -11,6 +11,9 @@
 
 #define EDUKE32_SDL_LINKED_PREREQ(x, a, b, c) ((x).major > (a) || ((x).major == (a) && ((x).minor > (b) || ((x).minor == (b) && (x).patch >= (c)))))
 
+// getenv for variables read every frame and never set while the game runs: looked up once per thread.
+char const *sdlayer_getenv_cached(char const *name);
+
 #ifdef USE_OPENXR
 namespace eduke_xr { class Runtime; }
 eduke_xr::Runtime *sdlayer_xr_worldRuntime();

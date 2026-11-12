@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
 // net packet specification/compatibility version
-#define NETVERSION    15 // client-owned security cameras and crane prediction, friendly fire off in co-op, keycards synced (and shared), server-announced level and episode ends (PACKET_END_LEVEL), VR shot sample (hand, head, use yaw), map-tagged world updates, voice and VR body pose channels; no older peers
+#define NETVERSION    16 // sector moves packed in world updates; client-owned security cameras and crane prediction, friendly fire off in co-op, keycards synced (and shared), server-announced level and episode ends (PACKET_END_LEVEL), VR shot sample (hand, head, use yaw), map-tagged world updates, voice and VR body pose channels; no older peers
 
 extern ENetHost       *g_netClient;
 extern ENetHost       *g_netServer;
@@ -275,6 +275,11 @@ void    Net_StartNewGame();
 void    Net_ResetPlayers();
 void    Net_NotifyNewGame();
 void    Net_SendNewGame(int32_t frommenu, ENetPeer *peer);
+int     Net_PeerSend(ENetPeer *peer, enet_uint8 channel, ENetPacket *packet);
+// Client: when this game itself last started a sector move (door, lift) in each sector, so the
+// next world updates do not undo it before the server's own move arrives.
+extern uint32_t g_netLocalAnimationTime[MAXSECTORS];
+extern bool     g_netApplyingAnimations;
 // Server: the level ended (exit, nuke button, timed exit); clients end it too and go to the same level.
 void    Net_SendEndLevel(void);
 int     G_NextEpisode(int volume);   // game.cpp

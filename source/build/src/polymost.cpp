@@ -366,7 +366,7 @@ void polymost_xrMeasureNativeMasks(int eye, uint32_t frame)
         xrNativeMaskDemand.eye=-1;
         return;
     }
-    auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
+    static auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
     xrNativeMaskDemand={};
     if (diagnostics && !Bstrcmp(diagnostics,"1") && reports<6)
     { xrNativeMaskDemand.eye=eye; ++reports; }
@@ -445,8 +445,18 @@ void polymost_xrEndModelInstance()
     xrOpaque.modelInstanceActive=false;
 }
 
+// Fault-injection test hooks: EDUKE32_XR_TEST_FAIL is set at launch, so a normal run never reads the
+// environment again (these are asked per sprite and per packet, per eye, every frame).
+static bool polymost_xrFaultTests()
+{
+    static bool const enabled = Bgetenv("EDUKE32_XR_TEST_FAIL") != nullptr;
+    return enabled;
+}
+
 static bool polymost_xrMaskFaultArmed(char const * const name)
 {
+    if (!polymost_xrFaultTests())
+        return false;
     char const * const armed = Bgetenv("EDUKE32_XR_TEST_MASK_ARMED");
     char const * const failure = Bgetenv("EDUKE32_XR_TEST_FAIL");
     return armed && !Bstrcmp(armed, "1") && failure && !Bstrcmp(failure, name);
@@ -454,6 +464,8 @@ static bool polymost_xrMaskFaultArmed(char const * const name)
 
 static bool polymost_xrModelFaultArmed(char const *name)
 {
+    if (!polymost_xrFaultTests())
+        return false;
     auto const armed=Bgetenv("EDUKE32_XR_TEST_MODELS_ARMED");
     auto const fault=Bgetenv("EDUKE32_XR_TEST_FAIL");
     return xrOpaque.phase==POLYMOST_XR_MODELS && armed && !Bstrcmp(armed,"1") && fault && !Bstrcmp(fault,name);
@@ -1268,8 +1280,8 @@ static void polymost_xrUploadOpaquePacket(xr_opaque_packet_t const &left, xr_opa
     {
         // Indexed ART has no captured fixed-function fog range. Upload only
         // for the native families that own it; zero endpoints are singular.
-        auto const fixture=Bgetenv("EDUKE32_XR_TEST_ZERO_IPD");
-        auto const fault=Bgetenv("EDUKE32_XR_TEST_FAIL");
+        static auto const fixture=Bgetenv("EDUKE32_XR_TEST_ZERO_IPD");
+        auto const fault=polymost_xrFaultTests() ? Bgetenv("EDUKE32_XR_TEST_FAIL") : nullptr;
         bool const skip=left.skyKind==XR_SKYBOX_COLOR && fixture && !Bstrcmp(fixture,"1")
             && fault && !Bstrcmp(fault,"skybox-fog-upload");
         if (!skip)
@@ -1370,7 +1382,9 @@ struct xr_voxel_replay_state_probe_t
     GLfloat constant[4]{};
     xr_voxel_replay_state_probe_t()
     {
-        auto const armed=Bgetenv("EDUKE32_XR_TEST_MASK_PROBE_ARMED");
+        // Armed at run time by the zero-IPD and stereo fixtures only.
+        static bool const fixtures=Bgetenv("EDUKE32_XR_TEST_ZERO_IPD") || Bgetenv("EDUKE32_XR_TEST_STEREO_POSE");
+        auto const armed=fixtures ? Bgetenv("EDUKE32_XR_TEST_MASK_PROBE_ARMED") : nullptr;
         if (xrOpaque.phase!=POLYMOST_XR_MASKS || !armed || Bstrcmp(armed,"1")) return;
         bool voxel=false;
         for (auto const &packets:xrOpaque.packets)
@@ -4659,7 +4673,7 @@ static bool polymost_xrPrepareOpaquePacket(xr_opaque_packet_t &packet, pthtyp co
         // This is deliberately opt-in and process-bounded: the regular
         // collection rejection remains the native fallback path.
         static unsigned int reports;
-        char const * const diagnostics = Bgetenv("EDUKE32_XR_TEST_OPAQUE_REJECTIONS");
+        static char const * const diagnostics = Bgetenv("EDUKE32_XR_TEST_OPAQUE_REJECTIONS");
         if (diagnostics && diagnostics[0] == '1' && diagnostics[1] == '\0' && reports < 16)
         {
             ++reports;
@@ -4890,7 +4904,7 @@ bool polymost_xrCollectVoxel(voxmodel_t const *model, float const color[4])
     packet.voxelVbo=model->vbo; packet.voxelIbo=model->vboindex;
     packet.count=packet.voxelIndexCount=uint32_t(count);
     static unsigned reports;
-    auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
+    static auto const diagnostics=Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
     if (diagnostics && !Bstrcmp(diagnostics,"1") && reports<16)
     {
         auto const &previous=xrOpaque.packets[eye].empty() ? packet : xrOpaque.packets[eye].back();
@@ -10699,7 +10713,7 @@ void polymost_drawsprite(int32_t snum)
         // have changed the mapping, and a prior collection failure means this
         // guard is no longer the reason native fallback was selected.
         static unsigned int reports;
-        char const * const diagnostics = Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
+        static char const * const diagnostics = Bgetenv("EDUKE32_XR_TEST_MASK_REJECTIONS");
         bool const collectionAlreadyRejected = xrOpaque.rejected;
         if (!collectionAlreadyRejected && diagnostics && diagnostics[0] == '1' && diagnostics[1] == '\0' && reports < 16)
         {

@@ -404,7 +404,7 @@ Verified across a real network with `tools/vr/smoke_xr_remote_coop.py`. That tes
 
 ## Multiplayer compatibility
 
-Only identical, current builds play together. The network protocol (NETVERSION 15) always carries the VR shot sample (hand ray and head direction) in every input update; flat clients send it inactive. It also has voice and VR body pose channels. There is no negotiation and no support for older clients or servers, which are refused at connect.
+Only identical, current builds play together. The network protocol (NETVERSION 16, from v0.1.14) always carries the VR shot sample (hand ray and head direction) in every input update; flat clients send it inactive. It also has voice and VR body pose channels. There is no negotiation and no support for older clients or servers, which are refused at connect.
 
 ## Hit Feedback mod
 

@@ -8,6 +8,7 @@
 
 #include "voice.h"
 
+#include "sdlayer.h"
 #include "duke3d.h"
 #include "fx_man.h"
 #include "multivoc.h"
@@ -63,7 +64,7 @@ bool transmitAllowed()
     if (voice_transmit == 2)
     {
 #ifdef USE_OPENXR
-        char const *xr = std::getenv("EDUKE32_XR");
+        char const *xr = sdlayer_getenv_cached("EDUKE32_XR");
         return xr && *xr && std::strcmp(xr, "0");
 #else
         return false;
@@ -111,9 +112,11 @@ struct Capture
 {
     SDL_AudioDeviceID device = 0;
     SDL_AudioStream *stream = nullptr;
+    uint32_t frameBytes = 2;   // one sample frame of the device's format (dequeue whole frames only)
     bool sdlAudio = false;
     double retryAt = 0;
     std::vector<int16_t> pending;
+    size_t pendingRead = 0;   // samples of pending already taken (compacted now and then, not per frame)
     // Test source (EDUKE32_VOICE_TEST_TONE=hz[:on_ms:off_ms]): a synthetic microphone.
     double toneHz = 0, toneOn = 0, toneOff = 0, toneStart = -1, toneSamples = 0;
 } capture;
@@ -128,7 +131,10 @@ uint32_t statSent, statReceived, statDecoded, statConcealed;
 uint16_t sequence;
 uint32_t timestamp;
 uint8_t talkspurt;
-std::vector<std::vector<int16_t>> preroll;
+// The last frames before speech starts (sent with it so the first syllable is not cut): a fixed ring,
+// filled 50 times a second while nobody talks.
+int16_t preroll[3][Frame];
+unsigned prerollCount, prerollNext;
 
 void closeCapture()
 {
@@ -136,6 +142,7 @@ void closeCapture()
     if (capture.stream) SDL_FreeAudioStream(capture.stream);
     capture.device = 0; capture.stream = nullptr;
     capture.pending.clear();
+    capture.pendingRead = 0;
 }
 
 bool openCapture()
@@ -158,6 +165,7 @@ bool openCapture()
         LOG_F(WARNING, "Voice: no capture device (%s).", SDL_GetError());
         return false;
     }
+    capture.frameBytes = std::max<uint32_t>(1, (SDL_AUDIO_BITSIZE(have.format) / 8) * std::max<int>(1, have.channels));
     if (have.freq != Rate || have.format != AUDIO_S16SYS || have.channels != 1)
         capture.stream = SDL_NewAudioStream(have.format, have.channels, have.freq, AUDIO_S16SYS, 1, Rate);
     SDL_PauseAudioDevice(capture.device, 0);
@@ -186,11 +194,15 @@ bool nextCaptureFrame(int16_t *out)
     }
     if (!capture.device) return false;
     uint8_t raw[8192];
-    while (capture.pending.size() < size_t(Frame))
+    auto const available = [] { return capture.pending.size() - capture.pendingRead; };
+    while (available() < size_t(Frame))
     {
         uint32_t const queued = SDL_GetQueuedAudioSize(capture.device);
         if (!queued) break;
-        uint32_t const got = SDL_DequeueAudio(capture.device, raw, std::min<uint32_t>(queued, sizeof(raw)));
+        // Whole sample frames only (6-byte frames do not divide 8192: a cut frame misaligns the rest).
+        uint32_t const want = std::min<uint32_t>(queued, sizeof(raw)) / capture.frameBytes * capture.frameBytes;
+        if (!want) break;
+        uint32_t const got = SDL_DequeueAudio(capture.device, raw, want);
         if (!got) break;
         if (capture.stream)
         {
@@ -203,11 +215,21 @@ bool nextCaptureFrame(int16_t *out)
         else capture.pending.insert(capture.pending.end(), (int16_t *)raw, (int16_t *)raw + got / 2);
     }
     // Drop a backlog (e.g. after a hitch) rather than send stale audio.
-    if (capture.pending.size() > size_t(Frame * 10))
-        capture.pending.erase(capture.pending.begin(), capture.pending.end() - Frame);
-    if (capture.pending.size() < size_t(Frame)) return false;
-    std::copy_n(capture.pending.begin(), Frame, out);
-    capture.pending.erase(capture.pending.begin(), capture.pending.begin() + Frame);
+    if (available() > size_t(Frame * 10))
+        capture.pendingRead = capture.pending.size() - Frame;
+    if (available() < size_t(Frame)) return false;
+    std::copy_n(capture.pending.begin() + capture.pendingRead, Frame, out);
+    capture.pendingRead += Frame;
+    if (capture.pendingRead == capture.pending.size())
+    {
+        capture.pending.clear();
+        capture.pendingRead = 0;
+    }
+    else if (capture.pendingRead >= size_t(Frame * 8))
+    {
+        capture.pending.erase(capture.pending.begin(), capture.pending.begin() + capture.pendingRead);
+        capture.pendingRead = 0;
+    }
     return true;
 }
 
@@ -259,16 +281,21 @@ void processCapture()
             opus_encoder_ctl(encoder, OPUS_RESET_STATE);
             bool first = true;
             if (!voice_mode)
-                for (auto &frame : preroll) { encodeAndSend(frame.data(), first ? VoiceFlagStart : 0); first = false; }
-            preroll.clear();
+                for (unsigned k = 0; k < prerollCount; k++)   // oldest first
+                {
+                    encodeAndSend(preroll[(prerollNext + 3 - prerollCount + k) % 3], first ? VoiceFlagStart : 0);
+                    first = false;
+                }
+            prerollCount = prerollNext = 0;
             encodeAndSend(pcm, first ? VoiceFlagStart : 0);
         }
         else if (gate) encodeAndSend(pcm, 0);
         else
         {
             if (transmitting) { sendFrame(nullptr, 0, VoiceFlagEnd); transmitting = false; }
-            preroll.emplace_back(pcm, pcm + Frame);
-            if (preroll.size() > 3) preroll.erase(preroll.begin());
+            std::copy(pcm, pcm + Frame, preroll[prerollNext]);
+            prerollNext = (prerollNext + 1) % 3;
+            if (prerollCount < 3) ++prerollCount;
         }
     }
 }
@@ -461,7 +488,7 @@ void updatePlayback(int index, double now)
     }
     else
         FX_SetPan(sp.handle, std::max(l, r), l, r);
-    if (std::getenv("EDUKE32_VOICE_TEST_DUMP"))
+    if (sdlayer_getenv_cached("EDUKE32_VOICE_TEST_DUMP"))
     {
         static double lastLog[MaxSpeakers];
         if (now - lastLog[index] > 1000.0)
@@ -555,7 +582,7 @@ void Voice_Init(void)
         opus_encoder_ctl(encoder, OPUS_SET_VBR(1));
         opus_encoder_ctl(encoder, OPUS_SET_DTX(1));
     }
-    if (char const *tone = std::getenv("EDUKE32_VOICE_TEST_TONE"))
+    if (char const *tone = sdlayer_getenv_cached("EDUKE32_VOICE_TEST_TONE"))
     {
         std::sscanf(tone, "%lf:%lf:%lf", &capture.toneHz, &capture.toneOn, &capture.toneOff);
         LOG_F(INFO, "Voice: test tone %.0f Hz (%.0f ms on / %.0f ms off) replaces the microphone.", capture.toneHz, capture.toneOn, capture.toneOff);
@@ -598,7 +625,7 @@ void Voice_ReceivePacket(int source, uint8_t const *body, uint32_t length)
         int error = 0;
         sp.decoder = opus_decoder_create(Rate, 1, &error);
         if (!sp.decoder) return;
-        if (char const *prefix = std::getenv("EDUKE32_VOICE_TEST_DUMP"))
+        if (char const *prefix = sdlayer_getenv_cached("EDUKE32_VOICE_TEST_DUMP"))
         {
             std::string path = std::string(prefix) + "-speaker-" + std::to_string(source) + ".s16";
             sp.dump = std::fopen(path.c_str(), "wb");
@@ -677,7 +704,7 @@ void Voice_RadioBeep(bool on)
     if (!ud.config.SoundToggle)
         return;
     int const volume = std::max(1, std::min(255, int(ud.config.FXVolume)));
-    FX_PlayRaw(sound[on], sizeof(sound[on]), rate, 0, volume, volume, volume, FX_MUSIC_PRIORITY, fix16_one, MUSIC_ID);
+    FX_PlayRaw(sound[on], sizeof(sound[on]), rate, 0, volume, volume, volume, 255, fix16_one, MUSIC_ID);   // not the music priority: only one such voice is mixed (it muted streamed music, or was muted)
 }
 
 int Voice_CaptureDevices(char const ***names)
@@ -719,7 +746,7 @@ void Voice_Frame(void)
 {
     if (g_networkMode == NET_DEDICATED_SERVER) return;
     FX_SetVoiceDucking(voice_duck, voice_duck_overall);
-    static bool const duckTest = std::getenv("EDUKE32_TEST_DUCK") != nullptr;   // test hook
+    static bool const duckTest = sdlayer_getenv_cached("EDUKE32_TEST_DUCK") != nullptr;   // test hook
     if (duckTest)
     {
         static double lastLog;
@@ -741,7 +768,7 @@ void Voice_Frame(void)
     }
     processCapture();
     double const now = nowMs();
-    if (std::getenv("EDUKE32_VOICE_TEST_LOG") || std::getenv("EDUKE32_VOICE_TEST_DUMP") || std::getenv("EDUKE32_VOICE_TEST_TONE"))
+    if (sdlayer_getenv_cached("EDUKE32_VOICE_TEST_LOG") || sdlayer_getenv_cached("EDUKE32_VOICE_TEST_DUMP") || sdlayer_getenv_cached("EDUKE32_VOICE_TEST_TONE"))
     {
         static double lastStats;
         if (now - lastStats > 3000.0)

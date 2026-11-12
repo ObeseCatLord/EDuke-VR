@@ -1344,7 +1344,10 @@ static int osdcmd_net_endlevel(osdcmdptr_t parm)
     if (parm->numparms >= 1 && !Bstrcasecmp(parm->parms[0], "episode"))
         ud.eog = 1;   // as the episode's ending (the boss's endofgame)
     P_EndLevel();
-    LOG_F(INFO, "Level ended (net_endlevel).");
+    if (g_netClient)
+        LOG_F(INFO, "net_endlevel: only the server ends levels online (run it in the server's console).");
+    else
+        LOG_F(INFO, "Level ended (net_endlevel).");
     return OSDCMD_OK;
 }
 

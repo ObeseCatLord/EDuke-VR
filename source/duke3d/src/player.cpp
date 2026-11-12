@@ -33,6 +33,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <cstdlib>
 #include "savegame.h"
 
+uint8_t g_inputUnconsumed[MAXPLAYERS];
+
 #ifdef __ANDROID__
 #include "android.h"
 #endif

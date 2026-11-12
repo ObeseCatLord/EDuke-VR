@@ -245,7 +245,7 @@ int __fastcall A_FindPlayer(const spritetype *pSprite, int32_t *dist)
 
     for (bssize_t TRAVERSE_CONNECT(j))
     {
-        if (j == 0 && dedicated)  // the dedicated server's own player is not in the game
+        if ((j == 0 && dedicated) || G_PlayerOutOfGame(j))  // the dedicated server's own player, or one who left
             continue;
 
         auto const pPlayer    = g_player[j].ps;
@@ -267,6 +267,19 @@ int __fastcall A_FindPlayer(const spritetype *pSprite, int32_t *dist)
 bool G_DedicatedHostPlayer(int playerNum)
 {
     return playerNum == 0 && (g_networkMode == NET_DEDICATED_SERVER || g_networkMode == NET_DEDICATED_CLIENT);
+}
+
+// Not a player in the game: the dedicated server's slot, or (online) a player who left, whose body
+// stays in the connect list until the slot is reused (enemies chased it, touch plates found it).
+bool G_PlayerOutOfGame(int playerNum)
+{
+    if (G_DedicatedHostPlayer(playerNum))
+        return true;
+#ifndef NETCODE_DISABLE
+    if ((g_netServer || g_netClient) && (unsigned)playerNum < MAXPLAYERS && !g_player[playerNum].playerquitflag)
+        return true;
+#endif
+    return false;
 }
 
 // Multiplayer clients: drop this game's own moves of a sector (lifts, doors) when the server says it
@@ -401,6 +414,11 @@ int SetAnimation(int sectNum, int32_t *animPtr, int goalVal, int animVel)
 
     if (animNum == g_animateCnt)
         g_animateCnt++;
+
+#ifndef NETCODE_DISABLE
+    if (g_netClient && !g_netApplyingAnimations && (unsigned)sectNum < MAXSECTORS)
+        g_netLocalAnimationTime[sectNum] = timerGetTicks() | 1;
+#endif
 
     G_SetInterpolation(animPtr);
 

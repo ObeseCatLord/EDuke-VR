@@ -109,6 +109,22 @@ static int vsync_unsupported;
 
 static int32_t vsync_renderlayer;
 
+// getenv for settings and test hooks read every frame: each name looked up once per thread. Only
+// for variables nothing sets while the game runs.
+char const *sdlayer_getenv_cached(char const *name)
+{
+    struct Entry { char const *name; char const *value; };
+    thread_local Entry cache[256];
+    thread_local int count;
+    for (int i = 0; i < count; i++)
+        if (cache[i].name == name || !std::strcmp(cache[i].name, name))
+            return cache[i].value;
+    char const *const value = std::getenv(name);
+    if (count < int(sizeof(cache) / sizeof(cache[0])))
+        cache[count++] = { name, value };
+    return value;
+}
+
 #ifdef USE_OPENXR
 // Explicit diagnostic using Polymost's context; this is not game-world VR.
 static eduke_xr::Runtime sdl_xr;
@@ -217,7 +233,29 @@ bool sdlayer_xr_requested()
     return mode && (!std::strcmp(mode, "1") || !std::strcmp(mode, "play"));
 }
 
+static char const *sdlayer_xr_option_uncached(char const *name);
+
+// Options are read every frame (some per sprite): each name is resolved once per thread (the
+// environment and the preset do not change while the game runs; test hooks set at run time are read
+// with getenv directly).
 char const *sdlayer_xr_option(char const *name)
+{
+    // (the model pack sets this one while loading, after an earlier read may have found nothing)
+    if (!std::strcmp(name, "EDUKE32_XR_MODEL_FILTER"))
+        return sdlayer_xr_option_uncached(name);
+    struct Entry { char const *name; char const *value; };
+    thread_local Entry cache[96];
+    thread_local int count;
+    for (int i = 0; i < count; i++)
+        if (cache[i].name == name || !std::strcmp(cache[i].name, name))
+            return cache[i].value;
+    char const *const value = sdlayer_xr_option_uncached(name);
+    if (count < int(sizeof(cache) / sizeof(cache[0])))
+        cache[count++] = { name, value };
+    return value;
+}
+
+static char const *sdlayer_xr_option_uncached(char const *name)
 {
     if (char const *value = std::getenv(name))
         return value;
