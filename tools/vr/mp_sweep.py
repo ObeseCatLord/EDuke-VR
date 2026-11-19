@@ -237,6 +237,12 @@ def main():
     parser.add_argument('--grp', required=True, type=Path)
     parser.add_argument('--work-dir', required=True, type=Path)
     parser.add_argument('--level', default='1,1', help='episode,level')
+    # Add-ons and expansions: the map's file and where it is, files linked into each game's folder
+    # (paths with spaces), and arguments every game gets (e.g. -grp vacation.grp, -x NWINTER.CON).
+    parser.add_argument('--map-file', default='', help='the level\'s map file name (default E#L#.MAP), e.g. VACA1.MAP')
+    parser.add_argument('--map-source', type=Path, help='GRP or folder holding --map-file (default --grp)')
+    parser.add_argument('--link', action='append', default=[], help='NAME=PATH linked into every game folder')
+    parser.add_argument('--game-args', default='', help='extra EDuke32 arguments for the server and players (space separated)')
     parser.add_argument('--display', default=':105')
     parser.add_argument('--port', type=int, default=24691)
     parser.add_argument('--settle', type=float, default=3.5, help='seconds after a use before sampling')
@@ -252,9 +258,15 @@ def main():
     args = parser.parse_args()
     episode, level = map(int, args.level.split(','))
     deadline = time.monotonic() + args.timeout
-    data = grp_file(args.grp, f'E{episode}L{level}.MAP')
+    map_name = args.map_file or f'E{episode}L{level}.MAP'
+    source = args.map_source or args.grp
+    if source.is_dir():
+        found = [f for f in source.iterdir() if f.name.upper() == map_name.upper()]
+        data = found[0].read_bytes() if found else None
+    else:
+        data = grp_file(source, map_name)
     if data is None:
-        print(json.dumps({'passed': False, 'error': f'no E{episode}L{level}.MAP in the GRP'}))
+        print(json.dumps({'passed': False, 'error': f'no {map_name} in {source}'}))
         return 1
     sectors, walls, sprites = read_map(data)
     teleporters = frozenset(spr['sectnum'] for spr in sprites if spr['picnum'] == SECTOREFFECTOR and spr['lotag'] == SE_TELEPORT)
@@ -265,7 +277,7 @@ def main():
     root = Path(tempfile.mkdtemp(prefix=f'sweep-e{episode}l{level}-', dir=args.work_dir.resolve()))
     env = {k: v for k, v in os.environ.items() if not k.startswith(('EDUKE32_XR', 'XR_'))}
     env.update(DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy')
-    result = {'level': f'E{episode}L{level}', 'targets': len(todo), 'of': len(every), 'start': args.start, 'used': 0, 'issues': [], 'baseline': [],
+    result = {'level': f'E{episode}L{level}' + (f' ({map_name})' if args.map_file else ''), 'targets': len(todo), 'of': len(every), 'start': args.start, 'used': 0, 'issues': [], 'baseline': [],
               'evidence_directory': str(root)}
     processes = []
 
@@ -275,6 +287,9 @@ def main():
         config = CONFIG.replace('ScreenWidth = 960', 'ScreenWidth = 320').replace('ScreenHeight = 600', 'ScreenHeight = 200')
         (d / 'eduke32.cfg').write_text(config + f'\n[Comm Setup]\nPlayerName = "{name}"\n')
         (d / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
+        for item in args.link:
+            name, _, target = item.partition('=')
+            (d / name).symlink_to(Path(target).resolve())
         return d
 
     def log_text(d):
@@ -292,7 +307,7 @@ def main():
 
     try:
         binary = str(args.binary.resolve())
-        common = ['-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm']
+        common = ['-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm', *args.game_args.split()]
         host = lab('server')
         # --server-wrap, e.g. "gdb -batch -ex run -ex bt --args": the server under a debugger.
         server_env = dict(env, **dict(kv.split('=', 1) for kv in args.client_env))
@@ -303,6 +318,10 @@ def main():
         if not wait(lambda: 'Multiplayer server initialized.' in log_text(host), 60):
             raise RuntimeError('server did not start')
         time.sleep(2)
+        # A level the server cannot load leaves it running with no map (players then wait forever).
+        missing = re.search(r'Unable to load ([^:\n]+)', log_text(host))
+        if missing:
+            raise RuntimeError(f'server could not load {missing.group(1)}')
         bots = {}
         for name in ('actor', 'watcher'):
             d = lab(name)

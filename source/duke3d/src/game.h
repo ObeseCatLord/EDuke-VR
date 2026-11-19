@@ -577,7 +577,13 @@ static inline void G_NewGame_EnterLevel(void)
     G_NewGame(ud.m_volume_number, ud.m_level_number, ud.m_player_skill);
 
     if (G_EnterLevel(MODE_GAME))
+    {
+        // A dedicated server has no menu: back there it ran on with no level and joining players
+        // waited forever (a map it could not find).
+        if (g_networkMode == NET_DEDICATED_SERVER)
+            G_GameExit("Dedicated server: the level could not be loaded (see the log above).");
         G_BackToMenu();
+    }
 }
 
 static inline int G_GetMusicIdx(const char *str)

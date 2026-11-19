@@ -556,6 +556,11 @@ def main():
     for item in sorted(args.world_tour.iterdir()):
         if item.suffix.upper() in ('.ART', '.CON', '.RTS') or item.name in ('maps', 'music', 'sound'):
             (shutil.copytree if item.is_dir() else shutil.copy2)(item, wt / item.name)
+    # World Tour's CON names its maps maps/E1L1.map, but episodes 1-4 ship as E1L1.MAP: Windows does
+    # not mind the case, Linux could not load them (only episode 5, named .map, played).
+    for item in sorted((wt / 'maps').iterdir()):
+        if item.suffix == '.MAP':
+            item.rename(item.with_suffix('.map'))
     (data / 'addons').mkdir()
     for name in ('DUKE3D.GRP', 'dukedc.grp', 'vacation.grp', 'nwinter.grp'):
         shutil.copy2(args.addons / name, data / 'addons' / name)

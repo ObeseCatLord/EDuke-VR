@@ -370,7 +370,7 @@ void G_GameExit(const char *msg)
     if (in3dmode())
         G_Shutdown();
 
-    if (msg != nullptr)
+    if (msg != nullptr && g_networkMode != NET_DEDICATED_SERVER)   // (a server has nobody to click the box)
     {
         char titlebuf[256];
         Bsnprintf(titlebuf, sizeof(titlebuf), HEAD2 " %s", s_buildRev);

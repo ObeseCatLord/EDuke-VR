@@ -5174,10 +5174,18 @@ static uint32_t Net_GetNextRevisionNumber(uint32_t currentNumber)
 
 void Net_WaitForInitialSnapshot()
 {
+    // A server that never sends the game (it has no level, or the link is gone) is given up on after
+    // two minutes instead of a black screen forever.
+    uint32_t const start = timerGetTicks();
     while (g_netClient && g_netMapRevisionNumber < cStartingRevisionIndex)
     {
         if (quitevent)
             G_GameExit();
+        if (timerGetTicks() - start > 120000)
+        {
+            LOG_F(ERROR, "The server sent no game in two minutes; leaving it.");
+            G_GameExit("The server sent no game state (it may have failed to load its level). Disconnected.");
+        }
         gameHandleEvents();
     }
 }
