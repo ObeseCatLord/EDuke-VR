@@ -1519,8 +1519,50 @@ void G_NewGame(int volumeNum, int levelNum, int skillNum)
     VM_OnEvent(EVENT_NEWGAME, g_player[screenpeek].ps->i, screenpeek);
 }
 
+// Online, every player needs a player sprite, and players take the map's player starts in order:
+// a map with fewer starts than player slots (Nuclear Winter's levels have one) refused everyone past
+// them ("server full"), the dedicated server's own slot taking the only start. Copies of the first
+// start fill the slots; co-op shares the start points. Server and players load the same map and add
+// the same sprites (no game events, no random numbers).
+static void G_PadPlayerStarts(void)
+{
+#ifndef NETCODE_DISABLE
+    if (!g_netServer && !g_netClient)
+        return;
+#else
+    if (ud.multimode < 2)
+        return;
+#endif
+    int count = 0, first = -1;
+    for (int SPRITES_OF(STAT_PLAYER, i))
+    {
+        first = i;   // the list runs newest first: the last one is the map's first start
+        count++;
+    }
+    if (first < 0)
+        return;
+    spritetype const start = sprite[first];
+    for (; count < MAXPLAYERS; count++)
+    {
+        int const k = insertsprite(start.sectnum, STAT_PLAYER);
+        if (k < 0)
+            break;
+        auto &s = sprite[k];
+        int16_t const statnum = s.statnum, sectnum = s.sectnum;
+        s = start;
+        s.statnum = statnum;
+        s.sectnum = sectnum;
+        s.owner   = k;
+        Bmemset(&actor[k], 0, sizeof(actor_t));
+        actor[k].bpos = s.xyz;
+        spriteext[k] = {};
+        spritesmooth[k] = {};
+    }
+}
+
 static void G_CollectSpawnPoints(int gameMode)
 {
+    G_PadPlayerStarts();
     g_playerSpawnCnt = 0;
     //    circ = 2048/ud.multimode;
 
