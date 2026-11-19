@@ -2675,6 +2675,16 @@ DETONATE:
 
                         if (p >= 0 && (g_player[p].ps->on_ground || pSprite->ang == 512))
                         {
+                            // Online, only the server fires touch plates; players get what they start
+                            // (effectors, sector moves) in its world updates. A player's own game fired
+                            // them too, and the server's updates reset its latch, so it fired again and
+                            // toggled the effectors back (World Tour E5L6's ceilings stood open on
+                            // another player's game while closed on the server).
+#ifndef NETCODE_DISABLE
+                            if (g_netClient)
+                                ;
+                            else
+#endif
                             if (pData[0] == 0 && !G_CheckActivatorMotion(pSprite->lotag))
                             {
                                 static char const *const touchTest = getenv("EDUKE32_TEST_ANIM");

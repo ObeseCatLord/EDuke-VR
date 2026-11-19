@@ -11,6 +11,7 @@ agree or should not happen:
   desync-player   the actor's position on the server and in its own game differ
   moved           the actor ended up far from where it stood to use the thing (a teleport)
   camera-stuck    a security screen left the actor in camera view, or not back where it stood
+  camera-not-entered  Use on a security screen did not open its camera (reported, not left)
   desync-sector   a sector's floor or ceiling differs between the server and a player (both samples)
   desync-switch   a switch wall's picture differs (on/off) between the server and a player
   desync-sprite   a lasting sprite (crane, door part, effector...) is elsewhere on a player's game
@@ -443,7 +444,11 @@ def main():
                 if math.dist(own_me['pos'][:2], (x, y)) > 1536 and own_me['newowner'] < 0 and kind not in ('door', 'teleport', 'lift') \
                         and find_sector(sectors, walls, x, y) not in teleporters:
                     issues.append(('moved', 'actor', me, (x, y), own_me['pos']))
-                if own_me['newowner'] >= 0 or target['kind'] == 'viewscreen':
+                if target['kind'] == 'viewscreen' and own_me['newowner'] < 0:
+                    # The use did not open the camera (e.g. right after a respawn): pressing Use again to
+                    # "leave" would open it and read as a stuck camera.
+                    issues.append(('camera-not-entered', 'actor', me, (x, y), own_me['pos']))
+                elif own_me['newowner'] >= 0:
                     # A camera: leave it, and the actor must be back where it stood.
                     console('actor', 'test_use')
                     time.sleep(1.5)
