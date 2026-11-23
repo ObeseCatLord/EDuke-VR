@@ -1654,7 +1654,7 @@ EXTERN tile2model_t tile2model[MAXTILES+EXTRATILES];
 
 static FORCE_INLINE int32_t md_tilehasmodel(int32_t const tilenume, int32_t const pal)
 {
-    return mdinited ? tile2model[Ptile2tile(tilenume,pal)].modelid : -1;
+    return mdinited && (unsigned)tilenume < MAXTILES ? tile2model[Ptile2tile(tilenume,pal)].modelid : -1;
 }
 #endif  // defined USE_OPENGL
 

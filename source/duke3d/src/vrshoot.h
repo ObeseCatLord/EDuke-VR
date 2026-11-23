@@ -40,6 +40,8 @@ bool G_VRShotDetonate(int player);
 int G_VRUseAngle(int player, int fallback);
 // Required firing/presentation capability, or zero for an unsupported replacement.
 uint8_t G_VRHandShotFeature(int player, int tile=-1);
+// Another game's (not Duke's) own CON projectiles leave from the VR hand too.
+bool G_VRCustomHandShots(int player);
 bool G_VRShotReady(int player);
 bool G_VRShotValid(int player);
 bool G_VRShotCanFire(int player);

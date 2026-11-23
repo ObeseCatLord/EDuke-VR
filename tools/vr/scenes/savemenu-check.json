@@ -1,0 +1,9 @@
+[
+ {"pose": {"head": [0, 1.6, 0, 0, 0, 0]}},
+ {"wait": 4},
+ {"keys": ["F6"]}, {"wait": 4}, {"capture": "f6"},
+ {"keys": ["Escape"]}, {"wait": 3},
+ {"keys": ["F2"]}, {"wait": 4}, {"capture": "f2"},
+ {"keys": ["Escape"]}, {"wait": 3},
+ {"keys": ["Escape"]}, {"wait": 3}, {"capture": "esc"}
+]

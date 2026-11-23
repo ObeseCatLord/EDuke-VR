@@ -1080,16 +1080,28 @@ static int A_ShootCustom(int const spriteNum, int const projecTile, int shootAng
     switch (pProj->workslike & PROJECTILE_TYPE_MASK)
     {
     case PROJECTILE_HITSCAN:
+    {
         if (!(pProj->workslike & PROJECTILE_NOSETOWNERSHADE) && pSprite->extra >= 0)
             pSprite->shade = pProj->shade;
 
+        // VR in another game: the ray leaves the weapon hand along its aim (as Duke's own hitscan).
+        HandHitscan resolved;
+        HandHitscan *hand = nullptr;
+        if (playerNum >= 0 && G_VRCustomHandShots(playerNum))
+        {
+            bool clamped = false;
+            if (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum, *startPos, resolved.sector, clamped))
+                return -1;
+            hand = &resolved;
+        }
+
         if (playerNum >= 0)
             P_PreFireHitscan(spriteNum, playerNum, projecTile, startPos, &zvel, &shootAng,
-                             pProj->workslike & PROJECTILE_ACCURATE_AUTOAIM, !(pProj->workslike & PROJECTILE_ACCURATE));
+                             pProj->workslike & PROJECTILE_ACCURATE_AUTOAIM, !(pProj->workslike & PROJECTILE_ACCURATE), hand);
         else
             A_PreFireHitscan(pSprite, startPos, &zvel, &shootAng, !(pProj->workslike & PROJECTILE_ACCURATE));
 
-        if (Proj_DoHitscan(spriteNum, (pProj->cstat >= 0) ? pProj->cstat : 256 + 1, startPos, zvel, shootAng, &hitData))
+        if (Proj_DoHitscan(spriteNum, (pProj->cstat >= 0) ? pProj->cstat : 256 + 1, startPos, zvel, shootAng, &hitData, hand))
             return -1;
 
         if (pProj->range > 0 && klabs(startPos->x - hitData.x) + klabs(startPos->y - hitData.y) > pProj->range)
@@ -1122,10 +1134,23 @@ static int A_ShootCustom(int const spriteNum, int const projecTile, int shootAng
             S_PlaySound3D(pProj->isound, otherSprite, hitData.xyz);
 
         return -1;
+    }
 
     case PROJECTILE_RPG:
+    {
         if (!(pProj->workslike & PROJECTILE_NOSETOWNERSHADE) && pSprite->extra >= 0)
             pSprite->shade = pProj->shade;
+
+        // VR in another game: the projectile leaves the weapon hand along its aim (as Duke's RPG).
+        bool const handTracked = pPlayer != NULL && G_VRCustomHandShots(playerNum);
+        int16_t originSector = pSprite->sectnum;
+        if (handTracked)
+        {
+            bool clamped = false;
+            if (!G_VRShotCanFire(playerNum) || !G_VRResolveShot(playerNum, *startPos, originSector, clamped))
+                return -1;
+        }
+        int projectileVel = pProj->vel;
 
         if (pPlayer != NULL)
         {
@@ -1161,8 +1186,13 @@ static int A_ShootCustom(int const spriteNum, int const projecTile, int shootAng
             // l may be a SPRITE_INDEX, see above
             int const l = (playerNum >= 0 && otherSprite >= 0) ? otherSprite : -1;
 
+            if (handTracked)
+                P_HandProjectileVelocity(playerNum, l, pProj->vel, shootAng, projectileVel, zvel);
             zvel = A_GetShootZvel(zvel);
-            otherSprite = A_InsertSprite(pSprite->sectnum,
+            otherSprite = handTracked
+                ? A_InsertSprite(originSector, startPos->x, startPos->y, startPos->z, projecTile, 0, 14, 14, shootAng,
+                                 projectileVel, zvel, spriteNum, 4)
+                : A_InsertSprite(pSprite->sectnum,
                 startPos->x + tabledivide32_noinline(sintable[(348 + shootAng + 512) & 2047], pProj->offset),
                 startPos->y + tabledivide32_noinline(sintable[(shootAng + 348) & 2047], pProj->offset),
                 startPos->z - (1 << 8), projecTile, 0, 14, 14, shootAng, pProj->vel, zvel, spriteNum, 4);
@@ -1186,6 +1216,7 @@ static int A_ShootCustom(int const spriteNum, int const projecTile, int shootAng
 
             return otherSprite;
         }
+    }
 
     case PROJECTILE_KNEE:
         if (playerNum >= 0)

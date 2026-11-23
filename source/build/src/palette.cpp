@@ -529,13 +529,31 @@ void handle_blend(uint8_t enable, uint8_t blend, uint8_t def)
 #ifdef USE_OPENXR
     if (sdlayer_xr_overlayTargetBound())
     {
+        // The UI target is composited over the world as premultiplied alpha (colour + world*(1-a)),
+        // so a mod's custom blend modes (Ion Fury's HUD, AA's effects) map onto it: additive light
+        // adds colour without coverage, darkening adds coverage without colour, premultiplied
+        // "over" is itself. Modes that need the world's colour (multiply, screen, ...) cannot be
+        // reproduced on a separate layer and are drawn as plain alpha blending instead.
         if (src==GL_SRC_ALPHA && dst==GL_ONE_MINUS_SRC_ALPHA)
-        {
             glBlendFuncSeparate(src,dst,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
-            return;
+        else if (src==GL_ONE && dst==GL_ONE_MINUS_SRC_ALPHA)
+            glBlendFuncSeparate(GL_ONE,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+        else if (dst==GL_ONE && (src==GL_SRC_ALPHA || src==GL_ONE))
+            glBlendFuncSeparate(src,GL_ONE,GL_ZERO,GL_ONE);
+        else if (dst==GL_ONE || (src==GL_ONE && dst==GL_ONE_MINUS_SRC_COLOR))
+            glBlendFuncSeparate(src==GL_ONE ? GL_ONE : GL_SRC_ALPHA,GL_ONE,GL_ZERO,GL_ONE);   // "screen" and the like: additive
+        else if (src==GL_ZERO && dst==GL_ONE_MINUS_SRC_ALPHA)
+            glBlendFuncSeparate(GL_ZERO,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+        else
+        {
+            static bool reported;
+            if (!reported)
+                LOG_F(WARNING,"OpenXR UI: blend factors 0x%x/0x%x need the world's colour; drawn as alpha blending on the UI layer.",
+                      unsigned(src),unsigned(dst));
+            reported=true;
+            glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
         }
-        LOG_F(WARNING,"OpenXR UI capture canceled: unsupported custom blend factors.");
-        sdlayer_xr_cancelMenuPresentation();
+        return;
     }
 #endif
     glBlendFunc(src,dst);

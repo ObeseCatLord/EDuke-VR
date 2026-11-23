@@ -138,6 +138,13 @@ uint8_t G_VRHandShotFeature(int player, int tile)
 #endif
     return false;
 }
+bool G_VRCustomHandShots(int player)
+{
+    // Duke and its mods (Alien Armageddon) keep their native custom-projectile aim; a total
+    // conversion (no Duke game flag: Ion Fury, Demon Throne, AMC Squad) fires everything as its
+    // own projectiles, so those follow the weapon hand. Same answer on server and clients.
+    return !(g_gameType & GAMEFLAG_DUKE) && G_VRShotEnabled(player);
+}
 bool G_VRShotReady(int player)
 {
     return G_VRShotEnabled(player) && (shots[player].input.flags & VRShotValid)

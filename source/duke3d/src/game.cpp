@@ -770,8 +770,13 @@ static void G_ReadGLFrame(void)
 
     Bassert(waloff[TILE_SAVESHOT]);
 
-    int const xf = divscale16(ydim*4/3, 320);
-    int const yf = divscale16(ydim, 200);  // (ydim<<16)/200
+    // The thumbnail is the centred 4:3 part of the frame. The screen can be narrower than 4:3 (in
+    // VR it is the headset's eye size, square or portrait), so crop vertically then instead of
+    // reading outside the frame.
+    int const srcW = min(xdim, ydim*4/3), srcH = min(ydim, xdim*3/4);
+    int const x0 = (xdim-srcW)/2, y0 = (ydim-srcH)/2;
+    int const xf = divscale16(srcW, 320);
+    int const yf = divscale16(srcH, 200);
 
     videoBeginDrawing();
     glReadPixels(0, 0, xdim, ydim, GL_RGBA, GL_UNSIGNED_BYTE, frame);
@@ -795,11 +800,11 @@ static void G_ReadGLFrame(void)
 
     for (int y = 0; y < 200; y++)
     {
-        const int32_t base = mulscale16(200 - y - 1, yf)*xdim;
+        const int32_t base = (y0 + mulscale16(200 - y - 1, yf))*xdim;
 
         for (int x = 0; x < 320; x++)
         {
-            const palette_t *pix = &frame[base + mulscale16(x, xf) + (xdim-(ydim*4/3))/2];
+            const palette_t *pix = &frame[base + x0 + mulscale16(x, xf)];
             pic[320 * y + x] = paletteGetClosestColor(pix->r, pix->g, pix->b);
         }
     }

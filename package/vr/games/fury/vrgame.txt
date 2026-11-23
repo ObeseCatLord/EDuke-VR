@@ -1,0 +1,14 @@
+# Ion Fury in VR: the weapon and gadget wheels (package/vr/eduke32-vr-play --game).
+# Tiles are Ion Fury's own pickup icons, named by its scripts' defines (scripts/names.con);
+# weapon keys as its EVENT_WEAPKEY handlers (key N selects weapon N-1).
+weapon 0 I_BATON noammo          # Electrifryer
+weapon 1 I_LOVERBOY              # Loverboy
+weapon 2 I_SHOTGUN               # Disperser
+weapon 3 I_SMG                   # Penetrator
+weapon 4 I_MINIGUN               # Chaingun
+weapon 5 I_BOWLINGBOMB_PICKUP    # Bowling bombs
+weapon 6 I_GRENADELAUNCHER       # Disperser grenades
+weapon 7 I_PLASMACROSSBOW        # Ion Bow
+weapon 8 P_PUCK_PLACED           # Clusterpuck
+# Medkits: firstaid_amount, used with the MedKit key (Ion Fury carries up to MEDKIT_MAXAMOUNT).
+gadget 0 I_MEDKIT MedKit MEDKIT_MAXAMOUNT

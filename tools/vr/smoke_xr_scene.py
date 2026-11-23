@@ -8,7 +8,7 @@ step list against the Monado remote (a Valve Index pair), capturing both eyes wh
   [{"pose": {"right": [x, y, z, yaw, pitch, roll], "left": [...], "head": [...]}},
    {"buttons": {"right": {"trackpad_touch": 1}, "left": {"trigger_value": 1.0}}},
    {"console": "xr_weapons"}, {"wait": 2}, {"until": "regex", "timeout": 20},
-   {"capture": "name"}]
+   {"capture": "name"}, {"stats": "label"}]
 
 With --server PORT the level runs on a dedicated co-op server (same binary, flat) that the VR game
 joins; {"server": "net_givekeys"} types a server console command and "until" with
@@ -49,7 +49,7 @@ def quat(yaw=0.0, pitch=0.0, roll=0.0):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True, type=Path)
-    parser.add_argument('--grp', required=True, type=Path)
+    parser.add_argument('--grp', type=Path, help='the GRP (required unless --game)')
     parser.add_argument('--work-dir', required=True, type=Path)
     parser.add_argument('--script', required=True, type=Path)
     parser.add_argument('--display', default=':105')
@@ -62,12 +62,15 @@ def main():
     parser.add_argument('--server', type=int, default=0, help='play on a dedicated co-op server on this port')
     parser.add_argument('--bots', type=int, default=0, help='with --server: flat players who join after the VR player')
     parser.add_argument('--pack', default='original-lowres', help='model pack (launcher --pack); "default": the game\'s own choice')
+    parser.add_argument('--assets', type=Path, help='duke-vr-assets folder for the launcher (e.g. a scratch one with a test pack)')
+    parser.add_argument('--game', type=Path, help='a total conversion install folder (launcher --game; --grp is then ignored)')
     args = parser.parse_args()
     steps = json.loads(args.script.read_text())
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='scene-', dir=args.work_dir.resolve()))
     (lab / 'eduke32.cfg').write_text(CONFIG)
-    (lab / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
+    if not args.game:
+        (lab / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
     capture, console = lab / 'capture-request', lab / 'console-request'
     env = dict(os.environ, DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
                EDUKE32_XR='play', EDUKE32_XR_TEST_HELD='1',
@@ -101,7 +104,10 @@ def main():
             time.sleep(.2)
         time.sleep(3)
         level = ['-connect', f'127.0.0.1:{args.server}']
-    command = [str(launcher), '--no-voxel-build', '--binary', str(args.binary.resolve()), *pack, '--',
+    assets = ['--assets', str(args.assets.resolve())] if args.assets else []
+    if args.game:
+        assets += ['--game', str(args.game.resolve())]
+    command = [str(launcher), '--no-voxel-build', '--binary', str(args.binary.resolve()), *pack, *assets, '--',
                '-usecwd', '-noautoload', '-nologo', *level, *([] if args.server else ['-s1']), *args.args.split()]
     log_path = lab / 'game.log'
     text = lambda: log_path.read_text(errors='replace')
@@ -121,7 +127,7 @@ def main():
 
     x11 = X11(args.display)
 
-    def game_window():
+    def game_pids():
         # The launcher runs the game as a child (it relaunches it to switch model sets).
         pids, found = {process.pid}, True
         while found:
@@ -133,7 +139,10 @@ def main():
                         pids.add(int(entry.name)); found = True
                 except (OSError, ValueError, IndexError):
                     pass
-        for pid in pids:
+        return pids
+
+    def game_window():
+        for pid in game_pids():
             window, _ = x11.owned_window(pid)
             if window:
                 return window
@@ -240,6 +249,18 @@ def main():
                     console_mark = None
                     ok = wait(lambda: re.search(step['until'], text()[start:]) is not None, step.get('timeout', 20))
                     result.setdefault('until', []).append({step['until']: ok})
+                if 'stats' in step:
+                    # {"stats": "label"}: open files, threads and memory of the game process(es).
+                    row = {'label': step['stats'], 'fds': 0, 'threads': 0, 'rss_kb': 0}
+                    for pid in game_pids():
+                        try:
+                            row['fds'] += len(os.listdir(f'/proc/{pid}/fd'))
+                            status = Path(f'/proc/{pid}/status').read_text()
+                            row['threads'] += int(re.search(r'Threads:\s+(\d+)', status)[1])
+                            row['rss_kb'] += int(re.search(r'VmRSS:\s+(\d+)', status)[1])
+                        except (OSError, TypeError):
+                            pass
+                    result.setdefault('stats', []).append(row)
                 if 'capture' in step:
                     stem = lab / step['capture']
                     capture.write_text(str(stem) + '\n'); wait(lambda: not capture.exists(), 60)

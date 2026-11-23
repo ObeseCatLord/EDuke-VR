@@ -382,6 +382,9 @@ bool sdlayer_xr_renderExtent(int32_t &x, int32_t &y)
     float scale = 1.f;
     if (char const *value = sdlayer_xr_option("EDUKE32_XR_RENDER_SCALE"))
         scale = std::max(.25f, std::min(float(std::atof(value)), 2.f));
+    // The engine's per-column/row tables hold at most MAXXDIM x MAXYDIM: a large eye at a high
+    // render scale is shrunk to fit (same aspect) instead of overrunning them.
+    scale = std::min({scale, float(MAXXDIM) / std::max(width, 1u), float(MAXYDIM) / std::max(height, 1u)});
     int32_t const newX = int32_t(width * scale) & ~1, newY = int32_t(height * scale) & ~1;
     if (newX < 320 || newY < 200) return false;
     if (newX != x || newY != y)
@@ -776,6 +779,76 @@ static void attach_debugger_here(void)
 #endif
 }
 
+#ifdef _WIN32
+// Windows reports a crash caught by sighandler only as abort() in ucrtbase (0xc0000409), which
+// hides where it happened. A vectored handler records each fatal exception (code, address, call
+// stack) as it is raised; sighandler then logs the last one before aborting, as module+offset.
+static struct
+{
+    DWORD code, thread;
+    void *address;
+    ULONG_PTR access[2];
+    void *frames[48];
+    USHORT frameCount;
+} lastFault;
+
+static LONG CALLBACK recordFault(PEXCEPTION_POINTERS info)
+{
+    EXCEPTION_RECORD const *const record = info->ExceptionRecord;
+    switch (record->ExceptionCode)
+    {
+        case EXCEPTION_ACCESS_VIOLATION: case EXCEPTION_IN_PAGE_ERROR: case EXCEPTION_ILLEGAL_INSTRUCTION:
+        case EXCEPTION_PRIV_INSTRUCTION: case EXCEPTION_INT_DIVIDE_BY_ZERO: case EXCEPTION_STACK_OVERFLOW:
+        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: case EXCEPTION_DATATYPE_MISALIGNMENT:
+            break;
+        default:
+            return EXCEPTION_CONTINUE_SEARCH;
+    }
+    lastFault.code = record->ExceptionCode;
+    lastFault.thread = GetCurrentThreadId();
+    lastFault.address = record->ExceptionAddress;
+    lastFault.access[0] = record->NumberParameters >= 2 ? record->ExceptionInformation[0] : 0;
+    lastFault.access[1] = record->NumberParameters >= 2 ? record->ExceptionInformation[1] : 0;
+    // No stack walk on an exhausted stack.
+    lastFault.frameCount = record->ExceptionCode == EXCEPTION_STACK_OVERFLOW ? 0
+        : RtlCaptureStackBackTrace(0, ARRAY_SIZE(lastFault.frames), lastFault.frames, nullptr);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void describeAddress(void const *address, char *out, size_t size)
+{
+    HMODULE module = nullptr;
+    char path[MAX_PATH];
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)address, &module) && module && GetModuleFileNameA(module, path, sizeof(path)))
+    {
+        char const *const name = strrchr(path, '\\');
+        snprintf(out, size, "%s+0x%llx", name ? name + 1 : path, (unsigned long long)((uintptr_t)address - (uintptr_t)module));
+    }
+    else
+        snprintf(out, size, "%p", address);
+}
+
+static void logLastFault(void)
+{
+    if (!lastFault.code)
+        return;
+    char where[MAX_PATH + 32];
+    describeAddress(lastFault.address, where, sizeof(where));
+    if (lastFault.code == EXCEPTION_ACCESS_VIOLATION)
+        LOG_F(ERROR, "Crash: access violation (%s of 0x%llx) at %s, thread %lu.",
+              lastFault.access[0] == 0 ? "read" : lastFault.access[0] == 8 ? "execute" : "write",
+              (unsigned long long)lastFault.access[1], where, (unsigned long)lastFault.thread);
+    else
+        LOG_F(ERROR, "Crash: exception 0x%08lx at %s, thread %lu.", (unsigned long)lastFault.code, where, (unsigned long)lastFault.thread);
+    for (int i = 0; i < lastFault.frameCount; ++i)
+    {
+        describeAddress(lastFault.frames[i], where, sizeof(where));
+        LOG_F(ERROR, "  #%d %s", i, where);
+    }
+}
+#endif
+
 static void sighandler(int signum)
 {
     UNREFERENCED_PARAMETER(signum);
@@ -795,6 +868,9 @@ static void sighandler(int signum)
         //        usleep(15000000);
 #endif
         attach_debugger_here();
+#ifdef _WIN32
+        logLastFault();
+#endif
         app_crashhandler();
         Bexit(EXIT_FAILURE);
     }
@@ -917,6 +993,9 @@ int main(int argc, char *argv[])
 
     engineSetupAllocator();
 
+#ifdef _WIN32
+    AddVectoredExceptionHandler(1, recordFault);
+#endif
 #ifndef __ANDROID__
     signal(SIGSEGV, sighandler);
     signal(SIGILL, sighandler);  /* clang -fcatch-undefined-behavior uses an ill. insn */

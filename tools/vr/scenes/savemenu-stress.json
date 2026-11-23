@@ -1,0 +1,994 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 4
+},
+{
+"stats": "start"
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"stats": "menu x10"
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"stats": "menu x20"
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"stats": "menu x30"
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Return"
+]
+},
+{
+"wait": 1
+},
+{
+"keys": [
+"t",
+"Return"
+]
+},
+{
+"wait": 3
+},
+{
+"capture": "saved"
+},
+{
+"stats": "saved"
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 1.2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.0
+},
+{
+"stats": "menu after save x10"
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+1
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+0
+]
+},
+"right": {
+"thumbstick": [
+1,
+0
+]
+}
+}
+},
+{
+"wait": 4
+},
+{
+"buttons": {
+"right": {
+"thumbstick": [
+0,
+0
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"stats": "play 0"
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+1
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+0
+]
+},
+"right": {
+"thumbstick": [
+1,
+0
+]
+}
+}
+},
+{
+"wait": 4
+},
+{
+"buttons": {
+"right": {
+"thumbstick": [
+0,
+0
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"stats": "play 1"
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+1
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+0
+]
+},
+"right": {
+"thumbstick": [
+1,
+0
+]
+}
+}
+},
+{
+"wait": 4
+},
+{
+"buttons": {
+"right": {
+"thumbstick": [
+0,
+0
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"stats": "play 2"
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+1
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+0
+]
+},
+"right": {
+"thumbstick": [
+1,
+0
+]
+}
+}
+},
+{
+"wait": 4
+},
+{
+"buttons": {
+"right": {
+"thumbstick": [
+0,
+0
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"stats": "play 3"
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+1
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+0
+]
+},
+"right": {
+"thumbstick": [
+1,
+0
+]
+}
+}
+},
+{
+"wait": 4
+},
+{
+"buttons": {
+"right": {
+"thumbstick": [
+0,
+0
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"stats": "play 4"
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+1
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"buttons": {
+"left": {
+"thumbstick": [
+0,
+0
+]
+},
+"right": {
+"thumbstick": [
+1,
+0
+]
+}
+}
+},
+{
+"wait": 4
+},
+{
+"buttons": {
+"right": {
+"thumbstick": [
+0,
+0
+]
+}
+}
+},
+{
+"wait": 8
+},
+{
+"stats": "play 5"
+},
+{
+"capture": "end"
+}
+]

@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Launch EDuke32 VR with the qualified gameplay features (EDUKE32_XR=play).
 #
-#   eduke32-vr-play [--aa AA_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release] [--glow] [--pack NAME]
+#   eduke32-vr-play [--aa AA_DIR] [--game TC_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release] [--glow] [--pack NAME]
 #                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [--voxel-zip ZIP] [--no-voxel-build]
 #                   [--build-packs] [--desktop] [-- eduke32 args]
 #
 # Stock Duke: pass --grp (or run where DUKE3D.GRP is found natively).
 # Alien Armageddon 5.66: pass --aa with the install directory; the shipped
 # eduke32_vr_aa566.con compatibility entry is selected automatically.
+# Other games built on EDuke32 (Ion Fury, Demon Throne): pass --game with the install directory.
+# Their own scripts, HUD and art are used as they are; the Duke model packs and the Hit Feedback
+# mod are left out (they are made for Duke's tiles), and package/vr/games/<game>/ adds the VR
+# profile (weapon wheel icons, wrist HUD) for that game.
 # Model packs are ordinary mods: every pack in the sibling duke-vr-assets checkout is built into
 # ~/.local/share/eduke32-vr/vrpacks/<name>/ (build_vr_pack.py), where the game finds it; the game
 # loads the one chosen in Options > VR Setup (saved in its config), --pack NAME for this run, or
@@ -28,7 +32,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 binary="$repo/eduke32-xr"
 assets="$(cd "$repo/.." && pwd)/duke-vr-assets"
-aa="" grp="" models=1 release="" glow="" pack="" default_pack="" voxel_zip="" no_voxel="" build_only="" desktop=""
+aa="" game="" game_id="" grp="" models=1 release="" glow="" pack="" default_pack="" voxel_zip="" no_voxel="" build_only="" desktop=""
 # Personal defaults (never shipped): ~/.config/eduke32-vr/launcher.conf, e.g. "pack=dnf-private" or
 # "voxel_zip=/path/to/voxel_duke3d.zip". The pack is only the default; the game's VR Setup choice wins.
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/eduke32-vr/launcher.conf"
@@ -40,6 +44,7 @@ args=()
 while (($#)); do
     case "$1" in
         --aa) aa=$(cd "$2" && pwd); shift 2 ;;
+        --game) game=$(cd "$2" && pwd); shift 2 ;;
         --grp) grp=$(realpath "$2"); shift 2 ;;
         --left) export EDUKE32_XR_AIM="${EDUKE32_XR_AIM:-left}"; shift ;;
         --no-models) models=0; shift ;;
@@ -53,15 +58,35 @@ while (($#)); do
         --build-packs) build_only=1; shift ;;
         --desktop) desktop=1; shift ;;
         --) shift; args+=("$@"); break ;;
-        -h|--help) sed -n '3,24p' "$0"; exit 0 ;;
+        -h|--help) sed -n '3,28p' "$0"; exit 0 ;;
         *) args+=("$1"); shift ;;
     esac
 done
 [[ -n $build_only || -x "$binary" ]] || { echo "eduke32-vr-play: build $binary first (make USE_OPENXR=1 ...)" >&2; exit 1; }
 
+# A total conversion: which one, by its main data file. Its art uses its own tile numbers, so no
+# Duke model pack is loaded (the VR hands and weapon cards are drawn from the game's own HUD art).
+game_grp="" game_dirs=()
+if [[ -n $game ]]; then
+    for candidate in fury.grp WGR2.grp AMCSQUAD.GRP; do
+        found=$(find "$game" -maxdepth 1 -iname "$candidate" -print -quit)
+        [[ -n $found ]] && { game_grp=$(basename "$found"); break; }
+    done
+    case "${game_grp,,}" in
+        fury.grp) game_id=fury ;;
+        wgr2.grp) game_id=demonthrone; game_dirs=("$game/WGR2") ;;   # its scripts include files from WGR2/
+        amcsquad.grp) game_id=amcsquad ;;
+        *) echo "eduke32-vr-play: no supported game found in $game (Ion Fury, Demon Throne, AMC Squad)" >&2; exit 1 ;;
+    esac
+    models=0
+fi
+
 export EDUKE32_VR_HERE="$here"
 root="${XDG_DATA_HOME:-$HOME/.local/share}/eduke32-vr"
-packs="$root/vrpacks" local="$root/local/$([[ -n $aa ]] && echo aa566 || echo duke3d)"
+local_name=duke3d
+[[ -n $aa ]] && local_name=aa566
+[[ -n $game_id ]] && local_name=$game_id
+packs="$root/vrpacks" local="$root/local/$local_name"
 mkdir -p "$packs" "$local"
 
 # Pack names: a pack.json "name" (e.g. "original") or its duke-vr-assets folder (e.g. v7-original).
@@ -118,8 +143,9 @@ prepare() {
     # Tipping: a wad of bills cut from the MONEY art of the user's own GRP (AA.grp, the stock GRP,
     # or a DUKE3D.GRP in the working directory); not part of any pack.
     art_grp=$grp
-    [[ -z $art_grp ]] && art_grp=$(find . -maxdepth 1 -iname duke3d.grp -print -quit 2>/dev/null)
-    python3 - "$local" ${aa:+"$aa/AA.grp"} ${art_grp:+"$(realpath "$art_grp")"} <<'PY'
+    [[ -z $art_grp && -z $game_id ]] && art_grp=$(find . -maxdepth 1 -iname duke3d.grp -print -quit 2>/dev/null)
+    [[ -n $game_id ]] && art_grp="" && : > "$local/vr-local.def"
+    [[ -n $game_id ]] || python3 - "$local" ${aa:+"$aa/AA.grp"} ${art_grp:+"$(realpath "$art_grp")"} <<'PY'
 import os, sys
 from pathlib import Path
 sys.path.insert(0, os.environ['EDUKE32_VR_HERE'])
@@ -139,7 +165,12 @@ PY
         cmd+=(-vrpack "$(pack_name "$pack")")
     fi
     [[ -n $default_pack ]] && export EDUKE32_XR_DEFAULT_PACK="$(pack_name "$default_pack")"
-    if [[ -n $aa ]]; then
+    if [[ -n $game_id ]]; then
+        cmd+=(-j "$game")
+        for dir in "${game_dirs[@]}"; do cmd+=(-j "$dir"); done
+        [[ -d $here/games/$game_id ]] && cmd+=(-j "$here/games/$game_id")
+        cmd+=(-gamegrp "$game_grp")
+    elif [[ -n $aa ]]; then
         cmd+=(-j "$aa" -j "$here/aa566" -g "$aa/AA.grp" -x eduke32_vr_aa566.con)
     elif [[ ${EDUKE32_VR_HITFEEDBACK:-1} != 0 && -f $here/mods/hitfeedback/hitfeedback.con ]]; then
         # Hit Feedback mod (extra blood and sparks on hits); EDUKE32_VR_HITFEEDBACK=0 leaves it out.

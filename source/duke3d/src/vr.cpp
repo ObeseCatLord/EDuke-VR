@@ -137,6 +137,85 @@ static bool aaGame()
     return hash_find(&h_gamevars,"pchar")>=0;
 }
 
+static FILE *openPackFile(char const *name);
+
+// Games built on EDuke32 that are not Duke (Ion Fury, Demon Throne, AMC Squad): no Duke flag.
+static bool totalConversion() { return !(g_gameType & GAMEFLAG_DUKE); }
+
+// VR game profile (vrgame.txt on the search path, from package/vr/games/<game>/): a total
+// conversion's weapons and usable items for the weapon and gadget wheels, as its own scripts
+// define them. Lines (# comments):
+//   weapon N ICON [key K] [noammo]   weapon slot N (curr_weapon), drawn with tile ICON (a number
+//                                    or a CON define such as I_LOVERBOY); selected with weapon
+//                                    key K (default N+1); noammo: always selectable (melee)
+//   gadget ITEM ICON FUNCTION FULL   inventory slot ITEM (GET_*), its icon, the game function that
+//                                    uses it (e.g. MedKit) and the amount shown as a full ring
+// Read on first use, after the game's scripts are compiled (their defines name the tiles).
+struct VRGameProfile
+{
+    struct Weapon { int weapon, tile, key; bool noAmmo; };
+    struct Gadget { int item, tile, function, full; };
+    std::vector<Weapon> weapons;
+    std::vector<Gadget> gadgets;
+    bool present=false;
+};
+
+static int profileValue(char const *token)
+{
+    if (!token) return -1;
+    char *end=nullptr;
+    long const number=std::strtol(token,&end,0);
+    if (end && end!=token && !*end) return int(number);
+    int const label=hash_find(&h_labels,token);
+    return label>=0 && (labeltype[label] & LABEL_DEFINE) ? labelcode[label] : -1;
+}
+
+static VRGameProfile const &gameProfile()
+{
+    static VRGameProfile profile;
+    static bool loaded;
+    if (loaded) return profile;
+    loaded=true;
+    FILE *file=openPackFile("vrgame.txt");
+    if (!file) return profile;
+    profile.present=true;
+    char line[256];
+    while (std::fgets(line,sizeof(line),file))
+    {
+        if (char *comment=std::strchr(line,'#')) *comment=0;
+        char *save=nullptr;
+        char const *word=strtok_r(line," \t\r\n",&save);
+        if (!word) continue;
+        auto next=[&]() { return strtok_r(nullptr," \t\r\n",&save); };
+        if (!Bstrcasecmp(word,"weapon"))
+        {
+            VRGameProfile::Weapon weapon{profileValue(next()),profileValue(next()),-1,false};
+            while (char const *option=next())
+            {
+                if (!Bstrcasecmp(option,"noammo")) weapon.noAmmo=true;
+                else if (!Bstrcasecmp(option,"key")) weapon.key=profileValue(next());
+            }
+            if (weapon.key<0) weapon.key=weapon.weapon+1;
+            if ((unsigned)weapon.weapon<MAX_WEAPONS && (unsigned)weapon.key-1<10u && profile.weapons.size()<12)
+                profile.weapons.push_back(weapon);
+            else LOG_F(WARNING,"vrgame.txt: weapon line ignored (slot %d, key %d).",weapon.weapon,weapon.key);
+        }
+        else if (!Bstrcasecmp(word,"gadget"))
+        {
+            int const item=profileValue(next()), tile=profileValue(next());
+            char const *function=next();
+            int const full=profileValue(next());
+            VRGameProfile::Gadget gadget{item,tile,function ? CONFIG_FunctionNameToNum(function) : -1,full>0 ? full : 100};
+            if ((unsigned)gadget.item<GET_MAX && gadget.function>=0 && profile.gadgets.size()<8)
+                profile.gadgets.push_back(gadget);
+            else LOG_F(WARNING,"vrgame.txt: gadget line ignored (item %d).",item);
+        }
+    }
+    std::fclose(file);
+    LOG_F(INFO,"VR game profile: %d weapons, %d gadgets.",int(profile.weapons.size()),int(profile.gadgets.size()));
+    return profile;
+}
+
 // A model pack file, read like any mod's file: through the game filesystem (the loaded pack folder
 // or zip), or an absolute path as given (developer overrides). The caller fcloses it.
 static FILE *openPackFile(char const *name)
@@ -599,39 +678,75 @@ static bool weaponWheelEnabled()
     return option && !Bstrcmp(option,"1");
 }
 
+static VRGameProfile::Weapon const *profileWeapon(int weapon)
+{
+    for (auto const &entry:gameProfile().weapons)
+        if (entry.weapon==weapon) return &entry;
+    return nullptr;
+}
+
 static int wheelCurrentWeapon(DukePlayer_t const *p)
 {
     int const weapon=p->curr_weapon;
-    return weapon==HANDREMOTE_WEAPON ? HANDBOMB_WEAPON : weapon;
+    return !totalConversion() && weapon==HANDREMOTE_WEAPON ? HANDBOMB_WEAPON : weapon;
 }
 
 static bool wheelSelectable(DukePlayer_t const *p, int weapon)
 {
     if ((unsigned)weapon>=MAX_WEAPONS || !(p->gotweapon & (1<<weapon))) return false;
+    if (totalConversion())
+    {
+        auto const entry=profileWeapon(weapon);
+        // Without a profile entry the first slot is taken to be the game's melee weapon.
+        return (entry ? entry->noAmmo : weapon==0) || p->ammo_amount[weapon]>0;
+    }
     if (weapon==HANDBOMB_WEAPON) return p->ammo_amount[weapon]>0 || p->hbomb_on;
     return p->ammo_amount[weapon]>0;
 }
 
 static int wheelModelTile(DukePlayer_t const *p, int weapon)
 {
+    if (totalConversion()) return -1;   // no held models for another game's weapons
     if (weapon==HANDBOMB_WEAPON && p->ammo_amount[weapon]<=0 && p->hbomb_on) weapon=HANDREMOTE_WEAPON;
     return weapon==PISTOL_WEAPON ? 21 : XRHeldModelTileBase+weapon;
 }
 
+// The weapon's 2D icon on the wheel: Duke's pickup sprites, or the profile's for another game
+// (-1: none known, the slot shows its number).
+static int wheelIconTile(DukePlayer_t const *p, int weapon)
+{
+    if (totalConversion())
+    {
+        auto const entry=profileWeapon(weapon);
+        return entry && (unsigned)entry->tile<MAXTILES && tilesiz[entry->tile].x>0 ? entry->tile : -1;
+    }
+    if (weapon==GROW_WEAPON) return GROWSPRITEICON;
+    if (weapon==HANDBOMB_WEAPON && p->ammo_amount[weapon]<=0 && p->hbomb_on) return WeaponPickupSprites[HANDREMOTE_WEAPON];
+    return WeaponPickupSprites[weapon];
+}
+
 // Usable inventory items (scuba gear and boots work by themselves): item, native key, pickup tile.
-static constexpr unsigned GadgetCount=5;
+// Another game lists its own in its profile (none without one).
+static constexpr unsigned DukeGadgetCount=5;
+static unsigned gadgetCount()
+{
+    return totalConversion() ? unsigned(gameProfile().gadgets.size()) : DukeGadgetCount;
+}
 static int gadgetItem(int gadget)
 {
-    static int const items[GadgetCount]={GET_FIRSTAID,GET_STEROIDS,GET_HOLODUKE,GET_JETPACK,GET_HEATS};
+    if (totalConversion()) return gameProfile().gadgets[gadget].item;
+    static int const items[DukeGadgetCount]={GET_FIRSTAID,GET_STEROIDS,GET_HOLODUKE,GET_JETPACK,GET_HEATS};
     return items[gadget];
 }
 static int gadgetKey(int gadget)
 {
-    static int const keys[GadgetCount]={gamefunc_MedKit,gamefunc_Steroids,gamefunc_Holo_Duke,gamefunc_Jetpack,gamefunc_NightVision};
+    if (totalConversion()) return gameProfile().gadgets[gadget].function;
+    static int const keys[DukeGadgetCount]={gamefunc_MedKit,gamefunc_Steroids,gamefunc_Holo_Duke,gamefunc_Jetpack,gamefunc_NightVision};
     return keys[gadget];
 }
 static int gadgetTile(int gadget)
 {
+    if (totalConversion()) return gameProfile().gadgets[gadget].tile;
     switch (gadget)
     {
         case 0: return FIRSTAID;
@@ -640,6 +755,12 @@ static int gadgetTile(int gadget)
         case 3: return JETPACK;
         default: return HEATSENSOR;
     }
+}
+static int gadgetFull(int gadget)
+{
+    if (totalConversion()) return gameProfile().gadgets[gadget].full;
+    static int const full[DukeGadgetCount]={100,400,2400,1600,1200};
+    return full[gadget];
 }
 static bool gadgetSelectable(DukePlayer_t const *p, int gadget) { return p->inv_amount[gadgetItem(gadget)]>0; }
 
@@ -655,8 +776,22 @@ static void wheelFillSlots(Wheel &w)
     auto const p=g_player[myconnectindex].ps;
     if (w.gadgets)
     {
-        for (unsigned gadget=0;gadget<GadgetCount;++gadget)
+        for (unsigned gadget=0;gadget<gadgetCount() && w.count<ARRAY_SIZE(w.slots);++gadget)
             if (gadgetSelectable(p,int(gadget))) w.slots[w.count++]=int(gadget);
+        return;
+    }
+    if (totalConversion())
+    {
+        // The profile's order, else every slot the player has.
+        auto const &listed=gameProfile().weapons;
+        if (!listed.empty())
+        {
+            for (auto const &entry:listed)
+                if ((p->gotweapon & (1<<entry.weapon)) && w.count<ARRAY_SIZE(w.slots)) w.slots[w.count++]=entry.weapon;
+        }
+        else
+            for (int weapon=0;weapon<MAX_WEAPONS && w.count<ARRAY_SIZE(w.slots);++weapon)
+                if (p->gotweapon & (1<<weapon)) w.slots[w.count++]=weapon;
         return;
     }
     static int const order[]={PISTOL_WEAPON,SHOTGUN_WEAPON,CHAINGUN_WEAPON,RPG_WEAPON,HANDBOMB_WEAPON,SHRINKER_WEAPON,
@@ -683,6 +818,11 @@ static bool wheelUses3D()
 
 static int wheelKey(int weapon)
 {
+    if (totalConversion())
+    {
+        auto const entry=profileWeapon(weapon);
+        return gamefunc_Weapon_1+(entry ? entry->key-1 : weapon);
+    }
     if (weapon==GROW_WEAPON) weapon=SHRINKER_WEAPON;
     if (weapon==FLAMETHROWER_WEAPON) weapon=FREEZE_WEAPON;
     return gamefunc_Weapon_1+weapon;
@@ -3419,9 +3559,8 @@ static float slotFraction(Wheel const &w, DukePlayer_t const *p, int item, int &
 {
     if (w.gadgets)
     {
-        static int const full[GadgetCount]={100,400,2400,1600,1200};
         amount=p->inv_amount[gadgetItem(item)];
-        return float(amount)/full[item];
+        return float(amount)/std::max(1,gadgetFull(item));
     }
     amount=p->ammo_amount[item];
     int const most=p->max_ammo_amount[item];
@@ -3476,14 +3615,7 @@ void G_XRDrawWheelPanels()
         for (unsigned slot=0;slot<w->count;++slot)
         {
             int const item=w->slots[slot];
-            int tile;
-            if (w->gadgets) tile=gadgetTile(item);
-            else
-            {
-                tile=item==GROW_WEAPON ? GROWSPRITEICON : WeaponPickupSprites[item];
-                if (item==HANDBOMB_WEAPON && p->ammo_amount[item]<=0 && p->hbomb_on) tile=WeaponPickupSprites[HANDREMOTE_WEAPON];
-            }
-            if ((unsigned)tile>=MAXTILES) continue;
+            int const tile=w->gadgets ? gadgetTile(item) : wheelIconTile(p,item);
             bool const selectable=slotSelectable(*w,p,int(slot)), hovered=int(slot)==w->hovered;
             float const angle=2*Pi*slot/w->count;
             // 320x200 units are taller than wide on screen: stretch x so the ring stays round.
@@ -3491,13 +3623,24 @@ void G_XRDrawWheelPanels()
             rotatespriteUnitPixels(unitAcross,unitDown);
             float const cx=160.f+unitDown/unitAcross*ringUnits*std::sin(angle), cy=100.f-ringUnits*std::cos(angle);
             int const scale=int((hovered ? 62000.f : selectable ? 50000.f : 38000.f)*frac);
-            if (!models)
+            if (!models && (unsigned)tile<MAXTILES)
             {
-                // Centre the picture itself: pickup sprites carry ground-anchored tile offsets.
-                float const k=scale/65536.f;
+                // Centre the picture itself: pickup sprites carry ground-anchored tile offsets. Another
+                // game's icons are fitted to the same 40-unit bubble whatever their art size.
+                float const fit=totalConversion() ? 40.f/std::max<float>(1,std::max(tilesiz[tile].x,tilesiz[tile].y)) : 1.f;
+                int const drawScale=int(scale*std::min(fit,2.5f));
+                float const k=drawScale/65536.f;
                 float const ox=picanm[tile].xofs*k, oy=picanm[tile].yofs*k;
-                rotatesprite_fs(int(std::lround((cx+ox)*65536.f)),int(std::lround((cy+oy)*65536.f)),scale,0,tile,
+                rotatesprite_fs(int(std::lround((cx+ox)*65536.f)),int(std::lround((cy+oy)*65536.f)),drawScale,0,tile,
                                 hovered ? -16 : selectable ? 0 : 28,0,2+8);
+            }
+            else if (!models)
+            {
+                // No icon known: the slot's weapon key number.
+                char number[4];
+                Bsnprintf(number,sizeof(number),"%d",(wheelKey(item)-gamefunc_Weapon_1+1)%10);
+                gametext_(int(std::lround(cx*65536.f)),int(std::lround((cy-4.f)*65536.f)),number,hovered ? -16 : selectable ? 0 : 28,
+                          0,0,0,TEXT_XCENTER);
             }
             int amount=0;
             float const fraction=slotFraction(*w,p,item,amount);
@@ -3638,7 +3781,7 @@ bool prepareHandModel(HandModelSample &sample)
     sample.context.skinnum=tile2model[tile].skinnum;
     char name[16];
     int const counter=sample.presentation.counter;
-    if (counter) Bsprintf(name,sample.presentation.family==XRWeaponFamily::AARpg
+    if (counter) Bsnprintf(name,sizeof(name),sample.presentation.family==XRWeaponFamily::AARpg
         || counter<(sample.presentation.family==XRWeaponFamily::AAPistol ? 6 : 5) ? "fire_%02d" : "reload_%02d",counter);
     else Bstrcpy(name,"rest");
     int frame=md3_getframeindex(sample.context.modelid,name);

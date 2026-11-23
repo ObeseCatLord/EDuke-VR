@@ -1,0 +1,693 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 4
+},
+{
+"stats": "start"
+},
+{
+"capture": "before"
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"capture": "savemenu"
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"stats": "after 5"
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"stats": "after 10"
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"stats": "after 15"
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"stats": "after 20"
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"stats": "after 25"
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"stats": "after 30"
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"stats": "after 35"
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"F6"
+]
+},
+{
+"wait": 1.5
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1.5
+},
+{
+"stats": "after 40"
+},
+{
+"capture": "after"
+}
+]
