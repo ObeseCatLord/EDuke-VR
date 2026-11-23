@@ -157,6 +157,9 @@ class Runtime
     bool        menuPresentationActive() const;
     bool        menuPresentationArmed() const;
     bool        menuOverlayTargetBound() const;
+    // Clears a crop (u0,v0,u1,v1; v up) of the bound UI segment: content already shown elsewhere
+    // (on a wrist) that must not also reach the head panel.
+    bool        clearMenuOverlayRect(float const *uvRect);
     // Composite one sequential native segment, mirror it, then clear/reuse the
     // same capture. The original presentation owner and acquired frame remain.
     // Optional two column-major native clip matrices place a world-space segment

@@ -63,12 +63,15 @@ def main():
     parser.add_argument('--bots', type=int, default=0, help='with --server: flat players who join after the VR player')
     parser.add_argument('--pack', default='original-lowres', help='model pack (launcher --pack); "default": the game\'s own choice')
     parser.add_argument('--assets', type=Path, help='duke-vr-assets folder for the launcher (e.g. a scratch one with a test pack)')
+    parser.add_argument('--cvar', action='append', default=[], help='NAME=VALUE written to the lab settings.cfg (e.g. r_precache=0)')
     parser.add_argument('--game', type=Path, help='a total conversion install folder (launcher --game; --grp is then ignored)')
     args = parser.parse_args()
     steps = json.loads(args.script.read_text())
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='scene-', dir=args.work_dir.resolve()))
     (lab / 'eduke32.cfg').write_text(CONFIG)
+    if args.cvar:
+        (lab / 'settings.cfg').write_text(''.join(f'{kv.split("=", 1)[0]} "{kv.split("=", 1)[1]}"\n' for kv in args.cvar))
     if not args.game:
         (lab / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
     capture, console = lab / 'capture-request', lab / 'console-request'

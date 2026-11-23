@@ -36,7 +36,7 @@
 #endif
 
 // VR settings (cvars; vr.h).
-int32_t vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=24, vr_audiomix=0;
+int32_t vr_hudmode=0, vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=24, vr_audiomix=0;
 int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
@@ -141,22 +141,39 @@ static FILE *openPackFile(char const *name);
 
 // Games built on EDuke32 that are not Duke (Ion Fury, Demon Throne, AMC Squad): no Duke flag.
 static bool totalConversion() { return !(g_gameType & GAMEFLAG_DUKE); }
+struct VRGameProfile;
+static VRGameProfile const &gameProfile();
+// The weapon and gadget wheels follow a VR game profile when the game has one (a total conversion,
+// or a Duke mod such as Alien Armageddon with more weapons than slots), else Duke's own weapons.
+static bool profileWheel();
 
 // VR game profile (vrgame.txt on the search path, from package/vr/games/<game>/): a total
 // conversion's weapons and usable items for the weapon and gadget wheels, as its own scripts
 // define them. Lines (# comments):
-//   weapon N ICON [key K] [noammo]   weapon slot N (curr_weapon), drawn with tile ICON (a number
+//   weapon N ICON [key K] [noammo] [when VAR VALUE]
+//                                    weapon slot N (curr_weapon), drawn with tile ICON (a number
 //                                    or a CON define such as I_LOVERBOY); selected with weapon
-//                                    key K (default N+1); noammo: always selectable (melee)
+//                                    key K (default N+1); noammo: always selectable (melee);
+//                                    when: only while gamevar VAR is VALUE (a game with several
+//                                    characters, each its own arsenal)
+//                                    [is VAR VALUE] [owned VAR MASK] [ammo VAR MAX]
+//                                    for mods with more weapons than slots (several share one):
+//                                    [isbits VAR MASK] like is, while VAR & MASK == MASK
+//                                    is: this one is in hand while gamevar VAR is VALUE (the key is
+//                                    pressed until it is); owned: carried while VAR & MASK; ammo:
+//                                    its rounds are in VAR (full ring at MAX). Up to 24 entries.
 //   gadget ITEM ICON FUNCTION FULL   inventory slot ITEM (GET_*), its icon, the game function that
 //                                    uses it (e.g. MedKit) and the amount shown as a full ring
+//   wristhud rest Y                  the game draws its HUD in EVENT_DISPLAYREST: what it draws below
+//                                    Y (a screen fraction) goes onto the wrists, the rest stays in front
 // Read on first use, after the game's scripts are compiled (their defines name the tiles).
 struct VRGameProfile
 {
-    struct Weapon { int weapon, tile, key; bool noAmmo; };
+    struct Weapon { int weapon, tile, key; bool noAmmo, isBits; int var, value, isVar, isValue, ownVar, ownMask, ammoVar, ammoMax; };
     struct Gadget { int item, tile, function, full; };
     std::vector<Weapon> weapons;
     std::vector<Gadget> gadgets;
+    float restWristBand=0.f;   // wristhud rest Y: EVENT_DISPLAYREST sprites below Y (screen fraction) go to the wrists
     bool present=false;
 };
 
@@ -189,23 +206,57 @@ static VRGameProfile const &gameProfile()
         auto next=[&]() { return strtok_r(nullptr," \t\r\n",&save); };
         if (!Bstrcasecmp(word,"weapon"))
         {
-            VRGameProfile::Weapon weapon{profileValue(next()),profileValue(next()),-1,false};
+            VRGameProfile::Weapon weapon{profileValue(next()),profileValue(next()),-1,false,false,-1,0,-1,0,-1,0,-1,0};
+            bool good=true;
             while (char const *option=next())
             {
                 if (!Bstrcasecmp(option,"noammo")) weapon.noAmmo=true;
                 else if (!Bstrcasecmp(option,"key")) weapon.key=profileValue(next());
+                else if (!Bstrcasecmp(option,"is") || !Bstrcasecmp(option,"isbits") || !Bstrcasecmp(option,"owned") || !Bstrcasecmp(option,"ammo"))
+                {
+                    char const *var=next();
+                    int const id=var ? hash_find(&h_gamevars,var) : -1;
+                    int const value=profileValue(next());
+                    if (id<0) good=false;
+                    else if (!Bstrcasecmp(option,"is")) { weapon.isVar=id; weapon.isValue=value; }
+                    else if (!Bstrcasecmp(option,"isbits")) { weapon.isVar=id; weapon.isValue=value; weapon.isBits=true; }
+                    else if (!Bstrcasecmp(option,"owned")) { weapon.ownVar=id; weapon.ownMask=value; }
+                    else { weapon.ammoVar=id; weapon.ammoMax=value; }
+                }
+                else if (!Bstrcasecmp(option,"when"))
+                {
+                    char const *var=next();
+                    weapon.var=var ? hash_find(&h_gamevars,var) : -1;
+                    weapon.value=profileValue(next());
+                    good=weapon.var>=0;
+                }
             }
+            if (!good) { LOG_F(WARNING,"vrgame.txt: weapon %d: unknown gamevar.",weapon.weapon); continue; }
             if (weapon.key<0) weapon.key=weapon.weapon+1;
-            if ((unsigned)weapon.weapon<MAX_WEAPONS && (unsigned)weapon.key-1<10u && profile.weapons.size()<12)
+            if ((unsigned)weapon.weapon<MAX_WEAPONS && (unsigned)weapon.key-1<10u && profile.weapons.size()<64)
                 profile.weapons.push_back(weapon);
             else LOG_F(WARNING,"vrgame.txt: weapon line ignored (slot %d, key %d).",weapon.weapon,weapon.key);
+        }
+        else if (!Bstrcasecmp(word,"wristhud"))
+        {
+            // wristhud rest Y: a HUD drawn in EVENT_DISPLAYREST, along the screen's bottom from Y
+            // (0..1, top down): those sprites become the wrist watches, the rest stays in front.
+            char const *event=next(), *band=next();
+            if (event && !Bstrcasecmp(event,"rest") && band) profile.restWristBand=float(std::atof(band));
         }
         else if (!Bstrcasecmp(word,"gadget"))
         {
             int const item=profileValue(next()), tile=profileValue(next());
             char const *function=next();
             int const full=profileValue(next());
-            VRGameProfile::Gadget gadget{item,tile,function ? CONFIG_FunctionNameToNum(function) : -1,full>0 ? full : 100};
+            // A game may rename its functions (definegamefuncname): the built-in names still work.
+            static struct { char const *name; int function; } const builtIn[]={
+                {"MedKit",gamefunc_MedKit},{"Steroids",gamefunc_Steroids},{"Holo_Duke",gamefunc_Holo_Duke},
+                {"Jetpack",gamefunc_Jetpack},{"NightVision",gamefunc_NightVision},{"Inventory",gamefunc_Inventory}};
+            int functionNum=function ? CONFIG_FunctionNameToNum(function) : -1;
+            for (auto const &entry:builtIn)
+                if (functionNum<0 && function && !Bstrcasecmp(function,entry.name)) functionNum=entry.function;
+            VRGameProfile::Gadget gadget{item,tile,functionNum,full>0 ? full : 100};
             if ((unsigned)gadget.item<GET_MAX && gadget.function>=0 && profile.gadgets.size()<8)
                 profile.gadgets.push_back(gadget);
             else LOG_F(WARNING,"vrgame.txt: gadget line ignored (item %d).",item);
@@ -215,6 +266,8 @@ static VRGameProfile const &gameProfile()
     LOG_F(INFO,"VR game profile: %d weapons, %d gadgets.",int(profile.weapons.size()),int(profile.gadgets.size()));
     return profile;
 }
+
+static bool profileWheel() { return totalConversion() || !gameProfile().weapons.empty(); }
 
 // A model pack file, read like any mod's file: through the game filesystem (the loaded pack folder
 // or zip), or an absolute path as given (developer overrides). The caller fcloses it.
@@ -287,6 +340,7 @@ void G_XRRegisterCvars()
         { "vr_audiomix", "VR audio mix applied (internal: 1 once VR lowered untouched default effect and music volumes under voice chat)", (void *)&vr_audiomix, CVAR_INT, 0, 1 },
         { "vr_menupointer", "VR: point at menu items with a laser from the controller; its trigger selects", (void *)&vr_menupointer, CVAR_BOOL, 0, 1 },
         { "vr_physicalcrouch", "VR: ducking for real (head ~40 cm below your standing height) crouches", (void *)&vr_physicalcrouch, CVAR_BOOL, 0, 1 },
+        { "vr_hudmode", "VR HUD placement: 0 = status bar on the wrists (watches), 1 = the whole HUD on the panel in front of you", (void *)&vr_hudmode, CVAR_INT, 0, 1 },
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
         { "vr_foveation", "VR foveated rendering: 0 = auto (eye-tracked on a Steam Frame, else off), 1 = off (default), 2 = fixed, 3 = eye-tracked (fixed without an eye tracker)", (void *)&vr_foveation, CVAR_INT, 0, 3 },
@@ -665,7 +719,7 @@ struct Wheel
     XrVector3f faceRight{}, faceUp{}, faceBack{}; // display frame: upright, facing the head at opening
     float pointerX=0.f, pointerY=0.f;              // pointer on the ring, radius 1 = slot circle
     int hovered=-1;
-    int slots[12]{};
+    int slots[24]{};
     unsigned count=0;
     int target=-1, lastCurrent=-1;
     double deadline=0, pressUntil=0, waitUntil=0;
@@ -678,25 +732,54 @@ static bool weaponWheelEnabled()
     return option && !Bstrcmp(option,"1");
 }
 
+static bool profileWeaponApplies(VRGameProfile::Weapon const &entry)
+{
+    auto const p=g_player[myconnectindex].ps;
+    return entry.var<0 || (p && (unsigned)p->i<MAXSPRITES && Gv_GetVar(entry.var,p->i,myconnectindex)==entry.value);
+}
+
 static VRGameProfile::Weapon const *profileWeapon(int weapon)
 {
     for (auto const &entry:gameProfile().weapons)
-        if (entry.weapon==weapon) return &entry;
+        if (entry.weapon==weapon && profileWeaponApplies(entry)) return &entry;
     return nullptr;
 }
+
+// Wheel items: Duke's are weapon numbers; a profile's are ProfileItemBase + its entry index
+// (several entries can share one weapon slot).
+static constexpr int ProfileItemBase=1000;
+static VRGameProfile::Weapon const *itemEntry(int item)
+{
+    auto const &list=gameProfile().weapons;
+    return item>=ProfileItemBase && unsigned(item-ProfileItemBase)<list.size() ? &list[item-ProfileItemBase] : nullptr;
+}
+static int itemWeapon(int item) { auto const entry=itemEntry(item); return entry ? entry->weapon : item; }
+static int entryVar(DukePlayer_t const *p, int var) { return Gv_GetVar(var,p->i,myconnectindex); }
 
 static int wheelCurrentWeapon(DukePlayer_t const *p)
 {
     int const weapon=p->curr_weapon;
-    return !totalConversion() && weapon==HANDREMOTE_WEAPON ? HANDBOMB_WEAPON : weapon;
+    return !profileWheel() && weapon==HANDREMOTE_WEAPON ? HANDBOMB_WEAPON : weapon;
 }
 
-static bool wheelSelectable(DukePlayer_t const *p, int weapon)
+static bool itemIsCurrent(DukePlayer_t const *p, int item)
 {
+    auto const entry=itemEntry(item);
+    if (!entry) return item==wheelCurrentWeapon(p);
+    if (p->curr_weapon!=entry->weapon || entry->isVar<0) return p->curr_weapon==entry->weapon;
+    int const value=entryVar(p,entry->isVar);
+    return entry->isBits ? (value & entry->isValue)==entry->isValue : value==entry->isValue;
+}
+
+static bool wheelSelectable(DukePlayer_t const *p, int item)
+{
+    int const weapon=itemWeapon(item);
     if ((unsigned)weapon>=MAX_WEAPONS || !(p->gotweapon & (1<<weapon))) return false;
-    if (totalConversion())
+    if (profileWheel())
     {
-        auto const entry=profileWeapon(weapon);
+        auto const entry=itemEntry(item) ? itemEntry(item) : profileWeapon(weapon);
+        if (entry && entry->ownVar>=0 && !(entryVar(p,entry->ownVar) & entry->ownMask)) return false;
+        if (entry && entry->ammoVar>=0) return entry->noAmmo || entryVar(p,entry->ammoVar)>0;
         // Without a profile entry the first slot is taken to be the game's melee weapon.
         return (entry ? entry->noAmmo : weapon==0) || p->ammo_amount[weapon]>0;
     }
@@ -713,11 +796,12 @@ static int wheelModelTile(DukePlayer_t const *p, int weapon)
 
 // The weapon's 2D icon on the wheel: Duke's pickup sprites, or the profile's for another game
 // (-1: none known, the slot shows its number).
-static int wheelIconTile(DukePlayer_t const *p, int weapon)
+static int wheelIconTile(DukePlayer_t const *p, int item)
 {
-    if (totalConversion())
+    int const weapon=itemWeapon(item);
+    if (profileWheel())
     {
-        auto const entry=profileWeapon(weapon);
+        auto const entry=itemEntry(item) ? itemEntry(item) : profileWeapon(weapon);
         return entry && (unsigned)entry->tile<MAXTILES && tilesiz[entry->tile].x>0 ? entry->tile : -1;
     }
     if (weapon==GROW_WEAPON) return GROWSPRITEICON;
@@ -730,23 +814,23 @@ static int wheelIconTile(DukePlayer_t const *p, int weapon)
 static constexpr unsigned DukeGadgetCount=5;
 static unsigned gadgetCount()
 {
-    return totalConversion() ? unsigned(gameProfile().gadgets.size()) : DukeGadgetCount;
+    return (totalConversion() || !gameProfile().gadgets.empty()) ? unsigned(gameProfile().gadgets.size()) : DukeGadgetCount;
 }
 static int gadgetItem(int gadget)
 {
-    if (totalConversion()) return gameProfile().gadgets[gadget].item;
+    if ((totalConversion() || !gameProfile().gadgets.empty())) return gameProfile().gadgets[gadget].item;
     static int const items[DukeGadgetCount]={GET_FIRSTAID,GET_STEROIDS,GET_HOLODUKE,GET_JETPACK,GET_HEATS};
     return items[gadget];
 }
 static int gadgetKey(int gadget)
 {
-    if (totalConversion()) return gameProfile().gadgets[gadget].function;
+    if ((totalConversion() || !gameProfile().gadgets.empty())) return gameProfile().gadgets[gadget].function;
     static int const keys[DukeGadgetCount]={gamefunc_MedKit,gamefunc_Steroids,gamefunc_Holo_Duke,gamefunc_Jetpack,gamefunc_NightVision};
     return keys[gadget];
 }
 static int gadgetTile(int gadget)
 {
-    if (totalConversion()) return gameProfile().gadgets[gadget].tile;
+    if ((totalConversion() || !gameProfile().gadgets.empty())) return gameProfile().gadgets[gadget].tile;
     switch (gadget)
     {
         case 0: return FIRSTAID;
@@ -758,7 +842,7 @@ static int gadgetTile(int gadget)
 }
 static int gadgetFull(int gadget)
 {
-    if (totalConversion()) return gameProfile().gadgets[gadget].full;
+    if ((totalConversion() || !gameProfile().gadgets.empty())) return gameProfile().gadgets[gadget].full;
     static int const full[DukeGadgetCount]={100,400,2400,1600,1200};
     return full[gadget];
 }
@@ -780,14 +864,19 @@ static void wheelFillSlots(Wheel &w)
             if (gadgetSelectable(p,int(gadget))) w.slots[w.count++]=int(gadget);
         return;
     }
-    if (totalConversion())
+    if (profileWheel())
     {
         // The profile's order, else every slot the player has.
         auto const &listed=gameProfile().weapons;
         if (!listed.empty())
         {
-            for (auto const &entry:listed)
-                if ((p->gotweapon & (1<<entry.weapon)) && w.count<ARRAY_SIZE(w.slots)) w.slots[w.count++]=entry.weapon;
+            for (unsigned i=0;i<listed.size() && w.count<ARRAY_SIZE(w.slots);++i)
+            {
+                auto const &entry=listed[i];
+                if (!(p->gotweapon & (1<<entry.weapon)) || !profileWeaponApplies(entry)) continue;
+                if (entry.ownVar>=0 && !(entryVar(p,entry.ownVar) & entry.ownMask)) continue;
+                w.slots[w.count++]=ProfileItemBase+int(i);
+            }
         }
         else
             for (int weapon=0;weapon<MAX_WEAPONS && w.count<ARRAY_SIZE(w.slots);++weapon)
@@ -809,7 +898,7 @@ static void wheelFillSlots(Wheel &w)
 // panel at the ring (G_XRDrawWheelPanels). Gadgets always use the panel.
 static bool wheelUses3D()
 {
-    if (!G_XRModelsEnabled()) return false;
+    if (!G_XRModelsEnabled() || profileWheel()) return false;
     auto const p=g_player[myconnectindex].ps;
     for (unsigned i=0;i<wheel.count;++i)
         if (md_tilehasmodel(wheelModelTile(p,wheel.slots[i]),0)<0) return false;
@@ -818,10 +907,10 @@ static bool wheelUses3D()
 
 static int wheelKey(int weapon)
 {
-    if (totalConversion())
+    if (profileWheel())
     {
-        auto const entry=profileWeapon(weapon);
-        return gamefunc_Weapon_1+(entry ? entry->key-1 : weapon);
+        auto const entry=itemEntry(weapon) ? itemEntry(weapon) : profileWeapon(weapon);
+        return gamefunc_Weapon_1+(entry ? entry->key-1 : itemWeapon(weapon));
     }
     if (weapon==GROW_WEAPON) weapon=SHRINKER_WEAPON;
     if (weapon==FLAMETHROWER_WEAPON) weapon=FREEZE_WEAPON;
@@ -852,7 +941,7 @@ static bool updateWheel(Wheel &w, uint64_t &buttons, uint32_t handDown)
         else
         {
             int const current=p ? wheelCurrentWeapon(p) : -1;
-            if (!p || current==w.target || now>w.deadline || !wheelSelectable(p,w.target)) w.target=-1;
+            if (!p || itemIsCurrent(p,w.target) || now>w.deadline || !wheelSelectable(p,w.target)) w.target=-1;
             else if (now<w.pressUntil) buttons|=uint64_t(1)<<wheelKey(w.target);
             else if (now>=w.waitUntil || current!=w.lastCurrent)
             {
@@ -911,10 +1000,11 @@ static bool updateWheel(Wheel &w, uint64_t &buttons, uint32_t handDown)
         {
             int const item=w.slots[w.hovered];
             if (w.gadgets) { w.target=item; w.pressUntil=now+.07; }
-            else if (item!=wheelCurrentWeapon(p) || (item==SHRINKER_WEAPON && p->curr_weapon==GROW_WEAPON)
+            else if (!itemIsCurrent(p,item) || (item==SHRINKER_WEAPON && p->curr_weapon==GROW_WEAPON)
                      || (item==FREEZE_WEAPON && p->curr_weapon==FLAMETHROWER_WEAPON))
             {
-                w.target=item; w.deadline=now+1.5; w.pressUntil=w.waitUntil=0; w.lastCurrent=-2;
+                // A weapon sharing its slot with others may take several presses to come round.
+                w.target=item; w.deadline=now+(itemEntry(item) ? 4.0 : 1.5); w.pressUntil=w.waitUntil=0; w.lastCurrent=-2;
             }
             if (wheelLog()) LOG_F(INFO,"OpenXR %s wheel: commit %s=%d current=%d.",name,w.gadgets ? "gadget" : "weapon",item,p->curr_weapon);
         }
@@ -2564,7 +2654,7 @@ static unsigned prepareWheel(Wheel const &w, std::vector<HandSegmentSample> &out
         place(hovered ? VRWheelBubbleLitTile : VRWheelBubbleTile,instanceBase+int(slot),hovered ? -16 : selectable ? 0 : 26,
               add(position,w.faceBack,-.035f),faceAxes,bubble/32.f,{0,0,0});
         if (!weaponModels) continue;
-        int const weapon=w.slots[slot];
+        int const weapon=itemWeapon(w.slots[slot]);
         int const tile=wheelModelTile(p,weapon);
         int const modelid=md_tilehasmodel(tile,0);
         vec3f_t lo, hi;
@@ -3562,6 +3652,13 @@ static float slotFraction(Wheel const &w, DukePlayer_t const *p, int item, int &
         amount=p->inv_amount[gadgetItem(item)];
         return float(amount)/std::max(1,gadgetFull(item));
     }
+    if (auto const entry=itemEntry(item))
+        if (entry->ammoVar>=0)
+        {
+            amount=entryVar(p,entry->ammoVar);
+            return entry->ammoMax>0 ? float(amount)/entry->ammoMax : amount>0 ? 1.f : 0.f;
+        }
+    item=itemWeapon(item);
     amount=p->ammo_amount[item];
     int const most=p->max_ammo_amount[item];
     return most>0 ? float(amount)/most : amount>0 ? 1.f : 0.f;
@@ -3622,12 +3719,13 @@ void G_XRDrawWheelPanels()
             float unitAcross, unitDown;
             rotatespriteUnitPixels(unitAcross,unitDown);
             float const cx=160.f+unitDown/unitAcross*ringUnits*std::sin(angle), cy=100.f-ringUnits*std::cos(angle);
-            int const scale=int((hovered ? 62000.f : selectable ? 50000.f : 38000.f)*frac);
+            float const crowd=w->count>12 ? 12.f/w->count : 1.f;   // more than 12 slots: smaller icons
+            int const scale=int((hovered ? 62000.f : selectable ? 50000.f : 38000.f)*frac*crowd);
             if (!models && (unsigned)tile<MAXTILES)
             {
                 // Centre the picture itself: pickup sprites carry ground-anchored tile offsets. Another
                 // game's icons are fitted to the same 40-unit bubble whatever their art size.
-                float const fit=totalConversion() ? 40.f/std::max<float>(1,std::max(tilesiz[tile].x,tilesiz[tile].y)) : 1.f;
+                float const fit=profileWheel() ? 40.f/std::max<float>(1,std::max(tilesiz[tile].x,tilesiz[tile].y)) : 1.f;
                 int const drawScale=int(scale*std::min(fit,2.5f));
                 float const k=drawScale/65536.f;
                 float const ox=picanm[tile].xofs*k, oy=picanm[tile].yofs*k;
@@ -3659,7 +3757,7 @@ void G_XRDrawWheelPanels()
         int centreItem=centreSlot>=0 ? w->slots[centreSlot] : -1;
         if (centreItem<0 && !w->gadgets)
             for (unsigned slot=0;slot<w->count;++slot)
-                if (w->slots[slot]==wheelCurrentWeapon(p)) centreItem=w->slots[slot];
+                if (itemIsCurrent(p,w->slots[slot])) centreItem=w->slots[slot];
         if (centreItem>=0)
         {
             int amount=0;
@@ -4364,7 +4462,7 @@ bool G_XRCrosshairPosition(vec2_t &position)
     auto const flat=ray(logical,pitchRoll(nativePitch(logical.horizon),logical.roll));
     auto const head=multiply(multiply(pitchRoll(nativePitch(body.horizon),body.roll),inverseYaw),rawInput.headPose.orientation);
     auto tracked=ray(body,head);
-    if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
+    if (handShotsRequested() && (G_VRHandShotFeature(myconnectindex) || G_VRCustomHandShots(myconnectindex)))
     {
         if (!G_VRShotValid(myconnectindex)) return false;
         auto const shot=G_VRGetShotInput(myconnectindex);
@@ -4555,7 +4653,7 @@ void G_XREndWeapon(bool captured)
         visible=visible && weaponVisualOwned();
         if (visible) pose=crosshairViews.weapon.pose;
     }
-    else if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
+    else if (handShotsRequested() && (G_VRHandShotFeature(myconnectindex) || G_VRCustomHandShots(myconnectindex)))
     {
         vec3_t position; int16_t sector; bool clamped;
         visible=visible && G_VRResolveShot(myconnectindex,position,sector,clamped);
@@ -4612,8 +4710,10 @@ void G_XREndWeapon(bool captured)
 // (ammo, inventory) one on the right wrist. Quotes, voice and menus stay on the head panel.
 static bool wristHudRequested()
 {
+    // VR Setup > HUD: "In front" (vr_hudmode 1) keeps everything on the head panel, for players
+    // who prefer it and for mods whose HUD does not split onto the wrists.
     auto const value=sdlayer_xr_option("EDUKE32_XR_WRIST_HUD");
-    return value && !Bstrcmp(value,"1");
+    return value && !Bstrcmp(value,"1") && vr_hudmode==0;
 }
 static SpriteBounds wristBounds[2];
 static bool wristSegment;
@@ -4622,6 +4722,7 @@ static void wristSprite(float x0,float y0,float x1,float y1)
     wristBounds[(x0+x1)*.5f<xdim*.5f ? 0 : 1].add(x0,y0,x1,y1);
 }
 bool G_XRWristHudActive() { return wristSegment; }
+static void flushWristWatches(float metresPerPixel, bool keepAll);
 
 bool G_XRBeginWristHud()
 {
@@ -4661,6 +4762,14 @@ void G_XREndWristHud(bool captured)
                   wristBounds[1].x0,wristBounds[1].y0,wristBounds[1].x1,wristBounds[1].y1,
                   int(rawInput.hands[0].aimValid),int(rawInput.hands[1].aimValid));
     }
+    flushWristWatches(metresPerPixel,false);
+}
+
+// Shows each wrist's crop of the bound UI segment as a watch on that wrist. keepAll leaves the
+// segment in place afterwards (its remainder still goes to the head panel); otherwise the last
+// flush clears it.
+static void flushWristWatches(float metresPerPixel, bool keepAll)
+{
     std::string error;
     for (unsigned hand=0;hand<2;++hand)
     {
@@ -4685,9 +4794,67 @@ void G_XREndWristHud(bool captured)
             float const half=Pi*35.f/360.f;
             pose.orientation=multiply(multiply(pose.orientation,face),XrQuaternionf{std::sin(half),0,0,std::cos(half)});
         }
-        if (!menuRuntime->flushMenuOverlay(pose,halfWidth,halfHeight,visible,error,nullptr,nullptr,rect,hand==0))
+        if (!menuRuntime->flushMenuOverlay(pose,halfWidth,halfHeight,visible,error,nullptr,nullptr,rect,keepAll || hand==0))
         { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return; }
     }
+}
+
+// A total conversion's HUD drawn in EVENT_DISPLAYREST (Demon Throne): the profile's bottom band
+// is split onto the wrists like the native status bar; everything else it draws (messages, full
+// screen pictures, its own menus) stays on the panel in front.
+static bool restSegment;
+static void restSprite(float x0,float y0,float x1,float y1)
+{
+    if ((y0+y1)*.5f<gameProfile().restWristBand*ydim) return;
+    wristBounds[(x0+x1)*.5f<xdim*.5f ? 0 : 1].add(x0,y0,x1,y1);
+}
+
+bool G_XRBeginRestHud()
+{
+    auto const p=g_player[myconnectindex].ps;
+    if (!totalConversion() || gameProfile().restWristBand<=0.f || !wristHudRequested())
+        return false;
+    if (!menuRuntime
+        || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()
+        || !inputValid() || screenpeek!=myconnectindex || ud.overhead_on || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU))
+    {
+        static int logged;
+        if (sdlayer_getenv_cached("EDUKE32_XR_TEST_HELD") && logged++%300==0)
+            LOG_F(INFO,"OpenXR rest HUD skipped: runtime=%d bound=%d input=%d gm=%d.",menuRuntime!=nullptr,
+                  menuRuntime && menuRuntime->menuOverlayTargetBound(),int(inputValid()),p ? p->gm : -1);
+        return false;
+    }
+    if (!flushHeadPanel()) return false;
+    wristBounds[0]=wristBounds[1]=SpriteBounds{};
+    polymost_xrSpriteBounds=restSprite;
+    restSegment=true;
+    return true;
+}
+
+void G_XREndRestHud(bool captured)
+{
+    if (!restSegment) return;
+    restSegment=false;
+    polymost_xrSpriteBounds=nullptr;
+    if (!captured || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
+    float const widest=std::max({wristBounds[0].empty() ? 0.f : wristBounds[0].x1-wristBounds[0].x0,
+                                 wristBounds[1].empty() ? 0.f : wristBounds[1].x1-wristBounds[1].x0,1.f});
+    if (sdlayer_getenv_cached("EDUKE32_XR_TEST_HELD"))
+    {
+        static int logged;
+        if (logged++%300==0)
+            LOG_F(INFO,"OpenXR rest HUD: band=%.2f left=%s right=%s.",gameProfile().restWristBand,
+                  wristBounds[0].empty() ? "empty" : "drawn",wristBounds[1].empty() ? "empty" : "drawn");
+    }
+    flushWristWatches(std::min(.10f/widest,.3f/ydim),true);
+    // The watches' pixels must not show again on the head panel.
+    for (auto const &bounds:wristBounds)
+        if (!bounds.empty())
+        {
+            float rect[4];
+            bounds.uv(rect);
+            menuRuntime->clearMenuOverlayRect(rect);
+        }
 }
 
 static char const *crosshairCapturePrefix()
@@ -4699,6 +4866,10 @@ static char const *crosshairCapturePrefix()
     return worldFrames+1==(requested ? std::strtoull(requested,nullptr,10) : 60)
         ? sdlayer_getenv_cached("EDUKE32_XR_CROSSHAIR_OUTPUT") : nullptr;
 }
+
+// What the crosshair segment drew (a mod's own reticle is placed by its real centre).
+static SpriteBounds crosshairBounds;
+static void crosshairSprite(float x0,float y0,float x1,float y1) { crosshairBounds.add(x0,y0,x1,y1); }
 
 bool G_XRBeginCrosshair()
 {
@@ -4718,11 +4889,14 @@ bool G_XRBeginCrosshair()
             if (!menuRuntime->captureFrame(before.c_str(),false,error,true))
             { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); return false; }
         }
+    crosshairBounds=SpriteBounds{};
+    polymost_xrSpriteBounds=crosshairSprite;
     return true;
 }
 
 void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t flags, bool eventOnly)
 {
+    if (captured) polymost_xrSpriteBounds=nullptr;
     if (!captured || !crosshairViews.valid || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
     auto const p=g_player[myconnectindex].ps;
     auto const body=crosshairViews.weapon.selected ? crosshairViews.body : aimBodyCamera(camera());
@@ -4744,7 +4918,7 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
         start=visual.root; sector=visual.sector; clamped=visual.clamped;
         ray={visual.ray.direction[0],visual.ray.direction[1],visual.ray.direction[2]*16};
     }
-    else if (handShotsRequested() && G_VRHandShotFeature(myconnectindex))
+    else if (handShotsRequested() && (G_VRHandShotFeature(myconnectindex) || G_VRCustomHandShots(myconnectindex)))
     {
         visible=visible && aimPoseUsable() && G_VRResolveShot(myconnectindex,start,sector,clamped);
         auto const shot=G_VRGetShotInput(myconnectindex);
@@ -4820,9 +4994,16 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
         // rotatesprite bounds (0,0,xdim,ydim). Their authored relative offsets
         // stay intact. Stock returned tiles retain look/returnvar/viewport and
         // FURY conventions; those do not describe independently drawn CON ART.
-        auto const anchor=eventOnly
+        // A mod's own reticle (Ion Fury draws one in 640x480 HUD units) is anchored by the centre of
+        // what it actually drew; with nothing measured, the logical full-screen centre.
+        auto anchor=eventOnly
             ? polymost_xrRotateSpriteAnchor({160<<16,100<<16},65536,RS_AUTO,{xdim,ydim})
             : polymost_xrRotateSpriteAnchor(position,scale,flags,{windowxy1.x+windowxy2.x,windowxy1.y+windowxy2.y});
+        if (eventOnly && !crosshairBounds.empty())
+        {
+            anchor.x=(crosshairBounds.x0+crosshairBounds.x1)*.5f;
+            anchor.y=(crosshairBounds.y0+crosshairBounds.y1)*.5f;
+        }
         float const ax=2.f*anchor.x/xdim-1.f, ay=1.f-2.f*anchor.y/ydim;
         for (int eye=0;eye<2;++eye)
         {
@@ -5175,6 +5356,39 @@ static void runConsoleRequest()
             savebrief_t save("xr_load");
             Bstrncpyz(save.path,command.c_str()+8,sizeof(save.path));
             LOG_F(INFO,"VR load: %s -> %d.",save.path,G_LoadPlayerMaybeMulti(save));
+            continue;
+        }
+        if (!command.compare(0,10,"xr_setvar "))
+        {
+            // Test hook: set a CON gamevar for the local player (e.g. skip a mod's own menus).
+            char name[64]; int value=0;
+            auto const p=g_player[myconnectindex].ps;
+            if (std::sscanf(command.c_str()+10,"%63s %d",name,&value)==2 && p && (unsigned)p->i<MAXSPRITES)
+            {
+                int const id=hash_find(&h_gamevars,name);
+                if (id>=0) Gv_SetVar(id,value,p->i,myconnectindex);
+                LOG_F(INFO,"VR setvar: %s=%d (%s).",name,value,id>=0 ? "set" : "unknown");
+            }
+            continue;
+        }
+        if (!command.compare(0,7,"xr_var "))
+        {
+            // Test hook: log CON gamevars (space separated) for the local player.
+            auto const p=g_player[myconnectindex].ps;
+            std::string out;
+            size_t at=7;
+            while (at<command.size())
+            {
+                size_t const end=std::min(command.find(' ',at),command.size());
+                std::string const name=command.substr(at,end-at);
+                at=end+1;
+                if (name.empty()) continue;
+                int const id=hash_find(&h_gamevars,name.c_str());
+                out+=name+"="+(id>=0 && p && (unsigned)p->i<MAXSPRITES ? std::to_string(Gv_GetVar(id,p->i,myconnectindex)) : std::string("?"))+" ";
+            }
+            LOG_F(INFO,"VR var: %s pause=%d gm=%d ang=%d oang=%d horiz=%d pals=%d,%d,%d,%d palette=%d newowner=%d.",out.c_str(),ud.pause_on,p ? p->gm : -1,p ? fix16_to_int(p->q16ang) : -1,
+                  p ? fix16_to_int(p->oq16ang) : -1,p ? fix16_to_int(p->q16horiz) : -1,p ? p->pals.r : -1,p ? p->pals.g : -1,p ? p->pals.b : -1,
+                  p ? p->pals.f : -1,p ? p->palette : -1,p ? p->newowner : -1);
             continue;
         }
         if (command=="xr_where")

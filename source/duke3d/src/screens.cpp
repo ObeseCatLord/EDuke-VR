@@ -1343,7 +1343,13 @@ void G_DisplayRest(int32_t smoothratio)
     if (VM_HaveEvent(EVENT_DISPLAYREST))
     {
         int32_t vr=viewingrange, asp=yxaspect;
+#ifdef USE_OPENXR
+        bool const xrRest=G_XRBeginRestHud();
+#endif
         VM_ExecuteEvent(EVENT_DISPLAYREST, g_player[screenpeek].ps->i, screenpeek);
+#ifdef USE_OPENXR
+        G_XREndRestHud(xrRest);
+#endif
         renderSetAspect(vr, asp);
     }
 

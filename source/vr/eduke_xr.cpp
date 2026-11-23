@@ -2359,6 +2359,21 @@ bool Runtime::menuPresentationActive() const
 bool Runtime::menuPresentationArmed() const
 { return m_impl && m_impl->menuActive && m_impl->menuArmed; }
 
+bool Runtime::clearMenuOverlayRect(float const *uvRect)
+{
+    if (!menuOverlayTargetBound() || !uvRect) return false;
+    auto const w=float(m_impl->menuWidth), h=float(m_impl->menuHeight);
+    int const x0=int(std::floor(uvRect[0]*w)), y0=int(std::floor(uvRect[1]*h));
+    int const x1=int(std::ceil(uvRect[2]*w)), y1=int(std::ceil(uvRect[3]*h));
+    if (x1<=x0 || y1<=y0) return true;
+    GLState state; state.save();
+    glEnable(GL_SCISSOR_TEST); glScissor(x0,y0,x1-x0,y1-y0);
+    glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+    glClearColor(0,0,0,0); glClear(GL_COLOR_BUFFER_BIT);
+    state.restore();
+    return true;
+}
+
 bool Runtime::menuOverlayTargetBound() const
 {
     if (!m_impl || !m_impl->menuActive || !m_impl->menuOverlay) return false;

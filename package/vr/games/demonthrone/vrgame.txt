@@ -1,0 +1,26 @@
+# Demon Throne (WGRealms 2) in VR: the weapon and gadget wheels (package/vr/eduke32-vr-play --game).
+# Two playable characters share the weapon slots (gamevar "character": 0 the gunslinger, 1 the
+# knight); the icons are the game's own pickups (WGR2DEFS.CON, WGR2ITEMS.CON addweapon). Weapon
+# keys as its EVENT_WEAPKEY handlers (key N selects weapon N-1; key 7 toggles slots 6 and 11).
+weapon 0 none noammo when character 0         # fists (no pickup: the wheel shows its key number)
+weapon 1 FIRSTGUNSPRITE when character 0
+weapon 2 SHOTGUNSPRITE when character 0
+weapon 3 CHAINGUNSPRITE when character 0
+weapon 4 RPGSPRITE when character 0
+weapon 5 HBOMBAMMO when character 0
+weapon 6 BFGSPRITE when character 0
+weapon 11 REVOLVERSPRITE key 7 when character 0
+weapon 7 FLAMETHROWERSPRITE when character 0
+weapon 8 TRIPBOMBSPRITE when character 0
+weapon 9 PLASMASPRITE when character 0
+weapon 1 NECROSWORD noammo when character 1
+weapon 2 HAMMERSPRITE noammo when character 1
+weapon 3 AXESPRITE noammo when character 1
+weapon 4 BOWSPRITE when character 1
+weapon 5 HBOMBAMMO when character 1
+weapon 6 SWORDSPRITE noammo when character 1
+weapon 7 GAUNTSPRITE when character 1
+weapon 8 TRIPBOMBSPRITE when character 1
+weapon 9 CANNONSPRITE when character 1
+gadget 0 FIRSTAID MedKit 100
+wristhud rest 0.82            # its HUD (health, armour, ammo) is drawn along the bottom in EVENT_DISPLAYREST

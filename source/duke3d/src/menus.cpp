@@ -1419,6 +1419,10 @@ static MenuOption_t MEO_VR_MODELSET = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_MO
 static MenuEntry_t ME_VR_MODELSET = MAKE_MENUENTRY( "Models", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_MODELSET, Option );
 static MenuOption_t MEO_VR_FULLBODY = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_fullbody );
 static MenuEntry_t ME_VR_FULLBODY = MAKE_MENUENTRY( "Full body", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_FULLBODY, Option );
+static char const *MEOSN_VR_HUDMODE[] = { "On wrists", "In front", };
+static MenuOptionSet_t MEOS_VR_HUDMODE = MAKE_MENUOPTIONSET( MEOSN_VR_HUDMODE, NULL, 0x2 );
+static MenuOption_t MEO_VR_HUDMODE = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_VR_HUDMODE, &vr_hudmode );
+static MenuEntry_t ME_VR_HUDMODE = MAKE_MENUENTRY( "HUD", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_HUDMODE, Option );
 static MenuOption_t MEO_VR_TWOHAND = MAKE_MENUOPTION( &MF_Bluefont, &MEOS_OffOn, &vr_twohand );
 static MenuEntry_t ME_VR_TWOHAND = MAKE_MENUENTRY( "Two-handed aiming", &MF_Bluefont, &MEF_SmallOptions, &MEO_VR_TWOHAND, Option );
 // Foveated rendering (vr_foveation): "Auto" names what it picks on this headset (see Menu_PopulateVRSetup).
@@ -1448,6 +1452,7 @@ static MenuEntry_t ME_VR_VOICE = MAKE_MENUENTRY( "Voice Chat Setup", &MF_Bluefon
 static MenuEntry_t *MEL_VRSETUP[] = {
     &ME_VR_MODELSET,
     &ME_VR_FULLBODY,
+    &ME_VR_HUDMODE,
     &ME_VR_TWOHAND,
     &ME_VR_FOVEATION,
     &ME_VR_FOVEATIONLEVEL,
