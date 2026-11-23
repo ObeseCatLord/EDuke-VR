@@ -1495,7 +1495,7 @@ static int32_t smoststart[MAXWALLSB];
 static char smostwalltype[MAXWALLSB];
 static int32_t smostwall[MAXWALLSB], smostwallcnt = -1;
 
-static vec3_t spritesxyz[MAXSPRITESONSCREEN + 1];
+static vec3_t spritesxyz[MAXTSPRITES + 1];
 
 int32_t xdimen = -1, xdimenrecip, halfxdimen, xdimenscale, xdimscale;
 float fxdimen = -1.f;
@@ -9182,7 +9182,7 @@ static walltype wall_s[MAXWALLS + M32_FIXME_WALLS];
 static wallext_t wallext_s[MAXWALLS];
 #endif
 static spritetype sprite_s[MAXSPRITES];
-static tspritetype tsprite_s[MAXSPRITESONSCREEN];
+static tspritetype tsprite_s[MAXTSPRITES];
 #endif
 
 int32_t enginePreInit(void)
@@ -10216,7 +10216,7 @@ void renderDrawMasks(void)
     static struct {
         int16_t di;  // &32768: &32767 is tspriteptr[], else thewall[] index
         int16_t i;   // sprite[] or wall[] index
-    } debugmask[MAXWALLSB + MAXSPRITESONSCREEN + 1];
+    } debugmask[MAXWALLSB + MAXTSPRITES + 1];
 
     int32_t dmasknum = 0;
 

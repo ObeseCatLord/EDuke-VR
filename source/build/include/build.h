@@ -100,6 +100,10 @@ enum rendmode_t {
 // Maximum number of component tiles in a multi-psky:
 #define MAXPSKYTILES 16
 #define MAXSPRITESONSCREEN 4096
+// Capacity of the drawn sprite list (tsprite[]). One view still collects at most
+// maxspritesonscreen (<= MAXSPRITESONSCREEN); the XR stereo frame draws the union
+// of up to four views (two eyes, front and back passes) and needs the extra room.
+#define MAXTSPRITES (MAXSPRITESONSCREEN*2)
 #define MAXUNIQHUDID 256 //Extra slots so HUD models can store animation state without messing game sprites
 
 #define TSPR_TEMP 99
@@ -630,7 +634,7 @@ EXTERN wallext_t wallext[MAXWALLS];
 EXTERN sectortype sector[MAXSECTORS + M32_FIXME_SECTORS];
 EXTERN walltype wall[MAXWALLS + M32_FIXME_WALLS];
 EXTERN spritetype sprite[MAXSPRITES];
-EXTERN tspritetype tsprite[MAXSPRITESONSCREEN];
+EXTERN tspritetype tsprite[MAXTSPRITES];
 #endif
 
 #ifdef USE_STRUCT_TRACKERS
@@ -755,7 +759,7 @@ static inline int16_t spriteGetSlope(uint16_t const spritenum)
 
 EXTERN int16_t maskwall[MAXWALLSB], maskwallcnt;
 EXTERN int16_t thewall[MAXWALLSB];
-EXTERN tspriteptr_t tspriteptr[MAXSPRITESONSCREEN + 1];
+EXTERN tspriteptr_t tspriteptr[MAXTSPRITES + 1];
 
 EXTERN int32_t wx1, wy1, wx2, wy2;
 EXTERN int32_t xdim, ydim, numpages, upscalefactor;

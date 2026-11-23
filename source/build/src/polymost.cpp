@@ -7390,7 +7390,7 @@ static void polymost_flatskyrender(vec2f_t const* const dpxy, int32_t const n, i
             LOG_F(INFO, "XR sky camera: pic=%d bits=%d yscale=%d yoffs=%d ghalfx=%.2f ghalfy=%.2f ghoriz=%.2f horiz=%.3f gvr=%.4f "
                   "pitch=%.4f,%.4f ang=%.2f xpan=%d ypan=%d tile=%dx%d xdimen=%d ydimen=%d vrange=%d",
                   globalpicnum, dapskybits, dapyscale, dapyoffs, ghalfx, ghalfy, ghoriz, qglobalhoriz/65536.f, gvrcorrection,
-                  gshang, gchang, fglobalang, xpanning, global_cf_ypanning, tilesiz[globalpicnum].x, tilesiz[globalpicnum].y,
+                  gshang, gchang, fglobalang, int(xpanning), int(global_cf_ypanning), tilesiz[globalpicnum].x, tilesiz[globalpicnum].y,
                   xdimen, ydimen, viewingrange);
     }
     float const xrFocal = ghalfx / gvrcorrection;

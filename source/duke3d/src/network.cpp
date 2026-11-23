@@ -1361,9 +1361,9 @@ static void Net_CopyActorsToGameArrays(const netmapstate_t* srv_snapshot, const 
 
         Net_UpdateSpriteLinkedLists(actorIndex, snapshotActor);
         if (traceRPG) LOG_F(INFO,"VR snapshot RPG applied: index=%d sector=%d stat=%d angle=%d speed=%d zvel=%d flags=%d.",
-                           actorIndex,gameSprite->sectnum,gameSprite->statnum,gameSprite->ang,gameSprite->xvel,int16_t(gameSprite->zvel),gameActor->flags);
+                           actorIndex,int(gameSprite->sectnum),int(gameSprite->statnum),int(gameSprite->ang),int(gameSprite->xvel),int16_t(gameSprite->zvel),gameActor->flags);
         if (traceFireball) LOG_F(INFO,"VR snapshot fireball applied: index=%d sector=%d stat=%d owner=%d angle=%d speed=%d zvel=%d.",
-                                actorIndex,gameSprite->sectnum,gameSprite->statnum,gameSprite->owner,gameSprite->ang,gameSprite->xvel,int16_t(gameSprite->zvel));
+                                actorIndex,int(gameSprite->sectnum),int(gameSprite->statnum),int(gameSprite->owner),int(gameSprite->ang),int(gameSprite->xvel),int16_t(gameSprite->zvel));
 
 
         if (!snapSpriteIsDeleted)
@@ -2245,7 +2245,7 @@ static void Net_Server_SetupPlayer(int playerindex)
     if (sdlayer_getenv_cached("EDUKE32_TEST_PLAYER_DEATH"))
     {
         auto const &p = *g_player[playerindex].ps;
-        LOG_F(INFO, "Player setup: player=%d sprite=%d extra=%d dead=%d pos=%d,%d,%d sect=%d spawns=%d.", playerindex, p.i, sprite[p.i].extra,
+        LOG_F(INFO, "Player setup: player=%d sprite=%d extra=%d dead=%d pos=%d,%d,%d sect=%d spawns=%d.", playerindex, p.i, int(sprite[p.i].extra),
               p.dead_flag, p.pos.x, p.pos.y, p.pos.z, p.cursectnum, g_playerSpawnCnt);
     }
 }

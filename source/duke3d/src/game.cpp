@@ -4362,7 +4362,7 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                 {
                     ++reported;
                     LOG_F(INFO, "Held weapon candidate: player=%d mirror=%d multi=%d extra=%d model=%d notmd=%d weapon=%d heldTile=%d.",
-                          playerNum, int(display_mirror), int(g_netServer || ud.multimode > 1), sprite[g_player[playerNum].ps->i].extra,
+                          playerNum, int(display_mirror), int(g_netServer || ud.multimode > 1), int(sprite[g_player[playerNum].ps->i].extra),
                           md_tilehasmodel(t->picnum, t->pal), int(!!(spriteext[i].flags & SPREXT_NOTMD)),
                           g_player[playerNum].ps->curr_weapon, G_HeldWeaponModelTile(g_player[playerNum].ps->curr_weapon));
                 }

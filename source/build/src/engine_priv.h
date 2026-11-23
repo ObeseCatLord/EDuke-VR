@@ -164,7 +164,7 @@ static FORCE_INLINE int32_t ksqrt_inline(uint32_t n)
 extern int16_t thesector[MAXWALLSB], thewall[MAXWALLSB];
 extern int16_t bunchfirst[MAXWALLSB], bunchlast[MAXWALLSB];
 extern int16_t maskwall[MAXWALLSB], maskwallcnt;
-extern tspriteptr_t tspriteptr[MAXSPRITESONSCREEN + 1];
+extern tspriteptr_t tspriteptr[MAXTSPRITES + 1];
 extern uint8_t* mirrorBuffer;
 extern int32_t xdimen, xdimenrecip, halfxdimen, xdimenscale, xdimscale, ydimen;
 extern float fxdimen;

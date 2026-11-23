@@ -1769,8 +1769,8 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
 
             if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
                 LOG_F(INFO,"VR native projectile: player=%d tile=%d index=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d policy=%d.",
-                      playerNum,projecTile,returnSprite,pReturn->x,pReturn->y,pReturn->z,originSector,clamped,
-                      pReturn->ang,pReturn->xvel,int16_t(pReturn->zvel),pReturn->yvel);
+                      playerNum,projecTile,returnSprite,int(pReturn->x),int(pReturn->y),int(pReturn->z),originSector,clamped,
+                      int(pReturn->ang),int(pReturn->xvel),int16_t(pReturn->zvel),int(pReturn->yvel));
             return returnSprite;
         }
 
@@ -4030,7 +4030,7 @@ void P_GetInput(int const playerNum)
             static int reported=-1;
             if (reported!=locked)
                 LOG_F(INFO,"OpenXR native look lock: %d extra=%d dead=%d fist=%d transporter=%d landing=%d access=%d knee=%d crane=%d newowner=%d center=%d recenter=%d.",
-                      locked,sprite[pPlayer->i].extra,pPlayer->dead_flag,pPlayer->fist_incs,pPlayer->transporter_hold,pPlayer->hard_landing,
+                      locked,int(sprite[pPlayer->i].extra),pPlayer->dead_flag,pPlayer->fist_incs,pPlayer->transporter_hold,pPlayer->hard_landing,
                       pPlayer->access_incs,pPlayer->knee_incs,pPlayer->on_crane,pPlayer->newowner,pPlayer->return_to_center,
                       int(g_player[playerNum].horizRecenter));
             reported=locked;
@@ -4667,9 +4667,9 @@ void P_FragPlayer(int playerNum)
 
     if (std::getenv("EDUKE32_TEST_PLAYER_DEATH"))
         LOG_F(INFO, "Player death: player=%d pos=%d,%d,%d sect=%d sprite=%d,%d,%d sect=%d floorz=%d ceilz=%d htpicnum=%d htextra=%d htowner=%d falling=%d extra=%d dead=%d clock=%d.",
-              playerNum, pPlayer->pos.x, pPlayer->pos.y, pPlayer->pos.z, pPlayer->cursectnum, pSprite->x, pSprite->y, pSprite->z, pSprite->sectnum,
+              playerNum, pPlayer->pos.x, pPlayer->pos.y, pPlayer->pos.z, pPlayer->cursectnum, int(pSprite->x), int(pSprite->y), int(pSprite->z), int(pSprite->sectnum),
               actor[pPlayer->i].floorz, actor[pPlayer->i].ceilingz, actor[pPlayer->i].htpicnum, actor[pPlayer->i].htextra, actor[pPlayer->i].htowner,
-              pPlayer->falling_counter, pSprite->extra, pPlayer->dead_flag, (int)totalclock);
+              pPlayer->falling_counter, int(pSprite->extra), pPlayer->dead_flag, (int)totalclock);
 
     if (pSprite->pal != 1)
     {
@@ -5170,8 +5170,8 @@ static void P_ProcessWeapon(int playerNum)
                     }
                     if (tracked && std::getenv("EDUKE32_XR_TEST_SHOTS"))
                         LOG_F(INFO,"VR native pipebomb: player=%d index=%d origin=%d,%d,%d sector=%d clamped=%d angle=%d speed=%d zvel=%d rolling=%d mode=%d fuse=%d charge=%d.",
-                              playerNum,pipeSpriteNum,sprite[pipeSpriteNum].x,sprite[pipeSpriteNum].y,sprite[pipeSpriteNum].z,
-                              sprite[pipeSpriteNum].sectnum,clamped,sprite[pipeSpriteNum].ang,sprite[pipeSpriteNum].xvel,
+                              playerNum,pipeSpriteNum,int(sprite[pipeSpriteNum].x),int(sprite[pipeSpriteNum].y),int(sprite[pipeSpriteNum].z),
+                              int(sprite[pipeSpriteNum].sectnum),clamped,int(sprite[pipeSpriteNum].ang),int(sprite[pipeSpriteNum].xvel),
                               int16_t(sprite[pipeSpriteNum].zvel),rolling,actor[pipeSpriteNum].t_data[6],actor[pipeSpriteNum].t_data[7],pPlayer->hbomb_hold_delay);
                 }
 

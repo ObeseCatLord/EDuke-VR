@@ -65,6 +65,7 @@ def main():
     parser.add_argument('--assets', type=Path, help='duke-vr-assets folder for the launcher (e.g. a scratch one with a test pack)')
     parser.add_argument('--cvar', action='append', default=[], help='NAME=VALUE written to the lab settings.cfg (e.g. r_precache=0)')
     parser.add_argument('--game', type=Path, help='a total conversion install folder (launcher --game; --grp is then ignored)')
+    parser.add_argument('--copy', action='append', default=[], type=Path, help='file copied into the lab directory (e.g. a save game)')
     args = parser.parse_args()
     steps = json.loads(args.script.read_text())
     args.work_dir.mkdir(parents=True, exist_ok=True)
@@ -72,6 +73,8 @@ def main():
     (lab / 'eduke32.cfg').write_text(CONFIG)
     if args.cvar:
         (lab / 'settings.cfg').write_text(''.join(f'{kv.split("=", 1)[0]} "{kv.split("=", 1)[1]}"\n' for kv in args.cvar))
+    for source in args.copy:
+        (lab / source.name).write_bytes(source.read_bytes())
     if not args.game:
         (lab / 'DUKE3D.GRP').symlink_to(args.grp.resolve())
     capture, console = lab / 'capture-request', lab / 'console-request'

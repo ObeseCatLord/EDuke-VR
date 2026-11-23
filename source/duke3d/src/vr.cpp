@@ -113,7 +113,7 @@ constexpr float SplitViewportClip=1.f/256.f;
 // Wall near plane for split passes, in Build units (native SCISDIST is 1).
 // Measured: 1 leaves a 1-2px seam, 1/4 and below 1/32 show precision holes.
 constexpr float SplitNearClip=1.f/16.f;
-static std::array<uint8_t, MAXSPRITESONSCREEN> membership;
+static std::array<uint8_t, MAXTSPRITES> membership;
 static bool animating, generationSaturated;
 static uint64_t worldFrames, worldMultiviewFrames, worldOracleFrames;
 static uint64_t worldMaskMultiviewFrames, worldMaskOracleFrames, worldFullMultiviewFrames;
@@ -5399,18 +5399,18 @@ static void runConsoleRequest()
             // Read-only position report for multiplayer harnesses (players, then corpses).
             for (int j=0;j<MAXSPRITES;++j)
                 if (sprite[j].statnum<MAXSTATUS && sprite[j].picnum==DUKELYINGDEAD && (unsigned)sprite[j].sectnum<(unsigned)numsectors)
-                    LOG_F(INFO,"VR where corpse: index=%d z=%d cstat=%d floorz=%d model=%d.",j,sprite[j].z,sprite[j].cstat,
-                          getflorzofslope(sprite[j].sectnum,sprite[j].x,sprite[j].y),md_tilehasmodel(sprite[j].picnum,sprite[j].pal));
+                    LOG_F(INFO,"VR where corpse: index=%d z=%d cstat=%d floorz=%d model=%d.",j,int(sprite[j].z),int(sprite[j].cstat),
+                          getflorzofslope(sprite[j].sectnum,int(sprite[j].x),int(sprite[j].y)),md_tilehasmodel(sprite[j].picnum,int(sprite[j].pal)));
             for (int TRAVERSE_CONNECT(i))
             {
                 auto const q=g_player[i].ps;
                 if ((unsigned)q->i>=MAXSPRITES) continue;
                 auto const &body=sprite[q->i];
                 LOG_F(INFO,"VR where: player=%d local=%d pos=%d,%d,%d ang=%d weapon=%d sprite=%d,%d,%d,%d.",i,int(i==myconnectindex),
-                      q->pos.x,q->pos.y,q->pos.z,fix16_to_int(q->q16ang),q->curr_weapon,body.x,body.y,body.z,body.ang);
+                      q->pos.x,q->pos.y,q->pos.z,fix16_to_int(q->q16ang),q->curr_weapon,int(body.x),int(body.y),int(body.z),int(body.ang));
                 LOG_F(INFO,"VR where sprite: player=%d index=%d picnum=%d cstat=%d xrepeat=%d extra=%d dead=%d floorz=%d access=%d.",i,q->i,
-                      body.picnum,body.cstat,body.xrepeat,body.extra,int(q->dead_flag),
-                      (unsigned)body.sectnum<(unsigned)numsectors ? getflorzofslope(body.sectnum,body.x,body.y) : 0,q->got_access);
+                      int(body.picnum),int(body.cstat),int(body.xrepeat),int(body.extra),int(q->dead_flag),
+                      (unsigned)int(body.sectnum)<(unsigned)numsectors ? getflorzofslope(body.sectnum,int(body.x),int(body.y)) : 0,q->got_access);
             }
             continue;
         }
@@ -5902,6 +5902,21 @@ void G_XRTestCaptureNative()
     }
 }
 
+// A sprite list filled up (one view: r_maxspritesonscreen, at most 4096; the
+// stereo union: twice that): the remaining sprites are dropped for this frame,
+// as the flat renderer does. Logged once per kind, then every 600th frame.
+enum SpriteSaturation { SaturatedEye, SaturatedUnion, SaturatedGenerated };
+static void noteSpriteSaturation(SpriteSaturation kind, int count)
+{
+    static char const *const names[]={"eye view","stereo union","generated sprites"};
+    static unsigned seen[3];
+    char const *const where=names[kind];
+    unsigned const n=seen[kind]++;
+    if (n == 0 || n % 600 == 0)
+        LOG_F(WARNING,"OpenXR world: %s filled the sprite list (%d of %d); the rest are not drawn this frame (seen %u times).",
+              where,count,int(maxspritesonscreen),n+1);
+}
+
 bool G_XRCanAppendSprite(int32_t limit)
 {
     bool const fits = spritesortcnt < limit;
@@ -6229,12 +6244,16 @@ bool G_XRDrawRooms(int32_t smoothRatio)
                 yax_polymostclearzbuffer=1;
                 if (collect && polymost_xrEndCollection(i) != POLYMOST_XR_COLLECT_OK)
                     return false;
-                if (spritesortcnt >= maxspritesonscreen || maskwallcnt >= MAXWALLSB)
+                if (maskwallcnt >= MAXWALLSB)
                 {
-                    error="stereo collection saturated native list capacity";
+                    error="stereo collection saturated native masked-wall capacity";
                     good=false; return false;
                 }
-                view.sprites.assign(tsprite,tsprite+spritesortcnt);
+                // A full sprite list keeps the sprites that fit, as the flat
+                // renderer does (dense mod areas reach the native limit).
+                if (spritesortcnt >= maxspritesonscreen)
+                    noteSpriteSaturation(SaturatedEye,spritesortcnt);
+                view.sprites.assign(tsprite,tsprite+min(spritesortcnt,maxspritesonscreen));
                 view.walls.reserve(maskwallcnt);
                 for (int j=0;j<maskwallcnt;++j) view.walls.push_back(thewall[maskwall[j]]);
                 for (size_t j=0;j<sizeof(gotsector);++j) eye.sectors[j]|=gotsector[j];
@@ -6316,35 +6335,83 @@ bool G_XRDrawRooms(int32_t smoothRatio)
     else drawOpaque(false);
     mirrorSeen=bitmap_test(gotpic,MIRROR);
     lap(xrTiming.opaque);
+    // Each view collected at most maxspritesonscreen sprites; their union (two eyes,
+    // and a back pass each on full-pitch frames) may hold more. The stereo union,
+    // its animation and its masks get the list's whole capacity, then the native
+    // limit returns (unless CON changed it meanwhile).
+    struct StereoSpriteLimit
+    {
+        int native, stereo;
+        StereoSpriteLimit() : native(maxspritesonscreen), stereo(std::min<int>(MAXTSPRITES,2*maxspritesonscreen)) { maxspritesonscreen=stereo; }
+        ~StereoSpriteLimit() { if (maxspritesonscreen == stereo) maxspritesonscreen=native; }
+    } const stereoSpriteLimit;
     if (good)
     {
-        static std::vector<int> byOwner(MAXSPRITES);
+        static std::vector<int> byOwner(MAXSPRITES), byOwnerAlt(MAXSPRITES);
+        bool unionFull=false;
         std::fill(byOwner.begin(),byOwner.end(),-1);
+        std::fill(byOwnerAlt.begin(),byOwnerAlt.end(),-1);
         spritesortcnt=0;
         membership.fill(0);
         for (unsigned i=0;i<2 && good;++i)
             for (unsigned pass=0;pass<eyes[i].passCount() && good;++pass)
             for (auto const &sprite : eyes[i].passes[pass].sprites)
             {
-                int slot=(unsigned)sprite.owner < byOwner.size() ? byOwner[sprite.owner] : -1;
+                bool const owned=(unsigned)sprite.owner < byOwner.size();
+                int slot=owned ? byOwner[sprite.owner] : -1;
                 if (slot >= 0 && Bmemcmp(&tsprite[slot],&sprite,sizeof(sprite)))
                 {
-                    error="ordinary-room stereo collected conflicting instances of one sprite";
-                    good=false; break;
+                    // The views collected differing instances of one sprite (e.g. a
+                    // room-over-room layer's script animation changed it between the
+                    // eyes): each view keeps its own instance instead of stopping.
+                    int const alt=byOwnerAlt[sprite.owner];
+                    slot=alt >= 0 && !Bmemcmp(&tsprite[alt],&sprite,sizeof(sprite)) ? alt : -1;
+                    static unsigned conflicts;
+                    if (!conflicts++ || conflicts % 600 == 0)
+                        LOG_F(WARNING,"OpenXR world: the eye views saw differing instances of sprite %d (picnum %d); each view draws its own (seen %u times).",
+                              int(sprite.owner),int(sprite.picnum),conflicts);
+                    if (slot < 0)
+                    {
+                        if (spritesortcnt >= maxspritesonscreen)
+                        {
+                            unionFull=true;
+                            continue;
+                        }
+                        slot=spritesortcnt++;
+                        tsprite[slot]=sprite;
+                        if (alt < 0) byOwnerAlt[sprite.owner]=slot;
+                    }
                 }
-                if (slot < 0)
+                else if (slot < 0)
                 {
                     if (spritesortcnt >= maxspritesonscreen)
                     {
-                        error="stereo sprite union exceeds native list capacity";
-                        good=false; break;
+                        // Sprites past the list's capacity are not drawn, as in the flat renderer.
+                        unionFull=true;
+                        continue;
                     }
                     slot=spritesortcnt++;
                     tsprite[slot]=sprite;
-                    if ((unsigned)sprite.owner < byOwner.size()) byOwner[sprite.owner]=slot;
+                    if (owned) byOwner[sprite.owner]=slot;
                 }
                 membership[slot] |= 1u<<(i*2+pass);
             }
+        if (unionFull)
+            noteSpriteSaturation(SaturatedUnion,spritesortcnt);
+    }
+    if (good && sdlayer_getenv_cached("EDUKE32_XR_TEST_UNION"))
+    {
+        // Test hook: sprite counts of each view and of their stereo union, once a second.
+        static unsigned frames;
+        if (frames++ % 60 == 0)
+        {
+            size_t sizes[4]={};
+            for (unsigned i=0;i<2;++i)
+                for (unsigned pass=0;pass<eyes[i].passCount();++pass)
+                    sizes[i*2+pass]=eyes[i].passes[pass].sprites.size();
+            LOG_F(INFO,"XR union test: union=%d limit=%d views=%zu,%zu,%zu,%zu.",spritesortcnt,int(maxspritesonscreen),
+                  sizes[0],sizes[1],sizes[2],sizes[3]);
+        }
     }
     if (good)
     {
@@ -6364,11 +6431,10 @@ bool G_XRDrawRooms(int32_t smoothRatio)
         animating=false;
         animated=true;
         logical=camera(); // Preserve any CON changes to the common logical camera.
+        // Effects CON or the game could not add once the list was full are
+        // skipped, exactly as in the flat renderer.
         if (generationSaturated)
-        {
-            good=false;
-            error="stereo generated-sprite list saturated native capacity";
-        }
+            noteSpriteSaturation(SaturatedGenerated,spritesortcnt);
         if (testFailure("masks"))
         {
             good=false;

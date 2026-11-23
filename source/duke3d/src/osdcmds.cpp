@@ -1259,21 +1259,21 @@ static int osdcmd_net_state(osdcmdptr_t parm)
         if ((unsigned)p->i >= MAXSPRITES)
             continue;
         fprintf(file, "player %d pos %d %d %d ang %d sect %d newowner %d crane %d extra %d dead %d\n", i, p->pos.x, p->pos.y, p->pos.z,
-                fix16_to_int(p->q16ang), p->cursectnum, p->newowner, p->on_crane, sprite[p->i].extra, p->dead_flag);
+                fix16_to_int(p->q16ang), p->cursectnum, p->newowner, p->on_crane, int(sprite[p->i].extra), p->dead_flag);
     }
     for (int s = 0; s < numsectors; s++)
-        fprintf(file, "sector %d %d %d %d\n", s, sector[s].floorz, sector[s].ceilingz, sector[s].lotag);
+        fprintf(file, "sector %d %d %d %d\n", s, int(sector[s].floorz), int(sector[s].ceilingz), int(sector[s].lotag));
     for (int w = 0; w < numwalls; w++)
         if (wall[w].lotag || wall[w].hitag)
-            fprintf(file, "wall %d %d %d %d %d\n", w, wall[w].picnum, wall[w].overpicnum, wall[w].x, wall[w].y);
+            fprintf(file, "wall %d %d %d %d %d\n", w, int(wall[w].picnum), int(wall[w].overpicnum), int(wall[w].x), int(wall[w].y));
     for (int j = 0; j < MAXSPRITES; j++)
     {
         auto const &spr = sprite[j];
         // Sprites that stay: map things, actors, effectors, standables (not effects or projectiles).
         if (spr.statnum == STAT_DEFAULT || spr.statnum == STAT_ACTOR || spr.statnum == STAT_ZOMBIEACTOR || spr.statnum == STAT_EFFECTOR
             || spr.statnum == STAT_STANDABLE)
-            fprintf(file, "sprite %d %d %d %d %d %d %d %d %d\n", j, spr.picnum, spr.statnum, spr.x, spr.y, spr.z, spr.ang, spr.cstat,
-                    spr.sectnum);
+            fprintf(file, "sprite %d %d %d %d %d %d %d %d %d\n", j, int(spr.picnum), int(spr.statnum), int(spr.x), int(spr.y), int(spr.z), int(spr.ang),
+                    int(spr.cstat), int(spr.sectnum));
     }
     Bfclose(file);
     LOG_F(INFO, "net_state: wrote %s.", parm->parms[0]);

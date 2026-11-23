@@ -2087,7 +2087,7 @@ ACTOR_STATIC void G_MoveStandables(void)
             static bool const craneTrace = std::getenv("EDUKE32_TEST_CRANE") != nullptr;
             if (craneTrace)
                 LOG_F(INFO, "Crane: tick=%d sprite=%d state=%d pos=%d,%d,%d owner=%d.", (int32_t)totalclock, spriteNum, pData[0],
-                      pSprite->x, pSprite->y, pSprite->z, pSprite->owner);
+                      int(pSprite->x), int(pSprite->y), int(pSprite->z), int(pSprite->owner));
 
 
             if (pSprite->owner != -1)
@@ -2690,7 +2690,7 @@ DETONATE:
                                 static char const *const touchTest = getenv("EDUKE32_TEST_ANIM");
                                 if (touchTest)
                                     LOG_F(INFO, "Touch plate fires: sprite=%d lotag=%d hitag=%d data=%d,%d,%d,%d player=%d.", spriteNum,
-                                          pSprite->lotag, pSprite->hitag, pData[0], pData[1], pData[3], pData[5], p);
+                                          int(pSprite->lotag), int(pSprite->hitag), pData[0], pData[1], pData[3], pData[5], p);
                                 pData[0] = 1;
                                 pData[1] = 1;
                                 pData[3] = !pData[3];
@@ -3771,7 +3771,7 @@ ACTOR_STATIC void G_MoveWeapons(void)
 
                             if (!pSprite->xvel && std::getenv("EDUKE32_XR_TEST_SHOTS"))
                                 LOG_F(INFO,"VR vertical RPG impact: projectile=%d,%d,%d effect=%d,%d,%d.",
-                                      pSprite->x,pSprite->y,pSprite->z,sprite[newSprite].x,sprite[newSprite].y,sprite[newSprite].z);
+                                      int(pSprite->x),int(pSprite->y),int(pSprite->z),int(sprite[newSprite].x),int(sprite[newSprite].y),int(sprite[newSprite].z));
                             if (pSprite->xrepeat >= 10)
                             {
                                 int const x = pSprite->extra;
