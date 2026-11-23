@@ -81,10 +81,7 @@
 "capture": "charsel"
 },
 {
-"console": "xr_var character cursorx cursory charsel softwarning"
-},
-{
-"wait": 1
+"console": "xr_var character cursorx cursory charsel"
 },
 {
 "buttons": {
@@ -97,7 +94,7 @@
 }
 },
 {
-"wait": 0.6
+"wait": 1.2
 },
 {
 "buttons": {
@@ -113,44 +110,35 @@
 "wait": 1
 },
 {
-"console": "xr_var character cursorx cursory charsel softwarning"
+"console": "xr_var character cursorx cursory charsel"
 },
 {
-"wait": 1
-},
-{
-"buttons": {
-"right": {
-"thumbstick": [
-1,
-0
-]
-}
-}
-},
-{
-"wait": 0.6
+"capture": "charsel-right"
 },
 {
 "buttons": {
 "right": {
-"thumbstick": [
-0,
-0
-]
+"trigger_value": 1.0
 }
 }
 },
 {
-"wait": 1
+"wait": 0.5
 },
 {
-"console": "xr_var character cursorx cursory charsel softwarning"
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
 },
 {
-"wait": 1
+"wait": 4
 },
 {
-"capture": "charsel-2"
+"console": "xr_var character cursorx cursory charsel"
+},
+{
+"capture": "picked"
 }
 ]

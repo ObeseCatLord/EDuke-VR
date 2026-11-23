@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--timeout', default=580, type=int)
     parser.add_argument('--switches', type=int, default=24)
     parser.add_argument('--pack', default='original-lowres', help='model pack (launcher --pack)')
+    parser.add_argument('--wheel', action='store_true', help='after giving weapons, open the weapon and gadget wheels (capture both)')
     parser.add_argument('--crosshair-output', type=Path, help='EDUKE32_XR_CROSSHAIR_OUTPUT prefix (crosshair diagnostic capture)')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
@@ -43,7 +44,7 @@ def main():
     env.update(DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy',
                EDUKE32_XR='play', EDUKE32_XR_STICK_PITCH='1', EDUKE32_XR_PHYSICAL_THROW='0',
                EDUKE32_XR_TEST_HELD='1', EDUKE32_XR_TEST_HAPTICS='1', EDUKE32_XR_TEST_INPUT='1',
-               EDUKE32_XR_TEST_SHOTS='1', EDUKE32_XR_TEST_PVP='1',
+               EDUKE32_XR_TEST_SHOTS='1', EDUKE32_XR_TEST_PVP='1', EDUKE32_XR_TEST_WHEEL='1',
                EDUKE32_XR_CAPTURE_REQUEST=str(capture), EDUKE32_XR_CONSOLE_REQUEST=str(console),
                XDG_DATA_HOME=str(lab / 'data'))
     if args.crosshair_output:
@@ -97,6 +98,22 @@ def main():
                 observer.pause(6)
                 run('xr_weapons'); observer.pause(2)
                 run('god'); observer.pause(2)
+                if args.wheel:
+                    run('xr_items'); observer.pause(2)
+                    for side, name in (('right', 'weapon'), ('left', 'gadget')):
+                        start = len(observer.text())
+                        getattr(remote.packet, side).trackpad_touch = True; remote.send()
+                        opened = wait(lambda text: f'{name} wheel: open' in text[start:], 15)
+                        observer.pause(1.5)
+                        capture.write_text(str(lab / f'wheel-{name}') + '\n')
+                        wait(lambda _: not capture.exists(), 60)
+                        getattr(remote.packet, side).trackpad_touch = False; remote.send()
+                        observer.pause(1.5)
+                        rows = re.findall(rf'{name} wheel: open slots=(\d+) order=([\d,]*)', observer.text()[start:])
+                        result[f'{name}_wheel'] = {'opened': opened, 'slots': int(rows[-1][0]) if rows else 0,
+                                                   'order': rows[-1][1] if rows else '',
+                                                   'captured': (lab / f'wheel-{name}-left.ppm').is_file()}
+                    result['profile'] = re.findall(r'VR game profile: [^\n]*', observer.text())[-1:]
                 last, seen = None, set()
                 for press in range(args.switches):
                     if time.monotonic() > deadline - 30:

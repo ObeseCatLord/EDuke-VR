@@ -9388,6 +9388,7 @@ void G_MoveWorld(void)
 
     MICROPROFILE_SCOPEI("Game", "MoveWorld", MP_YELLOW);
 
+    g_vm_preemptHold = 1;
     VM_OnEvent(EVENT_PREWORLD);
     G_DoEventGame(EVENT_PREGAME, false);
     G_RecordOldSpritePos();
@@ -9411,6 +9412,7 @@ void G_MoveWorld(void)
         MICROPROFILE_SCOPEI("MoveWorld", "MovePlayers", MP_YELLOW);
         G_MovePlayers();  //ST 10
     }
+    g_vm_preemptHold = 0;
 
     // Must be called here to fix a problem where SE7 Transports and Touchplates do not activate concurrently
     G_RecordOldSpritePosForStatnum(STAT_PLAYER);

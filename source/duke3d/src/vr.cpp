@@ -159,6 +159,7 @@ static bool profileWheel();
 //                                    [is VAR VALUE] [owned VAR MASK] [ammo VAR MAX]
 //                                    for mods with more weapons than slots (several share one):
 //                                    [isbits VAR MASK] like is, while VAR & MASK == MASK
+//                                    [isclear VAR MASK] like is, while VAR & MASK == 0
 //                                    is: this one is in hand while gamevar VAR is VALUE (the key is
 //                                    pressed until it is); owned: carried while VAR & MASK; ammo:
 //                                    its rounds are in VAR (full ring at MAX). Up to 24 entries.
@@ -169,7 +170,7 @@ static bool profileWheel();
 // Read on first use, after the game's scripts are compiled (their defines name the tiles).
 struct VRGameProfile
 {
-    struct Weapon { int weapon, tile, key; bool noAmmo, isBits; int var, value, isVar, isValue, ownVar, ownMask, ammoVar, ammoMax; };
+    struct Weapon { int weapon, tile, key; bool noAmmo, isBits, isClear; int var, value, isVar, isValue, ownVar, ownMask, ammoVar, ammoMax; };
     struct Gadget { int item, tile, function, full; };
     std::vector<Weapon> weapons;
     std::vector<Gadget> gadgets;
@@ -206,13 +207,13 @@ static VRGameProfile const &gameProfile()
         auto next=[&]() { return strtok_r(nullptr," \t\r\n",&save); };
         if (!Bstrcasecmp(word,"weapon"))
         {
-            VRGameProfile::Weapon weapon{profileValue(next()),profileValue(next()),-1,false,false,-1,0,-1,0,-1,0,-1,0};
+            VRGameProfile::Weapon weapon{profileValue(next()),profileValue(next()),-1,false,false,false,-1,0,-1,0,-1,0,-1,0};
             bool good=true;
             while (char const *option=next())
             {
                 if (!Bstrcasecmp(option,"noammo")) weapon.noAmmo=true;
                 else if (!Bstrcasecmp(option,"key")) weapon.key=profileValue(next());
-                else if (!Bstrcasecmp(option,"is") || !Bstrcasecmp(option,"isbits") || !Bstrcasecmp(option,"owned") || !Bstrcasecmp(option,"ammo"))
+                else if (!Bstrcasecmp(option,"is") || !Bstrcasecmp(option,"isbits") || !Bstrcasecmp(option,"isclear") || !Bstrcasecmp(option,"owned") || !Bstrcasecmp(option,"ammo"))
                 {
                     char const *var=next();
                     int const id=var ? hash_find(&h_gamevars,var) : -1;
@@ -220,6 +221,7 @@ static VRGameProfile const &gameProfile()
                     if (id<0) good=false;
                     else if (!Bstrcasecmp(option,"is")) { weapon.isVar=id; weapon.isValue=value; }
                     else if (!Bstrcasecmp(option,"isbits")) { weapon.isVar=id; weapon.isValue=value; weapon.isBits=true; }
+                    else if (!Bstrcasecmp(option,"isclear")) { weapon.isVar=id; weapon.isValue=value; weapon.isClear=true; }
                     else if (!Bstrcasecmp(option,"owned")) { weapon.ownVar=id; weapon.ownMask=value; }
                     else { weapon.ammoVar=id; weapon.ammoMax=value; }
                 }
@@ -768,7 +770,8 @@ static bool itemIsCurrent(DukePlayer_t const *p, int item)
     if (!entry) return item==wheelCurrentWeapon(p);
     if (p->curr_weapon!=entry->weapon || entry->isVar<0) return p->curr_weapon==entry->weapon;
     int const value=entryVar(p,entry->isVar);
-    return entry->isBits ? (value & entry->isValue)==entry->isValue : value==entry->isValue;
+    return entry->isClear ? !(value & entry->isValue)
+         : entry->isBits ? (value & entry->isValue)==entry->isValue : value==entry->isValue;
 }
 
 static bool wheelSelectable(DukePlayer_t const *p, int item)

@@ -321,6 +321,10 @@ extern uint32_t g_frameCounter;
 #define DRAWFRAME_MAX_STACK_SIZE     (1792 * 1024)
 
 extern int32_t g_vm_preempt;
+// Set while a tick moves the world up to the players' old-angle sync (G_MoveWorld): a frame drawn in
+// there would apply the local turn after the scripts ran and before the sync, hiding it from every
+// script that reads angle minus old angle (Demon Throne's cursors, guided arrows).
+extern int32_t g_vm_preemptHold;
 //extern mco_coro* co_drawframe;
 //extern void g_switchRoutine(mco_coro *co);
 extern void drawframe_do(void);
@@ -330,7 +334,7 @@ static FORCE_INLINE int dukeMaybeDrawFrame(void)
     // g_frameJustDrawn is set by G_DrawFrame() (and thus by the coroutine)
     // it isn't cleared until the next game tic is processed.
     auto ticks = timerGetNanoTicks();
-    if (g_vm_preempt && !g_saveRequested /*&& mco_running() != co_drawframe*/
+    if (g_vm_preempt && !g_vm_preemptHold && !g_saveRequested /*&& mco_running() != co_drawframe*/
         && (ticks - g_lastFrameStartTime) >= g_frameDelay && ticks - g_lastFrameStartTime - g_lastFrameDuration2 < g_frameDelay
         && !g_frameJustDrawn && engineFPSLimit())
     {
