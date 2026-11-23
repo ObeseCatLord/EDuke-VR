@@ -91,7 +91,8 @@ voxel_build() {
 }
 run() {   # run MODE(vr|desktop) [game arguments...]
     local mode=$1; shift
-    voxel_build
+    # Another EDuke32 game (play-game.sh) uses its own art: no Duke model sets or Duke mods.
+    [[ -n ${other_game:-} ]] || voxel_build
     if [[ $mode == vr ]]; then
         export EDUKE32_XR="${EDUKE32_XR:-play}" SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"
         export __GL_SYNC_TO_VBLANK=0 __GL_THREADED_OPTIMIZATIONS=0 mesa_glthread=false
@@ -107,6 +108,7 @@ run() {   # run MODE(vr|desktop) [game arguments...]
     # Hit Feedback mod (extra blood and sparks on hits): EDUKE32_VR_HITFEEDBACK=0 leaves it out.
     [[ ${EDUKE32_VR_HITFEEDBACK:-1} != 0 && -f $data/mods/hitfeedback/hitfeedback.con ]] \
         && mods=(-j "$data/mods/hitfeedback" -mx hitfeedback.con)
+    [[ -n ${other_game:-} ]] && { mods=(); local_data=(); pack=(-vrpack none); }
     while :; do
         : > "$restart"; status=0
         "$bin/eduke32-vr" -j "$data" "${local_data[@]}" "${mods[@]}" "${pack[@]}" -nosetup "$@" || status=$?
@@ -115,6 +117,13 @@ run() {   # run MODE(vr|desktop) [game arguments...]
     done
 }
 '''
+
+def copy_games(dest):
+    """VR profiles of the other EDuke32 games play-game supports (package/vr/games/NAME/)."""
+    for game in sorted((HERE / 'games').iterdir()):
+        if game.is_dir():
+            shutil.copytree(game, dest / game.name)
+
 
 def copy_mods(dest):
     """The gameplay mods shipped with the game (package/vr/mods/NAME/), loaded by play/join."""
@@ -129,6 +138,24 @@ def sh_script(body):
 SH_PLAY = sh_script(r'''# ./play.sh [vr|desktop] [extra EDuke32 arguments]   (default: vr)
 mode=${1:-vr}; [[ $# -gt 0 ]] && shift
 run "$mode" "${grp[@]}" "$@"
+''')
+SH_GAME = sh_script(r'''# ./play-game.sh GAME_FOLDER [vr|desktop]   another EDuke32 game you own, from its install folder:
+#   Ion Fury (fury.grp) or Demon Throne (WGR2.grp). Its own HUD, menus and art; VR weapon and gadget
+#   wheels from data/games/.
+dir=${1:?usage: play-game.sh GAME_FOLDER [vr|desktop]}; mode=${2:-vr}; shift $(( $# >= 2 ? 2 : 1 ))
+dir=$(cd "$dir" && pwd)
+found=""
+for name in fury.grp WGR2.grp; do
+    found=$(find "$dir" -maxdepth 1 -iname "$name" -print -quit)
+    [[ -n $found ]] && break
+done
+case "$(basename "${found:-none}" | tr '[:upper:]' '[:lower:]')" in
+    fury.grp) game=(-j "$dir" -j "$data/games/fury") ;;
+    wgr2.grp) game=(-j "$dir" -j "$dir/WGR2" -j "$data/games/demonthrone") ;;   # its scripts include from WGR2/
+    *) echo "play-game: no supported game in $dir (Ion Fury: fury.grp, Demon Throne: WGR2.grp)" >&2; exit 2 ;;
+esac
+other_game=1
+run "$mode" "${game[@]}" -gamegrp "$(basename "$found")" "$@"
 ''')
 SH_JOIN_ANY = sh_script(r'''# ./join.sh HOST[:PORT] [vr|desktop]   join a multiplayer server (default port 23513)
 server=${1:?usage: join.sh HOST[:PORT] [vr|desktop]}; mode=${2:-vr}; shift $(( $# >= 2 ? 2 : 1 ))
@@ -262,7 +289,7 @@ set "ARGS=!ARGS! "%~1""
 shift
 goto collect
 :collected
-call :voxel
+if not defined OTHERGAME call :voxel
 if /i "%MODE%"=="vr" (set "EDUKE32_XR=play") else (set "EDUKE32_XR=")
 rem Hit Feedback mod (extra blood and sparks on hits): set EDUKE32_VR_HITFEEDBACK=0 to leave it out.
 set "MODS="
@@ -271,6 +298,12 @@ rem Personal bundles carry data\local\duke3d (the money wad cut from your GRP); 
 set "LOCALDATA="
 if exist "!DATA!\local\duke3d\vr-local.def" set LOCALDATA=-j "!DATA!\local\duke3d" -mh vr-local.def
 set "PACK="
+rem Another EDuke32 game (play-game.bat) uses its own art: no Duke model sets or Duke mods.
+if defined OTHERGAME (
+    set "MODS="
+    set "LOCALDATA="
+    set "PACK=-vrpack none"
+)
 :again
 type nul > "!EDUKE32_XR_RESTART_REQUEST!"
 "!EXE!" -j "!DATA!" !LOCALDATA! !MODS! !PACK! -nosetup !XARGS! !ARGS!
@@ -346,6 +379,20 @@ goto rest
 :restdone
 set "XARGS=!GRP!"
 call :run %M% !REST!
+''')
+BAT_GAME = bat(r'''rem play-game.bat GAME_FOLDER [vr|desktop]   another EDuke32 game you own, from its install folder:
+rem   Ion Fury (fury.grp) or Demon Throne (WGR2.grp). Its own HUD, menus and art; VR weapon and gadget
+rem   wheels from data\games\.
+set "G=%~1"
+set "M=%~2"
+if "%M%"=="" set "M=vr"
+if "!G!"=="" (echo usage: play-game.bat GAME_FOLDER [vr^|desktop] & exit /b 2)
+set "XARGS="
+if exist "!G!\fury.grp" set XARGS=-j "!G!" -j "!DATA!\games\fury" -gamegrp fury.grp
+if exist "!G!\WGR2.grp" set XARGS=-j "!G!" -j "!G!\WGR2" -j "!DATA!\games\demonthrone" -gamegrp WGR2.grp
+if not defined XARGS (echo play-game: no supported game in !G! ^(Ion Fury: fury.grp, Demon Throne: WGR2.grp^) & exit /b 2)
+set "OTHERGAME=1"
+call :run %M%
 ''')
 BAT_JOIN_ANY = bat(r'''rem join.bat HOST[:PORT] [vr|desktop]   join a multiplayer server (default port 23513)
 set "S=%~1"
@@ -538,6 +585,7 @@ def main():
     for pack in PACKS:
         copy_pack(args.packs / pack, data / 'vrpacks' / pack)
     copy_mods(data / 'mods')
+    copy_games(data / 'games')
     local = data / 'local/duke3d'
     local.mkdir(parents=True)
     sys.path.insert(0, str(HERE))
@@ -568,6 +616,8 @@ def main():
     # Scripts.
     write(out / 'play.sh', SH_PLAY, True)
     write(out / 'play-expansion.sh', SH_EXPANSION, True)
+    write(out / 'play-game.sh', SH_GAME, True)
+    write(out / 'play-game.bat', BAT_GAME, crlf=True)
     for mode in ('vr', 'desktop'):
         write(out / f'join-marmot-{mode}.sh', SH_JOIN.replace('{mode}', mode).replace('{server}', SERVER), True)
         write(out / f'join-marmot-{mode}.bat', BAT_JOIN.replace('{mode}', mode).replace('{server}', SERVER), crlf=True)

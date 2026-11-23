@@ -155,6 +155,7 @@ def tree(root, version, platform, binary, windir, release, arm64dir=None):
     for name in BUILDER_ASSETS:
         shutil.copytree(release / 'duke-vr-assets' / name, builder / 'duke-vr-assets' / name)
     mpb.copy_mods(data / 'mods')
+    mpb.copy_games(data / 'games')
     (data / 'grp').mkdir(parents=True)
     (data / 'grp/PUT DUKE3D.GRP HERE.txt').write_text('Optional: put your DUKE3D.GRP here (else an installed copy is found).\n')
     mpb.write(out / 'VERSION', version + '\n')
@@ -164,6 +165,7 @@ def tree(root, version, platform, binary, windir, release, arm64dir=None):
         else:
             shutil.copytree(arm64dir, out / 'linux-arm64')
         mpb.write(out / 'play.sh', mpb.SH_PLAY, True)
+        mpb.write(out / 'play-game.sh', mpb.SH_GAME, True)
         mpb.write(out / 'join.sh', mpb.SH_JOIN_ANY, True)
         mpb.write(out / 'install.sh', mpb.SH_INSTALL, True)
         mpb.write(out / 'update.sh', mpb.SH_UPDATE, True)
@@ -177,6 +179,7 @@ def tree(root, version, platform, binary, windir, release, arm64dir=None):
     else:
         mpb.copy_windows_build(windir, out / 'windows')
         mpb.write(out / 'play.bat', mpb.BAT_PLAY, crlf=True)
+        mpb.write(out / 'play-game.bat', mpb.BAT_GAME, crlf=True)
         mpb.write(out / 'join.bat', mpb.BAT_JOIN_ANY, crlf=True)
         mpb.write(out / 'install.ps1', mpb.PS_INSTALL, crlf=True)
         mpb.write(out / 'update.ps1', mpb.PS_UPDATE, crlf=True)

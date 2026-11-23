@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--timeout', default=580, type=int)
     parser.add_argument('--switches', type=int, default=24)
     parser.add_argument('--pack', default='original-lowres', help='model pack (launcher --pack)')
+    parser.add_argument('--crosshair-output', type=Path, help='EDUKE32_XR_CROSSHAIR_OUTPUT prefix (crosshair diagnostic capture)')
     args = parser.parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
     lab = Path(tempfile.mkdtemp(prefix='aa-weapons-', dir=args.work_dir.resolve()))
@@ -45,6 +46,8 @@ def main():
                EDUKE32_XR_TEST_SHOTS='1', EDUKE32_XR_TEST_PVP='1',
                EDUKE32_XR_CAPTURE_REQUEST=str(capture), EDUKE32_XR_CONSOLE_REQUEST=str(console),
                XDG_DATA_HOME=str(lab / 'data'))
+    if args.crosshair_output:
+        env.update(EDUKE32_XR_CROSSHAIR_OUTPUT=str(args.crosshair_output), EDUKE32_XR_CROSSHAIR_FRAME='400')
     launcher = Path(__file__).resolve().parents[2] / 'package/vr/eduke32-vr-play'
     command = [str(launcher), '--no-voxel-build', '--binary', str(args.binary.resolve()), '--aa', str(args.aa_root.resolve()), '--pack', args.pack, '--',
                '-usecwd', '-nosetup', '-noautoload', '-nologo', '-ns', '-nm',

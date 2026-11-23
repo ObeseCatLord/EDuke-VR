@@ -22,7 +22,8 @@ game data is included.
 - Weapon and gadget wheels, and a wrist HUD.
 - Duke's full 3D body, hands and weapons, made from Voxel Duke (see below).
 - Snap or smooth turning and room-scale movement.
-- Supports most EDuke32 mods, including Alien Armageddon and Voxel Duke
+- Supports most EDuke32 mods, including Alien Armageddon and Voxel Duke, and the games Ion Fury
+  and Demon Throne.
 - Windows, Linux and Steam Frame.
 
 ## Installation
@@ -45,6 +46,18 @@ Downloads). The next time you start the game it builds them once, which takes ab
 and the game world becomes voxels too. It needs [Python 3](https://www.python.org/downloads/) with
 numpy, scipy and Pillow (`pip install numpy scipy pillow`). Without it you play with Duke's
 original sprites.
+
+## Other EDuke32 games
+
+Ion Fury and Demon Throne also play in VR, with their own HUD, menus and weapons. Their HUD goes
+on your wrists, the weapon wheel shows their weapons, and your shots leave from your hand. Run them
+from the game's install folder:
+
+```
+./play-game.sh "/path/to/Ion Fury" vr          play-game.bat "C:\Games\Ion Fury" vr
+```
+
+Use `desktop` instead of `vr` to play on a normal screen. Support for AMC Squad is in progress.
 
 ## Co-op
 
@@ -69,7 +82,8 @@ on with `mp_friendlyfire 1` on the server.
 | Menu button | Menu |
 
 On Index controllers, rest your thumb on a trackpad for the wheels. VR options are under
-**Options > VR Setup**. Everything else, including other controllers, multiplayer servers and model
+**Options > VR Setup**, including **HUD: On wrists / In front** to show the whole HUD in front of
+you instead of on your wrists. Everything else, including other controllers, multiplayer servers and model
 sets, is in [docs/vr/PLAYING.md](docs/vr/PLAYING.md).
 
 ## Building from source

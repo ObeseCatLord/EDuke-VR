@@ -161,7 +161,7 @@ is only the default until you choose one in the menu; `--pack NAME` overrides fo
 | `EDUKE32_XR_PIXELATED` | `1` | unfiltered world ART; model skins nearest up close, mipmapped at a distance |
 | `EDUKE32_XR_WEAPON_WHEEL` | `1` | weapon wheel and gadget wheel |
 | `EDUKE32_XR_ALWAYS_RUN` | `1` | always run; the right grip walks |
-| `EDUKE32_XR_WRIST_HUD` | `1` | status bar as two watches: health/armour on the left wrist, ammo/items on the right |
+| `EDUKE32_XR_WRIST_HUD` | `1` | status bar as two watches: health/armour on the left wrist, ammo/items on the right (VR Setup **HUD: In front** turns it off) |
 | `EDUKE32_XR_BODY_TILE` | unset | `1405` shows the third-person Duke model as your first-person body (head/arms hidden) |
 | `EDUKE32_XR_RETRY` | `1` | restart a stopped XR session (1, 2, 4, 8, 16 s backoff, 8 attempts); a held-model receipt mismatch drops one frame instead of stopping |
 
@@ -256,6 +256,32 @@ preset): turn your **left** wrist toward you to read health and armour, your
 In multiplayer the mic state (`MIC READY` / `MIC LIVE`) and who is talking sit on
 the left watch, just above health. Game messages and menus stay on the panel in
 front of you.
+
+VR Setup **HUD** (`vr_hudmode`) switches between **On wrists** (default) and **In front**, which
+keeps the whole status bar on the panel in front of you, for players who prefer it and for mods
+whose HUD does not split well onto the wrists.
+
+## Other EDuke32 games (Ion Fury, Demon Throne)
+
+`play-game.sh GAME_FOLDER [vr|desktop]` (Windows: `play-game.bat`), or `eduke32-vr-play --game
+GAME_FOLDER` from source, runs another game built on EDuke32 from its own install folder: Ion Fury
+(`fury.grp`) and Demon Throne (`WGR2.grp`). The game keeps its own scripts, HUD, menus and art; the
+Duke model sets and the Hit Feedback mod are left out. In VR:
+
+- Weapons are held as cards from the game's own art, and their shots (the game's own projectiles)
+  leave from your hand.
+- The HUD is split onto the wrists: Ion Fury's (drawn in its status bar event) by screen half,
+  Demon Throne's (drawn with the rest of its screen) from the bottom band of the screen, while its
+  messages and pictures stay in front.
+- The weapon and gadget wheels show the game's own weapons and items, from a VR game profile,
+  `vrgame.txt` (in `data/games/NAME/`): weapon slots with their icons and keys, per-character
+  arsenals, several weapons sharing one slot (up to 24 on the wheel), usable items and where the HUD
+  is drawn. The format is described at the top of `gameProfile()` in `source/duke3d/src/vr.cpp`;
+  a mod or game can ship its own `vrgame.txt` the same way.
+- Its own crosshair is placed where your hand points.
+
+AMC Squad needs engine changes of its own (a larger tile range and new script commands) and is not
+supported yet.
 
 ## Menus
 
