@@ -197,7 +197,7 @@ void A_RadiusDamageObject_Internal(int const spriteNum, int const otherSprite, i
 
         dmgActor.htang = getangle(pOther->x - pSprite->x, pOther->y - pSprite->y);
 
-        if ((pOther->extra > 0 && ((A_CheckSpriteFlags(spriteNum, SFLAG_PROJECTILE) && SpriteProjectile[spriteNum].workslike & PROJECTILE_RADIUS_PICNUM)
+        if ((pOther->extra > 0 && ((A_CheckSpriteFlags(spriteNum, SFLAG_PROJECTILE) && SpriteProjectile[spriteNum].workslike & PROJECTILE_RADIUS_PICNUM_MASK)
 #ifndef EDUKE32_STANDALONE
             || pSprite->picnum == RPG
 #endif
@@ -599,6 +599,11 @@ int A_GetClipdist(int spriteNum)
     {
         if (pSprite->statnum == STAT_PROJECTILE)
         {
+#if defined AMC_BUILD && !defined EDUKE32_STANDALONE
+            if (!FURY && pSprite->picnum == SHRINKSPARK)
+                clipDist = 8;
+            else
+#endif
             if ((SpriteProjectile[spriteNum].workslike & PROJECTILE_REALCLIPDIST) == 0)
                 clipDist = 16;
         }
@@ -660,7 +665,19 @@ int32_t A_MoveSpriteClipdist(int32_t spriteNum, vec3_t const &change, uint32_t c
     spriteheightofs(spriteNum, &diffZ, 1);
 
     if (pSprite->statnum == STAT_PROJECTILE)
+    {
+#if defined AMC_BUILD && !defined EDUKE32_STANDALONE
+        if (!FURY && pSprite->picnum == SHRINKSPARK)
+        {
+            int32_t oldZ = pSprite->z;
+            pSprite->z -= 2 * tilesiz[pSprite->picnum].y * pSprite->yrepeat;
+            returnValue = clipmovex(&pSprite->xyz, &newSectnum, change.x << 13, change.y << 13, clipDist, ZOFFSET6, ZOFFSET6, clipType, 1);
+            pSprite->z = oldZ;
+        }
+        else
+#endif
         returnValue = clipmovex(&pSprite->xyz, &newSectnum, change.x << 13, change.y << 13, clipDist, diffZ >> 3, diffZ >> 3, clipType, 1);
+    }
     else
     {
         pSprite->z -= diffZ >> 1;
@@ -855,7 +872,7 @@ void A_AddToDeleteQueue(int spriteNum)
     g_spriteDeleteQueuePos = (g_spriteDeleteQueuePos+1)%g_deleteQueueSize;
 }
 
-void A_SpawnMultiple(int spriteNum, int tileNum, int spawnCnt)
+void A_SpawnMultiple(int spriteNum, picnum32_t tileNum, int spawnCnt)
 {
     auto const pSprite = &sprite[spriteNum];
 
@@ -869,7 +886,7 @@ void A_SpawnMultiple(int spriteNum, int tileNum, int spawnCnt)
 }
 
 #ifndef EDUKE32_STANDALONE
-void A_DoGuts(int spriteNum, int tileNum, int spawnCnt)
+void A_DoGuts(int spriteNum, picnum32_t tileNum, int spawnCnt)
 {
     auto const pSprite = (uspriteptr_t)&sprite[spriteNum];
     vec2_t     repeat  = { 32, 32 };
@@ -1325,6 +1342,11 @@ int A_IncurDamage(int const spriteNum)
             pSprite->owner = pActor->htowner;
 
         pActor->htextra = -1;
+
+#ifdef AMC_BUILD
+        VM_OnEvent(EVENT_POSTACTORDAMAGE, spriteNum, playerNum, playerDist);
+#endif
+
         return pActor->htpicnum;
     }
     else
@@ -1382,7 +1404,12 @@ int A_IncurDamage(int const spriteNum)
 
             default:
             {
+#ifdef AMC_BUILD
+                int const isRPG = (A_CheckSpriteTileFlags(pActor->htpicnum, SFLAG_PROJECTILE) && (g_tile[pActor->htpicnum].proj->workslike & PROJECTILE_RPG)
+                        && (g_tile[pActor->htpicnum].proj->workslike & PROJECTILE_RADIUS_PICNUM_EX));
+#else
                 int const isRPG = (A_CheckSpriteTileFlags(pActor->htpicnum, SFLAG_PROJECTILE) && (g_tile[pActor->htpicnum].proj->workslike & PROJECTILE_RPG));
+#endif
                 P_Nudge(playerNum, spriteNum, 1 << isRPG);
                 break;
             }
@@ -1739,7 +1766,7 @@ ACTOR_STATIC void G_MoveFX(void)
                     T1(spriteNum) = 0;
                 }
             }
-            else if (pSprite->lotag < 999 && pSprite->lotag && S_SoundIsValid(pSprite->lotag) && (unsigned)sector[pSprite->sectnum].lotag < 9 &&  // ST_9_SLIDING_ST_DOOR
+            else if (pSprite->lotag < 999 && pSprite->lotag && S_SoundIsDefinedAMC(pSprite->lotag) && (unsigned)sector[pSprite->sectnum].lotag < 9 &&  // ST_9_SLIDING_ST_DOOR
                          ud.config.AmbienceToggle && sector[SECT(spriteNum)].floorz != sector[SECT(spriteNum)].ceilingz)
             {
                 if (g_sounds[pSprite->lotag]->flags & SF_MSFX)
@@ -1836,7 +1863,11 @@ ACTOR_STATIC void G_MoveFallers(void)
 
             if ((j = A_IncurDamage(spriteNum)) >= 0)
             {
-                if (j == FIREEXT || j == RPG || j == RADIUSEXPLOSION || j == SEENINE || j == OOZFILTER)
+                if (j == FIREEXT || j == RPG || j == RADIUSEXPLOSION || j == SEENINE || j == OOZFILTER
+#ifdef AMC_BUILD
+                        || ((g_tile[j].flags & SFLAG_PROJECTILE) && (g_tile[j].proj->workslike & PROJECTILE_RPG) && (g_tile[j].proj->workslike & PROJECTILE_RADIUS_PICNUM_EX))
+#endif
+                   )
                 {
                     if (pSprite->extra <= 0)
                     {
@@ -2380,8 +2411,16 @@ ACTOR_STATIC void G_MoveStandables(void)
 
                 int const dmgTile = A_IncurDamage(spriteNum);
 
+#ifdef AMC_BUILD
+                if (dmgTile < 0 || dmgTile >= MAXTILES)
+#else
                 if (dmgTile < 0)
+#endif
                     goto crack_default;
+#ifdef AMC_BUILD
+                if ((g_tile[dmgTile].flags & SFLAG_PROJECTILE) && (g_tile[dmgTile].proj->workslike & PROJECTILE_RPG) && (g_tile[dmgTile].proj->workslike & PROJECTILE_RADIUS_PICNUM_EX))
+                    goto radius_picnum_ex;
+#endif
 
                 switch (tileGetMapping(dmgTile))
                 {
@@ -2390,6 +2429,9 @@ ACTOR_STATIC void G_MoveStandables(void)
                     case RADIUSEXPLOSION__:
                     case SEENINE__:
                     case OOZFILTER__:
+#ifdef AMC_BUILD
+radius_picnum_ex:
+#endif
                         for (SPRITES_OF(STAT_STANDABLE, j))
                         {
                             if (pSprite->hitag == sprite[j].hitag &&
@@ -3932,7 +3974,7 @@ static void P_FinishWaterChange(int const playerNum, DukePlayer_t * const pPlaye
 // octabrains would be transported by SE7 (both water and normal) only if dead.
 static int A_CheckNonTeleporting(int const spriteNum)
 {
-    int const tileNum = sprite[spriteNum].picnum;
+    picnum16_t const tileNum = sprite[spriteNum].picnum;
     return !!(A_CheckSpriteFlags(spriteNum, SFLAG_NOTELEPORT) || tileNum == SHARK || tileNum == COMMANDER || tileNum == OCTABRAIN
               || (tileNum >= GREENSLIME && tileNum <= GREENSLIME + 7));
 }

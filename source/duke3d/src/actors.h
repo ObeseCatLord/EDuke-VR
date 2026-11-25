@@ -391,9 +391,18 @@ enum pflags_t : unsigned int
     PROJECTILE_RPG_IMPACT_DAMAGE = 0x00400000,
 //    PROJECTILE_PENETRATE         = 0x00800000,
     PROJECTILE_HITRADIUS_ADDITIVE  = 0x01000000,
+#ifdef AMC_BUILD
+    PROJECTILE_RADIUS_PICNUM_EX  = 0x40000000,
+#endif
     PROJECTILE_MOVED             = 0x80000000,  // internal flag, do not document
     PROJECTILE_TYPE_MASK         = PROJECTILE_HITSCAN | PROJECTILE_RPG | PROJECTILE_KNEE | PROJECTILE_BLOOD,
 };
+
+#ifdef AMC_BUILD
+#define PROJECTILE_RADIUS_PICNUM_MASK (PROJECTILE_RADIUS_PICNUM | PROJECTILE_RADIUS_PICNUM_EX)
+#else
+#define PROJECTILE_RADIUS_PICNUM_MASK PROJECTILE_RADIUS_PICNUM
+#endif
 
 extern tiledata_t   g_tile[MAXTILES];
 extern actor_t      actor[MAXSPRITES];
@@ -417,14 +426,14 @@ int  A_CheckSwitchTile(int spriteNum);
 int A_IncurDamage(int spriteNum);
 void A_AddToDeleteQueue(int spriteNum);
 void A_DeleteSprite(int spriteNum);
-void A_DoGuts(int spriteNum, int tileNum, int spawnCnt);
+void A_DoGuts(int spriteNum, picnum32_t tileNum, int spawnCnt);
 int A_GetClipdist(int spriteNum);
 void A_MoveCyclers(void);
 void A_MoveDummyPlayers(void);
 void A_MoveSector(int spriteNum);
 void A_PlayAlertSound(int spriteNum);
 void A_RadiusDamage(int spriteNum, int blastRadius, int dmg1, int dmg2, int dmg3, int dmg4);
-void A_SpawnMultiple(int spriteNum, int tileNum, int spawnCnt);
+void A_SpawnMultiple(int spriteNum, picnum32_t tileNum, int spawnCnt);
 
 int  G_SetInterpolation(int32_t *posptr);
 void G_DeleteAllLights(void);
@@ -452,7 +461,7 @@ static FORCE_INLINE void   Sect_SetInterpolation(int sectnum) { Sect_ToggleInter
 #endif
 
 extern int32_t A_MoveSpriteClipdist(int32_t spritenum, vec3_t const &change, uint32_t cliptype, int32_t clipdist);
-ACTOR_INLINE_HEADER int A_CheckEnemyTile(int tileNum);
+ACTOR_INLINE_HEADER int A_CheckEnemyTile(picnum32_t tileNum);
 ACTOR_INLINE_HEADER int A_SetSprite(int spriteNum, uint32_t cliptype);
 ACTOR_INLINE_HEADER int32_t A_MoveSprite(int spriteNum, vec3_t const &change, uint32_t cliptype);
 
@@ -469,7 +478,7 @@ EXTERN_INLINE_HEADER int A_CheckEnemySprite(void const * s);
 
 # if !KRANDDEBUG || (KRANDDEBUG && defined actors_c_)
 
-ACTOR_INLINE int A_CheckEnemyTile(int const tileNum)
+ACTOR_INLINE int A_CheckEnemyTile(picnum32_t const tileNum)
 {
     return ((g_tile[tileNum].flags & (SFLAG_HARDCODED_BADGUY | SFLAG_BADGUY)) != 0);
 }

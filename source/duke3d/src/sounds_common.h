@@ -30,7 +30,11 @@ enum {
     SF_TALK = 4,
     SF_ADULT = 8,
     SF_GLOBAL = 16,
+#ifdef AMC_BUILD
+    SF_NOUWPITCHSHIFT = 32,  // AMC: do not apply the underwater pitch shift
+#else
     SF_ONEINST_INTERNAL = 32,
+#endif
     SF_SPEECH = 64,
 
     SF_DTAG = 128,

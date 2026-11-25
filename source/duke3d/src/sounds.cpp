@@ -549,7 +549,11 @@ void cacheAllSounds(void)
         {
             S_LoadSound(i);
             j += g_sounds[i]->len;
+#ifdef AMC_BUILD
+            if (j >= 1024 * 1024)
+#else
             if (j >= 4 * 1024 * 1024)
+#endif
                 gameHandleEvents(), j = 0;
         }
     }
@@ -597,13 +601,19 @@ int32_t S_DefineSound(int sndidx, const char *name, int minpitch, int maxpitch, 
     snd->minpitch   = clamp(minpitch, INT16_MIN, INT16_MAX);
     snd->maxpitch   = clamp(maxpitch, INT16_MIN, INT16_MAX);
     snd->priority   = priority & 0xFF;
+#ifdef AMC_BUILD
+    snd->flags      = type;
+#else
     snd->flags       = type & ~SF_ONEINST_INTERNAL;
+#endif
     snd->distOffset = clamp(distance, INT16_MIN, INT16_MAX);
     snd->volume     = volume * fix16_one;
     snd->voices     = &nullvoice;
 
+#ifndef AMC_BUILD
     if (snd->flags & SF_LOOP)
         snd->flags |= SF_ONEINST_INTERNAL;
+#endif
 
     return 0;
 }
@@ -828,9 +838,15 @@ int S_PlaySound3D(int num, int spriteNum, const vec3_t& pos)
     if ((sndNum == -1 && num != -1) || !ud.config.SoundToggle || (unsigned)spriteNum >= MAXSPRITES) // check that the user returned -1, but only if -1 wasn't playing already (in which case, warn)
         return -1;
 
+#ifdef AMC_BUILD
+    if (S_SoundIsDefined(sndNum) && g_sounds[sndNum]->ptr == nullptr && g_sounds[sndNum]->filename)
+    {
+        DLOG_F(INFO, "Caching sound #%d (%s)", sndNum, g_sounds[sndNum]->filename);
+#else
     if ((unsigned)sndNum < (unsigned)g_highestSoundIdx && g_sounds[sndNum]->ptr == nullptr && g_sounds[sndNum]->filename)
     {
         LOG_F(WARNING, "Sound #%d (%s) not precached!", sndNum, g_sounds[sndNum]->filename);
+#endif
         S_LoadSound(sndNum);
     }
 
@@ -885,6 +901,10 @@ int S_PlaySound3D(int num, int spriteNum, const vec3_t& pos)
     if (pOther->sound_pitch)
         pitch += pOther->sound_pitch;
 
+#ifdef AMC_BUILD
+    if ((snd->flags & SF_NOUWPITCHSHIFT) == 0)
+#endif
+    {
     if (explosionp)
     {
         if (pOther->cursectnum > -1 && sector[pOther->cursectnum].lotag == ST_2_UNDERWATER)
@@ -901,14 +921,23 @@ int S_PlaySound3D(int num, int spriteNum, const vec3_t& pos)
             && (snd->flags & SF_TALK) == 0)
             pitch = -768;
     }
+    }
 
     if (snd->playing && PN(spriteNum) != MUSICANDSFX)
         S_StopEnvSound(sndNum, spriteNum);
 
     int const repeatp = (snd->flags & SF_LOOP);
 
+#ifdef AMC_BUILD
+    // this replaces the previous SF_ONEINST_INTERNAL flag
+    // do not overlap looping sounds of same type if it originates from a hardcoded effector/activator sprite
+    if (snd->playing && (snd->flags & SF_LOOP) && (PN(spriteNum) == SECTOREFFECTOR || PN(spriteNum) == ACTIVATOR
+                                        || PN(spriteNum) == ACTIVATORLOCKED || PN(spriteNum) == MASTERSWITCH))
+        return -1;
+#else
     if ((snd->flags & (SF_LOOP|SF_ONEINST_INTERNAL)) == (SF_LOOP|SF_ONEINST_INTERNAL) && snd->playing)
         return -1;
+#endif
 
     if (++snd->lock < CACHE1D_LOCKED)
         snd->lock = CACHE1D_LOCKED;
@@ -951,9 +980,15 @@ int S_PlaySound(int num)
     if ((sndnum == -1 && num != -1) || !ud.config.SoundToggle) // check that the user returned -1, but only if -1 wasn't playing already (in which case, warn)
         return -1;
 
+#ifdef AMC_BUILD
+    if (S_SoundIsDefined(sndnum) && g_sounds[sndnum]->ptr == nullptr && g_sounds[sndnum]->filename)
+    {
+        DLOG_F(INFO, "Caching sound #%d (%s)", sndnum, g_sounds[sndnum]->filename);
+#else
     if ((unsigned)sndnum < (unsigned)g_highestSoundIdx && g_sounds[sndnum]->ptr == nullptr && g_sounds[sndnum]->filename)
     {
         LOG_F(WARNING, "Sound #%d (%s) not precached!", sndnum, g_sounds[sndnum]->filename);
+#endif
         S_LoadSound(sndnum);
     }
 
@@ -1011,7 +1046,7 @@ int A_PlaySound(int soundNum, int spriteNum)
 
 void S_StopEnvSound(int soundNum, int spriteNum)
 {
-    if (/*EDUKE32_PREDICT_FALSE*/(!S_SoundIsValid(soundNum)))
+    if (/*EDUKE32_PREDICT_FALSE*/(!S_SoundIsDefinedAMC(soundNum)))
     {
         LOG_F(WARNING, "Invalid sound #%d", soundNum);
         return;
