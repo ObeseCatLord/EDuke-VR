@@ -265,7 +265,7 @@ whose HUD does not split well onto the wrists.
 
 `play-game.sh GAME_FOLDER [vr|desktop]` (Windows: `play-game.bat`), or `eduke32-vr-play --game
 GAME_FOLDER` from source, runs another game built on EDuke32 from its own install folder: Ion Fury
-(`fury.grp`), Demon Throne (`WGR2.grp`) AMC Squad 5.2.2 (`AMCSQUAD.GRP`) and A.W.O.L. v1.3 (`awol.grp`, on the normal engine build; the engine starts it as a standalone game by its CRC, without a Duke add-on and without `DUKE3D.GRP`, and its extra options are in Game Setup). The game keeps its own scripts, HUD, menus and art; the
+(`fury.grp`), Demon Throne (`WGR2.grp`), AMC Squad 5.2.2 (`AMCSQUAD.GRP`) and A.W.O.L. v1.3 (`awol.grp`, on the normal engine build; the engine starts it as a standalone game by its CRC, without a Duke add-on and without `DUKE3D.GRP`, and its extra options are in Game Setup). The game keeps its own scripts, HUD, menus and art; the
 Duke model sets and the Hit Feedback mod are left out. In VR:
 
 - Weapons are held as cards from the game's own art, and their shots (the game's own projectiles)
