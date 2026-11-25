@@ -49,7 +49,8 @@ extern "C" {
 typedef struct
 {
     int16_t qbeg, qend;  // indices into sectq
-    int16_t picnum, next;
+    picnum16_t picnum;
+    int16_t next;
     int32_t maxdist;
 } clipinfo_t;
 

@@ -200,7 +200,7 @@ static fix16_t global100horiz;  // (-100..300)-scale horiz (the one passed to dr
 int32_t enginecompatibilitymode = ENGINE_EDUKE32;
 #endif
 
-classicht_t *tileLoadHigh(int dapicnum)
+classicht_t *tileLoadHigh(picnum32_t dapicnum)
 {
 #ifdef WITHKPLIB
     auto tsiz = tilesiz[dapicnum];
@@ -840,7 +840,14 @@ void yax_tweakpicnums(int32_t bunchnum, int32_t cf, int32_t restore)
     // and after polymer_drawmasks() with restore==1
 
     int32_t i, dastat;
+#ifdef AMC_BUILD
+    // picnums use all 16 bits here, so keep the "polymer tweaked" marker out of the way
+    static int32_t opicnum[2][MAXSECTORS];
+# define OPICNUM_TWEAKED 0x10000
+#else
     static int16_t opicnum[2][MAXSECTORS];
+# define OPICNUM_TWEAKED 0x8000
+#endif
 #ifdef DEBUGGINGAIDS
     static uint8_t expect_restore[2][YAX_MAXBUNCHES];
 
@@ -854,7 +861,7 @@ void yax_tweakpicnums(int32_t bunchnum, int32_t cf, int32_t restore)
         dastat = (SECTORFLD(i,stat, cf)&(128+256));
 
         // only consider non-masked ceilings/floors
-        if (dastat==0 || (restore==1 && opicnum[cf][i]&0x8000))
+        if (dastat==0 || (restore==1 && opicnum[cf][i]&OPICNUM_TWEAKED))
         {
             if (!restore)
             {
@@ -875,7 +882,7 @@ void yax_tweakpicnums(int32_t bunchnum, int32_t cf, int32_t restore)
                 if (!restore)
                 {
                     SECTORFLD(i,stat, cf) |= 128;
-                    opicnum[cf][i] |= 0x8000;
+                    opicnum[cf][i] |= OPICNUM_TWEAKED;
                 }
                 else
                 {
@@ -1552,7 +1559,8 @@ int32_t halfxdim16, midydim16;
 typedef struct
 {
     int32_t sx, sy, z;
-    int16_t a, picnum;
+    int16_t a;
+    picnum16_t picnum;
     int8_t dashade;
     char dapalnum, dastat;
     uint8_t daalpha, dablend;
@@ -1612,7 +1620,7 @@ static vec2_t bakwindowxy1[MAXSETVIEW], bakwindowxy2[MAXSETVIEW];
 #ifdef USE_OPENGL
 static int32_t bakrendmode;
 #endif
-static int32_t baktile;
+static picnum32_t baktile;
 
 #ifdef APPNAME
 char apptitle[256] = APPNAME;
@@ -1797,15 +1805,15 @@ static int get_screen_coords(const vec2_t &p1, const vec2_t &p2,
 }
 
 
-static inline int findUnusedTile(void)
+static inline picnum32_t findUnusedTile(void)
 {
     static int lastUnusedTile = MAXUSERTILES-1;
 
     for (; lastUnusedTile >= 0; --lastUnusedTile)
         if ((tilesiz[lastUnusedTile].x|tilesiz[lastUnusedTile].y) == 0 && !waloff[lastUnusedTile])
-            return lastUnusedTile;
+            return (picnum32_t) lastUnusedTile;
 
-    return -1;
+    return (picnum32_t) -1;
 }
 
 //
@@ -2076,7 +2084,7 @@ static WSHELPER_DECL void calc_vplcinc(uint32_t *vplc, int32_t *vinc, const int3
 # endif
 #endif
 
-intptr_t tileLoadScaled(int const picnum, vec2_16_t *upscale/* = nullptr*/)
+intptr_t tileLoadScaled(picnum32_t const picnum, vec2_16_t *upscale/* = nullptr*/)
 {
     intptr_t bufplc;
 
@@ -2499,7 +2507,7 @@ static void prepwall(int32_t z, uwallptr_t wal)
 //
 // animateoffs (internal)
 //
-int32_t animateoffs(int const tilenum)
+int32_t animateoffs(picnum32_t const tilenum)
 {
     int const animnum = picanm[tilenum].num;
 
@@ -2808,7 +2816,7 @@ static void calc_globalshifts(void)
 }
 
 static int32_t setup_globals_cf1(usectorptr_t sec, int32_t pal, int32_t zd,
-                                 int32_t picnum, int32_t shade, int32_t stat,
+                                 picnum32_t picnum, int32_t shade, int32_t stat,
                                  int32_t xpanning, int32_t ypanning, int32_t x1)
 {
     int32_t i;
@@ -4386,7 +4394,7 @@ static void parascan(char dastat, int32_t bunch)
 
 
 // set orientation, panning, shade, pal; picnum
-static void setup_globals_wall1(uwallptr_t wal, int32_t dapicnum)
+static void setup_globals_wall1(uwallptr_t wal, picnum32_t dapicnum)
 {
     globalorientation = wal->cstat;
 
@@ -5399,7 +5407,7 @@ static void classicDrawVoxel(int32_t dasprx, int32_t daspry, int32_t dasprz, int
 
 
 static void setup_globals_sprite1(tspriteptr_t tspr, usectorptr_t sec,
-                                     int32_t yspan, int32_t yoff, int32_t tilenum,
+                                     int32_t yspan, int32_t yoff, picnum32_t tilenum,
                                      int32_t cstat, int32_t *z1ptr, int32_t *z2ptr,
                                      vec2_16_t upscale)
 {
@@ -5515,8 +5523,9 @@ static void classicDrawSprite(int32_t snum)
 
     auto const sec = (usectorptr_t)&sector[sectnum];
 
-    int32_t cstat=tspr->cstat, tilenum;
+    int32_t cstat=tspr->cstat;
     auto tsprflags = tspr->clipdist;
+    picnum32_t tilenum;
 
     if (!(tsprflags & TSPR_FLAGS_SLAB))
         tileUpdatePicnum(&tspr->picnum, spritenum+32768);
@@ -7875,7 +7884,7 @@ void dorotspr_handle_bit2(int32_t *sxptr, int32_t *syptr, int32_t *z, int32_t da
 // dorotatesprite (internal)
 //
 //JBF 20031206: Thanks to Ken's hunting, s/(rx1|ry1|rx2|ry2)/n\1/ in this function
-static void dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+static void dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                            int8_t dashade, char dapalnum, int32_t dastat, uint8_t daalpha, uint8_t dablend,
                            int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2,
                            int32_t uniqid)
@@ -7911,7 +7920,8 @@ static void dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t
         static struct sm
         {
             vec4_t lerp, goal;
-            int16_t picnum, flags;
+            picnum16_t picnum;
+            int16_t flags;
             ClockTicks clock;
         } smooth[MAXUNIQHUDID];
 #pragma pack(pop)
@@ -9093,7 +9103,7 @@ int32_t rayintersect(int32_t x1, int32_t y1, int32_t z1, int32_t vx, int32_t vy,
 // multi-pskies
 //
 
-psky_t * tileSetupSky(int32_t const tilenum)
+psky_t * tileSetupSky(picnum32_t const tilenum)
 {
     for (bssize_t i = 0; i < pskynummultis; i++)
         if (multipskytile[i] == tilenum)
@@ -9101,7 +9111,7 @@ psky_t * tileSetupSky(int32_t const tilenum)
 
     int32_t const newPskyID = pskynummultis++;
     multipsky = (psky_t *)Xrealloc(multipsky, pskynummultis * sizeof(psky_t));
-    multipskytile = (int32_t *)Xrealloc(multipskytile, pskynummultis * sizeof(int32_t));
+    multipskytile = (picnum32_t *)Xrealloc(multipskytile, pskynummultis * sizeof(picnum32_t));
 
     psky_t * const newPsky = &multipsky[newPskyID];
     Bmemset(newPsky, 0, sizeof(psky_t));
@@ -9315,6 +9325,16 @@ int32_t enginePostInit(void)
 //
 // uninitengine
 //
+#ifdef AMC_BUILD
+static void freeMapArtStrings(const char *, intptr_t key)
+{
+    char** mapartarray = (char**) key;
+    for (int i = 0; i < MAXARTPERMAP; i++)
+        Xfree(mapartarray[i]);
+    Xfree(mapartarray);
+}
+#endif
+
 void engineUnInit(void)
 {
     communityapiShutdown();
@@ -9370,6 +9390,11 @@ void engineUnInit(void)
     DO_FREE_AND_NULL(multipsky);
     DO_FREE_AND_NULL(multipskytile);
     pskynummultis = 0;
+
+#ifdef AMC_BUILD
+    hash_loop(&h_mapartpaths, freeMapArtStrings);
+    hash_free(&h_mapartpaths);
+#endif
 
     DO_FREE_AND_NULL(g_defNamePtr);
 
@@ -9571,10 +9596,10 @@ int32_t renderDrawRoomsQ16(int32_t daposx, int32_t daposy, int32_t daposz,
         auto &w    = wall[i];
         auto &tile = rottile[w.picnum+animateoffs(w.picnum)];
 
-        if (tile.newtile == -1)
+        if (tile.newtile == TILE_NONE)
         {
             tile.newtile = findUnusedTile();
-            Bassert(tile.newtile != -1);
+            Bassert(tile.newtile != TILE_NONE);
 
             rottile[tile.newtile].owner = w.picnum+animateoffs(w.picnum);
 
@@ -9582,7 +9607,7 @@ int32_t renderDrawRoomsQ16(int32_t daposx, int32_t daposy, int32_t daposz,
             tileSetSize(tile.newtile, siz.y, siz.x);
         }
 
-        if (tile.newtile != -1 && !waloff[tile.newtile])
+        if (tile.newtile != TILE_NONE && !waloff[tile.newtile])
             tileLoad(tile.newtile);
     }
 
@@ -11102,6 +11127,32 @@ static void check_sprite(int32_t i)
     }
 }
 
+#ifdef AMC_BUILD
+// AMC-specific: These flags ensure that the map cannot be loaded with an incompatible build.
+static int32_t amc_strip_mapversion_flags(int32_t version)
+{
+    if (version & MAPVERSION_FLAG_AMC5_0)
+        LOG_F(INFO, "Map uses AMC Squad v5.0 format (%d > MAXTILES >= %d).", MAXTILES, AMC4_5_MAXTILES);
+    else if (version & MAPVERSION_FLAG_AMC4_5)
+        LOG_F(INFO, "Map uses AMC Squad v4.5 format (%d > MAXTILES >= %d).", AMC4_5_MAXTILES, AMC4_0_MAXTILES);
+    else if (version & MAPVERSION_FLAG_AMC4_0)
+        LOG_F(INFO, "Map uses AMC Squad v3.5 format (%d > MAXTILES >= %d).", AMC4_0_MAXTILES, EDUKE32_MAXTILES);
+
+    return version & ~(MAPVERSION_FLAG_AMC5_0 | MAPVERSION_FLAG_AMC4_5 | MAPVERSION_FLAG_AMC4_0);
+}
+
+static int32_t find_max_sprite_picnum(void)
+{
+    int j, maxpicnum = 0;
+    for (j=0; j<MAXSPRITES; j++)
+    {
+        if (sprite[j].statnum != MAXSTATUS && sprite[j].picnum > maxpicnum)
+            maxpicnum = sprite[j].picnum;
+    }
+    return maxpicnum;
+}
+#endif
+
 #ifdef NEW_MAP_FORMAT
 // Returns the number of sprites, or <0 on error.
 int32_t (*loadboard_maptext)(buildvfs_kfd fil, vec3_t *dapos, int16_t *daang, int16_t *dacursectnum);
@@ -11150,6 +11201,10 @@ int32_t engineLoadBoard(const char *filename, char flags, vec3_t *dapos, int16_t
         {
             // Not map-text. We expect a little-endian version int now.
             mapversion = B_LITTLE32(mapversion);
+#ifdef AMC_BUILD
+            // Remove any mapversion flags before processing further.
+            mapversion = amc_strip_mapversion_flags(mapversion);
+#endif
 #ifdef YAX_ENABLE
             ok |= (mapversion==9);
 #endif
@@ -11712,7 +11767,20 @@ int32_t saveboard(const char *filename, const vec3_t *dapos, int16_t daang, int1
         return -1;
     }
 
-    tl = B_LITTLE32(mapversion);    buildvfs_write(fil,&tl,4);
+#ifdef AMC_BUILD
+    {
+        // if highest tilenum is greater than MAXTILES of prior versions, flag stored mapversion
+        int32_t const maxpicnum = find_max_sprite_picnum();
+        int32_t flaggedversion = mapversion;
+        if (maxpicnum >= EDUKE32_MAXTILES) flaggedversion |= MAPVERSION_FLAG_AMC4_0;
+        if (maxpicnum >= AMC4_0_MAXTILES) flaggedversion |= MAPVERSION_FLAG_AMC4_5;
+        if (maxpicnum >= AMC4_5_MAXTILES) flaggedversion |= MAPVERSION_FLAG_AMC5_0;
+        tl = B_LITTLE32(flaggedversion);
+    }
+#else
+    tl = B_LITTLE32(mapversion);
+#endif
+    buildvfs_write(fil,&tl,4);
 
     tl = B_LITTLE32(dapos->x);      buildvfs_write(fil,&tl,4);
     tl = B_LITTLE32(dapos->y);      buildvfs_write(fil,&tl,4);
@@ -12373,7 +12441,7 @@ void vox_clearid(int32_t const voxindex)
     // TODO: nextvoxid
 }
 
-void vox_undefine(int32_t const tile)
+void vox_undefine(picnum32_t const tile)
 {
     vox_clearid(tiletovox[tile]);
     tiletovox[tile] = -1;
@@ -13870,7 +13938,7 @@ void renderFlushPerms(void)
 //
 // rotatesprite
 //
-void rotatesprite_(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+void rotatesprite_(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                    int8_t dashade, char dapalnum, int32_t dastat, uint8_t daalpha, uint8_t dablend,
                    int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2)
 {
@@ -14055,7 +14123,7 @@ void videoClearScreen(int32_t dacol)
 //
 // setviewtotile
 //
-void renderSetTarget(int16_t tilenume, int32_t xsiz, int32_t ysiz)
+void renderSetTarget(picnum16_t tilenume, int32_t xsiz, int32_t ysiz)
 {
     if (setviewcnt >= MAXSETVIEW-1)
         return;
@@ -14131,7 +14199,7 @@ void renderRestoreTarget(void)
 //
 // squarerotatetile
 //
-void squarerotatetile(int16_t tilenume)
+void squarerotatetile(picnum16_t tilenume)
 {
     int const siz = tilesiz[tilenume].x;
 
@@ -15108,7 +15176,7 @@ void renderSetRollAngle(int32_t rolla)
 //         bit 7: ignored (67% translucence, using clamping)
 //       clamping is for sprites, repeating is for walls
 //
-void tileInvalidate(int16_t tilenume, int32_t pal, int32_t how)
+void tileInvalidate(picnum16_t tilenume, int32_t pal, int32_t how)
 {
 #if !defined USE_OPENGL
     UNREFERENCED_PARAMETER(tilenume);

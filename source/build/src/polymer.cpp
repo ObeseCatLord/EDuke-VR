@@ -1437,7 +1437,7 @@ void                polymer_editorpick(void)
     searchit = 0;
 }
 
-void                polymer_inb4rotatesprite(int16_t tilenum, char pal, int8_t shade, int32_t method)
+void                polymer_inb4rotatesprite(picnum16_t tilenum, char pal, int8_t shade, int32_t method)
 {
     _prmaterial     rotatespritematerial;
 
@@ -1684,7 +1684,7 @@ int16_t             polymer_addlight(_prlight* light)
 
         // get the texture handle for the lightmap
         if (light->tilenum > 0) {
-            int16_t     picnum = light->tilenum;
+            picnum16_t  picnum = light->tilenum;
             pthtyp*     pth;
 
             tileUpdatePicnum(&picnum, 0);
@@ -2247,7 +2247,7 @@ static void         polymer_emptybuckets(void)
 
 static hashtable_t h_buckets      = { 2048, NULL };
 
-static _prbucket*   polymer_findbucket(int16_t tilenum, char pal)
+static _prbucket*   polymer_findbucket(picnum16_t tilenum, char pal)
 {
     char propstr[16];
 
@@ -2693,10 +2693,10 @@ static int32_t      polymer_updatesector(int16_t sectnum)
     else if (sec->visibility != s->visibility)
         wallinvalidate = 1;
 
-    int16_t floorpicnum = sec->floorpicnum;
+    picnum16_t floorpicnum = sec->floorpicnum;
     tileUpdatePicnum(&floorpicnum, sectnum);
 
-    int16_t ceilingpicnum = sec->ceilingpicnum;
+    picnum16_t ceilingpicnum = sec->ceilingpicnum;
     tileUpdatePicnum(&ceilingpicnum, sectnum);
 
     if ((!s->flags.empty) && (!needfloor) &&
@@ -2757,7 +2757,7 @@ static int32_t      polymer_updatesector(int16_t sectnum)
 
         uint16_t curstat   = sec->floorstat;
         auto     curbuffer = s->floor.buffer;
-        int16_t  curpicnum = floorpicnum;
+        picnum16_t curpicnum = floorpicnum;
         float currelscalefactor = relscalefactorfloor;
         uint8_t curxpanning = sec->floorxpanning;
         uint8_t  curypanning = sec->floorypanning;
@@ -3188,7 +3188,7 @@ static int32_t      polymer_initwall(int16_t wallnum)
 // TODO: r_npotwallmode. Needs polymost_is_npotmode() handling among others.
 #define DAMETH_WALL 0
 
-static float calc_ypancoef(char curypanning, int16_t curpicnum, int32_t dopancor)
+static float calc_ypancoef(char curypanning, picnum16_t curpicnum, int32_t dopancor)
 {
 #ifdef NEW_MAP_FORMAT
     if (g_loadedMapVersion >= 10)
@@ -3218,7 +3218,8 @@ static float calc_ypancoef(char curypanning, int16_t curpicnum, int32_t dopancor
 
 static void         polymer_updatewall(int16_t wallnum)
 {
-    int16_t         nwallnum, nnwallnum, curpicnum, wallpicnum, walloverpicnum, nwallpicnum;
+    int16_t         nwallnum, nnwallnum;
+    picnum16_t      curpicnum, wallpicnum, walloverpicnum, nwallpicnum;
     char            curxpanning, curypanning, underwall, overwall, curpal;
     int8_t          curshade;
     walltype        *wal;
@@ -3279,7 +3280,7 @@ static void         polymer_updatewall(int16_t wallnum)
     tileUpdatePicnum(&wallpicnum, wallnum+16384);
 
     walloverpicnum = wal->overpicnum;
-    if (walloverpicnum>=0)
+    if (PICNUM_USABLE(walloverpicnum))
         tileUpdatePicnum(&walloverpicnum, wallnum+16384);
 
     if (nwallnum >= 0 && nwallnum < numwalls)
@@ -4185,7 +4186,7 @@ void                polymer_updatesprite(int32_t snum)
 }
 
 // SKIES
-static void polymer_getsky(int16_t picnum, uint8_t pal, int8_t shade)
+static void polymer_getsky(picnum16_t picnum, uint8_t pal, int8_t shade)
 {
     int32_t horizfrac;
 
@@ -4212,7 +4213,7 @@ static void polymer_getsky(int16_t picnum, uint8_t pal, int8_t shade)
     }
 }
 
-void         polymer_drawsky(int16_t tilenum, char palnum, int8_t shade)
+void         polymer_drawsky(picnum16_t tilenum, char palnum, int8_t shade)
 {
     float           pos[3];
     pthtyp*         pth;
@@ -4262,7 +4263,7 @@ static inline void polymer_drawartskyquad(int32_t p1, int32_t p2, GLfloat height
     polymost_finishBufferedDrawing(GL_QUADS);
 }
 
-static void         polymer_drawartsky(int16_t tilenum, char palnum, int8_t shade)
+static void         polymer_drawartsky(picnum16_t tilenum, char palnum, int8_t shade)
 {
     pthtyp*         pth;
     //GLuint          glpics[PSKYOFF_MAX];
@@ -4278,7 +4279,7 @@ static void         polymer_drawartsky(int16_t tilenum, char palnum, int8_t shad
     i = 0;
     while (i < numskytiles)
     {
-        int16_t picnum = tilenum + dapskyoff[i];
+        picnum16_t picnum = tilenum + dapskyoff[i];
         // Prevent oob by bad user input:
         if (picnum >= MAXTILES)
             picnum = MAXTILES-1;
@@ -4338,7 +4339,7 @@ static void         polymer_drawartsky(int16_t tilenum, char palnum, int8_t shad
     buildgl_setDisabled(GL_TEXTURE_2D);
 }
 
-static void         polymer_drawskybox(int16_t tilenum, char palnum, int8_t shade)
+static void         polymer_drawskybox(picnum16_t tilenum, char palnum, int8_t shade)
 {
     pthtyp*         pth;
     int32_t         i;
@@ -4903,7 +4904,7 @@ static void         polymer_getscratchmaterial(_prmaterial* material)
     material->mdspritespace = GL_FALSE;
 }
 
-static void         polymer_setupartmap(int16_t tilenum, char pal, int32_t meth)
+static void         polymer_setupartmap(picnum16_t tilenum, char pal, int32_t meth)
 {
     if (!prartmaps[tilenum]) {
         char *tilebuffer = (char *) waloff[tilenum];
@@ -4983,7 +4984,7 @@ static void         polymer_setupartmap(int16_t tilenum, char pal, int32_t meth)
     }
 }
 
-static _prbucket*   polymer_getbuildmaterial(_prmaterial* material, int16_t tilenum, char pal, int8_t shade, int8_t vis, int32_t cmeth)
+static _prbucket*   polymer_getbuildmaterial(_prmaterial* material, picnum16_t tilenum, char pal, int8_t shade, int8_t vis, int32_t cmeth)
 {
     // find corresponding bucket; XXX key that with pr_buckets later, need to be tied to restartvid
     _prbucket *bucketptr = polymer_findbucket(tilenum, pal);
@@ -5820,7 +5821,7 @@ static void         polymer_updatelights(void)
             // get the texture handle for the lightmap
             if (light->radius && light->tilenum > 0)
             {
-                int16_t     picnum = light->tilenum;
+                picnum16_t  picnum = light->tilenum;
                 pthtyp*     pth;
 
                 tileUpdatePicnum(&picnum, 0);

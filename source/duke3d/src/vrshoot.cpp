@@ -263,7 +263,12 @@ template <typename Visit> void visitBodyPose(VRBodyPose &p, Visit &&visit)
     for (auto &v:p.headUp) visit.s16(v);
     auto frame=[&](VRBodyFrame &f) { for (auto &v:f.root) visit.s16(v); for (auto &v:f.axes) visit.s16(v); };
     frame(p.handFrame[0]); frame(p.handFrame[1]);
-    visit.s16(p.weaponTile); visit.s16(p.weaponFrame); visit.s16(p.weaponNextFrame); visit.u8(p.weaponLerp);
+#ifdef AMC_BUILD
+    visit.u16(p.weaponTile);
+#else
+    visit.s16(p.weaponTile);
+#endif
+    visit.s16(p.weaponFrame); visit.s16(p.weaponNextFrame); visit.u8(p.weaponLerp);
     frame(p.weapon);
 }
 struct PoseWriter
@@ -295,7 +300,7 @@ bool G_VRDecodeBodyPose(uint8_t const *bytes, size_t size, VRBodyPose &pose)
     if (decoded.flags & ~(VRBodyHead|VRBodyWeapon)) return false;
     if (decoded.hand[0]>=VRHandKinds || decoded.hand[1]>=VRHandKinds) return false;
     if ((decoded.flags & VRBodyHead) && (!unitVector(decoded.headForward) || !unitVector(decoded.headUp))) return false;
-    if ((decoded.flags & VRBodyWeapon) && (decoded.weaponTile<0 || decoded.weaponTile>=MAXTILES
+    if ((decoded.flags & VRBodyWeapon) && ((unsigned)decoded.weaponTile>=MAXTILES
         || decoded.weaponFrame<0 || decoded.weaponNextFrame<0)) return false;
     pose=decoded; return true;
 }

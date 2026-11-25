@@ -332,6 +332,7 @@ CPLUSPLUS := 1
 # Feature toggles
 STANDALONE ?= 0
 NETCODE ?= 1
+AMCSQUAD ?= 0
 USE_OPENXR ?= 0
 STARTUP_WINDOW ?= 1
 RETAIL_MENU ?= 0
@@ -848,6 +849,9 @@ ifneq (0,$(USE_OPENGL))
 endif
 ifneq (0,$(POLYMER))
     COMPILERFLAGS += -DPOLYMER
+endif
+ifneq (0,$(AMCSQUAD))
+    COMPILERFLAGS += -DAMC_BUILD
 endif
 
 

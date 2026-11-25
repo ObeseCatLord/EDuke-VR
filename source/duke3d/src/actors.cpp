@@ -1302,7 +1302,7 @@ int A_IncurDamage(int const spriteNum)
     auto const pActor  = &actor[spriteNum];
 
     // dmg->picnum check: safety, since it might have been set to <0 from CON.
-    if (pActor->htextra < 0 || pSprite->extra < 0 || pActor->htpicnum < 0)
+    if (pActor->htextra < 0 || pSprite->extra < 0 || !PICNUM_USABLE(pActor->htpicnum))
     {
         pActor->htextra = -1;
         return -1;
@@ -8958,7 +8958,7 @@ static void A_DoLight(int spriteNum)
 
         for (int ii=0; ii<2; ii++)
         {
-            if (pSprite->picnum <= 0)  // oob safety
+            if (PICNUM_ZERO_OR_BAD(pSprite->picnum))  // oob safety
                 break;
 
             switch (tileGetMapping(pSprite->picnum-1+ii))

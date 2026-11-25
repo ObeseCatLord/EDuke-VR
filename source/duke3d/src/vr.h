@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 #include <cstdint>
+#include "vrtiles.h"
 // Stock weapons other than the calibrated pistol use one generic held MD3 per
 // weapon on reserved tile XRHeldModelTileBase+weapon (no world ART exists).
 // Flat builds use them too, for weapons held by 3D player models.
-constexpr int32_t XRHeldModelTileBase=30020;
+constexpr int32_t XRHeldModelTileBase=XRTile(30020);
 #ifdef USE_OPENXR
 #include "player.h"
 // Called once by each ordinary native display loop, before controls and after
@@ -47,6 +48,12 @@ bool G_XRTrackedPitchOwner();
 int G_XRListenerAngle(int fallback);
 // VR 3D models on (vr_models cvar, EDUKE32_XR_MODELS, usemodels); off = native 2D sprites.
 bool G_XRModelsEnabled();
+#ifdef AMC_BUILD
+// AMC build: the VR layer's private tiles are moved to XRTileFirst..XRTileLast. Logs an ERROR naming
+// every such tile that already has art, a hightile replacement (or, before the VR model pack loads,
+// a model or voxel), since VR would clobber or be clobbered by it. stage names the call site.
+void G_XRCheckReservedTiles(char const *stage, bool beforeVRPack);
+#endif
 // VR settings (cvars) and model sets for the settings menu.
 extern int32_t vr_hudmode, vr_models, vr_laser, vr_fullbody, vr_lefttrigger, vr_ptt_button, vr_twohand, vr_menupointer, vr_ptt_radio, vr_voxeldistance;
 extern int32_t vr_foveation, vr_foveation_level;

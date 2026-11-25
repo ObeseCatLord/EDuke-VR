@@ -4689,7 +4689,7 @@ PALONLY:
                 while (tilesiz[t->picnum].x == 0 && t->picnum > 0)
                     t->picnum -= l;       //Hack, for actors
 
-            if (actor[i].dispicnum >= 0)
+            if (PICNUM_USABLE(actor[i].dispicnum))
                 actor[i].dispicnum = t->picnum;
 #ifdef USE_OPENXR
             if (pSprite->picnum == APLAYER && pSprite->extra <= 0 && sdlayer_getenv_cached("EDUKE32_XR_TEST_DEAD"))
@@ -4723,7 +4723,7 @@ skip:
         if (pSprite->statnum == STAT_DUMMYPLAYER || A_CheckEnemySprite(pSprite) || A_CheckSpriteFlags(t->owner,SFLAG_SHADOW) || (pSprite->picnum == APLAYER && pSprite->owner >= 0))
             if (t->statnum != TSPR_TEMP && pSprite->picnum != EXPLOSION2 && pSprite->picnum != HANGLIGHT && pSprite->picnum != DOMELITE && pSprite->picnum != HOTMEAT)
             {
-                if (actor[i].dispicnum < 0)
+                if (!PICNUM_USABLE(actor[i].dispicnum))
                 {
 #ifdef DEBUGGINGAIDS
                     // A negative actor[i].dispicnum used to mean 'no floor shadow please', but
@@ -7289,6 +7289,9 @@ int app_main(int argc, char const* const* argv)
 
     Anim_Init();
 
+#if defined USE_OPENXR && defined AMC_BUILD
+    G_XRCheckReservedTiles("before the VR model pack", true);
+#endif
 #ifdef USE_OPENXR
     // The loaded VR model pack's models (Alien Armageddon has its own set: vrpack_aa.def).
     if (hash_find(&h_gamevars, "pchar") >= 0 && testkopen("vrpack_aa.def", 0))
@@ -7304,6 +7307,9 @@ int app_main(int argc, char const* const* argv)
         LOG_F(INFO, "Definitions file '%s' loaded in %d ms.", deffile, etime-stime);
     }
     loaddefinitions_game(deffile, FALSE);
+#if defined USE_OPENXR && defined AMC_BUILD
+    G_XRCheckReservedTiles("after all DEF files", false);
+#endif
 
     for (char * m : g_defModules)
         Xfree(m);

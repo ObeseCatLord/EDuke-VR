@@ -16,6 +16,9 @@
 #define MAXPERMS 512
 #define MAXARTFILES_BASE 200
 #define MAXARTFILES_TOTAL 220
+#ifdef AMC_BUILD
+#define MAXARTPERMAP (MAXARTFILES_TOTAL - MAXARTFILES_BASE)
+#endif
 #define MAXCLIPDIST 1024
 
 // Uncomment to clear the screen before each top-level draw (classic only).
@@ -183,7 +186,7 @@ extern int32_t globvis, globalvisibility;
 extern int32_t xyaspect;
 extern int32_t globalshade;
 extern int32_t globalclipdist;
-extern int16_t globalpicnum;
+extern picnum16_t globalpicnum;
 
 extern int32_t globalorientation;
 
@@ -224,7 +227,7 @@ int32_t wallfront(int32_t l1, int32_t l2);
 
 void set_globalang(fix16_t const ang);
 
-int32_t animateoffs(int tilenum);
+int32_t animateoffs(picnum32_t tilenum);
 
 static FORCE_INLINE int32_t bad_tspr(tspriteptr_t tspr)
 {
@@ -319,7 +322,7 @@ skipit:
 
 #else	// __GNUC__ && __i386__
 
-static FORCE_INLINE void setgotpic(int32_t tilenume)
+static FORCE_INLINE void setgotpic(picnum32_t tilenume)
 {
     if (walock[tilenume] < CACHE1D_LOCKED) walock[tilenume] = CACHE1D_UNLOCKED;
     bitmap_set(gotpic, tilenume);
@@ -329,7 +332,7 @@ static FORCE_INLINE void setgotpic(int32_t tilenume)
 
 // Get properties of parallaxed sky to draw.
 // Returns: pointer to tile offset array. Sets-by-pointer the other three.
-static FORCE_INLINE const int8_t *getpsky(int32_t picnum, int32_t *dapyscale, int32_t *dapskybits, int32_t *dapyoffs, int32_t *daptileyscale)
+static FORCE_INLINE const int8_t *getpsky(picnum32_t picnum, int32_t *dapyscale, int32_t *dapskybits, int32_t *dapyoffs, int32_t *daptileyscale)
 {
     psky_t const * const psky = &multipsky[getpskyidx(picnum)];
 
@@ -361,7 +364,7 @@ template <typename T> static FORCE_INLINE void tileUpdatePicnum(T * const tilept
     if (picanm[tile].sf & PICANM_ANIMTYPE_MASK)
         tile += animateoffs(tile);
 
-    if (((obj & 16384) == 16384) && (globalorientation & CSTAT_WALL_ROTATE_90) && rottile[tile].newtile != -1)
+    if (((obj & 16384) == 16384) && (globalorientation & CSTAT_WALL_ROTATE_90) && rottile[tile].newtile != TILE_NONE)
         tile = rottile[tile].newtile;
 }
 

@@ -307,7 +307,7 @@ static bool loadHudModelMap()
             {
                 hudModelMap.assign(MAXTILES,-1);
                 int hud, model;
-                while (std::fscanf(file,"%d %d",&hud,&model)==2)
+                while (std::fscanf(file,"%d %d",&hud,&model)==2 && (model=XRTileFromFile(model),true))
                     if ((unsigned)hud<MAXTILES && (unsigned)model<MAXTILES && hudModelMap[hud]<0) hudModelMap[hud]=model;
                 std::fclose(file);
             }
@@ -317,8 +317,8 @@ static bool loadHudModelMap()
 // Runtime switches (console/settings.cfg): vr_models turns every VR model off (held weapons,
 // hands, body, third-person players, 3D weapon wheel) and falls back to native 2D art, like
 // RazeXR; vr_laser draws an aiming beam from the muzzle to the aim point.
-constexpr int32_t VRLaserTile=30060;
-constexpr int32_t VRMoneyTile=30068;   // tipping: wad of bills cut from the GRP's MONEY art
+constexpr int32_t VRLaserTile=XRTile(30060);
+constexpr int32_t VRMoneyTile=XRTile(30068);   // tipping: wad of bills cut from the GRP's MONEY art
 } // namespace
 
 
@@ -327,6 +327,31 @@ bool G_XRModelsEnabled()
     auto const option=sdlayer_xr_option("EDUKE32_XR_MODELS");
     return vr_models && usemodels && option && !Bstrcmp(option,"1");
 }
+
+#ifdef AMC_BUILD
+void G_XRCheckReservedTiles(char const *stage, bool beforeVRPack)
+{
+    int conflicts=0;
+    for (int tile=XRTileFirst;tile<=XRTileLast;++tile)
+    {
+        if ((unsigned)tile>=MAXTILES) { LOG_F(ERROR,"VR tile %d (logical %d) is outside MAXTILES (%d).",tile,tile-int(XR_TILE_OFFSET),int(MAXTILES)); ++conflicts; continue; }
+        char const *what=nullptr;
+        if (tilesiz[tile].x|tilesiz[tile].y) what="art";
+        else if (waloff[tile]) what="loaded art";
+        else if (bitmap_test(faketile,tile)) what="a dummy/imported tile";
+        else if (hicreplc[tile]) what="a hightile replacement";
+        else if (beforeVRPack && mdinited && tile2model[tile].modelid>=0) what="a model";
+        else if (beforeVRPack && tiletovox[tile]>=0) what="a voxel";
+        if (!what) continue;
+        ++conflicts;
+        if (conflicts<=32)
+            LOG_F(ERROR,"VR reserved tile %d (logical %d) already has %s (%s): VR models and art on it will clash with the game's.",
+                  tile,tile-int(XR_TILE_OFFSET),what,stage);
+    }
+    if (conflicts>32) LOG_F(ERROR,"VR reserved tiles: %d conflicts in total (%s).",conflicts,stage);
+    else if (!conflicts) LOG_F(INFO,"VR reserved tiles %d..%d are free (%s).",int(XRTileFirst),int(XRTileLast),stage);
+}
+#endif
 
 static void G_XRFlatFrame();
 void G_XRRegisterCvars()
@@ -1857,7 +1882,7 @@ static int bodyModelTile()
     int const tile=value ? std::atoi(value) : -1;
     if (tile<=0 || tile>=MAXTILES) return -1;
     // The dedicated torso/legs shell (no head or arms to hide) when the asset pack has it.
-    constexpr int BodyShellTile=30066;
+    constexpr int BodyShellTile=XRTile(30066);
     return md_tilehasmodel(BodyShellTile,0)>=0 ? BodyShellTile : tile;
 }
 
@@ -2067,7 +2092,7 @@ static HandRig const *handRig()
         if (!Bstrcmp(word,"segment"))
         {
             int side,tile,joint;
-            if (std::fscanf(file,"%d %d %d",&side,&tile,&joint)==3 && unsigned(side)<2 && unsigned(tile)<MAXTILES
+            if (std::fscanf(file,"%d %d %d",&side,&tile,&joint)==3 && unsigned(side)<2 && unsigned(tile=XRTileFromFile(tile))<MAXTILES
                 && unsigned(joint)<eduke_xr::HandInput::JointCount)
                 rig.segments[side].push_back({tile,joint});
         }
@@ -2087,7 +2112,7 @@ static HandRig const *handRig()
         else if (!Bstrcmp(word,"hold") || !Bstrcmp(word,"support"))
         {
             int tile;
-            if (std::fscanf(file,"%d %127s",&tile,name)==2) (word[0]=='h' ? rig.holds : rig.supports).emplace_back(tile,name);
+            if (std::fscanf(file,"%d %127s",&tile,name)==2) (word[0]=='h' ? rig.holds : rig.supports).emplace_back(XRTileFromFile(tile),name);
         }
         else if (!Bstrcmp(word,"shell") || !Bstrcmp(word,"shellwrist") || !Bstrcmp(word,"charshell"))
         {
@@ -2096,7 +2121,7 @@ static HandRig const *handRig()
             int side,tile,character=0;
             char skinPath[1024];
             if (!Bstrcmp(word,"charshell") && (std::fscanf(file,"%d",&character)!=1 || character<=0 || character>=8)) break;
-            if (std::fscanf(file,"%d %d %1023s",&side,&tile,skinPath)!=3 || unsigned(side)>=2 || unsigned(tile)>=MAXTILES) break;
+            if (std::fscanf(file,"%d %d %1023s",&side,&tile,skinPath)!=3 || unsigned(side)>=2 || unsigned(tile=XRTileFromFile(tile))>=MAXTILES) break;
             std::vector<HandRig::ShellVertex> vertices;
             if (FILE *skin=openPackFile(skinPath))
             {
@@ -2134,6 +2159,7 @@ static HandRig const *handRig()
             char paths[5][1024];
             if (std::fscanf(file,"%d %1023s %1023s %1023s %1023s %1023s",&tile,paths[0],paths[1],paths[2],paths[3],paths[4])!=6) break;
             HandRig::IkBody ik;
+            tile=XRTileFromFile(tile);
             bool good=unsigned(tile)<MAXTILES;
             if (FILE *skel=good ? openPackFile(paths[0]) : nullptr)
             {
@@ -2591,7 +2617,7 @@ static float wheelOpenFraction(Wheel const &w)
     return float(std::min(1.0,(now-w.openedAt)/.1));
 }
 
-constexpr int VRWheelBubbleTile=30061, VRWheelBubbleLitTile=30062, VRWheelPointerTile=30063, VRWheelBeamTile=30064;
+constexpr int VRWheelBubbleTile=XRTile(30061), VRWheelBubbleLitTile=XRTile(30062), VRWheelPointerTile=XRTile(30063), VRWheelBeamTile=XRTile(30064);
 
 static unsigned prepareWheel(Wheel const &w, std::vector<HandSegmentSample> &out, Camera const &body, eduke_xr::Runtime *runtime)
 {
@@ -3403,7 +3429,7 @@ static void publishBodyPose(Camera const &body, eduke_xr::Runtime *runtime, Hand
         if (held && heldTile>=0)
         {
             pose.flags|=VRBodyWeapon;
-            pose.weaponTile=int16_t(heldTile);
+            pose.weaponTile=picnum16_t(heldTile);
             pose.weaponFrame=int16_t(held->context.cframe); pose.weaponNextFrame=int16_t(held->context.nframe);
             pose.weaponLerp=uint8_t(std::lround(std::max(0.f,std::min(1.f,held->context.interpol))*255.f));
             pose.weapon=encodeFrame(heldModelFrame(*held),body.pos);
@@ -3630,7 +3656,7 @@ static void wheelPanelSprite(float x0,float y0,float x1,float y1) { wheelPanelBo
 // below one third; a sliver stays while any is left, so "almost empty" never reads as empty. Drawn
 // from short rotated segments of small solid tiles in the nearest palette colours.
 enum { RingTrack, RingGreen, RingYellow, RingRed, RingCount };
-static constexpr int RingTileBase=30500, RingSegments=40;
+static constexpr int RingTileBase=XRTile(30500), RingSegments=40;
 static bool makeRingTiles()
 {
     static int made=-1;

@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #define game_h_
 
 #ifndef ONLY_USERDEFS
+#include "vrtiles.h"
 #include "premap.h" // XXX
 #endif
 
@@ -352,7 +353,7 @@ extern int32_t g_Debug;
 extern int32_t g_Shareware;
 extern int32_t mp_sharekeys, cl_nametags;
 // Name tag tiles (cl_nametags): two per player, plain and talking.
-enum { NAMETAG_TILE_BASE = 30400 };
+enum { NAMETAG_TILE_BASE = XRTile(30400) };
 static inline bool G_IsNametagTile(int picnum) { return picnum >= NAMETAG_TILE_BASE && picnum < NAMETAG_TILE_BASE + MAXPLAYERS * 2; }
 extern uint8_t g_sharedAccess;
 // Co-op keycard sharing (mp_sharekeys): a key one player picks up goes to everyone.

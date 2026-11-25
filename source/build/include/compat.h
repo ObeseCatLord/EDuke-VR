@@ -612,6 +612,9 @@ typedef FILE BFILE;
 #define Bvfprintf vfprintf
 #define Bgetenv getenv
 #define Butime utime
+#ifndef _WIN32
+#define Brealpath realpath
+#endif
 
 
 ////////// Standard library wrappers //////////

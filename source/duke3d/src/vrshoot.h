@@ -71,7 +71,8 @@ struct VRBodyPose
     int16_t eye[3] {};      // Build offset of the eye
     int16_t headForward[3] {}, headUp[3] {};   // unit*32767: Build x, y and up (isotropic)
     VRBodyFrame handFrame[2] {};   // grip frame for named poses, weapon frame for a hold
-    int16_t weaponTile=-1, weaponFrame=0, weaponNextFrame=0;
+    picnum16_t weaponTile=TILE_NONE;   // a tile number: unsigned 16 bit in the AMC build (VR tiles sit above 32767 there)
+    int16_t weaponFrame=0, weaponNextFrame=0;
     uint8_t weaponLerp=0;
     VRBodyFrame weapon {};  // held model frame (MD3 axes, pivot applied)
 };

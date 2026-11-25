@@ -23,6 +23,7 @@
 #include "compat.h"
 #include "glad/glad.h"
 #include "glbuild.h"
+#include "hash.h"
 #include "palette.h"
 #include "pragmas.h"
 #include "random.h"
@@ -91,7 +92,37 @@ enum rendmode_t {
 
 #define MAXWALLSB (MAXWALLS>>1)
 
+// Tile index types. AMC Squad builds use unsigned 16-bit tile numbers (MAXTILES > 32767);
+// the normal build keeps the historical signed types so its behavior is unchanged.
+#ifdef AMC_BUILD
+typedef uint16_t picnum16_t;  // picnum fields / args that used to be int16_t
+typedef uint16_t picnum32_t;  // tile args that used to be int32_t
+#define TILE_NONE ((uint16_t)0xFFFF)
+// "is this a usable tile number" for a picnum16_t that may hold a -1/TILE_NONE sentinel
+#define PICNUM_USABLE(x) ((unsigned)(x) < MAXTILES)
+// picnum 0 or out of range (what "picnum <= 0" guarded when picnums were signed)
+#define PICNUM_ZERO_OR_BAD(x) ((unsigned)((x)-1) >= MAXTILES-1)
+#else
+typedef int16_t picnum16_t;
+typedef int32_t picnum32_t;
+#define TILE_NONE ((int16_t)-1)
+#define PICNUM_USABLE(x) ((x) >= 0)
+#define PICNUM_ZERO_OR_BAD(x) ((x) <= 0)
+#endif
+
+#ifdef AMC_BUILD
+// AMC Squad: unsigned 16-bit tile numbers, up to TILES199.ART
+#define MAPVERSION_FLAG_AMC4_0 0x1000
+#define MAPVERSION_FLAG_AMC4_5 0x2000
+#define MAPVERSION_FLAG_AMC5_0 0x4000
+#define EDUKE32_MAXTILES 30720
+#define AMC4_0_MAXTILES 32512
+#define AMC4_5_MAXTILES 44800 // TILES174.ART
+
+#define MAXTILES 51200 // Up to TILES199.ART
+#else
 #define MAXTILES 30720
+#endif
 #define MAXUSERTILES (MAXTILES-256)  // reserve 256 tiles at the end
 
 #define MAXVOXELS 2048
@@ -865,9 +896,9 @@ EXTERN int32_t g_pskyidx;
 EXTERN int32_t pskynummultis;
 EXTERN psky_t * multipsky;
 // Mapping of multi-sky index to base sky tile number:
-EXTERN int32_t * multipskytile;
+EXTERN picnum32_t * multipskytile;
 
-static FORCE_INLINE int32_t getpskyidx(int32_t picnum)
+static FORCE_INLINE int32_t getpskyidx(picnum32_t picnum)
 {
     int32_t j;
 
@@ -878,7 +909,7 @@ static FORCE_INLINE int32_t getpskyidx(int32_t picnum)
     return j;
 }
 
-EXTERN psky_t * tileSetupSky(int32_t tilenum);
+EXTERN psky_t * tileSetupSky(picnum32_t tilenum);
 
 EXTERN char parallaxtype;
 EXTERN int32_t parallaxyoffs_override, parallaxyscale_override;
@@ -974,7 +1005,7 @@ typedef struct {
     uint8_t tileflags; // tile-specific flags, such as true non-power-of-2 drawing.
 } picanm_t;
 EXTERN picanm_t picanm[MAXTILES];
-typedef struct { int16_t newtile; int16_t owner; } rottile_t;
+typedef struct { picnum16_t newtile; picnum16_t owner; } rottile_t; // owner refers to another picnum -> also needs to be unsigned in AMC_BUILD
 EXTERN rottile_t rottile[MAXTILES];
 EXTERN intptr_t waloff[MAXTILES];  // stores pointers to cache  -- SA
 
@@ -1076,7 +1107,7 @@ EXTERN uint16_t h_xsize[MAXTILES], h_ysize[MAXTILES];
 EXTERN int8_t h_xoffs[MAXTILES], h_yoffs[MAXTILES];
 
 EXTERN char *globalpalwritten;
-EXTERN int16_t globalpicnum;
+EXTERN picnum16_t globalpicnum;
 
 enum {
     GLOBAL_NO_GL_TILESHADES = 1<<0,
@@ -1243,33 +1274,39 @@ int32_t engineLoadClipMaps(void);
 #endif
 int32_t   saveboard(const char *filename, const vec3_t *dapos, int16_t daang, int16_t dacursectnum);
 
-void    tileSetupDummy(int32_t tile);
-void    tileSetData(int32_t tile, int32_t tsiz, char const *buffer);
-void    tileDelete(int32_t tile);
-void    tileSetSize(int32_t picnum, int16_t dasizx, int16_t dasizy);
+#ifdef AMC_BUILD
+#define MAXMAPARTDEFS 1024
+extern hashtable_t h_mapartpaths;
+void    artMapPathKey(const char *path, char *out);  // out: BMAX_PATH bytes
+#endif
+
+void    tileSetupDummy(picnum32_t tile);
+void    tileSetData(picnum32_t tile, int32_t tsiz, char const *buffer);
+void    tileDelete(picnum32_t tile);
+void    tileSetSize(picnum32_t picnum, int16_t dasizx, int16_t dasizy);
 int32_t artReadHeader(buildvfs_kfd fil, char const *fn, artheader_t *local);
 int32_t artReadHeaderFromBuffer(uint8_t const *buf, artheader_t *local);
 int32_t artCheckUnitFileHeader(uint8_t const *buf, int32_t length);
-void    tileConvertAnimFormat(int32_t picnum, uint32_t const picanmdisk);
+void    tileConvertAnimFormat(picnum32_t picnum, uint32_t const picanmdisk);
 void    artReadManifest(buildvfs_kfd fil, artheader_t * const local);
 void    artPreloadFile(buildvfs_kfd fil, artheader_t * const local);
 int32_t artLoadFiles(const char *filename, int32_t askedsize);
 void    artClearMapArt(void);
 void    artSetupMapArt(const char *filename);
-bool    tileLoad(int16_t tilenume);
-void    tileLoadData(int16_t tilenume, int32_t dasiz, char *buffer);
-intptr_t tileLoadScaled(int const picnum, vec2_16_t* upscale = nullptr);
-int32_t tileGetCRC32(int16_t tileNum);
-vec2_16_t tileGetSize(int16_t tileNum);
+bool    tileLoad(picnum16_t tilenume);
+void    tileLoadData(picnum16_t tilenume, int32_t dasiz, char *buffer);
+intptr_t tileLoadScaled(picnum32_t const picnum, vec2_16_t* upscale = nullptr);
+int32_t tileGetCRC32(picnum16_t tileNum);
+vec2_16_t tileGetSize(picnum16_t tileNum);
 void    artConvertRGB(palette_t *pic, uint8_t const *buf, int32_t bufsizx, int32_t sizx, int32_t sizy);
-void    tileUpdatePicSiz(int32_t picnum);
+void    tileUpdatePicSiz(picnum32_t picnum);
 
 int32_t   qloadkvx(int32_t voxindex, const char *filename);
 void vox_clearid(int32_t const);
-void vox_undefine(int32_t const);
-intptr_t   tileCreate(int16_t tilenume, int32_t xsiz, int32_t ysiz);
-void   tileCopySection(int32_t tilenume1, int32_t sx1, int32_t sy1, int32_t xsiz, int32_t ysiz, int32_t tilenume2, int32_t sx2, int32_t sy2);
-void   squarerotatetile(int16_t tilenume);
+void vox_undefine(picnum32_t const);
+intptr_t   tileCreate(picnum16_t tilenume, int32_t xsiz, int32_t ysiz);
+void   tileCopySection(picnum32_t tilenume1, int32_t sx1, int32_t sy1, int32_t xsiz, int32_t ysiz, picnum32_t tilenume2, int32_t sx2, int32_t sy2);
+void   squarerotatetile(picnum16_t tilenume);
 
 int32_t   videoSetGameMode(char davidoption, int32_t daupscaledxdim, int32_t daupscaledydim, int32_t dabpp, int32_t daupscalefactor);
 void   videoNextPage(void);
@@ -1281,7 +1318,7 @@ void   renderFlushPerms(void);
 void plotlines2d(const int32_t *xx, const int32_t *yy, int32_t numpoints, int col) ATTRIBUTE((nonnull(1,2)));
 
 void   plotpixel(int32_t x, int32_t y, char col);
-void   renderSetTarget(int16_t tilenume, int32_t xsiz, int32_t ysiz);
+void   renderSetTarget(picnum16_t tilenume, int32_t xsiz, int32_t ysiz);
 void   renderRestoreTarget(void);
 void   renderPrepareMirror(int32_t dax, int32_t day, int32_t daz, fix16_t daang, fix16_t dahoriz, int16_t dawall,
                            int32_t *tposx, int32_t *tposy, fix16_t *tang);
@@ -1306,7 +1343,7 @@ void   renderDrawMasks(void);
 void   videoClearViewableArea(int32_t dacol);
 void   videoClearScreen(int32_t dacol);
 void   renderDrawMapView(int32_t dax, int32_t day, int32_t zoome, int16_t ang);
-void   rotatesprite_(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+void   rotatesprite_(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                      int8_t dashade, char dapalnum, int32_t dastat, uint8_t daalpha, uint8_t dablend,
                      int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2);
 void   renderDrawLine(int32_t x1, int32_t y1, int32_t x2, int32_t y2, char col);
@@ -1327,20 +1364,20 @@ static FORCE_INLINE uint16_t getcrc16(void const* buffer, int bufleng, int crc =
 
 
 ////////// specialized rotatesprite wrappers for (very) often used cases //////////
-static FORCE_INLINE void rotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+static FORCE_INLINE void rotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                                 int8_t dashade, char dapalnum, int32_t dastat,
                                 int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2)
 {
     rotatesprite_(sx, sy, z, a, picnum, dashade, dapalnum, dastat, 0, 0, cx1, cy1, cx2, cy2);
 }
 // Don't clip at all, i.e. the whole screen real estate is available:
-static FORCE_INLINE void rotatesprite_fs(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+static FORCE_INLINE void rotatesprite_fs(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                                    int8_t dashade, char dapalnum, int32_t dastat)
 {
     rotatesprite_(sx, sy, z, a, picnum, dashade, dapalnum, dastat, 0, 0, 0,0,xdim-1,ydim-1);
 }
 
-static FORCE_INLINE void rotatesprite_fs_id(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+static FORCE_INLINE void rotatesprite_fs_id(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                                    int8_t dashade, char dapalnum, int32_t dastat, int16_t uniqid)
 {
     int restore = guniqhudid;
@@ -1349,13 +1386,13 @@ static FORCE_INLINE void rotatesprite_fs_id(int32_t sx, int32_t sy, int32_t z, i
     guniqhudid = restore;
 }
 
-static FORCE_INLINE void rotatesprite_fs_alpha(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+static FORCE_INLINE void rotatesprite_fs_alpha(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                                   int8_t dashade, char dapalnum, int32_t dastat, uint8_t alpha)
 {
     rotatesprite_(sx, sy, z, a, picnum, dashade, dapalnum, dastat, alpha, 0, 0, 0, xdim-1, ydim-1);
 }
 
-static FORCE_INLINE void rotatesprite_win(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+static FORCE_INLINE void rotatesprite_win(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                                     int8_t dashade, char dapalnum, int32_t dastat)
 {
     rotatesprite_(sx, sy, z, a, picnum, dashade, dapalnum, dastat, 0, 0, windowxy1.x,windowxy1.y,windowxy2.x,windowxy2.y);
@@ -1574,14 +1611,14 @@ void    renderSetRollAngle(int32_t rolla);
 //         bit 6: 33% translucence, using clamping
 //         bit 7: 67% translucence, using clamping
 //       clamping is for sprites, repeating is for walls
-void tileInvalidate(int16_t tilenume, int32_t pal, int32_t how);
+void tileInvalidate(picnum16_t tilenume, int32_t pal, int32_t how);
 
 void polymostSet2dView(void);   // sets up GL for 2D drawing
 
-int32_t polymost_drawtilescreen(int32_t tilex, int32_t tiley, int32_t tilenum, int32_t dimen, int32_t tilezoom,
+int32_t polymost_drawtilescreen(int32_t tilex, int32_t tiley, picnum32_t tilenum, int32_t dimen, int32_t tilezoom,
                                 int32_t usehitile, uint8_t *loadedhitile);
 void polymost_glreset(void);
-void polymost_precache(int32_t dapicnum, int32_t dapalnum, int32_t datype);
+void polymost_precache(picnum32_t dapicnum, int32_t dapalnum, int32_t datype);
 
 enum cutsceneflags {
     CUTSCENE_FORCEFILTER = 1,
@@ -1616,10 +1653,10 @@ extern int32_t mdtims, omdtims;
 extern int32_t glrendmode;
 #endif
 
-int32_t Ptile2tile(int32_t tile, int32_t palette) ATTRIBUTE((pure));
+picnum32_t Ptile2tile(picnum32_t tile, int32_t palette) ATTRIBUTE((pure));
 int32_t md_loadmodel(const char *fn);
 int32_t md_setmisc(int32_t modelid, float scale, int32_t shadeoff, float zadd, float yoffset, int32_t flags);
-// int32_t md_tilehasmodel(int32_t tilenume, int32_t pal);
+// int32_t md_tilehasmodel(picnum32_t tilenume, int32_t pal);
 
 extern const char *G_DefaultDefFile(void);
 extern const char *G_DefFile(void);
@@ -1644,25 +1681,29 @@ typedef struct
     // maps build tiles to particular animation frames of a model
     int16_t     modelid;
     int16_t     framenum;   // calculate the number from the name when declaring
-    int16_t     nexttile;
+    picnum16_t  nexttile;
     uint16_t    smoothduration;
     hudtyp      *hudmem[2];
     int8_t      skinnum;
     char        pal;
 } tile2model_t;
 
+#ifdef AMC_BUILD
+#define EXTRATILES 3840
+#else
 #define EXTRATILES ((INT16_MAX-255)-MAXTILES)
+#endif
 
 EXTERN int32_t mdinited;
 EXTERN tile2model_t tile2model[MAXTILES+EXTRATILES];
 
-static FORCE_INLINE int32_t md_tilehasmodel(int32_t const tilenume, int32_t const pal)
+static FORCE_INLINE int32_t md_tilehasmodel(picnum32_t const tilenume, int32_t const pal)
 {
     return mdinited && (unsigned)tilenume < MAXTILES ? tile2model[Ptile2tile(tilenume,pal)].modelid : -1;
 }
 #endif  // defined USE_OPENGL
 
-static FORCE_INLINE int tilehasmodelorvoxel(int const tilenume, int pal)
+static FORCE_INLINE int tilehasmodelorvoxel(picnum32_t const tilenume, int pal)
 {
     UNREFERENCED_PARAMETER(pal);
     return
@@ -1672,7 +1713,7 @@ static FORCE_INLINE int tilehasmodelorvoxel(int const tilenume, int pal)
     (videoGetRenderMode() <= REND_POLYMOST && usevoxels && tiletovox[tilenume] != -1);
 }
 
-int32_t md_defineframe(int32_t modelid, const char *framename, int32_t tilenume,
+int32_t md_defineframe(int32_t modelid, const char *framename, picnum32_t tilenume,
                        int32_t skinnum, float smoothduration, int32_t pal);
 int32_t md_defineanimation(int32_t modelid, const char *framestart, const char *frameend,
                            int32_t fps, int32_t flags);
@@ -1680,7 +1721,7 @@ int32_t md_defineskin(int32_t modelid, const char *skinfn, int32_t palnum, int32
                       int32_t surfnum, float param, float specpower, float specfactor, int32_t flags);
 int32_t md_definehud (int32_t modelid, int32_t tilex, vec3f_t add,
                       int32_t angadd, int32_t flags, int32_t fov);
-int32_t md_undefinetile(int32_t tile);
+int32_t md_undefinetile(picnum32_t tile);
 int32_t md_undefinemodel(int32_t modelid);
 
 int32_t loaddefinitionsfile(const char *fn);
@@ -1693,7 +1734,6 @@ int32_t engineLoadBoardV5V6(const char *filename, char fromwhere, vec3_t *dapos,
 }
 #endif
 
-#include "hash.h"
 
 #ifdef POLYMER
 # include "polymer.h"

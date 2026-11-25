@@ -27,7 +27,7 @@ static int32_t curextra=MAXTILES;
 #define MIN_CACHETIME_PRINT 10
 
 
-static int32_t addtileP(int32_t model,int32_t tile,int32_t pallet)
+static picnum32_t addtileP(int32_t model,picnum32_t tile,int32_t pallet)
 {
     // tile >= 0 && tile < MAXTILES
 
@@ -47,7 +47,7 @@ static int32_t addtileP(int32_t model,int32_t tile,int32_t pallet)
     if (tile2model[tile].pal==pallet)
         return tile;
 
-    while (tile2model[tile].nexttile!=-1)
+    while (tile2model[tile].nexttile!=TILE_NONE)
     {
         tile=tile2model[tile].nexttile;
         if (tile2model[tile].pal==pallet)
@@ -60,10 +60,10 @@ static int32_t addtileP(int32_t model,int32_t tile,int32_t pallet)
     return curextra++;
 }
 
-int32_t Ptile2tile(int32_t tile,int32_t palette)
+picnum32_t Ptile2tile(picnum32_t tile,int32_t palette)
 {
-    int t = tile;
-    while ((tile = tile2model[tile].nexttile) != -1)
+    picnum32_t t = tile;
+    while ((tile = tile2model[tile].nexttile) != TILE_NONE)
         if (tile2model[tile].pal == palette)
         {
             t = tile;
@@ -317,7 +317,7 @@ static int32_t framename2index(mdmodel_t *vm, const char *nam)
     return i;
 }
 
-int32_t md_defineframe(int32_t modelid, const char *framename, int32_t tilenume, int32_t skinnum, float smoothduration, int32_t pal)
+int32_t md_defineframe(int32_t modelid, const char *framename, picnum32_t tilenume, int32_t skinnum, float smoothduration, int32_t pal)
 {
     md2model_t *m;
     int32_t i;
@@ -553,7 +553,7 @@ int32_t md_definehud(int32_t modelid, int32_t tilex, vec3f_t add, int32_t angadd
     return 0;
 }
 
-int32_t md_undefinetile(int32_t tile)
+int32_t md_undefinetile(picnum32_t tile)
 {
     if (!mdinited) return 0;
     if ((unsigned)tile >= (unsigned)MAXTILES) return -1;
@@ -858,7 +858,7 @@ void updateanimation(md2model_t *m, tspriteptr_t tspr, uint8_t lpal)
         return;
     }
 
-    int32_t const tile = Ptile2tile(tspr->picnum,lpal);
+    picnum32_t const tile = Ptile2tile(tspr->picnum,lpal);
     m->cframe = m->nframe = tile2model[tile].framenum;
 
 #ifdef DEBUGGINGAIDS

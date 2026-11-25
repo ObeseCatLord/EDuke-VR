@@ -15,6 +15,9 @@
 #include "xxhash_config.h"
 
 #include "vfs.h"
+#ifdef AMC_BUILD
+#include "common.h"
+#endif
 
 static osdsymbol_t *osd_addsymbol(const char *name);
 static osdsymbol_t *osd_findsymbol(const char *pszName, osdsymbol_t *pSymbol);
@@ -43,6 +46,10 @@ static uint32_t osdscrtime = 0;
 
 #define OSD_EDIT_LINE_WIDTH (osd->draw.cols - 1 - 3)
 #define OSDMAXERRORS 4096
+#ifdef AMC_BUILD
+#define OSDMAXLOGFILES 100
+char g_logfile_dir[BMAX_PATH] = "logs";
+#endif
 
 static hashtable_t h_osd = { OSDMAXSYMBOLS >> 1, NULL };
 
@@ -816,6 +823,9 @@ void OSD_Init(void)
     osd->text.useclipboard = 1;
     osd->draw.cols     = OSDDEFAULTCOLS;
     osd->log.maxerrors = OSDMAXERRORS;
+#ifdef AMC_BUILD
+    osd->log.numfiles  = 10;
+#endif
 
     osd->history.maxlines = OSDMINHISTORYDEPTH;
 
@@ -844,6 +854,9 @@ void OSD_Init(void)
 
         { "osdlogcutoff", "maximum number of error messages to log to the console", (void *) &osd->log.maxerrors, CVAR_INT, -1, OSDMAXERRORS },
         { "osdhistorydepth", "number of lines of command history to cycle through with the up and down cursor keys", (void *) &osd->history.maxlines, CVAR_INT|CVAR_FUNCPTR, OSDMINHISTORYDEPTH, OSDMAXHISTORYDEPTH },
+#ifdef AMC_BUILD
+        { "osdnumlogfiles", "number of log files to keep before deleting the oldest file", (void *) &osd->log.numfiles, CVAR_INT, 1, OSDMAXLOGFILES },
+#endif
     };
 
     for (auto & i : cvars_osd)
@@ -861,6 +874,58 @@ void OSD_Init(void)
     OSD_RegisterFunction("unalias", "unalias: removes a command alias", osdfunc_unalias);
 }
 
+
+#ifdef AMC_BUILD
+//
+// OSD_NewLogFilePath() -- Constructs a new log file path based on the current date & time.
+//   The constructed path has the format: "<logdir>/<prefix>_<yyyyMMdd>_<HHmmss>.log"
+//   Repeatedly invoking this function within one second returns the same filename.
+//
+void OSD_NewLogFilePath(char* buf, size_t bufsize, const char* prefix, const char* logdir)
+{
+    time_t const now = time(nullptr);
+    struct tm tmbuf;
+#ifdef _WIN32
+    localtime_s(&tmbuf, &now);
+#else
+    localtime_r(&now, &tmbuf);
+#endif
+    Bsnprintf(buf, bufsize, "%s/%s_%04d%02d%02d_%02d%02d%02d.log", logdir, prefix,
+              1900 + tmbuf.tm_year, 1 + tmbuf.tm_mon, tmbuf.tm_mday, tmbuf.tm_hour, tmbuf.tm_min, tmbuf.tm_sec);
+}
+
+//
+// OSD_CleanLogDir() -- If the maximum number of logs is reached, this removes the oldest logs with the given prefix.
+//   Assumes that the file list has lexicographic order ascending, and that the filenames contain timestamps.
+//
+void OSD_CleanLogDir(const char* prefix, const char* logdir)
+{
+    // do not search in ZIP or GRP files, don't search cwd if profile dir enabled
+    int32_t opsm = pathsearchmode;
+    pathsearchmode = 1;
+
+    char fn_pattern[BMAX_PATH];
+    Bsnprintf(fn_pattern, BMAX_PATH, "%s_*.log", prefix);
+
+    fnlist_t fnlist = FNLIST_INITIALIZER;
+    fnlist_getnames(&fnlist, logdir, fn_pattern, -1, 0);
+    int32_t filecnt = fnlist.numfiles;
+    BUILDVFS_FIND_REC *rec = fnlist.findfiles;
+
+    char pathbuf[BMAX_PATH];
+    while (rec && (filecnt > osd->log.numfiles))
+    {
+        Bsnprintf(pathbuf, BMAX_PATH, "%s/%s", logdir, rec->name);
+        DLOG_F(INFO, "Removing old log file at '%s'", pathbuf);
+        buildvfs_unlink(pathbuf);
+
+        rec = rec->next;
+        filecnt--;
+    }
+    fnlist_clearnames(&fnlist);
+    pathsearchmode = opsm;
+}
+#endif
 
 //
 // OSD_SetLogFile() -- Sets the text file where printed text should be echoed
@@ -2418,6 +2483,17 @@ void OSD_WriteCvars(buildvfs_FILE fp)
                 buildvfs_fputstrptr(fp, buf);
                 break;
             case CVAR_STRING:
+#ifdef AMC_BUILD
+                // an empty string cvar is saved too, so an empty value can override a non-empty default
+                if (pData.string)
+                {
+                    buildvfs_fputstrptr(fp, pData.name);
+                    buildvfs_fputstr(fp, " \"");
+                    if (pData.string[0])
+                        buildvfs_fputstrptr(fp, pData.string);
+                    buildvfs_fputstr(fp, "\"\n");
+                }
+#else
                 if (pData.string && pData.string[0])
                 {
                     buildvfs_fputstrptr(fp, pData.name);
@@ -2425,6 +2501,7 @@ void OSD_WriteCvars(buildvfs_FILE fp)
                     buildvfs_fputstrptr(fp, pData.string);
                     buildvfs_fputstr(fp, "\"\n");
                 }
+#endif
                 break;
             default: EDUKE32_UNREACHABLE_SECTION(break);
             }

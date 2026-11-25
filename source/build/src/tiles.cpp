@@ -23,6 +23,9 @@ static void *g_vm_data;
 // MAXARTFILES_BASE <= . < MAXARTFILES_TOTAL: tile is in a map-specific ART file
 EDUKE32_STATIC_ASSERT(MAXARTFILES_TOTAL <= 256);
 
+#ifdef AMC_BUILD
+hashtable_t h_mapartpaths = {MAXMAPARTDEFS, NULL};
+#endif
 static int32_t tilefileoffs[MAXTILES];
 
 // Backup tilefilenum[] and tilefileoffs[]. These get allocated only when
@@ -41,6 +44,9 @@ static int32_t g_vm_size = 0;
 
 static char artfilename[20];
 static char mapartfilename[BMAX_PATH];  // map-specific ART file name
+#ifdef AMC_BUILD
+static const char* mapartfilepaths[MAXARTPERMAP]; // multiple, non-indexed mapart filename
+#endif
 static int32_t mapartfnXXofs;  // byte offset to 'XX' (the number part) in the above
 static int32_t artfilnum, artfilplc;
 static buildvfs_kfd artfil;
@@ -53,6 +59,9 @@ static int32_t artReadIndexedFile(int32_t tilefilei);
 
 static inline void artClearMapArtFilename(void)
 {
+#ifdef AMC_BUILD
+    Bmemset(mapartfilepaths, 0, MAXARTPERMAP * sizeof(char*));
+#endif
     Bmemset(mapartfilename, 0, sizeof(mapartfilename));
     mapartfnXXofs = 0;
 }
@@ -141,27 +150,81 @@ void artClearMapArt(void)
 #endif
 }
 
+#ifdef AMC_BUILD
+// Builds the hash key used by the DEF "mapart" table for a map path: leading slashes stripped,
+// resolved to an absolute path when the file exists on disk, slashes normalized.
+void artMapPathKey(const char *path, char *out)
+{
+    while (*path == '/')
+        path++;
+
+    out[0] = '\0';
+#ifndef _WIN32
+    if (!Brealpath(path, out))
+        out[0] = '\0';
+#endif
+    if (!out[0])
+    {
+        Bstrncpy(out, path, BMAX_PATH-1);
+        out[BMAX_PATH-1] = '\0';
+    }
+
+    Bcorrectfilename(out, 0);
+}
+#endif
+
 void artSetupMapArt(const char *filename)
 {
     artClearMapArt();
 
-    if (Bstrlen(filename) + 7 >= sizeof(mapartfilename))
-        return;
-
-    Bstrcpy(mapartfilename, filename);
-    append_ext_UNSAFE(mapartfilename, "_XX.art");
-    mapartfnXXofs = Bstrlen(mapartfilename) - 6;
-
-    // Check for first per-map ART file: if that one doesn't exist, don't load any.
-    buildvfs_kfd fil = kopen4loadfrommod(artGetIndexedFileName(MAXARTFILES_BASE), 0);
-
-    if (fil == buildvfs_kfd_invalid)
+#ifdef AMC_BUILD
+    // first check the DEF "mapart" hash table
+    intptr_t mapartarrayptr = -1;
+    if (h_mapartpaths.items)
     {
-        artClearMapArtFilename();
-        return;
+        char mappathkey[BMAX_PATH];
+        artMapPathKey(filename, mappathkey);
+        mapartarrayptr = hash_find(&h_mapartpaths, mappathkey);
+        if (mapartarrayptr != -1)
+        {
+            int artidx = 0;
+            char ** mapartarray = (char**) mapartarrayptr;
+            while (artidx < MAXARTPERMAP && mapartarray[artidx])
+            {
+                buildvfs_kfd fil = kopen4loadfrommod(mapartarray[artidx], 0);
+                if (fil == buildvfs_kfd_invalid)
+                    break;
+
+                mapartfilepaths[artidx] = mapartarray[artidx];
+                kclose(fil);
+                artidx++;
+            }
+
+            if (artidx == 0) mapartarrayptr = -1;
+        }
     }
 
-    kclose(fil);
+    if (mapartarrayptr == -1)
+#endif
+    {
+        if (Bstrlen(filename) + 7 >= sizeof(mapartfilename))
+            return;
+
+        Bstrcpy(mapartfilename, filename);
+        append_ext_UNSAFE(mapartfilename, "_XX.art");
+        mapartfnXXofs = Bstrlen(mapartfilename) - 6;
+
+        // Check for first per-map ART file: if that one doesn't exist, don't load any.
+        buildvfs_kfd fil = kopen4loadfrommod(artGetIndexedFileName(MAXARTFILES_BASE), 0);
+
+        if (fil == buildvfs_kfd_invalid)
+        {
+            artClearMapArtFilename();
+            return;
+        }
+
+        kclose(fil);
+    }
 
     // Allocate backup arrays.
     ALLOC_MAPART_ARRAY(tilefilenum, g_bakTileFileNum);
@@ -203,13 +266,13 @@ void artSetupMapArt(const char *filename)
 // ART loading
 //
 
-void tileSetupDummy(int32_t const tile)
+void tileSetupDummy(picnum32_t const tile)
 {
     bitmap_set(faketile, tile);
     DO_FREE_AND_NULL(faketiledata[tile]);
 }
 
-static void tileSetDataSafe(int32_t const tile, int32_t tsiz, char const * const buffer)
+static void tileSetDataSafe(picnum32_t const tile, int32_t tsiz, char const * const buffer)
 {
     int const compressed_tsiz = LZ4_compressBound(tsiz);
     char * newtile = (char *) Xmalloc(compressed_tsiz);
@@ -227,7 +290,7 @@ static void tileSetDataSafe(int32_t const tile, int32_t tsiz, char const * const
     }
 }
 
-void tileSetData(int32_t const tile, int32_t tsiz, char const * const buffer)
+void tileSetData(picnum32_t const tile, int32_t tsiz, char const * const buffer)
 {
     int const compressed_tsiz = LZ4_compressBound(tsiz);
     faketiledata[tile] = (char *) Xrealloc(faketiledata[tile], compressed_tsiz);
@@ -246,7 +309,7 @@ void tileSetData(int32_t const tile, int32_t tsiz, char const * const buffer)
     }
 }
 
-static void tileSoftDelete(int32_t const tile)
+static void tileSoftDelete(picnum32_t const tile)
 {
     tilesiz[tile].x = 0;
     tilesiz[tile].y = 0;
@@ -261,7 +324,7 @@ static void tileSoftDelete(int32_t const tile)
     Bmemset(&picanm[tile], 0, sizeof(picanm_t));
 }
 
-void tileDelete(int32_t const tile)
+void tileDelete(picnum32_t const tile)
 {
     tileSoftDelete(tile);
 
@@ -277,7 +340,7 @@ void tileDelete(int32_t const tile)
 #endif
 }
 
-void tileUpdatePicSiz(int32_t picnum)
+void tileUpdatePicSiz(picnum32_t picnum)
 {
     int j = 15;
 
@@ -291,7 +354,7 @@ void tileUpdatePicSiz(int32_t picnum)
     picsiz[picnum] |= j<<4;
 }
 
-void tileSetSize(int32_t picnum, int16_t dasizx, int16_t dasizy)
+void tileSetSize(picnum32_t picnum, int16_t dasizx, int16_t dasizy)
 {
     tilesiz[picnum].x = dasizx;
     tilesiz[picnum].y = dasizy;
@@ -382,7 +445,7 @@ int32_t artCheckUnitFileHeader(uint8_t const * const buf, int32_t length)
     return 0;
 }
 
-void tileConvertAnimFormat(int32_t const picnum, uint32_t const picanmdisk)
+void tileConvertAnimFormat(picnum32_t const picnum, uint32_t const picanmdisk)
 {
     EDUKE32_STATIC_ASSERT(PICANM_ANIMTYPE_MASK == 192);
 
@@ -486,9 +549,14 @@ static const char *artGetIndexedFileName(int32_t tilefilei)
 {
     if (tilefilei >= MAXARTFILES_BASE)
     {
-        int32_t o = mapartfnXXofs;
         tilefilei -= MAXARTFILES_BASE;
 
+#ifdef AMC_BUILD
+        if (mapartfilepaths[tilefilei])
+            return mapartfilepaths[tilefilei];
+#endif
+
+        int32_t o = mapartfnXXofs;
         mapartfilename[o+1] = '0' + tilefilei%10;
         mapartfilename[o+0] = '0' + (tilefilei/10)%10;
 
@@ -602,7 +670,7 @@ int32_t artLoadFiles(const char *filename, int32_t askedsize)
     Bmemset(picanm, 0, sizeof(picanm));
 
     for (auto &rot : rottile)
-        rot = { -1, -1 };
+        rot = { TILE_NONE, TILE_NONE };
 
     //    artsize = 0;
 
@@ -628,9 +696,9 @@ int32_t artLoadFiles(const char *filename, int32_t askedsize)
 //
 // loadtile
 //
-static void tilePostLoad(int16_t tilenume);
+static void tilePostLoad(picnum16_t tilenume);
 
-bool tileLoad(int16_t tileNum)
+bool tileLoad(picnum16_t tileNum)
 {
     if ((unsigned) tileNum >= (unsigned) MAXTILES) return 0;
     int const dasiz = tilesiz[tileNum].x*tilesiz[tileNum].y;
@@ -664,7 +732,7 @@ bool tileLoad(int16_t tileNum)
     return (waloff[tileNum] != 0 && tilesiz[tileNum].x > 0 && tilesiz[tileNum].y > 0);
 }
 
-void tileMaybeRotate(int16_t tilenume)
+void tileMaybeRotate(picnum16_t tilenume)
 {
     auto &rot = rottile[tilenume];
     auto &siz = tilesiz[rot.owner];
@@ -685,11 +753,11 @@ void tileMaybeRotate(int16_t tilenume)
     tileSetSize(tilenume, siz.y, siz.x);
 }
 
-void tileLoadData(int16_t tilenume, int32_t dasiz, char *buffer)
+void tileLoadData(picnum16_t tilenume, int32_t dasiz, char *buffer)
 {
-    int const owner = rottile[tilenume].owner;
+    picnum32_t const owner = rottile[tilenume].owner;
 
-    if (owner != -1)
+    if (owner != TILE_NONE)
     {
         if (!waloff[owner])
             tileLoad(owner);
@@ -747,7 +815,7 @@ void tileLoadData(int16_t tilenume, int32_t dasiz, char *buffer)
     artfilplc = tilefileoffs[tilenume]+dasiz;
 }
 
-static void tilePostLoad(int16_t tilenume)
+static void tilePostLoad(picnum16_t tilenume)
 {
 #if !defined DEBUG_TILESIZY_512 && !defined DEBUG_TILEOFFSETS
     UNREFERENCED_PARAMETER(tilenume);
@@ -781,7 +849,7 @@ static void tilePostLoad(int16_t tilenume)
 #endif
 }
 
-int32_t tileGetCRC32(int16_t tileNum)
+int32_t tileGetCRC32(picnum16_t tileNum)
 {
     if ((unsigned)tileNum >= (unsigned)MAXTILES)
         return 0;
@@ -799,7 +867,7 @@ int32_t tileGetCRC32(int16_t tileNum)
     return crc;
 }
 
-vec2_16_t tileGetSize(int16_t tileNum)
+vec2_16_t tileGetSize(picnum16_t tileNum)
 {
     if ((unsigned)tileNum >= (unsigned)MAXTILES)
         return vec2_16_t{};
@@ -835,7 +903,7 @@ void artConvertRGB(palette_t * const pic, uint8_t const * const buf, int32_t con
 //
 // allocatepermanenttile
 //
-intptr_t tileCreate(int16_t tilenume, int32_t xsiz, int32_t ysiz)
+intptr_t tileCreate(picnum16_t tilenume, int32_t xsiz, int32_t ysiz)
 {
     if (xsiz <= 0 || ysiz <= 0 || (unsigned) tilenume >= MAXTILES)
         return 0;
@@ -854,8 +922,8 @@ intptr_t tileCreate(int16_t tilenume, int32_t xsiz, int32_t ysiz)
 //
 // copytilepiece
 //
-void tileCopySection(int32_t tilenume1, int32_t sx1, int32_t sy1, int32_t xsiz, int32_t ysiz,
-    int32_t tilenume2, int32_t sx2, int32_t sy2)
+void tileCopySection(picnum32_t tilenume1, int32_t sx1, int32_t sy1, int32_t xsiz, int32_t ysiz,
+    picnum32_t tilenume2, int32_t sx2, int32_t sy2)
 {
     char *ptr1, *ptr2, dat;
     int32_t xsiz1, ysiz1, xsiz2, ysiz2, i, j, x1, y1, x2, y2;

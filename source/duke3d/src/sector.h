@@ -41,7 +41,12 @@ extern "C" {
 #define VIEWSCREEN_ACTIVE_DISTANCE 8192
 
 typedef struct {
-    int16_t wallnum, tag;
+    int16_t wallnum;
+#ifdef AMC_BUILD
+    int32_t tag;  // a wall's original picnum (up to 65535) or a negative/animation counter value
+#else
+    int16_t tag;
+#endif
 } animwalltype;
 
 typedef struct {

@@ -192,6 +192,9 @@ typedef struct
 
     uint32_t m_lineidx;
     int32_t  maxerrors;
+#ifdef AMC_BUILD
+    int32_t  numfiles;
+#endif
 } osdlog_t;
 
 typedef struct
@@ -219,6 +222,9 @@ typedef struct
 
 extern osdmain_t *osd;
 extern const char* osdlogfn;
+#ifdef AMC_BUILD
+extern char g_logfile_dir[BMAX_PATH];
+#endif
 
 enum osdflags_t
 {
@@ -258,6 +264,14 @@ void OSD_Init(void);
 
 // cleans things up. these comments are retarded.
 void OSD_Cleanup(void);
+
+#ifdef AMC_BUILD
+// Constructs a new logfile path based on the current date and time, and stores it inside the provided buffer.
+void OSD_NewLogFilePath(char* buf, size_t bufsize, const char* prefix, const char* logdir);
+
+// Remove oldest log files if the maximum number of log files is exceeded.
+void OSD_CleanLogDir(const char* prefix, const char* logdir);
+#endif
 
 // sets the file to echo output to
 void OSD_SetLogFile(const char *fn);

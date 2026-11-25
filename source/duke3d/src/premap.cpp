@@ -479,7 +479,7 @@ void G_CacheMapData(void)
     {
         tloadtile(wall[i].picnum, 0);
 
-        if (wall[i].overpicnum >= 0)
+        if (PICNUM_USABLE(wall[i].overpicnum))
             tloadtile(wall[i].overpicnum, 0);
     }
 
@@ -1059,7 +1059,7 @@ static void G_SetupLightSwitches()
     {
         auto &s = sprite[spriteNum];
 
-        if (s.picnum <= 0)  // oob safety for switch below
+        if (PICNUM_ZERO_OR_BAD(s.picnum))  // oob safety for switch below
             continue;
 
         for (int i = 0; i < 2; i++)

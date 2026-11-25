@@ -269,7 +269,8 @@ typedef struct {
     int16_t dummyplayersprite, extra_extra8;
     int16_t actorsqu, timebeforeexit, customexitsound, last_pissed_time;
 
-    int16_t weaprecs[MAX_WEAPONS], weapon_sway, crack_time, bobcounter;
+    picnum16_t weaprecs[MAX_WEAPONS];
+    int16_t weapon_sway, crack_time, bobcounter;
 
     int16_t orotscrnang, rotscrnang, dead_flag;
     int16_t holoduke_on, pycount;
@@ -403,7 +404,7 @@ typedef struct {
 extern input_t          inputfifo[MOVEFIFOSIZ][MAXPLAYERS];
 extern playerspawn_t    g_playerSpawnPoints[MAXPLAYERS];
 extern playerdata_t     *const g_player;
-extern int16_t          WeaponPickupSprites[MAX_WEAPONS];
+extern picnum16_t       WeaponPickupSprites[MAX_WEAPONS];
 extern hudweapon_t      hudweap;
 extern int32_t          g_levelTextTime;
 extern int32_t          g_myAimMode;

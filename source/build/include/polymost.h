@@ -33,7 +33,7 @@ void uploadbasepalette(int32_t basepalnum);
 void uploadpalswap(int32_t palookupnum);
 void polymost_drawsprite(int32_t snum);
 void polymost_drawmaskwall(int32_t damaskwallcnt);
-void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum,
+void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
                              int8_t dashade, char dapalnum, int32_t dastat, uint8_t daalpha, uint8_t dablend, int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2, int32_t uniqid);
 void polymost_fillpolygon(int32_t npoints);
 void polymost_initosdfuncs(void);
@@ -170,7 +170,7 @@ enum {
     INVALIDATE_ART_NON_INDEXED
 };
 
-void gltexinvalidate(int32_t dapicnum, int32_t dapalnum, int32_t dameth);
+void gltexinvalidate(picnum32_t dapicnum, int32_t dapalnum, int32_t dameth);
 void gltexinvalidatetype(int32_t type);
 int32_t polymost_printtext256(int32_t xpos, int32_t ypos, int16_t col, int16_t backcol, const char *name, char fontsize);
 
@@ -222,7 +222,7 @@ enum tileshademodes
 };
 
 // Compare with polymer_eligible_for_artmap()
-static FORCE_INLINE int32_t eligible_for_tileshades(int32_t const picnum, int32_t const pal)
+static FORCE_INLINE int32_t eligible_for_tileshades(picnum32_t const picnum, int32_t const pal)
 {
     return !usehightile || !hicfindsubst(picnum, pal, hictinting[pal].f & HICTINT_ALWAYSUSEART);
 }
@@ -394,7 +394,7 @@ typedef struct pthtyp_t
     uint32_t        glpic;
     vec2f_t         scale;
     vec2_t          siz;
-    int16_t         picnum;
+    picnum16_t      picnum;
 
     uint16_t        flags; // see pthtyp_flags
     polytintflags_t effects;
@@ -414,8 +414,8 @@ EDUKE32_STATIC_ASSERT(TO_PTH_NOTRANSFIX(DAMETH_MASKPROPS) == 0);
 #define TO_PTH_INDEXED(dameth) ((dameth)&DAMETH_INDEXED)
 EDUKE32_STATIC_ASSERT(TO_PTH_INDEXED(DAMETH_INDEXED) == PTH_INDEXED);
 
-extern void gloadtile_art(int32_t,int32_t,int32_t,int32_t,int32_t,pthtyp *,int32_t);
-extern int32_t gloadtile_hi(int32_t,int32_t,int32_t,hicreplctyp *,int32_t,pthtyp *,int32_t,polytintflags_t);
+extern void gloadtile_art(picnum32_t,int32_t,int32_t,int32_t,int32_t,pthtyp *,int32_t);
+extern int32_t gloadtile_hi(picnum32_t,int32_t,int32_t,hicreplctyp *,int32_t,pthtyp *,int32_t,polytintflags_t);
 extern coltype *gloadtruecolortile_mdloadskin_shared(char* fn, int32_t picfillen, vec2_t * tsiz, vec2_t * siz, char * onebitalpha, polytintflags_t effect, int32_t dapalnum, char* al);
 extern int32_t drawingskybox;
 extern int32_t hicprecaching;
