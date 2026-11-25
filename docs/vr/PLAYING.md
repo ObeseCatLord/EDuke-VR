@@ -261,11 +261,11 @@ VR Setup **HUD** (`vr_hudmode`) switches between **On wrists** (default) and **I
 keeps the whole status bar on the panel in front of you, for players who prefer it and for mods
 whose HUD does not split well onto the wrists.
 
-## Other EDuke32 games (Ion Fury, Demon Throne)
+## Other EDuke32 games (Ion Fury, Demon Throne, AMC Squad)
 
 `play-game.sh GAME_FOLDER [vr|desktop]` (Windows: `play-game.bat`), or `eduke32-vr-play --game
 GAME_FOLDER` from source, runs another game built on EDuke32 from its own install folder: Ion Fury
-(`fury.grp`) and Demon Throne (`WGR2.grp`). The game keeps its own scripts, HUD, menus and art; the
+(`fury.grp`), Demon Throne (`WGR2.grp`) and AMC Squad 5.2.2 (`AMCSQUAD.GRP`). The game keeps its own scripts, HUD, menus and art; the
 Duke model sets and the Hit Feedback mod are left out. In VR:
 
 - Weapons are held as cards from the game's own art, and their shots (the game's own projectiles)
@@ -277,11 +277,21 @@ Duke model sets and the Hit Feedback mod are left out. In VR:
   `vrgame.txt` (in `data/games/NAME/`): weapon slots with their icons and keys, per-character
   arsenals, several weapons sharing one slot (up to 24 on the wheel), usable items and where the HUD
   is drawn. The format is described at the top of `gameProfile()` in `source/duke3d/src/vr.cpp`;
-  a mod or game can ship its own `vrgame.txt` the same way.
+  a mod or game can ship its own `vrgame.txt` the same way. Besides a tile number or define, a
+  weapon's icon can be `array:NAME` or `array:NAME[INDEX]`, read at draw time from that CON gamearray
+  (element INDEX, default the weapon slot), with `fallback ICON` as the static tile when it holds nothing
+  valid; `wristhud rest Y unless VAR [is V | not V]` leaves the HUD whole in front while a game
+  variable says a full-screen terminal or menu is up. Up to 256 weapon lines are read.
 - Its own crosshair is placed where your hand points.
 
-AMC Squad needs engine changes of its own (a larger tile range and new script commands) and is not
-supported yet.
+**AMC Squad** needs engine changes of its own (a larger tile range, new script commands, 67 video
+cutscenes through libvpx), so it runs on a second build of the engine, `eduke32-vr-amc`
+(`eduke32-vr-amc.exe` on Windows), which `play-game.sh`/`.bat` (and `eduke32-vr-play --game`, which looks for
+`eduke32-xr-amc` next to `eduke32-xr`, or `--binary-amc`) start for a folder holding `AMCSQUAD.GRP`. The
+game must be started from its folder, where it keeps savegames and progress, so use a writable copy; the
+scripts do that. Its profile (`data/games/amc/vrgame.txt`) has one weapon wheel per character, with each
+slot's icon read from the loadout the player bought, and keeps the game's full-screen terminals, menus
+and character select whole in front instead of splitting them onto the wrists.
 
 ## Menus
 

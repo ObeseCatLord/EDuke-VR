@@ -23,7 +23,7 @@ game data is included.
 - Duke's full 3D body, hands and weapons, made from Voxel Duke (see below).
 - Snap or smooth turning and room-scale movement.
 - Supports most EDuke32 mods, including Alien Armageddon and Voxel Duke, and the games Ion Fury
-  and Demon Throne.
+  Demon Throne and AMC Squad.
 - Windows, Linux and Steam Frame.
 
 ## Installation
@@ -57,7 +57,17 @@ from the game's install folder:
 ./play-game.sh "/path/to/Ion Fury" vr          play-game.bat "C:\Games\Ion Fury" vr
 ```
 
-Use `desktop` instead of `vr` to play on a normal screen. Support for AMC Squad is in progress.
+AMC Squad (the folder with `AMCSQUAD.GRP` and `AMCART.GRP`, version 5.2.2) works the same way:
+
+```
+./play-game.sh "/path/to/AMCSquad-EP5-5.2.2" vr          play-game.bat "C:\Games\AMCSquad-EP5-5.2.2" vr
+```
+
+It runs on its own engine build (`eduke32-vr-amc`, `eduke32-vr-amc.exe`), which the script picks
+automatically; the other games use the normal one. AMC Squad saves its progress in its own folder, so play a
+writable copy. Its weapon wheel follows the character and the loadout you bought.
+
+Use `desktop` instead of `vr` to play on a normal screen.
 
 ## Co-op
 

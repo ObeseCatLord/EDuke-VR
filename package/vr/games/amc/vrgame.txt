@@ -1,0 +1,244 @@
+# AMC Squad 5.2.2 in VR: the weapon and gadget wheels (package/vr/games/amc/vrgame.txt, used with the
+# eduke32-xr-amc binary). Findings and file:line citations: work/amc/profile/NOTES.md.
+#
+# * One block per character (gamevar CHAR, 0..18 as DATA/STATIC.CON); each weapon slot's icon is read at
+#   draw time from the CON gamearray WEAPON_TILE[slot] (array:WEAPON_TILE), which each character's
+#   PLAYER/CHAR/*.CON sets for the gun of the loadout the player bought. "fallback T" is the character's
+#   stock gun, used when the array holds nothing usable. Slot 11 (expander-like alternate of slot 6) has
+#   no WEAPON_TILE element of its own, so it shows element 6.
+# * wristhud rest 0.6 ... unless: the HUD below 60% of the screen goes onto the wrists, except while a
+#   full-screen CON terminal/menu is up (mouse cursor mode, PC terminal, mission box, character select,
+#   research/bestiary, documents): those stay whole in front.
+#
+# Slots are native curr_weapon slots (CON cur_weap is a copy of player[].curr_weapon, PLAYER.CON:119):
+# 0 temp weapon (picked up from enemies; fists/kick when none), 1 pistol, 2 shotgun, 3 machinegun,
+# 4 rocket launcher, 5 grenade/pipebomb, 6 special 1 (+ 11, its expander-like alternate; key 7 toggles
+# 6 and 11 as in Duke), 7 special 2, 8 trap/tripbomb, 9 special 3. Slot N is key N+1 (Weapon_1..10).
+# Slot 10 (remote detonator, set by script in INPUT/ALT_FIRE.CON:556) has no key and is not listed.
+
+# Slot 0: the same for everybody. The temp weapon's icon is in WEAPON_TILE[0] (set per pickup) and cannot
+# be named here, so the wheel shows the key number. noammo: its rounds live in AMC's ammo pools
+# (ammo_getdefs/ammo_remaining, DISPLAY/WEAPONBAR.CON:54-61), not always in ammo_amount[0].
+weapon 0 none noammo
+
+# James (CHAR 0): stock icons
+weapon 1 array:WEAPON_TILE fallback 5210 when CHAR 0
+weapon 2 array:WEAPON_TILE fallback 5216 when CHAR 0
+weapon 3 array:WEAPON_TILE fallback 5211 when CHAR 0
+weapon 4 array:WEAPON_TILE fallback 5212 when CHAR 0
+weapon 5 array:WEAPON_TILE fallback 5215 when CHAR 0
+weapon 6 array:WEAPON_TILE fallback 5214 when CHAR 0
+weapon 11 array:WEAPON_TILE[6] fallback 5214 key 7 when CHAR 0      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 5218 when CHAR 0
+weapon 8 array:WEAPON_TILE fallback 5217 when CHAR 0
+weapon 9 array:WEAPON_TILE fallback 5213 when CHAR 0
+
+# Zaxtor (CHAR 1): stock icons
+weapon 1 array:WEAPON_TILE fallback 5388 when CHAR 1
+weapon 2 array:WEAPON_TILE fallback 11107 when CHAR 1
+weapon 3 array:WEAPON_TILE fallback 5389 when CHAR 1
+weapon 4 array:WEAPON_TILE fallback 5443 when CHAR 1
+weapon 5 array:WEAPON_TILE fallback 5387 when CHAR 1
+weapon 6 array:WEAPON_TILE fallback 5386 when CHAR 1
+weapon 11 array:WEAPON_TILE[6] fallback 5386 key 7 when CHAR 1      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 5464 when CHAR 1
+weapon 8 array:WEAPON_TILE fallback 5450 when CHAR 1
+weapon 9 array:WEAPON_TILE fallback 5385 when CHAR 1
+
+# Merlijn (CHAR 2): stock icons
+weapon 1 array:WEAPON_TILE fallback 4970 when CHAR 2
+weapon 2 array:WEAPON_TILE fallback 4974 when CHAR 2
+weapon 3 array:WEAPON_TILE fallback 5026 when CHAR 2
+weapon 4 array:WEAPON_TILE fallback 4978 when CHAR 2
+weapon 5 array:WEAPON_TILE fallback 4907 when CHAR 2
+weapon 6 array:WEAPON_TILE fallback 10246 when CHAR 2
+weapon 11 array:WEAPON_TILE[6] fallback 10246 key 7 when CHAR 2      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 5027 when CHAR 2
+weapon 8 array:WEAPON_TILE fallback 11022 when CHAR 2
+weapon 9 array:WEAPON_TILE fallback 5040 when CHAR 2
+
+# Highwire (CHAR 3): stock icons
+weapon 1 array:WEAPON_TILE fallback 5990 when CHAR 3
+weapon 2 array:WEAPON_TILE fallback 5991 when CHAR 3
+weapon 3 array:WEAPON_TILE fallback 5992 when CHAR 3
+weapon 4 array:WEAPON_TILE fallback 5993 when CHAR 3
+weapon 5 array:WEAPON_TILE fallback 5986 when CHAR 3
+weapon 6 array:WEAPON_TILE fallback 5994 when CHAR 3
+weapon 7 array:WEAPON_TILE fallback 5995 when CHAR 3
+weapon 8 array:WEAPON_TILE fallback 69 when CHAR 3
+weapon 9 array:WEAPON_TILE fallback 5996 when CHAR 3
+
+# Sang (CHAR 4): stock icons
+weapon 1 array:WEAPON_TILE fallback 6324 when CHAR 4
+weapon 2 array:WEAPON_TILE fallback 6325 when CHAR 4
+weapon 3 array:WEAPON_TILE fallback 6326 when CHAR 4
+weapon 4 array:WEAPON_TILE fallback 6333 when CHAR 4
+weapon 5 array:WEAPON_TILE fallback 6332 when CHAR 4
+weapon 6 array:WEAPON_TILE fallback 6329 when CHAR 4
+weapon 11 array:WEAPON_TILE[6] fallback 6329 key 7 when CHAR 4      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 6330 when CHAR 4
+weapon 8 array:WEAPON_TILE fallback 6310 when CHAR 4
+weapon 9 array:WEAPON_TILE fallback 6334 when CHAR 4
+
+# Rusty (CHAR 5): stock icons
+weapon 1 array:WEAPON_TILE fallback 6839 when CHAR 5
+weapon 2 array:WEAPON_TILE fallback 6840 when CHAR 5
+weapon 3 array:WEAPON_TILE fallback 6841 when CHAR 5
+weapon 4 array:WEAPON_TILE fallback 6842 when CHAR 5
+weapon 5 array:WEAPON_TILE fallback 6846 when CHAR 5
+weapon 6 array:WEAPON_TILE fallback 6843 when CHAR 5
+weapon 11 array:WEAPON_TILE[6] fallback 6843 key 7 when CHAR 5      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 6844 when CHAR 5
+weapon 8 array:WEAPON_TILE fallback 12024 when CHAR 5
+weapon 9 array:WEAPON_TILE fallback 6845 when CHAR 5
+
+# Geoffrey (CHAR 6): stock icons
+weapon 1 array:WEAPON_TILE fallback 6648 when CHAR 6
+weapon 2 array:WEAPON_TILE fallback 6649 when CHAR 6
+weapon 3 array:WEAPON_TILE fallback 6650 when CHAR 6
+weapon 4 array:WEAPON_TILE fallback 6651 when CHAR 6
+weapon 5 array:WEAPON_TILE fallback 6645 when CHAR 6
+weapon 6 array:WEAPON_TILE fallback 6652 when CHAR 6
+weapon 7 array:WEAPON_TILE fallback 6653 when CHAR 6
+weapon 8 array:WEAPON_TILE fallback 6494 when CHAR 6
+weapon 9 array:WEAPON_TILE fallback 6654 when CHAR 6
+
+# Mikko (CHAR 7): stock icons
+weapon 1 array:WEAPON_TILE fallback 7067 when CHAR 7
+weapon 2 array:WEAPON_TILE fallback 7068 when CHAR 7
+weapon 3 array:WEAPON_TILE fallback 7069 when CHAR 7
+weapon 4 array:WEAPON_TILE fallback 7070 when CHAR 7
+weapon 5 array:WEAPON_TILE fallback 7075 when CHAR 7
+weapon 6 array:WEAPON_TILE fallback 7071 when CHAR 7
+weapon 11 array:WEAPON_TILE[6] fallback 7071 key 7 when CHAR 7      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 7072 when CHAR 7
+weapon 8 array:WEAPON_TILE fallback 69 when CHAR 7
+weapon 9 array:WEAPON_TILE fallback 7073 when CHAR 7
+
+# Cultist (CHAR 9): stock icons
+weapon 1 array:WEAPON_TILE fallback 22588 when CHAR 9
+weapon 2 array:WEAPON_TILE fallback 7884 when CHAR 9
+weapon 3 array:WEAPON_TILE fallback 7908 when CHAR 9
+weapon 4 array:WEAPON_TILE fallback 22545 when CHAR 9
+weapon 5 array:WEAPON_TILE fallback 6331 when CHAR 9
+weapon 6 array:WEAPON_TILE fallback 22002 when CHAR 9
+weapon 7 array:WEAPON_TILE fallback 8899 when CHAR 9
+weapon 8 array:WEAPON_TILE fallback 39031 when CHAR 9
+weapon 9 array:WEAPON_TILE fallback 13597 when CHAR 9
+
+# Bombshell (CHAR 10): stock icons
+weapon 1 array:WEAPON_TILE fallback 10450 when CHAR 10
+weapon 2 array:WEAPON_TILE fallback 13312 when CHAR 10
+weapon 3 array:WEAPON_TILE fallback 10464 when CHAR 10
+weapon 4 array:WEAPON_TILE fallback 10459 when CHAR 10
+weapon 5 array:WEAPON_TILE fallback 3787 when CHAR 10
+weapon 6 array:WEAPON_TILE fallback MINISHRINKERSPRITE when CHAR 10
+weapon 11 array:WEAPON_TILE[6] fallback MINISHRINKERSPRITE key 7 when CHAR 10      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 15075 when CHAR 10
+weapon 8 array:WEAPON_TILE fallback 69 when CHAR 10
+weapon 9 array:WEAPON_TILE fallback 13102 when CHAR 10
+
+# Maarten (CHAR 11): stock icons
+weapon 1 array:WEAPON_TILE fallback 11995 when CHAR 11
+weapon 2 array:WEAPON_TILE fallback RW_CROSSBOW_SPRITE when CHAR 11
+weapon 3 array:WEAPON_TILE fallback 12016 when CHAR 11
+weapon 4 array:WEAPON_TILE fallback 12002 when CHAR 11
+weapon 5 array:WEAPON_TILE fallback 5045 when CHAR 11
+weapon 6 array:WEAPON_TILE fallback 29059 when CHAR 11
+weapon 7 array:WEAPON_TILE fallback 29060 when CHAR 11
+weapon 8 array:WEAPON_TILE fallback 11022 when CHAR 11
+weapon 9 array:WEAPON_TILE fallback 29067 when CHAR 11
+
+# Jane (CHAR 12): stock icons
+weapon 1 array:WEAPON_TILE fallback 12906 when CHAR 12
+weapon 2 array:WEAPON_TILE fallback 12907 when CHAR 12
+weapon 3 array:WEAPON_TILE fallback 12908 when CHAR 12
+weapon 4 array:WEAPON_TILE fallback 12938 when CHAR 12
+weapon 5 array:WEAPON_TILE fallback 12966 when CHAR 12
+weapon 6 array:WEAPON_TILE fallback 13436 when CHAR 12
+weapon 7 array:WEAPON_TILE fallback 14985 when CHAR 12
+weapon 8 array:WEAPON_TILE fallback 69 when CHAR 12
+weapon 9 array:WEAPON_TILE fallback 12914 when CHAR 12
+
+# Micky (CHAR 13): stock icons
+weapon 1 array:WEAPON_TILE fallback 16477 when CHAR 13
+weapon 2 array:WEAPON_TILE fallback 16467 when CHAR 13
+weapon 3 array:WEAPON_TILE fallback 16488 when CHAR 13
+weapon 4 array:WEAPON_TILE fallback 16496 when CHAR 13
+weapon 5 array:WEAPON_TILE fallback 16525 when CHAR 13
+weapon 6 array:WEAPON_TILE fallback 16519 when CHAR 13
+weapon 7 array:WEAPON_TILE fallback 16630 when CHAR 13
+weapon 8 array:WEAPON_TILE fallback 16513 when CHAR 13
+weapon 9 array:WEAPON_TILE fallback 16542 when CHAR 13
+
+# Micky without suit (CHAR 15, level "Micky Begins", PSTATS.CON:1341): only the auto9 pistol is drawn for
+# slot 1 (WEAP_DISPLAY.CON:10303); the tile is Micky's stock slot 1 icon, UNCONFIRMED for CHAR 15.
+weapon 1 array:WEAPON_TILE fallback 16477 when CHAR 15
+
+# Snowfall (CHAR 14): stock icons
+weapon 1 array:WEAPON_TILE fallback 20799 when CHAR 14
+weapon 2 array:WEAPON_TILE fallback 20816 when CHAR 14
+weapon 3 array:WEAPON_TILE fallback 20822 when CHAR 14
+weapon 4 array:WEAPON_TILE fallback 20844 when CHAR 14
+weapon 5 array:WEAPON_TILE fallback 20961 when CHAR 14
+weapon 6 array:WEAPON_TILE fallback 20836 when CHAR 14
+weapon 11 array:WEAPON_TILE[6] fallback 20836 key 7 when CHAR 14      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 20946 when CHAR 14
+weapon 8 array:WEAPON_TILE fallback 69 when CHAR 14
+weapon 9 array:WEAPON_TILE fallback 20831 when CHAR 14
+
+# Rosa (CHAR 16): stock icons
+weapon 1 array:WEAPON_TILE fallback 23268 when CHAR 16
+weapon 2 array:WEAPON_TILE fallback 32366 when CHAR 16
+weapon 3 array:WEAPON_TILE fallback 32386 when CHAR 16
+weapon 4 array:WEAPON_TILE fallback 32409 when CHAR 16
+weapon 5 array:WEAPON_TILE fallback 32400 when CHAR 16
+weapon 6 array:WEAPON_TILE fallback 29781 when CHAR 16
+weapon 7 array:WEAPON_TILE fallback 32393 when CHAR 16
+weapon 8 array:WEAPON_TILE fallback 69 when CHAR 16
+weapon 9 array:WEAPON_TILE fallback 32419 when CHAR 16
+
+# Kagura (CHAR 17): stock icons
+weapon 1 array:WEAPON_TILE fallback 27332 when CHAR 17
+weapon 2 array:WEAPON_TILE fallback 8308 when CHAR 17
+weapon 3 array:WEAPON_TILE fallback 27278 when CHAR 17
+weapon 4 array:WEAPON_TILE fallback 27132 when CHAR 17
+weapon 5 array:WEAPON_TILE fallback 27380 when CHAR 17
+weapon 6 array:WEAPON_TILE fallback 27335 when CHAR 17
+weapon 11 array:WEAPON_TILE[6] fallback 27335 key 7 when CHAR 17      # expander-like alternate of slot 6
+weapon 7 array:WEAPON_TILE fallback 27272 when CHAR 17
+weapon 8 array:WEAPON_TILE fallback 27131 when CHAR 17
+weapon 9 array:WEAPON_TILE fallback 24042 when CHAR 17
+
+# Wheaton (CHAR 18): stock icons
+weapon 1 array:WEAPON_TILE fallback 35847 when CHAR 18
+weapon 2 array:WEAPON_TILE fallback 35894 when CHAR 18
+weapon 3 array:WEAPON_TILE fallback 35857 when CHAR 18
+weapon 4 array:WEAPON_TILE fallback 35873 when CHAR 18
+weapon 5 array:WEAPON_TILE fallback 35864 when CHAR 18
+weapon 6 array:WEAPON_TILE fallback 36044 when CHAR 18
+weapon 7 array:WEAPON_TILE fallback 36052 when CHAR 18
+weapon 8 array:WEAPON_TILE fallback 36068 when CHAR 18
+weapon 9 array:WEAPON_TILE fallback 35889 when CHAR 18
+
+# Usable inventory (item = player inv_amount index: 0 steroids, 3 holoduke, 4 jetpack, 7 heat/night vision,
+# 9 firstaid). AMC renames the functions (AMCUSER.CON:202-221: Holo_Duke = USE_INVENTORY_SLOT_1,
+# Jetpack = ENABLE_FLIGHT, NightVision = ENABLE_NIGHTVISION, MedKit = USE_HEALING_ITEM, Steroids =
+# USE_INVENTORY_SLOT_2); the built-in names below still resolve. Icons are AMC's generic pickup sprites
+# (AMCDEFS.CON:164-169, 543); each character also has own icons in c_medikit etc., not usable here.
+# Full ring: the game's own amounts (AMCUSER.CON:139-144): STEROID_AMOUNT 400, HOLOPLYR_AMOUNT 2400
+# (James caps at 900, ITEMS.CON:521), JETPACK_AMOUNT 1600, HEAT_AMOUNT 4800. Medkit 100 (research raises
+# pmax_firstaid_total to 150/250, PLAYER.CON:45-51).
+gadget 9 FIRSTAID MedKit 100
+gadget 0 STEROIDS Steroids STEROID_AMOUNT
+gadget 3 HOLODUKE Holo_Duke HOLOPLYR_AMOUNT
+gadget 4 JETPACK Jetpack JETPACK_AMOUNT
+gadget 7 HEATSENSOR NightVision HEAT_AMOUNT
+
+# The game's HUD is drawn in EVENT_DISPLAYREST (DISPLAY/DISPLAY.CON:2091), in 320x200 units. Per-character
+# bars sit at y>=124 (most at 150-191), centre prompts and fullscreen overlays at y 100-110. 0.6 (y=120)
+# sends the bars to the wrists and keeps the centre prompt (default position 170,110) in front.
+# Gamevars of the full-screen screens (NOTES.md section 5): MOUSEUP cursor mode, PCINTER computer terminal,
+# MISSION_UP mission box, CHARSELECT character select, show_rs_ui/show_bst_ui research and bestiary,
+# DOCUMENT (-1 when none).
+wristhud rest 0.6 unless MOUSEUP unless PCINTER unless MISSION_UP unless CHARSELECT unless show_rs_ui unless show_bst_ui unless DOCUMENT not -1

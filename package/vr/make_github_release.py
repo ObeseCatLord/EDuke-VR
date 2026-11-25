@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Build the public EDuke VR release archives for GitHub (nothing is uploaded).
 
-    make_github_release.py OUT --version vX.Y.Z --windows-dir WINDIR [--linux-binary BIN] [--release DIR]
+    make_github_release.py OUT --version vX.Y.Z --windows-dir WINDIR [--linux-binary BIN] [--linux-amc-binary BIN]
+                           [--release DIR]
 
 OUT receives
   EDuke-VR-<version>-linux-x86_64.tar.gz   EDuke-VR/ with linux/ (game + libraries), play/join/
@@ -25,7 +26,11 @@ personal bundle's layout, so update.sh/ps1 in either lays a release over an inst
 everything else (GRPs, expansions, Voxel Duke, settings, saves).
 
 The Linux binary should be built portable: make NETCODE=1 USE_OPENXR=1 PORTABLE_GLIBC=1 LTO=0
-(it then needs glibc 2.38 and GCC 13's libstdc++ with the bundled libraries).
+(it then needs glibc 2.38 and GCC 13's libstdc++ with the bundled libraries). AMC Squad needs its own
+engine build, the same make line plus AMCSQUAD=1 obj=obj-xr-amc-portable duke3d_game=eduke32-xr-amc-portable
+(--linux-amc-binary, default eduke32-xr-amc-portable); it is shipped as linux/eduke32-vr-amc,
+windows/eduke32-vr-amc.exe (in --windows-dir, from build_windows.sh) and linux-arm64/eduke32-vr-amc
+(in --linux-arm64-dir, from build_linux_arm64.sh), and play-game.sh/.bat pick it for AMCSQUAD.GRP.
 """
 import argparse
 import json
@@ -131,7 +136,8 @@ linux-arm64/lib/libogg.so.0             libogg, BSD 3-clause (libogg-COPYING.txt
 WINDOWS_ITEMS = '''windows/openxr_loader.dll         Khronos OpenXR loader, Apache License 2.0 (OpenXR-loader-Apache-2.0.txt)
 windows/libopus-0.dll             Opus, BSD 3-clause (opus-COPYING.txt)
 windows/eduke32-vr.exe            statically links SDL2 (zlib license, SDL2-zlib-LICENSE.txt) and
-                                  libvpx (BSD 3-clause, libvpx-LICENSE.txt)'''
+                                  libvpx (BSD 3-clause, libvpx-LICENSE.txt)
+windows/eduke32-vr-amc.exe        the same, built for AMC Squad'''
 
 
 def licenses(dest, table, items, version):
@@ -143,7 +149,7 @@ def licenses(dest, table, items, version):
     (dest / 'THIRD-PARTY.txt').write_text(THIRD_PARTY.format(version=version, items=items))
 
 
-def tree(root, version, platform, binary, windir, release, arm64dir=None):
+def tree(root, version, platform, binary, windir, release, arm64dir=None, amc_binary=None):
     """One platform's EDuke-VR/ folder."""
     out = root / 'EDuke-VR'
     data = out / 'data'
@@ -161,7 +167,7 @@ def tree(root, version, platform, binary, windir, release, arm64dir=None):
     mpb.write(out / 'VERSION', version + '\n')
     if platform in ('linux', 'linux-arm64'):
         if platform == 'linux':
-            mpb.copy_linux_build(binary, out / 'linux')
+            mpb.copy_linux_build(binary, out / 'linux', amc_binary)
         else:
             shutil.copytree(arm64dir, out / 'linux-arm64')
         mpb.write(out / 'play.sh', mpb.SH_PLAY, True)
@@ -195,6 +201,7 @@ def main():
     parser.add_argument('out', type=Path)
     parser.add_argument('--version', required=True, help='release tag, e.g. v0.1.0')
     parser.add_argument('--linux-binary', type=Path, default=REPO / 'eduke32-xr-portable')
+    parser.add_argument('--linux-amc-binary', type=Path, default=REPO / 'eduke32-xr-amc-portable', help='the AMC Squad engine build (skipped, with a warning, when missing)')
     parser.add_argument('--windows-dir', type=Path, required=True, help='eduke32-vr.exe, openxr_loader.dll, libopus-0.dll')
     parser.add_argument('--linux-arm64-dir', type=Path, help='prebuilt 64-bit ARM build: eduke32-vr and lib/ (package/vr/build_linux_arm64.sh)')
     parser.add_argument('--release', type=Path, help='an existing make_release.py output (else one is made)')
@@ -211,7 +218,8 @@ def main():
             subprocess.run([sys.executable, str(HERE / 'make_release.py'), str(release), '--no-source',
                             '--binary', str(args.linux_binary)], check=True, stdout=subprocess.DEVNULL)
         name = f'EDuke-VR-{args.version}'
-        lin = tree(scratch / 'linux', args.version, 'linux', args.linux_binary, None, release)
+        amc = mpb.amc_binary_or_none(args.linux_amc_binary)
+        lin = tree(scratch / 'linux', args.version, 'linux', args.linux_binary, None, release, amc_binary=amc)
         subprocess.run(['tar', '-czf', str(out / f'{name}-linux-x86_64.tar.gz'), '-C', str(lin.parent), lin.name], check=True)
         if args.linux_arm64_dir:
             arm = tree(scratch / 'arm64', args.version, 'linux-arm64', None, None, release, args.linux_arm64_dir)

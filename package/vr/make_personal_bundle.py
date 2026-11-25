@@ -2,16 +2,17 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Assemble a PERSONAL, ready-to-run EDuke32 VR bundle for testing on another machine you own.
 
-    make_personal_bundle.py OUT --linux-binary eduke32-xr --windows-dir WINDIR [--zip]
+    make_personal_bundle.py OUT --linux-binary eduke32-xr [--linux-amc-binary eduke32-xr-amc] --windows-dir WINDIR [--zip]
 
 PERSONAL USE ONLY. The bundle holds your own game data (GRPs, World Tour files) and the private
 Voxel Duke model pack built from your download of that mod: never upload or share it. (The
 redistributable release is make_release.py, which carries no game data and no private assets.)
 
 OUT receives:
-  linux/      eduke32-vr (the VR-capable build; desktop too) and lib/ with the shared libraries
-              it needs beyond the system's GL/X11/ALSA/glibc
-  windows/    eduke32-vr.exe, openxr_loader.dll, libopus-0.dll
+  linux/      eduke32-vr (the VR-capable build; desktop too), eduke32-vr-amc (the AMC Squad engine
+              build, used by play-game.sh when AMCSQUAD.GRP is there) and lib/ with the shared
+              libraries they need beyond the system's GL/X11/ALSA/glibc
+  windows/    eduke32-vr.exe, eduke32-vr-amc.exe (when built), openxr_loader.dll, libopus-0.dll
   data/       vrpacks/ (original, original-lowres and voxel model sets, ready to use; no Alien
               Armageddon files), local/duke3d/ (generated extras), grp/DUKE3D.GRP (World Tour, the
               same as the multiplayer server), worldtour/ (World Tour episode 5 maps, art, CON,
@@ -44,6 +45,7 @@ ADDONS = Path.home() / '.config/eduke32'
 LINUX_LIBS = ('libopenxr_loader.so.1', 'libopus.so.0', 'libvpx.so.12', 'libFLAC.so.14', 'libogg.so.0',
               'libjsoncpp.so.27', 'libatomic.so.1')
 WINDOWS_FILES = ('eduke32-vr.exe', 'openxr_loader.dll', 'libopus-0.dll')
+WINDOWS_OPTIONAL_FILES = ('eduke32-vr-amc.exe',)   # AMC Squad's own engine build
 PACKS = ('original', 'original-lowres', 'voxel')
 AA_FILES = ('hand-rig-aa.txt', 'hud-model-map-aa.txt')
 
@@ -111,7 +113,7 @@ run() {   # run MODE(vr|desktop) [game arguments...]
     [[ -n ${other_game:-} ]] && { mods=(); local_data=(); pack=(-vrpack none); }
     while :; do
         : > "$restart"; status=0
-        "$bin/eduke32-vr" -j "$data" "${local_data[@]}" "${mods[@]}" "${pack[@]}" -nosetup "$@" || status=$?
+        "$bin/${exe:-eduke32-vr}" -j "$data" "${local_data[@]}" "${mods[@]}" "${pack[@]}" -nosetup "$@" || status=$?
         [[ -s $restart ]] || return "$status"
         pack=(-vrpack "$(head -n1 "$restart")")   # the VR Setup menu switched model sets
     done
@@ -140,19 +142,23 @@ mode=${1:-vr}; [[ $# -gt 0 ]] && shift
 run "$mode" "${grp[@]}" "$@"
 ''')
 SH_GAME = sh_script(r'''# ./play-game.sh GAME_FOLDER [vr|desktop]   another EDuke32 game you own, from its install folder:
-#   Ion Fury (fury.grp) or Demon Throne (WGR2.grp). Its own HUD, menus and art; VR weapon and gadget
-#   wheels from data/games/.
+#   Ion Fury (fury.grp), Demon Throne (WGR2.grp) or AMC Squad (AMCSQUAD.GRP). Its own HUD, menus and
+#   art; VR weapon and gadget wheels from data/games/. AMC Squad runs on its own engine build
+#   (linux/eduke32-vr-amc) from its folder, where it keeps savegames and progress: use a writable copy.
 dir=${1:?usage: play-game.sh GAME_FOLDER [vr|desktop]}; mode=${2:-vr}; shift $(( $# >= 2 ? 2 : 1 ))
 dir=$(cd "$dir" && pwd)
 found=""
-for name in fury.grp WGR2.grp; do
+for name in fury.grp WGR2.grp AMCSQUAD.GRP; do
     found=$(find "$dir" -maxdepth 1 -iname "$name" -print -quit)
     [[ -n $found ]] && break
 done
 case "$(basename "${found:-none}" | tr '[:upper:]' '[:lower:]')" in
     fury.grp) game=(-j "$dir" -j "$data/games/fury") ;;
     wgr2.grp) game=(-j "$dir" -j "$dir/WGR2" -j "$data/games/demonthrone") ;;   # its scripts include from WGR2/
-    *) echo "play-game: no supported game in $dir (Ion Fury: fury.grp, Demon Throne: WGR2.grp)" >&2; exit 2 ;;
+    amcsquad.grp)
+        [[ -x $bin/eduke32-vr-amc ]] || { echo "play-game: this bundle has no AMC Squad engine build ($bin/eduke32-vr-amc)" >&2; exit 1; }
+        exe=eduke32-vr-amc; game=(-j "$dir" -j "$data/games/amc"); cd "$dir" ;;
+    *) echo "play-game: no supported game in $dir (Ion Fury: fury.grp, Demon Throne: WGR2.grp, AMC Squad: AMCSQUAD.GRP)" >&2; exit 2 ;;
 esac
 other_game=1
 run "$mode" "${game[@]}" -gamegrp "$(basename "$found")" "$@"
@@ -381,8 +387,9 @@ set "XARGS=!GRP!"
 call :run %M% !REST!
 ''')
 BAT_GAME = bat(r'''rem play-game.bat GAME_FOLDER [vr|desktop]   another EDuke32 game you own, from its install folder:
-rem   Ion Fury (fury.grp) or Demon Throne (WGR2.grp). Its own HUD, menus and art; VR weapon and gadget
-rem   wheels from data\games\.
+rem   Ion Fury (fury.grp), Demon Throne (WGR2.grp) or AMC Squad (AMCSQUAD.GRP). Its own HUD, menus and art;
+rem   VR weapon and gadget wheels from data\games\. AMC Squad runs on its own engine build
+rem   (windows\eduke32-vr-amc.exe) from its folder, where it keeps savegames and progress: use a writable copy.
 set "G=%~1"
 set "M=%~2"
 if "%M%"=="" set "M=vr"
@@ -390,7 +397,13 @@ if "!G!"=="" (echo usage: play-game.bat GAME_FOLDER [vr^|desktop] & exit /b 2)
 set "XARGS="
 if exist "!G!\fury.grp" set XARGS=-j "!G!" -j "!DATA!\games\fury" -gamegrp fury.grp
 if exist "!G!\WGR2.grp" set XARGS=-j "!G!" -j "!G!\WGR2" -j "!DATA!\games\demonthrone" -gamegrp WGR2.grp
-if not defined XARGS (echo play-game: no supported game in !G! ^(Ion Fury: fury.grp, Demon Throne: WGR2.grp^) & exit /b 2)
+if exist "!G!\AMCSQUAD.GRP" (
+    if not exist "!HERE!windows\eduke32-vr-amc.exe" (echo play-game: this bundle has no AMC Squad engine build ^(windows\eduke32-vr-amc.exe^) & exit /b 1)
+    set XARGS=-j "!G!" -j "!DATA!\games\amc" -gamegrp AMCSQUAD.GRP
+    set "EXE=!HERE!windows\eduke32-vr-amc.exe"
+    cd /d "!G!"
+)
+if not defined XARGS (echo play-game: no supported game in !G! ^(Ion Fury: fury.grp, Demon Throne: WGR2.grp, AMC Squad: AMCSQUAD.GRP^) & exit /b 2)
 set "OTHERGAME=1"
 call :run %M%
 ''')
@@ -514,11 +527,18 @@ Version {version}, built from commit {commit}.
 '''
 
 
-def copy_linux_build(binary, dest):
-    """The game as linux/eduke32-vr plus lib/ with the shared libraries it needs beyond the system's
-    SDL2/GL/X11/ALSA/glibc."""
+def copy_linux_build(binary, dest, amc_binary=None):
+    """The game as linux/eduke32-vr (and the AMC Squad engine build as eduke32-vr-amc, when given) plus
+    lib/ with the shared libraries it needs beyond the system's SDL2/GL/X11/ALSA/glibc."""
     (dest / 'lib').mkdir(parents=True)
     shutil.copy2(binary, dest / 'eduke32-vr')
+    if amc_binary:
+        shutil.copy2(amc_binary, dest / 'eduke32-vr-amc')
+        # Same libraries as the normal build (libvpx for its 67 IVF cutscenes): check it links them too.
+        amc_ldd = subprocess.run(['ldd', str(amc_binary)], capture_output=True, text=True, check=True).stdout
+        for lib in ('libvpx.so.12', 'libopenxr_loader.so.1'):
+            if lib not in amc_ldd:
+                raise SystemExit(f'copy_linux_build: {amc_binary} does not link {lib}')
     ldd = subprocess.run(['ldd', str(binary)], capture_output=True, text=True, check=True).stdout
     copied = set()
     for line in ldd.splitlines():
@@ -534,10 +554,22 @@ def copy_linux_build(binary, dest):
                          'update LINUX_LIBS and the THIRD-PARTY list')
 
 
+def amc_binary_or_none(path):
+    if path and path.is_file():
+        return path
+    print(f'make_personal_bundle: {path} not found, AMC Squad will not run from this bundle', file=sys.stderr)
+    return None
+
+
 def copy_windows_build(windir, dest):
     dest.mkdir(parents=True)
     for name in WINDOWS_FILES:
         shutil.copy2(windir / name, dest / name)
+    for name in WINDOWS_OPTIONAL_FILES:
+        if (windir / name).is_file():
+            shutil.copy2(windir / name, dest / name)
+        else:
+            print(f'copy_windows_build: {windir / name} not found, AMC Squad will not run from this bundle', file=sys.stderr)
 
 
 def copy_pack(src, dst):
@@ -562,6 +594,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('out', type=Path)
     parser.add_argument('--linux-binary', type=Path, default=REPO / 'eduke32-xr')
+    parser.add_argument('--linux-amc-binary', type=Path, default=REPO / 'eduke32-xr-amc', help='the AMC Squad engine build (skipped, with a warning, when missing)')
     parser.add_argument('--windows-dir', type=Path, required=True, help='eduke32-vr.exe, openxr_loader.dll, libopus-0.dll')
     parser.add_argument('--packs', type=Path, default=Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'eduke32-vr/vrpacks')
     parser.add_argument('--world-tour', type=Path, default=WORLD_TOUR)
@@ -576,7 +609,8 @@ def main():
     data = out / 'data'
 
     # Builds.
-    copy_linux_build(args.linux_binary, out / 'linux')
+    amc = amc_binary_or_none(args.linux_amc_binary)
+    copy_linux_build(args.linux_binary, out / 'linux', amc)
     if args.linux_arm64_dir:
         shutil.copytree(args.linux_arm64_dir, out / 'linux-arm64', symlinks=False)
     copy_windows_build(args.windows_dir, out / 'windows')

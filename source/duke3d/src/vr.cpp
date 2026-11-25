@@ -163,17 +163,31 @@ static bool profileWheel();
 //                                    is: this one is in hand while gamevar VAR is VALUE (the key is
 //                                    pressed until it is); owned: carried while VAR & MASK; ammo:
 //                                    its rounds are in VAR (full ring at MAX). Up to 24 entries.
+//                                    ICON may also be array:NAME or array:NAME[INDEX]: the tile is read
+//                                    at draw time from the CON gamearray NAME (element INDEX, default
+//                                    the weapon slot N), for a game that sets its icons per loadout
+//                                    (AMC Squad: array:WEAPON_TILE). If the array, the element or the
+//                                    tile is invalid (0 or out of range) the static tile from
+//                                    [fallback ICON] is used, else the slot shows its key number.
+//                                    Up to 256 weapon lines are read (all characters), 24 per wheel.
 //   gadget ITEM ICON FUNCTION FULL   inventory slot ITEM (GET_*), its icon, the game function that
 //                                    uses it (e.g. MedKit) and the amount shown as a full ring
 //   wristhud rest Y                  the game draws its HUD in EVENT_DISPLAYREST: what it draws below
 //                                    Y (a screen fraction) goes onto the wrists, the rest stays in front
+//                                    [unless VAR [is V | not V]]...: while the gamevar VAR is non-zero
+//                                    (or is V / is not V) nothing is captured, so a full-screen
+//                                    terminal or menu the game puts up in that event stays whole in front
 // Read on first use, after the game's scripts are compiled (their defines name the tiles).
 struct VRGameProfile
 {
-    struct Weapon { int weapon, tile, key; bool noAmmo, isBits, isClear; int var, value, isVar, isValue, ownVar, ownMask, ammoVar, ammoMax; };
+    struct Weapon { int weapon, tile, key; bool noAmmo, isBits, isClear; int var, value, isVar, isValue, ownVar, ownMask, ammoVar, ammoMax;
+                    int tileArray, tileIndex, fallbackTile; };   // icon from gamearray tileArray[tileIndex] (-1: static tile)
+    struct RestGate { int var, value; int mode; };   // mode 0: var != 0, 1: var == value, 2: var != value
+
     struct Gadget { int item, tile, function, full; };
     std::vector<Weapon> weapons;
     std::vector<Gadget> gadgets;
+    std::vector<RestGate> restGates;   // wristhud rest ... unless: any one true skips the capture
     float restWristBand=0.f;   // wristhud rest Y: EVENT_DISPLAYREST sprites below Y (screen fraction) go to the wrists
     bool present=false;
 };
@@ -207,11 +221,29 @@ static VRGameProfile const &gameProfile()
         auto next=[&]() { return strtok_r(nullptr," \t\r\n",&save); };
         if (!Bstrcasecmp(word,"weapon"))
         {
-            VRGameProfile::Weapon weapon{profileValue(next()),profileValue(next()),-1,false,false,false,-1,0,-1,0,-1,0,-1,0};
+            VRGameProfile::Weapon weapon{profileValue(next()),-1,-1,false,false,false,-1,0,-1,0,-1,0,-1,0,-1,-1,-1};
             bool good=true;
+            {
+                char const *icon=next();
+                if (icon && !Bstrncasecmp(icon,"array:",6))
+                {
+                    char name[64];
+                    char const *source=icon+6;
+                    size_t length=std::strcspn(source,"[");
+                    if (length>0 && length<sizeof(name))
+                    {
+                        std::memcpy(name,source,length); name[length]=0;
+                        weapon.tileArray=hash_find(&h_arrays,name);
+                        if (source[length]=='[') weapon.tileIndex=std::atoi(source+length+1);
+                    }
+                    if (weapon.tileArray<0) { LOG_F(WARNING,"vrgame.txt: weapon %d: unknown gamearray in %s.",weapon.weapon,icon); good=false; }
+                }
+                else weapon.tile=profileValue(icon);
+            }
             while (char const *option=next())
             {
                 if (!Bstrcasecmp(option,"noammo")) weapon.noAmmo=true;
+                else if (!Bstrcasecmp(option,"fallback")) weapon.fallbackTile=profileValue(next());
                 else if (!Bstrcasecmp(option,"key")) weapon.key=profileValue(next());
                 else if (!Bstrcasecmp(option,"is") || !Bstrcasecmp(option,"isbits") || !Bstrcasecmp(option,"isclear") || !Bstrcasecmp(option,"owned") || !Bstrcasecmp(option,"ammo"))
                 {
@@ -235,7 +267,7 @@ static VRGameProfile const &gameProfile()
             }
             if (!good) { LOG_F(WARNING,"vrgame.txt: weapon %d: unknown gamevar.",weapon.weapon); continue; }
             if (weapon.key<0) weapon.key=weapon.weapon+1;
-            if ((unsigned)weapon.weapon<MAX_WEAPONS && (unsigned)weapon.key-1<10u && profile.weapons.size()<64)
+            if ((unsigned)weapon.weapon<MAX_WEAPONS && (unsigned)weapon.key-1<10u && profile.weapons.size()<256)
                 profile.weapons.push_back(weapon);
             else LOG_F(WARNING,"vrgame.txt: weapon line ignored (slot %d, key %d).",weapon.weapon,weapon.key);
         }
@@ -245,6 +277,24 @@ static VRGameProfile const &gameProfile()
             // (0..1, top down): those sprites become the wrist watches, the rest stays in front.
             char const *event=next(), *band=next();
             if (event && !Bstrcasecmp(event,"rest") && band) profile.restWristBand=float(std::atof(band));
+            // [unless VAR [is V | not V]]...: gamevars that say the game is showing a full-screen screen.
+            char const *token=next();
+            while (token)
+            {
+                if (Bstrcasecmp(token,"unless")) { token=next(); continue; }
+                char const *var=next();
+                int const id=var ? hash_find(&h_gamevars,var) : -1;
+                token=next();
+                VRGameProfile::RestGate gate{id,0,0};
+                if (token && (!Bstrcasecmp(token,"is") || !Bstrcasecmp(token,"not")))
+                {
+                    gate.mode=!Bstrcasecmp(token,"is") ? 1 : 2;
+                    gate.value=profileValue(next());
+                    token=next();
+                }
+                if (id>=0 && profile.restGates.size()<16) profile.restGates.push_back(gate);
+                else LOG_F(WARNING,"vrgame.txt: wristhud unless %s ignored (unknown gamevar).",var ? var : "");
+            }
         }
         else if (!Bstrcasecmp(word,"gadget"))
         {
@@ -830,7 +880,21 @@ static int wheelIconTile(DukePlayer_t const *p, int item)
     if (profileWheel())
     {
         auto const entry=itemEntry(item) ? itemEntry(item) : profileWeapon(weapon);
-        return entry && (unsigned)entry->tile<MAXTILES && tilesiz[entry->tile].x>0 ? entry->tile : -1;
+        if (!entry) return -1;
+        int tile=entry->tile;
+        if (entry->tileArray>=0)
+        {
+            // The game's own per-loadout icon, read now; a bad array/element falls back to the static tile.
+            auto const &array=aGameArrays[entry->tileArray];
+            int const index=entry->tileIndex>=0 ? entry->tileIndex : entry->weapon;
+            tile=entry->fallbackTile;
+            if (array.pValues && !(array.flags & GAMEARRAY_SYSTEM) && (unsigned)index<(unsigned)array.size)
+            {
+                int const value=Gv_GetArrayValue(entry->tileArray,index);
+                if ((unsigned)value<MAXTILES && tilesiz[value].x>0) tile=value;
+            }
+        }
+        return (unsigned)tile<MAXTILES && tilesiz[tile].x>0 ? tile : -1;
     }
     if (weapon==GROW_WEAPON) return GROWSPRITEICON;
     if (weapon==HANDBOMB_WEAPON && p->ammo_amount[weapon]<=0 && p->hbomb_on) return WeaponPickupSprites[HANDREMOTE_WEAPON];
@@ -4843,6 +4907,13 @@ bool G_XRBeginRestHud()
     auto const p=g_player[myconnectindex].ps;
     if (!totalConversion() || gameProfile().restWristBand<=0.f || !wristHudRequested())
         return false;
+    // The game shows a full-screen screen (terminal, menu): leave it whole in front.
+    if (!gameProfile().restGates.empty() && (unsigned)p->i<MAXSPRITES)
+        for (auto const &gate:gameProfile().restGates)
+        {
+            int const value=Gv_GetVar(gate.var,p->i,myconnectindex);
+            if (gate.mode==0 ? value!=0 : gate.mode==1 ? value==gate.value : value!=gate.value) return false;
+        }
     if (!menuRuntime
         || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()
         || !inputValid() || screenpeek!=myconnectindex || ud.overhead_on || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU))

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Assemble a redistributable EDuke32 VR tree (nothing is uploaded).
 
-Usage: make_release.py OUT [--binary eduke32-xr] [--assets DUKE_VR_ASSETS]
+Usage: make_release.py OUT [--binary eduke32-xr] [--binary-amc eduke32-xr-amc] [--assets DUKE_VR_ASSETS]
 
 OUT receives:
   eduke32-vr/            launcher, DEF and pack builders (and build_voxel_pack.py, which makes
@@ -10,7 +10,8 @@ OUT receives:
                          runs it when voxel_duke3d.zip is put next to the game, and the pack is
                          then the default model set), AA
                          compatibility CON, docs,
-                         GPL text, the binary (when given or built), a source
+                         GPL text, the binaries (eduke32-xr, and eduke32-xr-amc for AMC Squad,
+                         when given or built), the per-game VR profiles (package/vr/games), a source
                          archive of the current commit (GPL source) and
                          vrpacks/original.zip and original-lowres.zip, the
                          original model set (and its low-res skins) as
@@ -42,6 +43,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('out', type=Path)
     parser.add_argument('--binary', type=Path, default=REPO / 'eduke32-xr')
+    parser.add_argument('--binary-amc', type=Path, default=REPO / 'eduke32-xr-amc', help='AMC Squad engine build (optional)')
     parser.add_argument('--assets', type=Path, default=REPO.parent / 'duke-vr-assets')
     parser.add_argument('--no-source', action='store_true', help='skip the git source archive')
     args = parser.parse_args()
@@ -63,6 +65,7 @@ def main():
     shutil.copytree(REPO / 'package/vr/voxelpack', game / 'package/vr/voxelpack', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     shutil.copytree(REPO / 'package/vr/aa566', game / 'package/vr/aa566')
     shutil.copytree(REPO / 'package/vr/mods', game / 'package/vr/mods')
+    shutil.copytree(REPO / 'package/vr/games', game / 'package/vr/games')   # per-game profiles (--game)
     (game / 'docs/vr').mkdir(parents=True)
     for doc in ('PLAYING.md', 'FULL_PITCH.md'):
         if (REPO / 'docs/vr' / doc).is_file():
@@ -71,6 +74,8 @@ def main():
     shutil.copy2(REPO / 'package/common/gpl-2.0.txt', game / 'gpl-2.0.txt')
     if args.binary.is_file():
         shutil.copy2(args.binary, game / 'eduke32-xr')
+    if args.binary_amc.is_file():
+        shutil.copy2(args.binary_amc, game / 'eduke32-xr-amc')   # found by eduke32-vr-play next to eduke32-xr
     if not args.no_source:
         subprocess.run(['git', '-C', str(REPO), 'archive', '--format=tar.gz', '--prefix=eduke32-vr-source/',
                         '-o', str(game / 'eduke32-vr-source.tar.gz'), 'HEAD'], check=True)
@@ -121,7 +126,7 @@ def main():
             subprocess.run([sys.executable, str(game / 'package/vr/build_vr_pack.py'), str(out / 'duke-vr-assets'), set_name,
                             str(game / 'vrpacks'), '--release', '--zip'], check=True, capture_output=True, text=True)
     print(json.dumps({'out': str(out), 'asset_files': len(copied), 'packs': sorted(p.name for p in (game / 'vrpacks').glob('*.zip')),
-                      'binary': (game / 'eduke32-xr').is_file(),
+                      'binary': (game / 'eduke32-xr').is_file(), 'binary_amc': (game / 'eduke32-xr-amc').is_file(),
                       'source_archive': (game / 'eduke32-vr-source.tar.gz').is_file()}, indent=1))
 
 

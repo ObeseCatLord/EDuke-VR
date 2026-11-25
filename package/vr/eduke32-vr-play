@@ -3,13 +3,16 @@
 # Launch EDuke32 VR with the qualified gameplay features (EDUKE32_XR=play).
 #
 #   eduke32-vr-play [--aa AA_DIR] [--game TC_DIR] [--grp DUKE3D.GRP] [--left] [--no-models] [--release] [--glow] [--pack NAME]
-#                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [--voxel-zip ZIP] [--no-voxel-build]
+#                   [--assets DUKE_VR_ASSETS] [--binary EDUKE32_XR] [--binary-amc EDUKE32_XR_AMC] [--voxel-zip ZIP] [--no-voxel-build]
 #                   [--build-packs] [--desktop] [-- eduke32 args]
 #
 # Stock Duke: pass --grp (or run where DUKE3D.GRP is found natively).
 # Alien Armageddon 5.66: pass --aa with the install directory; the shipped
 # eduke32_vr_aa566.con compatibility entry is selected automatically.
-# Other games built on EDuke32 (Ion Fury, Demon Throne): pass --game with the install directory.
+# Other games built on EDuke32 (Ion Fury, Demon Throne, AMC Squad): pass --game with the install directory.
+# AMC Squad (a folder holding AMCSQUAD.GRP) needs its own engine build, eduke32-xr-amc, found next to
+# eduke32-xr (--binary-amc or EDUKE32_VR_BINARY_AMC name another); the game runs from its folder, as it
+# keeps savegames and progress there, so use a writable copy.
 # Their own scripts, HUD and art are used as they are; the Duke model packs and the Hit Feedback
 # mod are left out (they are made for Duke's tiles), and package/vr/games/<game>/ adds the VR
 # profile (weapon wheel icons, wrist HUD) for that game.
@@ -32,6 +35,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 binary="$repo/eduke32-xr"
 assets="$(cd "$repo/.." && pwd)/duke-vr-assets"
+binary_amc="${EDUKE32_VR_BINARY_AMC:-}"
 aa="" game="" game_id="" grp="" models=1 release="" glow="" pack="" default_pack="" voxel_zip="" no_voxel="" build_only="" desktop=""
 # Personal defaults (never shipped): ~/.config/eduke32-vr/launcher.conf, e.g. "pack=dnf-private" or
 # "voxel_zip=/path/to/voxel_duke3d.zip". The pack is only the default; the game's VR Setup choice wins.
@@ -53,17 +57,16 @@ while (($#)); do
         --pack) pack=$2; shift 2 ;;
         --assets) assets=$(cd "$2" && pwd); shift 2 ;;
         --binary) binary=$(realpath "$2"); shift 2 ;;
+        --binary-amc) binary_amc=$(realpath "$2"); shift 2 ;;
         --voxel-zip) voxel_zip=$(realpath "$2"); shift 2 ;;
         --no-voxel-build) no_voxel=1; shift ;;
         --build-packs) build_only=1; shift ;;
         --desktop) desktop=1; shift ;;
         --) shift; args+=("$@"); break ;;
-        -h|--help) sed -n '3,28p' "$0"; exit 0 ;;
+        -h|--help) sed -n '3,32p' "$0"; exit 0 ;;
         *) args+=("$1"); shift ;;
     esac
 done
-[[ -n $build_only || -x "$binary" ]] || { echo "eduke32-vr-play: build $binary first (make USE_OPENXR=1 ...)" >&2; exit 1; }
-
 # A total conversion: which one, by its main data file. Its art uses its own tile numbers, so no
 # Duke model pack is loaded (the VR hands and weapon cards are drawn from the game's own HUD art).
 game_grp="" game_dirs=()
@@ -75,11 +78,18 @@ if [[ -n $game ]]; then
     case "${game_grp,,}" in
         fury.grp) game_id=fury ;;
         wgr2.grp) game_id=demonthrone; game_dirs=("$game/WGR2") ;;   # its scripts include files from WGR2/
-        amcsquad.grp) game_id=amcsquad ;;
+        amcsquad.grp) game_id=amc ;;
         *) echo "eduke32-vr-play: no supported game found in $game (Ion Fury, Demon Throne, AMC Squad)" >&2; exit 1 ;;
     esac
     models=0
 fi
+# AMC Squad has its own engine build (16-bit tile numbers, its CON/engine changes); every other game,
+# modded or not, runs on the normal one.
+if [[ $game_id == amc ]]; then
+    [[ -n $binary_amc ]] || binary_amc="$(dirname "$binary")/eduke32-xr-amc"
+    binary=$binary_amc
+fi
+[[ -n $build_only || -x "$binary" ]] || { echo "eduke32-vr-play: build $binary first (make USE_OPENXR=1 $([[ $game_id == amc ]] && echo AMCSQUAD=1 )...)" >&2; exit 1; }
 
 export EDUKE32_VR_HERE="$here"
 root="${XDG_DATA_HOME:-$HOME/.local/share}/eduke32-vr"
@@ -221,7 +231,8 @@ while :; do
     prepare
     : > "$restart"
     status=0
-    "${cmd[@]}" || status=$?
+    # AMC Squad keeps its savegames and progress in its own folder (relative paths).
+    if [[ $game_id == amc ]]; then (cd "$game" && "${cmd[@]}") || status=$?; else "${cmd[@]}" || status=$?; fi
     [[ -s $restart ]] || exit "$status"
     echo "eduke32-vr-play: restarting with model set $(head -n1 "$restart")" >&2
     pack=""
