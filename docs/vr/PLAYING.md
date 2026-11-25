@@ -288,8 +288,8 @@ Duke model sets and the Hit Feedback mod are left out. In VR:
 cutscenes through libvpx), so it runs on a second build of the engine, `eduke32-vr-amc`
 (`eduke32-vr-amc.exe` on Windows), which `play-game.sh`/`.bat` (and `eduke32-vr-play --game`, which looks for
 `eduke32-xr-amc` next to `eduke32-xr`, or `--binary-amc`) start for a folder holding `AMCSQUAD.GRP`. The
-game must be started from its folder, where it keeps savegames and progress, so use a writable copy; the
-scripts do that. Its profile (`data/games/amc/vrgame.txt`) has one weapon wheel per character, with each
+game runs from its own folder, where it keeps savegames and progress (the scripts start it there), so
+that folder must be writable, as AMC Squad itself requires. Its profile (`data/games/amc/vrgame.txt`) has one weapon wheel per character, with each
 slot's icon read from the loadout the player bought, and keeps the game's full-screen terminals, menus
 and character select whole in front instead of splitting them onto the wrists.
 

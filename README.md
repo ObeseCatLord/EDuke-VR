@@ -22,7 +22,7 @@ game data is included.
 - Weapon and gadget wheels, and a wrist HUD.
 - Duke's full 3D body, hands and weapons, made from Voxel Duke (see below).
 - Snap or smooth turning and room-scale movement.
-- Supports most EDuke32 mods, including Alien Armageddon and Voxel Duke, and the games Ion Fury
+- Supports most EDuke32 mods, including Alien Armageddon and Voxel Duke, and the games Ion Fury,
   Demon Throne and AMC Squad.
 - Windows, Linux and Steam Frame.
 
@@ -64,8 +64,8 @@ AMC Squad (the folder with `AMCSQUAD.GRP` and `AMCART.GRP`, version 5.2.2) works
 ```
 
 It runs on its own engine build (`eduke32-vr-amc`, `eduke32-vr-amc.exe`), which the script picks
-automatically; the other games use the normal one. AMC Squad saves its progress in its own folder, so play a
-writable copy. Its weapon wheel follows the character and the loadout you bought.
+automatically; the other games use the normal one. AMC Squad keeps its saves and progress in its own folder, so that folder must be writable,
+as AMC Squad itself requires. Its weapon wheel follows the character and the loadout you bought.
 
 Use `desktop` instead of `vr` to play on a normal screen.
 
