@@ -22,7 +22,7 @@ monado_remote (a_click, b_click, thumbstick_click, trackpad_touch, trackpad_forc
 squeeze_value, thumbstick=[x, y] ...); they stay set until changed. Prints a JSON result with
 the capture paths; captures are <work>/<name>-left.ppm / -right.ppm.
 """
-import argparse, json, math, os, re, subprocess, tempfile, time
+import argparse, json, math, os, re, shutil, subprocess, tempfile, time
 
 WHERE = re.compile(r'VR where: player=(\d+) local=(\d) pos=(-?\d+),(-?\d+),(-?\d+) ang=(-?\d+)')
 from pathlib import Path
@@ -81,6 +81,8 @@ def main():
         for entry in sorted(args.game_link.resolve().iterdir()):
             if entry.is_file() and entry.suffix.lower() in ('.cfg', '.ini'):
                 (args.game / entry.name).write_bytes(entry.read_bytes())
+            elif entry.is_dir() and not entry.is_symlink() and entry.name in ('DATA', 'savegames'):
+                shutil.copytree(entry, args.game / entry.name)   # folders the game writes into
             else:
                 (args.game / entry.name).symlink_to(entry)
     for source in args.copy:

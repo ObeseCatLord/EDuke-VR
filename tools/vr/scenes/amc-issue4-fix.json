@@ -1,0 +1,1 @@
+[{"wait":25},{"console":"xr_load savegames/save0036.esv"},{"wait":40},{"console":"xr_var VOLUME LEVEL amcbase_volume amcbase_level"},{"console":"xr_activate 825"},{"wait":5},{"console":"xr_var VOLUME LEVEL amcbase_level"},{"console":"xr_array BEAT_EPISODES"},{"wait":80},{"console":"xr_var VOLUME LEVEL amcbase_level"},{"shot":true}]

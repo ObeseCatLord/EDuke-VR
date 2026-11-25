@@ -5567,6 +5567,24 @@ static void runConsoleRequest()
             }
             continue;
         }
+        if (!command.compare(0,9,"xr_array "))
+        {
+            // Test hook: print a gamearray's first 16 elements.
+            int const id=hash_find(&h_arrays,command.c_str()+9);
+            if (id<0) { LOG_F(INFO,"VR array %s: unknown.",command.c_str()+9); continue; }
+            std::string values;
+            for (int i=0;i<std::min<int>(16,aGameArrays[id].size);++i) values+=std::to_string(Gv_GetArrayValue(id,i))+" ";
+            LOG_F(INFO,"VR array %s[%d]: %s",command.c_str()+9,int(aGameArrays[id].size),values.c_str());
+            continue;
+        }
+        if (!command.compare(0,12,"xr_activate "))
+        {
+            // Test hook: operate activators with this lotag, as a switch the local player pressed.
+            int const lotag=std::atoi(command.c_str()+12);
+            G_OperateActivators(lotag,myconnectindex);
+            LOG_F(INFO,"VR activate: %d.",lotag);
+            continue;
+        }
         if (!command.compare(0,8,"xr_menu "))
         {
             // Test hook: open the menu with this MenuID_t (scripted menu checks without key timing).

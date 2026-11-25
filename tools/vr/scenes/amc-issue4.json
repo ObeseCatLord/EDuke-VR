@@ -1,0 +1,71 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 6
+},
+{
+"console": "xr_load savegames/save0036.esv"
+},
+{
+"until": "VR load:",
+"timeout": 180
+},
+{
+"wait": 5
+},
+{
+"console": "xr_var VOLUME LEVEL amcbase_volume amcbase_level CHAR"
+},
+{
+"console": "xr_activate 825"
+},
+{
+"until": "E1L2: AMC BASE",
+"timeout": 400
+},
+{
+"wait": 10
+},
+{
+"console": "xr_var VOLUME LEVEL amcbase_volume amcbase_level CHAR"
+},
+{
+"console": "xr_array BEAT_EPISODES"
+},
+{
+"capture": "base"
+},
+{
+"wait": 40
+},
+{
+"console": "xr_var VOLUME LEVEL amcbase_volume amcbase_level CHAR"
+}
+]

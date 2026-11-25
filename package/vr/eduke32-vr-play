@@ -180,6 +180,8 @@ PY
         cmd+=(-j "$game")
         for dir in "${game_dirs[@]}"; do cmd+=(-j "$dir"); done
         [[ -d $here/games/$game_id ]] && cmd+=(-j "$here/games/$game_id")
+        # AMC Squad: compatibility fixes for AMC's own scripts (games/amc/amc_vr_fixes.con).
+        [[ $game_id == amc && -f $here/games/amc/amc_vr_fixes.con ]] && cmd+=(-mx amc_vr_fixes.con)
         cmd+=(-gamegrp "$game_grp")
     elif [[ -n $aa ]]; then
         cmd+=(-j "$aa" -j "$here/aa566" -g "$aa/AA.grp" -x eduke32_vr_aa566.con)

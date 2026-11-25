@@ -7928,7 +7928,11 @@ MAIN_LOOP_RESTART:
                     }
 
                 }
-                while (((g_netClient || g_netServer) || (g_player[myconnectindex].ps->gm & (MODE_MENU | MODE_DEMO)) == 0) && (int32_t)(totalclock - ototalclock) >= TICSPERFRAME && !g_saveRequested);
+                // Single player: once a level end is pending, simulate no more ticks of the old level. A
+                // machine behind on ticks (VR frames drawn mid-tick slower than the tick rate) would otherwise
+                // keep running the old map's scripts and never reach the level change below.
+                while (((g_netClient || g_netServer) || (g_player[myconnectindex].ps->gm & (MODE_MENU | MODE_DEMO)) == 0) && (int32_t)(totalclock - ototalclock) >= TICSPERFRAME && !g_saveRequested
+                       && ((g_netClient || g_netServer) || !(g_player[myconnectindex].ps->gm & (MODE_EOL | MODE_RESTART))));
 
                 g_gameUpdateTime = timerGetFractionalTicks() - gameUpdateStartTime;
 

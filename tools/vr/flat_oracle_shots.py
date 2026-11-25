@@ -3,10 +3,10 @@
 F12 screenshots after scripted key presses, for side-by-side comparison with VR captures.
 
 Run inside tools/vr/software_xr_lab.py (it owns the Xvfb). Steps file: JSON list of
-{"wait": s} | {"keys": [...]} | {"shot": true} (F12). The game plays from a writable folder inside
+{"wait": s} | {"keys": [...]} | {"console": "cmd"} | {"shot": true} (F12). The game plays from a writable folder inside
 --work-dir that symlinks every entry of --game-link (real copies of its .cfg files).
 """
-import argparse, json, os, subprocess, time
+import argparse, json, os, shutil, subprocess, time
 from pathlib import Path
 from smoke_multiplayer import X11
 from smoke_world import CONFIG
@@ -18,6 +18,7 @@ parser.add_argument('--work-dir', required=True, type=Path)
 parser.add_argument('--script', required=True, type=Path)
 parser.add_argument('--display', default=':105')
 parser.add_argument('--args', default='')
+parser.add_argument('--env', action='append', default=[], help='KEY=VALUE for the game')
 parser.add_argument('--config-name', default='eduke32.cfg', help='config file the binary reads (amcduke32: amcsquad.cfg)')
 args = parser.parse_args()
 game = args.work_dir / 'game'
@@ -25,11 +26,16 @@ game.mkdir(parents=True)
 for entry in sorted(args.game_link.resolve().iterdir()):
     if entry.is_file() and entry.suffix.lower() in ('.cfg', '.ini'):
         (game / entry.name).write_bytes(entry.read_bytes())
+    elif entry.is_dir() and not entry.is_symlink() and entry.name in ('DATA', 'savegames'):
+        shutil.copytree(entry, game / entry.name)   # folders the game writes into
     else:
         (game / entry.name).symlink_to(entry)
 (game / args.config_name).write_text(CONFIG)  # no config: the binary would open its setup window
 env = dict(os.environ, DISPLAY=args.display, SDL_VIDEODRIVER='x11', SDL_AUDIODRIVER='dummy')
 env.pop('WAYLAND_DISPLAY', None)
+console = args.work_dir / 'console-request'
+env['EDUKE32_XR_CONSOLE_REQUEST'] = str(console)
+env.update(kv.split('=', 1) for kv in args.env)
 log = (args.work_dir / 'game.log').open('w')
 process = subprocess.Popen([str(args.binary.resolve()), '-usecwd', '-nosetup', *args.args.split()], cwd=game, env=env,
                            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
@@ -53,6 +59,11 @@ try:
             time.sleep(step['wait'])
         for key in step.get('keys', []):
             press(key); time.sleep(.35)
+        if 'console' in step:
+            console.write_text(step['console'] + '\n')
+            for _ in range(300):
+                if not console.exists(): break
+                time.sleep(.1)
         if step.get('shot'):
             before = set(game.iterdir())
             press('F12'); time.sleep(2)

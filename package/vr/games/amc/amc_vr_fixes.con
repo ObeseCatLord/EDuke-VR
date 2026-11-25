@@ -1,0 +1,52 @@
+// EDuke-VR compatibility fixes for AMC Squad 5.2.2, loaded after AMC's own scripts (-mx amc_vr_fixes.con).
+// They change no AMC file, only AMC's state when it is clearly wrong.
+
+// A briefing map stored as the "AMC base" (GitHub issue #4).
+// Starting the training from a briefing (ALLY/CIVILIANS.CON, PCINTER 11) stores the current level, the
+// briefing, as amcbase_volume/amcbase_level so the training can return there. It is never cleared again, so
+// every later mission exit (GAME/LEVELS.CON, ACTIVATELEVEL with xvel 1) "returns to base" = the briefing,
+// which launches the same mission again: the story never moves on. A briefing is never a real base: once
+// the player is anywhere but the training map, forget it, so missions return where they do in a normal
+// playthrough (the mission's own next level, AMC Base for the first missions).
+
+var vrfix_brief 0 0
+
+defstate vrfix_forget_briefing_base
+	set vrfix_brief 0
+	switch amcbase_volume
+	case 0
+		ife amcbase_level 2 set vrfix_brief 1   // BRIEFING FILE 1
+		ife amcbase_level 6 set vrfix_brief 1   // BRIEFING FILE 2
+		break
+	case 1
+		ife amcbase_level 2 set vrfix_brief 1   // BRIEFING FILE 3
+		ife amcbase_level 5 set vrfix_brief 1   // BRIEFING FILE 4
+		ife amcbase_level 21 set vrfix_brief 1  // BRIEFING FILE 5
+		break
+	case 2
+		ife amcbase_level 2 set vrfix_brief 1   // BRIEFING FILE 6
+		ife amcbase_level 53 set vrfix_brief 1  // BRIEFING FILE 7
+		break
+	case 4
+		ife amcbase_level 2 set vrfix_brief 1   // BRIEFING FILE 8
+		ife amcbase_level 17 set vrfix_brief 1  // BRIEFING FILE 9
+		break
+	endswitch
+
+	// The training map (EP1 L26) still returns to the briefing it was started from.
+	ife VOLUME 0 ife LEVEL 26 set vrfix_brief 0
+
+	ife vrfix_brief 1
+	{
+		set amcbase_volume -1
+		set amcbase_level -1
+	}
+ends
+
+appendevent EVENT_ENTERLEVEL
+	state vrfix_forget_briefing_base
+endevent
+
+appendevent EVENT_LOADGAME
+	state vrfix_forget_briefing_base
+endevent

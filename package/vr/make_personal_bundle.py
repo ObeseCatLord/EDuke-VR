@@ -158,7 +158,7 @@ case "$(basename "${found:-none}" | tr '[:upper:]' '[:lower:]')" in
     wgr2.grp) game=(-j "$dir" -j "$dir/WGR2" -j "$data/games/demonthrone") ;;   # its scripts include from WGR2/
     amcsquad.grp)
         [[ -x $bin/eduke32-vr-amc ]] || { echo "play-game: this bundle has no AMC Squad engine build ($bin/eduke32-vr-amc)" >&2; exit 1; }
-        exe=eduke32-vr-amc; game=(-j "$dir" -j "$data/games/amc"); cd "$dir" ;;
+        exe=eduke32-vr-amc; game=(-j "$dir" -j "$data/games/amc" -mx amc_vr_fixes.con); cd "$dir" ;;
     *) echo "play-game: no supported game in $dir (Ion Fury: fury.grp, Demon Throne: WGR2.grp, AMC Squad: AMCSQUAD.GRP)" >&2; exit 2 ;;
 esac
 other_game=1
@@ -401,7 +401,7 @@ if exist "!G!\fury.grp" set XARGS=-j "!G!" -j "!DATA!\games\fury" -gamegrp fury.
 if exist "!G!\WGR2.grp" set XARGS=-j "!G!" -j "!G!\WGR2" -j "!DATA!\games\demonthrone" -gamegrp WGR2.grp
 if exist "!G!\AMCSQUAD.GRP" (
     if not exist "!HERE!windows\eduke32-vr-amc.exe" (echo play-game: this bundle has no AMC Squad engine build ^(windows\eduke32-vr-amc.exe^) & exit /b 1)
-    set XARGS=-j "!G!" -j "!DATA!\games\amc" -gamegrp AMCSQUAD.GRP
+    set XARGS=-j "!G!" -j "!DATA!\games\amc" -mx amc_vr_fixes.con -gamegrp AMCSQUAD.GRP
     set "EXE=!HERE!windows\eduke32-vr-amc.exe"
     cd /d "!G!"
 )
