@@ -183,7 +183,8 @@ static bool profileWheel();
 //                                    run: Run is never pressed), left_trigger, right_stickclick,
 //                                    left_grip, right_primary (A), right_secondary (B), left_primary (X),
 //                                    left_secondary (Y). The menu cursor and push-to-talk keep priority.
-//   crosshair TILE [TILE...]         the game draws its own reticle with rotatesprite (A.W.O.L.: two marks
+//   crosshair TILE [TILE...] [scale N]  (scale: replayed N times bigger, 0.25..8)
+//                                    the game draws its own reticle with rotatesprite (A.W.O.L.: two marks
 //                                    of tile 5627 that spread apart, in EVENT_DISPLAYWEAPON). TILE is a
 //                                    number or a CON define. In the headset every rotatesprite of these
 //                                    tiles drawn while the frame's 2D HUD is built (EVENT_DISPLAYWEAPON,
@@ -225,6 +226,7 @@ struct VRGameProfile
     std::vector<RestGate> cursorGates; // any one true: the cursor UI is up
     float restWristBand=0.f;   // wristhud rest Y: EVENT_DISPLAYREST sprites below Y (screen fraction) go to the wrists
     std::vector<int> crosshairTiles;   // crosshair TILE...: reticle ART the game draws itself, replayed at the aim point
+    float crosshairScale=1.f;          // crosshair ... scale N: replayed bigger by N about the screen centre
     bool present=false;
 };
 
@@ -353,6 +355,15 @@ static VRGameProfile const &gameProfile()
         {
             while (char const *token=next())
             {
+                if (!Bstrcasecmp(token,"scale"))
+                {
+                    // A reticle drawn too small to aim with in a headset: bigger by N (offsets from the centre too).
+                    char const *value=next();
+                    float const scale=value ? float(std::atof(value)) : 0.f;
+                    if (scale>=.25f && scale<=8.f) profile.crosshairScale=scale;
+                    else LOG_F(WARNING,"vrgame.txt: crosshair scale %s ignored (0.25 to 8).",value ? value : "");
+                    continue;
+                }
                 int const tile=profileValue(token);
                 if ((unsigned)tile<MAXTILES && profile.crosshairTiles.size()<16) profile.crosshairTiles.push_back(tile);
                 else LOG_F(WARNING,"vrgame.txt: crosshair %s ignored (unknown tile).",token);
@@ -1591,6 +1602,33 @@ static void publishInput()
     if (std::max(std::fabs(nav.x),std::fabs(nav.y)) > .6f)
         menu.dir=std::fabs(nav.y) >= std::fabs(nav.x) ? (nav.y > 0 ? dir_Up : dir_Down) : (nav.x > 0 ? dir_Right : dir_Left);
     CONTROL_SetExternalInput(&analog,buttons,&menu,inputValid);
+
+    // Aiming with the hand or looking around is activity: the native idle timer (crack_time) only counts
+    // fire, movement and turning, so a player standing still and aiming by hand went "idle" after ~26 s:
+    // Duke cracked his knuckles and Alien Armageddon played its idle animation and hid its crosshair.
+    // Single player only (in multiplayer the player state belongs to the simulation everyone shares).
+    if (inputValid && !g_netServer && !g_netClient)
+    {
+        static XrPosef lastActive[3];
+        static bool lastValid[3];
+        XrPosef poses[3]={rawInput.headPose,rawInput.hands[0].aimPose,rawInput.hands[1].aimPose};
+        bool const valid[3]={rawInput.headValid && validPose(rawInput.headPose),
+                             rawInput.hands[0].aimValid && validPose(rawInput.hands[0].aimPose),
+                             rawInput.hands[1].aimValid && validPose(rawInput.hands[1].aimPose)};
+        bool moved=false;
+        for (int i=0;i<3;++i)
+        {
+            if (!valid[i]) continue;
+            if (!lastValid[i]) { lastActive[i]=poses[i]; lastValid[i]=true; continue; }
+            auto const &a=lastActive[i].orientation, &b=poses[i].orientation;
+            float const d=std::fabs(a.x*b.x+a.y*b.y+a.z*b.z+a.w*b.w);   // cos(angle/2)
+            auto const &p=lastActive[i].position, &q=poses[i].position;
+            float const dist=std::sqrt((p.x-q.x)*(p.x-q.x)+(p.y-q.y)*(p.y-q.y)+(p.z-q.z)*(p.z-q.z));
+            if (d<.99966f || dist>.03f) { lastActive[i]=poses[i]; moved=true; }   // > ~3 degrees or 3 cm
+        }
+        auto const p=g_player[myconnectindex].ps;
+        if (moved && p && p->crack_time>0) p->crack_time=PCRACKTIME;
+    }
 
     if (auto trace=sdlayer_getenv_cached("EDUKE32_XR_TEST_INPUT"))
         if (!Bstrcmp(trace,"1"))
@@ -5232,7 +5270,9 @@ void G_XRCrosshairReplay()
             profileCrosshairAnchor=polymost_xrRotateSpriteAnchor({160<<16,100<<16},s.z,s.stat,{s.cx1+s.cx2,s.cy1+s.cy2});
             profileCrosshairAnchorValid=true;
         }
-        polymost_dorotatesprite(s.sx,s.sy,s.z,s.a,s.picnum,s.shade,s.pal,s.stat,s.alpha,s.blend,s.cx1,s.cy1,s.cx2,s.cy2,s.uniqid);
+        float const k=gameProfile().crosshairScale;
+        int32_t const sx=k==1.f ? s.sx : int32_t((160<<16)+(s.sx-(160<<16))*k), sy=k==1.f ? s.sy : int32_t((100<<16)+(s.sy-(100<<16))*k);
+        polymost_dorotatesprite(sx,sy,k==1.f ? s.z : int32_t(s.z*k),s.a,s.picnum,s.shade,s.pal,s.stat,s.alpha,s.blend,s.cx1,s.cy1,s.cx2,s.cy2,s.uniqid);
         ++profileCrosshairReplayed;
     }
     profileCrosshairReplaying=false;
@@ -5309,14 +5349,16 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
     float const pitch=nativePitch(p->q16horiz+p->q16horizoff), angle=fix16_to_float(p->q16ang)*Pi/1024.f;
     vec3_t ray={int32_t(std::lround(std::cos(angle)*std::cos(pitch)*32767.f)),
                 int32_t(std::lround(std::sin(angle)*std::cos(pitch)*32767.f)),int32_t(std::lround(-std::sin(pitch)*32767.f))*16};
-    if (crosshairViews.weapon.selected)
+    // The held weapon's muzzle ray when its visual is current; otherwise (the visual was dropped this frame,
+    // e.g. a stale shot sample on a slow frame) the hand's own shot ray, so the crosshair never just vanishes.
+    bool const fromWeapon=crosshairViews.weapon.selected && weaponVisualOwned();
+    if (fromWeapon)
     {
         auto const &visual=crosshairViews.weapon;
-        visible=visible && weaponVisualOwned();
         start=visual.root; sector=visual.sector; clamped=visual.clamped;
         ray={visual.ray.direction[0],visual.ray.direction[1],visual.ray.direction[2]*16};
     }
-    else if (handShotsRequested() && (G_VRHandShotFeature(myconnectindex) || G_VRCustomHandShots(myconnectindex)))
+    else if (handShotsRequested() && (crosshairViews.weapon.selected || G_VRHandShotFeature(myconnectindex) || G_VRCustomHandShots(myconnectindex)))
     {
         visible=visible && aimPoseUsable() && G_VRResolveShot(myconnectindex,start,sector,clamped);
         auto const shot=G_VRGetShotInput(myconnectindex);
@@ -5330,6 +5372,10 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
         hitscan(&start,sector,ray.x,ray.y,ray.z,&hit,CLIPMASK1);
         owner.cstat=cstat;
     }
+    if (crosshairCapturePrefix())
+        LOG_F(INFO,"OpenXR crosshair visibility: visible=%d hitSector=%d selectedWeapon=%d owned=%d handShots=%d aimUsable=%d head=%d menu=%d.",
+              int(visible),int(hit.sect),int(crosshairViews.weapon.selected),int(crosshairViews.weapon.selected && weaponVisualOwned()),
+              int(handShotsRequested()),int(aimPoseUsable()),int(rawInput.headValid),int(!!(p->gm & MODE_MENU)));
     visible=visible && hit.sect>=0;
     float matrices[2][16]={};
     XrPosef unused{}; unused.orientation.w=1;
@@ -5632,6 +5678,7 @@ static void dump(char const *path)
 
 // Test hook: run native console commands written into the request file
 // (one per line), then remove it. Used by harnesses to give/switch weapons.
+static std::string pendingCrosshairCapture;   // xr_crosshair test hook
 static void runConsoleRequest()
 {
     xrprofile::start();
@@ -5766,6 +5813,12 @@ static void runConsoleRequest()
             int const lotag=std::atoi(command.c_str()+12);
             G_OperateActivators(lotag,myconnectindex);
             LOG_F(INFO,"VR activate: %d.",lotag);
+            continue;
+        }
+        if (!command.compare(0,13,"xr_crosshair "))
+        {
+            // Test hook: capture the next frame's crosshair segment (PREFIX-before-*, PREFIX-*) and log its anchor.
+            pendingCrosshairCapture=command.substr(13);
             continue;
         }
         if (!command.compare(0,8,"xr_menu "))
@@ -6073,6 +6126,8 @@ void G_XRBeginFrame()
     runConsoleRequest();
     precacheVRModels();
     crosshairViews={};
+    // Test hook xr_crosshair: this frame's crosshair segment writes its diagnostic captures.
+    if (!pendingCrosshairCapture.empty()) { crosshairViews.diagnosticCrosshairPrefix=pendingCrosshairCapture; pendingCrosshairCapture.clear(); }
     modelAnimationCapture.clear(); weaponAnimationCapture.clear();
     // Credit only the exact completed projection, never a rendered image that
     // was later canceled by a nested native draw, resize, or early swap.

@@ -71,4 +71,5 @@ wristhud rest 0.3 unless PRISONBREAK_STATUS unless CHOREO_SPEAKER not CHOREO_AVA
 # EVENT_DISPLAYCROSSHAIR only returns -1 (awol_weapons.con:1806), so nothing else marks the aim point. In the headset
 # these sprites are drawn on the surface the aiming hand points at, around the logical screen centre, instead of on
 # the weapon hand's card.
-crosshair 5627
+# scale 3: the marks are drawn at a tiny zoom; in a headset they are too small to aim with otherwise.
+crosshair 5627 scale 3

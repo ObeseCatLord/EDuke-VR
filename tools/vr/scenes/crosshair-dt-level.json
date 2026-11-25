@@ -1,0 +1,131 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 8
+},
+{
+"console": "xr_setvar character 0"
+},
+{
+"wait": 5
+},
+{
+"console": "xr_var crawlclock nohud popuptime subtitle_time helpmenu cutscene endlevel CURRWEAP character"
+},
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"right": [
+0.15,
+1.4,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 3
+},
+{
+"console": "xr_var cutscene popuptime subtitle_time CURRWEAP"
+},
+{
+"console": "xr_crosshair xh-aim0"
+},
+{
+"wait": 1
+},
+{
+"capture": "aim0"
+},
+{
+"pose": {
+"right": [
+0.15,
+1.4,
+-0.35,
+20,
+0,
+0
+]
+}
+},
+{
+"wait": 3
+},
+{
+"console": "xr_var cutscene popuptime subtitle_time CURRWEAP"
+},
+{
+"console": "xr_crosshair xh-aim1"
+},
+{
+"wait": 1
+},
+{
+"capture": "aim1"
+},
+{
+"pose": {
+"right": [
+0.15,
+1.4,
+-0.35,
+0,
+15,
+0
+]
+}
+},
+{
+"wait": 3
+},
+{
+"console": "xr_var cutscene popuptime subtitle_time CURRWEAP"
+},
+{
+"console": "xr_crosshair xh-aim2"
+},
+{
+"wait": 1
+},
+{
+"capture": "aim2"
+}
+]

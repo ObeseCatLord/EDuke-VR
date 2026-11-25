@@ -98,6 +98,15 @@ def main():
                 observer.pause(6)
                 run('xr_weapons'); observer.pause(2)
                 run('god'); observer.pause(2)
+                if args.crosshair_output:
+                    # The crosshair must follow the aiming hand: straight, 20 degrees left, 15 degrees up.
+                    from smoke_xr_scene import quat
+                    for label, (yaw, pitch) in (('aim0', (0, 0)), ('aim1', (20, 0)), ('aim2', (0, 15))):
+                        hand = remote.packet.right.pose
+                        hand.position.x, hand.position.y, hand.position.z = .15, 1.4, -.35
+                        hand.orientation = quat(yaw, pitch); remote.send(); observer.pause(3)
+                        run('xr_var newhud secretsfound zoomin zoomcount startmode epselect drinkcola eatsnack zombieonplayer brutalcount movecam thiscam cutcam vrmenu vrscreen_time subtitle_time idleanim onturret handicon brutalvictim aimbot_on currentweapon LASERMODE PLAYERONTHEBIKE vendor_screen')
+                        run(f'xr_crosshair {args.crosshair_output}-{label}'); observer.pause(2)
                 if args.wheel:
                     run('xr_items'); observer.pause(2)
                     for side, name in (('right', 'weapon'), ('left', 'gadget')):

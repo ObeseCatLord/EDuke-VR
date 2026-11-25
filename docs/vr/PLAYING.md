@@ -292,7 +292,7 @@ Duke model sets and the Hit Feedback mod are left out. In VR:
   shot; `crosshair TILE [TILE...]` (numbers or CON defines) names the tiles of a reticle the game
   draws itself with `rotatesprite` (marks that spread apart with the weapon's spread): in the headset those
   sprites are not drawn on the weapon hand's card or the HUD but at the point your aiming hand points at,
-  around the screen centre, so the marks keep their spacing. Without the line the game's reticle is
+  around the screen centre, so the marks keep their spacing. `scale N` on the line (0.25 to 8) draws them N times bigger, spacing included, for reticles too small to aim with in a headset. Without the line the game's reticle is
   unchanged. Up to 256 weapon lines are read.
 - Its own crosshair is placed where your hand points.
 
