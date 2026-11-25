@@ -242,3 +242,12 @@ gadget 7 HEATSENSOR NightVision HEAT_AMOUNT
 # MISSION_UP mission box, CHARSELECT character select, show_rs_ui/show_bst_ui research and bestiary,
 # DOCUMENT (-1 when none).
 wristhud rest 0.6 unless MOUSEUP unless PCINTER unless MISSION_UP unless CHARSELECT unless show_rs_ui unless show_bst_ui unless DOCUMENT not -1
+
+# AMC's own mouse cursor (PLAYER.CON:3143-3165): while MOUSEUP > 0 the script adds the turn and look input
+# to Q16_MOUSEX/Q16_MOUSEY (16.16, 320x200), draws the cursor there (GENERIC_UI.CON:125) and clicks on Fire.
+# The VR layer sets those gamevars from the laser instead. Only MOUSEUP is listed: every screen that reads
+# MOUSEX/MOUSEY (character select CHARSELECT.CON:108-111, the PC terminals INTERFACES.CON:307 and the
+# research/bestiary UIs reached through them, loadout/shops, CIVILIANS.CON dialogues) sets MOUSEUP 1 itself,
+# while PCINTER/CHARSELECT/show_*_ui can stay non-zero with no cursor; MISSION_UP (the PDA box) and
+# DOCUMENT (full-screen pictures) never read the cursor.
+cursor Q16_MOUSEX Q16_MOUSEY when MOUSEUP

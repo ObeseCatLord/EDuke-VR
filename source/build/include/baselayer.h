@@ -326,6 +326,7 @@ void keyFlushChars(void);
 void mouseInit(void);
 void mouseUninit(void);
 int32_t mouseReadAbs(vec2_t *pResult, vec2_t const *pInput);
+void    mouseAbsTo320x200(vec2_t *pResult, vec2_t const *pInput);   // pixels -> 320x200 space (16.16), no input gating
 void mouseGrabInput(bool grab);
 void mouseLockToWindow(char a);
 int32_t mouseReadButtons(void);

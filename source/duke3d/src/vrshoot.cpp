@@ -156,7 +156,15 @@ bool G_VRShotValid(int player)
 {
     return G_VRShotEnabled(player) && (shots[player].input.flags & VRShotValid);
 }
-bool G_VRShotCanFire(int player) { return G_VRShotReady(player) && !shots[player].blocked; }
+static bool cursorActive;
+void G_VRSetCursorActive(bool active) { cursorActive=active; }
+bool G_VRCursorActive() { return cursorActive; }
+bool G_VRShotCanFire(int player)
+{
+    // The local player's trigger clicks the game's cursor while it is up: no hand shots.
+    if (cursorActive && player==myconnectindex) return false;
+    return G_VRShotReady(player) && !shots[player].blocked;
+}
 void G_VRBlockShot(int player) { if (unsigned(player)<MAXPLAYERS) shots[player].blocked=true; }
 bool G_VRQuickKickBlocked(int player)
 {
@@ -167,6 +175,13 @@ void G_VRFilterShotInput(int player, input_t &input)
     if (!G_VRShotEnabled(player)) return;
     auto &state=shots[player];
     bool const held=(input.bits & (BIT(SK_FIRE)|BIT(SK_QUICK_KICK))) || (input.extbits & BIT(EK_ALT_FIRE));
+    if (cursorActive && player==myconnectindex)
+    {
+        // Fire reaches the game's script as the click; a trigger still held when the UI closes
+        // stays blocked until released.
+        state.blocked=held;
+        return;
+    }
     if (!G_VRShotReady(player)) state.blocked=true;
     if (!held) state.blocked=false;
     if (held && (!G_VRShotReady(player) || state.blocked) && std::getenv("EDUKE32_XR_TEST_SHOTS"))

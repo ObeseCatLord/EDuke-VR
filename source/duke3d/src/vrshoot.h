@@ -50,6 +50,9 @@ bool G_VRQuickKickBlocked(int player);
 // Reuse the existing release-to-rearm latch after a rejected spatial throw.
 void G_VRBlockShot(int player);
 void G_VRFilterShotInput(int player, input_t &input);
+// A game's own UI cursor is driven by the aim ray (vrgame.txt "cursor"): the trigger is a click, never a shot.
+void G_VRSetCursorActive(bool active);
+bool G_VRCursorActive();
 // Revalidated on both client and authoritative server. Never move player state.
 // An optional native muzzle point is constrained from the same body anchor.
 bool G_VRResolveShot(int player, vec3_t &position, int16_t &sector, bool &clamped, vec3_t const *muzzlePosition=nullptr);

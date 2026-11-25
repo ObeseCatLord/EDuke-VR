@@ -281,7 +281,11 @@ Duke model sets and the Hit Feedback mod are left out. In VR:
   weapon's icon can be `array:NAME` or `array:NAME[INDEX]`, read at draw time from that CON gamearray
   (element INDEX, default the weapon slot), with `fallback ICON` as the static tile when it holds nothing
   valid; `wristhud rest Y unless VAR [is V | not V]` leaves the HUD whole in front while a game
-  variable says a full-screen terminal or menu is up. Up to 256 weapon lines are read.
+  variable says a full-screen terminal or menu is up; `cursor XVAR YVAR when VAR [is V | not V] [when ...]`
+  names the two gamevars (16.16 fixed, 320x200 screen space) of a game's own mouse cursor: while a `when`
+  condition holds the menu laser shows from the pointing hand, the point it meets on the UI panel is
+  written to the gamevars, turning and look input are zeroed and the trigger is Fire (the click), never a
+  shot. Up to 256 weapon lines are read.
 - Its own crosshair is placed where your hand points.
 
 **AMC Squad** needs engine changes of its own (a larger tile range, new script commands, 67 video

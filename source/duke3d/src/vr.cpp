@@ -178,6 +178,15 @@ static bool profileWheel();
 //                                    [unless VAR [is V | not V]]...: while the gamevar VAR is non-zero
 //                                    (or is V / is not V) nothing is captured, so a full-screen
 //                                    terminal or menu the game puts up in that event stays whole in front
+//   cursor XVAR YVAR when VAR [is V | not V] [when VAR ...]
+//                                    the game draws its own full-screen UIs with its own cursor, kept in
+//                                    the two gamevars XVAR, YVAR (16.16 fixed, 320x200 screen space).
+//                                    While any `when` holds (non-zero / is V / is not V, as for `unless`)
+//                                    and no native menu is up, the menu laser (the pointing hand's beam)
+//                                    shows on the UI panel and, every frame the beam meets it, sets
+//                                    XVAR/YVAR to the point under it. Turning and look input are zeroed
+//                                    meanwhile (the game's script adds them to the cursor), and the
+//                                    trigger is Fire (the click) and never a hand shot.
 // Read on first use, after the game's scripts are compiled (their defines name the tiles).
 struct VRGameProfile
 {
@@ -189,9 +198,17 @@ struct VRGameProfile
     std::vector<Weapon> weapons;
     std::vector<Gadget> gadgets;
     std::vector<RestGate> restGates;   // wristhud rest ... unless: any one true skips the capture
+    int cursorX=-1, cursorY=-1;        // cursor XVAR YVAR when ...: the game's own UI cursor gamevars
+    std::vector<RestGate> cursorGates; // any one true: the cursor UI is up
     float restWristBand=0.f;   // wristhud rest Y: EVENT_DISPLAYREST sprites below Y (screen fraction) go to the wrists
     bool present=false;
 };
+
+static bool gateHolds(VRGameProfile::RestGate const &gate, int spriteNum, int playerNum)
+{
+    int const value=Gv_GetVar(gate.var,spriteNum,playerNum);
+    return gate.mode==0 ? value!=0 : gate.mode==1 ? value==gate.value : value!=gate.value;
+}
 
 static int profileValue(char const *token)
 {
@@ -296,6 +313,36 @@ static VRGameProfile const &gameProfile()
                 if (id>=0 && profile.restGates.size()<16) profile.restGates.push_back(gate);
                 else LOG_F(WARNING,"vrgame.txt: wristhud unless %s ignored (unknown gamevar).",var ? var : "");
             }
+        }
+        else if (!Bstrcasecmp(word,"cursor"))
+        {
+            // cursor XVAR YVAR when VAR [is V | not V] [when VAR ...]
+            char const *xName=next(), *yName=next();
+            int const xId=xName ? hash_find(&h_gamevars,xName) : -1, yId=yName ? hash_find(&h_gamevars,yName) : -1;
+            std::vector<VRGameProfile::RestGate> gates;
+            char const *token=next();
+            while (token)
+            {
+                if (Bstrcasecmp(token,"when")) { token=next(); continue; }
+                char const *var=next();
+                int const id=var ? hash_find(&h_gamevars,var) : -1;
+                token=next();
+                VRGameProfile::RestGate gate{id,0,0};
+                if (token && (!Bstrcasecmp(token,"is") || !Bstrcasecmp(token,"not")))
+                {
+                    gate.mode=!Bstrcasecmp(token,"is") ? 1 : 2;
+                    gate.value=profileValue(next());
+                    token=next();
+                }
+                if (id>=0 && gates.size()<16) gates.push_back(gate);
+                else LOG_F(WARNING,"vrgame.txt: cursor when %s ignored (unknown gamevar).",var ? var : "");
+            }
+            if (xId>=0 && yId>=0 && !gates.empty())
+            {
+                profile.cursorX=xId; profile.cursorY=yId;
+                profile.cursorGates.insert(profile.cursorGates.end(),gates.begin(),gates.end());
+            }
+            else LOG_F(WARNING,"vrgame.txt: cursor line ignored (unknown gamevar or no condition).");
         }
         else if (!Bstrcasecmp(word,"gadget"))
         {
@@ -1180,12 +1227,27 @@ static bool physicallyDucking();
 // takes the pointer over. The runtime draws the beam and finds where it meets the panel.
 static int menuPointerHand=1;
 static bool menuPointerPressed;
+// The game's own UI cursor (vrgame.txt "cursor"): up while one of its `when` gamevars holds, in game and
+// with no native menu. Gamevars read from the local player's sprite.
+static bool cursorUiUp()
+{
+    auto const &profile=gameProfile();
+    auto const p=g_player[myconnectindex].ps;
+    if (profile.cursorGates.empty() || !vr_menupointer || !totalConversion() || !p || (unsigned)p->i>=MAXSPRITES
+        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || screenpeek!=myconnectindex)
+        return false;
+    for (auto const &gate:profile.cursorGates)
+        if (gateHolds(gate,p->i,myconnectindex)) return true;
+    return false;
+}
 static bool updateMenuPointer(uint32_t const down[2])
 {
     using namespace eduke_xr;
     static uint32_t previous[2];
     auto *const runtime=inputRuntime;
-    bool const open=vr_menupointer && runtime && (g_player[myconnectindex].ps->gm & MODE_MENU);
+    bool const menuOpen=vr_menupointer && runtime && (g_player[myconnectindex].ps->gm & MODE_MENU);
+    bool const cursor=!menuOpen && runtime && cursorUiUp();
+    bool const open=menuOpen || cursor;
     for (int hand=0;hand<2;++hand)
     {
         bool const pressed=(down[hand] & ~previous[hand]) & ButtonSelect;
@@ -1199,11 +1261,46 @@ static bool updateMenuPointer(uint32_t const down[2])
         if (runtime) runtime->setMenuPointer(false,{});
         if (menuPointerPressed) { g_mouseClickState=MOUSE_RELEASED; menuPointerPressed=false; }
         g_mouseExternal=false;
+        G_VRSetCursorActive(false);
         return false;
     }
     runtime->setMenuPointer(true,h.aimPose);
     float u, v;
     bool const trigger=down[menuPointerHand] & ButtonSelect;
+    if (cursor)
+    {
+        // The game's cursor: the trigger is Fire (set with the other buttons), the position goes to its gamevars.
+        if (menuPointerPressed) { g_mouseClickState=MOUSE_RELEASED; menuPointerPressed=false; }
+        g_mouseExternal=false;
+        G_VRSetCursorActive(true);
+        bool const hit=runtime->menuPointerHit(u,v);
+        vec2_t position={0,0};
+        if (hit)
+        {
+            // UI pixel -> 320x200 rotatesprite space, as the engine maps a normal rotatesprite (and the
+            // menu mouse): see mouseAbsTo320x200.
+            vec2_t const pixel={int32_t(u*xres),int32_t(v*yres)};
+            mouseAbsTo320x200(&position,&pixel);
+            position.x=clamp(position.x,0,320<<16);
+            position.y=clamp(position.y,0,200<<16);
+            auto const p=g_player[myconnectindex].ps;
+            Gv_SetVar(gameProfile().cursorX,position.x,p->i,myconnectindex);
+            Gv_SetVar(gameProfile().cursorY,position.y,p->i,myconnectindex);
+        }
+        if (sdlayer_getenv_cached("EDUKE32_XR_TEST_MENU_POINTER"))
+        {
+            static double last;
+            double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
+            if (now-last>.5)
+            {
+                last=now;
+                LOG_F(INFO,"VR cursor: active=1 hit=%d u=%.3f v=%.3f x=%d y=%d",int(hit),hit ? u : -1.f,hit ? v : -1.f,
+                      hit ? position.x>>16 : -1,hit ? position.y>>16 : -1);
+            }
+        }
+        return false;
+    }
+    G_VRSetCursorActive(false);
     if (runtime->menuPointerHit(u,v))
     {
         g_mouseExternal=true;
@@ -1294,6 +1391,9 @@ static void publishInput()
         }
         aimPoseWasValid=valid;
     }
+    // The menu laser (and the game's cursor laser) first: the cursor turns the right trigger into the click.
+    bool const menuPointing=updateMenuPointer(down);
+    bool const cursorOn=G_VRCursorActive();
     auto const move=inputStick(rawInput.hands[0]), turn=inputStick(rawInput.hands[1]);
     ControlInfo analog{};
     analog.dx=std::lround(move.x*32767.f); analog.dz=std::lround(-move.y*32767.f);
@@ -1322,8 +1422,9 @@ static void publishInput()
     // Right trigger fires (remote pipebombs: the detonator in the same hand), left trigger is the
     // mighty foot and the right stick click alt fire (vr_lefttrigger 1 swaps them; mods such as
     // Alien Armageddon use alt fire), left grip is use/interact, right grip runs.
-    button(down[1]&ButtonSelect,gamefunc_Fire);
-    button(down[0]&ButtonSelect,vr_lefttrigger ? gamefunc_Alt_Fire : gamefunc_Quick_Kick);
+    // The game's own cursor: the pointing hand's trigger (either hand) is the click, i.e. Fire, and kicks nothing.
+    button(cursorOn ? (down[menuPointerHand]&ButtonSelect) : (down[1]&ButtonSelect),gamefunc_Fire);
+    button(!cursorOn && (down[0]&ButtonSelect),vr_lefttrigger ? gamefunc_Alt_Fire : gamefunc_Quick_Kick);
     button(down[1]&ButtonStickClick,vr_lefttrigger ? gamefunc_Quick_Kick : gamefunc_Alt_Fire);
     button(down[0]&ButtonGrip,gamefunc_Open);
     button(down[1]&ButtonPrimary,gamefunc_Jump);
@@ -1357,7 +1458,7 @@ static void publishInput()
     {
         int const hand=aimHand();
         auto const p=g_player[myconnectindex].ps;
-        bool const bomb=(unsigned)p->curr_weapon<MAX_WEAPONS && PWEAPON(myconnectindex,p->curr_weapon,WorksLike)==HANDBOMB_WEAPON
+        bool const bomb=!cursorOn && (unsigned)p->curr_weapon<MAX_WEAPONS && PWEAPON(myconnectindex,p->curr_weapon,WorksLike)==HANDBOMB_WEAPON
             && p->ammo_amount[HANDBOMB_WEAPON]>0;
         double const now=double(timerGetNanoTicks())/double(timerGetNanoTickRate());
         auto const &input=rawInput.hands[hand];
@@ -1389,7 +1490,6 @@ static void publishInput()
         }
     }
     UserInput menu{false,false,false,dir_None};
-    bool const menuPointing=updateMenuPointer(down);
     menu.b_advance=(down[0]|down[1])&(menuPointing ? ButtonPrimary : (ButtonSelect|ButtonPrimary));
     menu.b_return=(down[0]|down[1])&ButtonSecondary;
     menu.b_escape=(down[0]|down[1])&ButtonMenu;
@@ -4348,6 +4448,11 @@ int G_XRListenerAngle(int fallback)
 void G_XRApplyAim(input_t &input, bool yawAllowed, bool pitchAllowed)
 {
     if (!localAimCamera()) return;
+    // The game's own cursor is up (the script adds q16avel/q16horz to it): no turn, no look, whatever the source
+    // (head, stick, snap turn); head tracking is caught up when it closes.
+    struct CursorLook { input_t &input; bool on; ~CursorLook() { if (on) input.q16avel=input.q16horz=0; } }
+        cursorLook{input,G_VRCursorActive()};
+    if (cursorLook.on) { yawAllowed=pitchAllowed=false; pendingSnapTurn=0.f; }
     shotLookAllowed=yawAllowed && pitchAllowed;
     // Native centering must not reactivate merely because a tracked source is
     // temporarily unavailable. The XR context retains look-mode ownership.
@@ -4587,6 +4692,7 @@ void G_XRClearInput()
     crosshairViews.weapon.valid=false;
     VRShotInput shot; if (handShotsRequested()) shot.flags=VRShotEnabled;
     G_VRSetShotInput(myconnectindex,shot);
+    G_VRSetCursorActive(false);
     for (unsigned hand=0;hand<2;++hand)
         blockedInputButtons[hand] |= rawInput.hands[hand].buttons;
     CONTROL_SetExternalInput(nullptr,0,nullptr);
@@ -4912,8 +5018,7 @@ bool G_XRBeginRestHud()
     if (!gameProfile().restGates.empty() && (unsigned)p->i<MAXSPRITES)
         for (auto const &gate:gameProfile().restGates)
         {
-            int const value=Gv_GetVar(gate.var,p->i,myconnectindex);
-            if (gate.mode==0 ? value!=0 : gate.mode==1 ? value==gate.value : value!=gate.value) return false;
+            if (gateHolds(gate,p->i,myconnectindex)) return false;
         }
     if (!menuRuntime
         || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()

@@ -354,11 +354,10 @@ void mouseReadPos(int32_t *x, int32_t *y)
     g_mousePos.x = g_mousePos.y = 0;
 }
 
-int32_t mouseReadAbs(vec2_t * const pResult, vec2_t const * const pInput)
+// Screen pixel -> 320x200 rotatesprite space (16.16), as a normal (non-aligned, non-stretched)
+// rotatesprite call maps it, including the centred 4:3 band VR uses for tall eyes (rotatesprite_letterbox).
+void mouseAbsTo320x200(vec2_t * const pResult, vec2_t const * const pInput)
 {
-    if (!g_mouseExternal && (!g_mouseEnabled || !appactive || !g_mouseInsideWindow || (osd && osd->flags & OSD_CAPTURE)))
-        return 0;
-
     int32_t const xwidth = max(scale(240<<16, xdim, ydim), 320<<16);
 
     pResult->x = scale(pInput->x, xwidth, xres) - ((xwidth>>1) - (320<<15));
@@ -368,7 +367,14 @@ int32_t mouseReadAbs(vec2_t * const pResult, vec2_t const * const pInput)
         pResult->y = scale(pInput->y, 200<<16, yres);
 
     pResult->y = divscale16(pResult->y - (200<<15), rotatesprite_yxaspect) + (200<<15) - rotatesprite_y_offset;
+}
 
+int32_t mouseReadAbs(vec2_t * const pResult, vec2_t const * const pInput)
+{
+    if (!g_mouseExternal && (!g_mouseEnabled || !appactive || !g_mouseInsideWindow || (osd && osd->flags & OSD_CAPTURE)))
+        return 0;
+
+    mouseAbsTo320x200(pResult, pInput);
     return 1;
 }
 
