@@ -157,12 +157,12 @@ static void Proj_DoWaterTracers(vec3_t startPos, vec3_t const *endPos, int n, in
     }
 }
 
-static inline projectile_t *Proj_GetProjectile(int tile)
+static inline projectile_t *Proj_GetProjectile(picnum32_t tile)
 {
     return ((unsigned)tile < MAXTILES && g_tile[tile].proj) ? g_tile[tile].proj : &DefaultProjectile;
 }
 
-static void A_HitscanProjTrail(const vec3_t *startPos, const vec3_t *endPos, int projAng, int tileNum, int16_t sectNum)
+static void A_HitscanProjTrail(const vec3_t *startPos, const vec3_t *endPos, int projAng, picnum32_t tileNum, int16_t sectNum)
 {
     const projectile_t *const pProj = Proj_GetProjectile(tileNum);
 
@@ -217,7 +217,7 @@ int32_t A_GetHitscanRange(int spriteNum)
     return (FindDistance2D(hitData.x - SX(spriteNum), hitData.y - SY(spriteNum)));
 }
 
-static int A_FindTargetSprite(const spritetype *pSprite, int projAng, int projecTile)
+static int A_FindTargetSprite(const spritetype *pSprite, int projAng, picnum32_t projecTile)
 {
     static int const aimstats[] = {
         STAT_PLAYER, STAT_DUMMYPLAYER, STAT_ACTOR, STAT_ZOMBIEACTOR
@@ -343,7 +343,7 @@ static void A_SetHitData(int spriteNum, const hitdata_t *hitData)
 }
 
 #ifndef EDUKE32_STANDALONE
-static int CheckShootSwitchTile(int tileNum)
+static int CheckShootSwitchTile(picnum32_t tileNum)
 {
     if (FURY)
         return 0;
@@ -362,7 +362,7 @@ static int32_t safeldist(int32_t spriteNum, const void *pSprite)
 // flags:
 //  1: do sprite center adjustment (cen-=(8<<8)) for GREENSLIME or ROTATEGUN
 //  2: do auto getangle only if not RECON (if clear, do unconditionally)
-static int GetAutoAimAng(int spriteNum, int playerNum, int projecTile, int zAdjust, int aimFlags,
+static int GetAutoAimAng(int spriteNum, int playerNum, picnum32_t projecTile, int zAdjust, int aimFlags,
                                const vec3_t *startPos, int projVel, int32_t *pZvel, int *pAng)
 {
     int returnSprite = -1;
@@ -396,23 +396,25 @@ static int GetAutoAimAng(int spriteNum, int playerNum, int projecTile, int zAdju
     return returnSprite;
 }
 
-static void Proj_DirectSpawn(int spriteNum, int projecTile, const hitdata_t *hitData)
+static void Proj_DirectSpawn(int spriteNum, picnum32_t projecTile, const hitdata_t *hitData)
 {
-    if (projecTile >= 0)
+    if (PICNUM_USABLE(projecTile))
     {
         int spawned = A_Spawn(spriteNum, projecTile);
         A_SetHitData(spawned, hitData);
     }
 }
 
-static void Proj_IndirectSpawn(int spriteNum, int projecTile, const hitdata_t *hitData)
+static void Proj_IndirectSpawn(int spriteNum, picnum32_t projecTile, const hitdata_t *hitData)
 {
     projectile_t *const pProj = Proj_GetProjectile(projecTile);
     if (pProj->spawns >= 0)
     {
         int spawned = A_Spawn(spriteNum, pProj->spawns);
 
+#ifndef AMC_BUILD
         if (projecTile >= 0)
+#endif
         {
             if (pProj->sxrepeat > 4)
                 sprite[spawned].xrepeat = pProj->sxrepeat;
@@ -434,7 +436,7 @@ static void Proj_Spawn(int spriteNum, uint16_t projecTile, const hitdata_t *hitD
 }
 
 // <extra>: damage that this shotspark does
-static int Proj_InsertShotspark(const hitdata_t *hitData, int spriteNum, int projecTile, int sparkSize, int sparkAng, int damage)
+static int Proj_InsertShotspark(const hitdata_t *hitData, int spriteNum, picnum32_t projecTile, int sparkSize, int sparkAng, int damage)
 {
     int returnSprite = A_InsertSprite(hitData->sect, hitData->x, hitData->y, hitData->z, SHOTSPARK1, -15,
                                      sparkSize, sparkSize, sparkAng, 0, 0, spriteNum, 4);
@@ -560,7 +562,7 @@ static int Proj_DoHitscan(int spriteNum, int32_t cstatmask, vec3_t const *srcVec
                           int shootAng, hitdata_t *hitData, HandHitscan const *hand=nullptr);
 
 // Prepare hitscan weapon fired from player p.
-static void P_PreFireHitscan(int spriteNum, int playerNum, int projecTile, vec3_t *srcVect, int32_t *zvel, int *shootAng,
+static void P_PreFireHitscan(int spriteNum, int playerNum, picnum32_t projecTile, vec3_t *srcVect, int32_t *zvel, int *shootAng,
                              int accurateAim, int doSpread, HandHitscan *hand=nullptr)
 {
     int angRange  = 32;
@@ -729,7 +731,7 @@ static bool P_HandWeaponHitscan(int player, vec3_t &origin, int &angle, hitdata_
                           &origin,0,angle,&hit,&hand);
 }
 
-static void Proj_DoRandDecalSize(int const spriteNum, int const projecTile)
+static void Proj_DoRandDecalSize(int const spriteNum, picnum32_t const projecTile)
 {
     const projectile_t *const proj    = Proj_GetProjectile(projecTile);
     auto const         pSprite = &sprite[spriteNum];
@@ -820,7 +822,7 @@ static void P_DoWeaponRumble(int playerNum)
 // TODO: maybe split into 3 cases (hit neither wall nor sprite, hit sprite, hit wall)?
 
 static int P_PostFireHitscan(int playerNum, int const spriteNum, hitdata_t *const hitData, int const STANDALONE_UNUSED(spriteOwner),
-                             int const projecTile, int const zvel, int const spawnTile, int const decalTile, int const wallDamage,
+                             picnum32_t const projecTile, int const zvel, picnum32_t const spawnTile, picnum32_t const decalTile, int const wallDamage,
                              int const decalFlags, bool directProjecTileSpawn)
 {
 #ifdef EDUKE32_STANDALONE
@@ -901,7 +903,7 @@ static int P_PostFireHitscan(int playerNum, int const spriteNum, hitdata_t *cons
                 if (sprite[decalSprite].picnum == decalTile && dist(&sprite[decalSprite], &sprite[spriteNum]) < (12 + (krand() & 7)))
                     goto SKIPBULLETHOLE;
 
-            if (decalTile >= 0)
+            if (PICNUM_USABLE(decalTile))
             {
                 decalSprite = A_Spawn(spriteNum, decalTile);
 
@@ -942,8 +944,8 @@ SKIPBULLETHOLE:
 }
 
 // Finish shooting hitscan weapon from actor (sprite <i>).
-static int A_PostFireHitscan(const hitdata_t *hitData, int const spriteNum, int const projecTile, int const zvel, int const shootAng,
-                             int const extra, int const spawnTile, int const wallDamage, bool directProjecTileSpawn)
+static int A_PostFireHitscan(const hitdata_t *hitData, int const spriteNum, picnum32_t const projecTile, int const zvel, int const shootAng,
+                             int const extra, picnum32_t const spawnTile, int const wallDamage, bool directProjecTileSpawn)
 {
     int const returnSprite = Proj_InsertShotspark(hitData, spriteNum, projecTile, 24, shootAng, extra);
 
@@ -993,11 +995,13 @@ static int Proj_CheckBlood(vec3_t const *const srcVect, hitdata_t const *const h
     return 0;
 }
 
-static void Proj_HandleKnee(hitdata_t *const hitData, int const spriteNum, int const playerNum, int const projecTile, int const shootAng,
-                            const projectile_t *const proj, int const inserttile, int const randomDamage, int const spawnTile,
+static void Proj_HandleKnee(hitdata_t *const hitData, int const spriteNum, int const playerNum, picnum32_t const projecTile, int const shootAng,
+                            const projectile_t *const proj, picnum32_t const inserttile, int const randomDamage, picnum32_t const spawnTile,
                             int const soundNum)
 {
+#ifndef AMC_BUILD
     auto const pPlayer = playerNum >= 0 ? g_player[playerNum].ps : NULL;
+#endif
 
     int kneeSprite = A_InsertSprite(hitData->sect,hitData->x,hitData->y,hitData->z,
                                     inserttile,-15,0,0,shootAng,32,0,spriteNum,4);
@@ -1014,7 +1018,7 @@ static void Proj_HandleKnee(hitdata_t *const hitData, int const spriteNum, int c
 
     if (playerNum >= 0)
     {
-        if (spawnTile >= 0)
+        if (PICNUM_USABLE(spawnTile))
         {
             int k = A_Spawn(kneeSprite, spawnTile);
             sprite[k].z -= ZOFFSET3;
@@ -1025,8 +1029,11 @@ static void Proj_HandleKnee(hitdata_t *const hitData, int const spriteNum, int c
             A_PlaySound(soundNum, kneeSprite);
     }
 
+// Disable the kick damage increase while Steroids is "active".
+#ifndef AMC_BUILD
     if (pPlayer != NULL && pPlayer->inv_amount[GET_STEROIDS] > 0 && pPlayer->inv_amount[GET_STEROIDS] < 400)
         sprite[kneeSprite].extra += (pPlayer->max_player_health>>2);
+#endif
 
     int const dmg = clamp<int>(sprite[kneeSprite].extra, FF_WEAPON_DMG_MIN, FF_WEAPON_DMG_MAX);
 
@@ -1053,7 +1060,7 @@ static void Proj_HandleKnee(hitdata_t *const hitData, int const spriteNum, int c
 
 #define MinibossScale(i, s) (((s)*sprite[i].yrepeat)/80)
 
-static int A_ShootCustom(int const spriteNum, int const projecTile, int shootAng, vec3_t * const startPos)
+static int A_ShootCustom(int const spriteNum, picnum32_t const projecTile, int shootAng, vec3_t * const startPos)
 {
     /* Custom projectiles */
     hitdata_t           hitData;
@@ -1317,7 +1324,7 @@ static int A_ShootCustom(int const spriteNum, int const projecTile, int shootAng
 }
 
 #ifndef EDUKE32_STANDALONE
-static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec3_t startPos,
+static int32_t A_ShootHardcoded(int spriteNum, picnum32_t projecTile, int shootAng, vec3_t startPos,
                                 spritetype *pSprite, int const playerNum, DukePlayer_t * const pPlayer)
 {
     hitdata_t hitData;
@@ -1995,9 +2002,9 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
 }
 #endif
 
-int A_ShootWithZvel(int const spriteNum, int const projecTile, int const forceZvel)
+int A_ShootWithZvel(int const spriteNum, picnum32_t const projecTile, int const forceZvel)
 {
-    Bassert(projecTile >= 0);
+    Bassert(PICNUM_USABLE(projecTile));
 
     auto const pSprite   = &sprite[spriteNum];
     int const  playerNum = (pSprite->picnum == APLAYER) ? P_GetP(pSprite) : -1;
@@ -2174,7 +2181,7 @@ static int P_DisplayFist(int const fistShade)
 
 static int32_t g_dts_yadd;
 
-static void G_DrawTileScaled(int drawX, int drawY, int tileNum, int drawShade, int drawBits, int drawPal, int uniqueID = 0)
+static void G_DrawTileScaled(int drawX, int drawY, picnum32_t tileNum, int drawShade, int drawBits, int drawPal, int uniqueID = 0)
 {
     int32_t wx[2] = { windowxy1.x, windowxy2.x };
     int32_t wy[2] = { windowxy1.y, windowxy2.y };
@@ -2240,7 +2247,7 @@ static void G_DrawTileScaled(int drawX, int drawY, int tileNum, int drawShade, i
 }
 
 #ifndef EDUKE32_STANDALONE
-static void G_DrawWeaponTile(int weaponX, int weaponY, int weaponTile, int weaponShade, int weaponBits, int weaponPal, int uniqueID = 0)
+static void G_DrawWeaponTile(int weaponX, int weaponY, picnum32_t weaponTile, int weaponShade, int weaponBits, int weaponPal, int uniqueID = 0)
 {
     static int shadef = 0;
     static int palf = 0;
@@ -2280,7 +2287,7 @@ static void G_DrawWeaponTile(int weaponX, int weaponY, int weaponTile, int weapo
 }
 #endif
 
-static inline void G_DrawWeaponTileUnfaded(int weaponX, int weaponY, int weaponTile, int weaponShade, int weaponBits, int p, int uniqueID = 0)
+static inline void G_DrawWeaponTileUnfaded(int weaponX, int weaponY, picnum32_t weaponTile, int weaponShade, int weaponBits, int p, int uniqueID = 0)
 {
     G_DrawTileScaled(weaponX, weaponY, weaponTile, weaponShade, weaponBits, p, uniqueID); // skip G_DrawWeaponTile
 }
@@ -4141,9 +4148,12 @@ static int32_t P_DoCounters(int playerNum)
         if (--pPlayer->inv_amount[GET_STEROIDS] == 0)
             P_SelectNextInvItem(pPlayer);
 
+// Disable the heartbeat sound when a Steroid item is counting down.
+#ifndef AMC_BUILD
         if (!(pPlayer->inv_amount[GET_STEROIDS] & 7))
             if (playerNum == screenpeek || GTFLAGS(GAMETYPE_COOPSOUND))
                 A_PlaySound(DUKE_HARTBEAT, pPlayer->i);
+#endif
     }
 
     if (pPlayer->heat_on && pPlayer->inv_amount[GET_HEATS] > 0)
@@ -5599,7 +5609,11 @@ static void P_DoJetpack(int const playerNum, int const playerBits, int const pla
         pPlayer->pos.z = actor[pPlayer->i].ceilingz + (18 << 8);
 }
 
+#ifdef AMC_BUILD
+static void P_Dead(int const playerNum, int const sectorLotag, int const floorZ, int ceilZ)
+#else
 static void P_Dead(int const playerNum, int const sectorLotag, int const floorZ, int const ceilZ)
+#endif
 {
     auto const pPlayer = g_player[playerNum].ps;
     auto const pSprite = &sprite[pPlayer->i];
@@ -5639,11 +5653,15 @@ static void P_Dead(int const playerNum, int const sectorLotag, int const floorZ,
 
     pushmove(&pPlayer->pos, &pPlayer->cursectnum, 128L, (4L<<8), (20L<<8), CLIPMASK0);
 
+#ifdef AMC_BUILD
+    UNREFERENCED_PARAMETER(ceilZ);
+#else
     if (floorZ > ceilZ + ZOFFSET2 && pSprite->pal != 1)
     {
         pPlayer->orotscrnang = pPlayer->rotscrnang;
         pPlayer->rotscrnang = (pPlayer->dead_flag + ((floorZ + pPlayer->pos.z) >> 7)) & 2047;
     }
+#endif
 
     pPlayer->on_warping_sector = 0;
 }
@@ -5668,7 +5686,11 @@ static void P_ClampZ(DukePlayer_t* const pPlayer, int const sectorLotag, int32_t
         pPlayer->pos.z = floorZ - PMINHEIGHT;
 }
 
+#ifdef AMC_BUILD
+#define GETZRANGECLIPDISTOFFSET 16
+#else
 #define GETZRANGECLIPDISTOFFSET 4
+#endif
 
 void P_ProcessInput(int playerNum)
 {
@@ -5727,6 +5749,45 @@ void P_ProcessInput(int playerNum)
 
     // sectorLotag can be set to 0 later on, but the same block sets spritebridge to 1
     int sectorLotag       = sector[pPlayer->cursectnum].lotag;
+#ifdef AMC_BUILD
+    int getZRangeClipDist = pPlayer->clipdist - GETZRANGECLIPDISTOFFSET;
+    // VR: in the air the crouched (low) step height applies, so a jump at a vent or duct opening
+    // gets in without timing a crouch (natively only a crouch on the ground does that).
+    bool const vrCrouchJump = G_VRShotEnabled(playerNum);
+    int32_t floorZ, ceilZ, highZhit, lowZhit;
+
+    bool const sbwActive = ((((TEST_SYNC_KEY(playerBits, SK_CROUCH) && pPlayer->on_ground && !pPlayer->jumping_toggle)
+                              || (vrCrouchJump && !pPlayer->on_ground)) && sectorLotag != ST_2_UNDERWATER)
+                            || (sectorLotag == ST_1_ABOVE_WATER && pPlayer->spritebridge != 1));
+
+    int getZRangeOffset  = sbwActive ? pPlayer->autostep_sbw : pPlayer->autostep;
+    int const stepHeight = getZRangeOffset - (FURY || sbwActive || pPlayer->on_ground ? 0 : (2 << 8));
+
+    // if not running Ion Fury, purposely break part of the clipping system
+    // this is what makes Duke step up onto sprite constructions he shouldn't automatically step up onto
+    if (!FURY)
+    {
+        getZRangeOffset   = 0;
+        getZRangeClipDist = pPlayer->clipdist - 1;
+    }
+    else
+    {
+        // we want to take these into account for getzrange() but not for the clipmove() call below
+        // this isn't taken into account when getZRangeOffset is initialized above because we first need
+        // the stepHeight value without this factored in
+        if (sectorLotag != ST_2_UNDERWATER)
+        {
+            if (pPlayer->pos.z + getZRangeOffset > actor[pPlayer->i].floorz - PMINHEIGHT)
+                getZRangeOffset -= klabs((pPlayer->pos.z + getZRangeOffset) - (actor[pPlayer->i].floorz - PMINHEIGHT));
+            else if (pPlayer->pos.z + getZRangeOffset < actor[pPlayer->i].ceilingz + PMINHEIGHT)
+                getZRangeOffset += klabs((actor[pPlayer->i].ceilingz + PMINHEIGHT) - (pPlayer->pos.z + getZRangeOffset));
+        }
+    }
+
+    pPlayer->pos.z += getZRangeOffset;
+    getzrange(&pPlayer->pos, pPlayer->cursectnum, &ceilZ, &highZhit, &floorZ, &lowZhit, getZRangeClipDist, CLIPMASK0);
+    pPlayer->pos.z -= getZRangeOffset;
+#else
     int getZRangeClipDist = (pPlayer->clipdist >> 1) - GETZRANGECLIPDISTOFFSET;
     // VR: in the air the crouched (low) step height applies, so a jump at a vent or duct opening
     // gets in without timing a crouch (natively only a crouch on the ground does that).
@@ -5786,6 +5847,8 @@ void P_ProcessInput(int playerNum)
             }
     }
 
+#endif
+
     pPlayer->spritebridge = 0;
     pPlayer->sbs          = 0;
 
@@ -5807,7 +5870,12 @@ void P_ProcessInput(int playerNum)
     {
         int const spriteNum = highZhit & (MAXSPRITES-1);
 
+#ifdef AMC_BUILD
+        int pHeightOffset = (FURY) ? PMINHEIGHT : 0;
+        if ((spriteNum != pPlayer->i && sprite[spriteNum].z + pHeightOffset > pPlayer->pos.z)
+#else
         if ((spriteNum != pPlayer->i && sprite[spriteNum].z + PMINHEIGHT > pPlayer->pos.z)
+#endif
             || (!playerShrunk && sprite[spriteNum].statnum == STAT_ACTOR && sprite[spriteNum].extra >= 0))
         {
             highZhit = 0;
@@ -5961,8 +6029,13 @@ void P_ProcessInput(int playerNum)
     }
 
     int                  velocityModifier = TICSPERFRAME;
+#ifndef AMC_BUILD
     const uint8_t *const weaponFrame      = &pPlayer->kickback_pic;
+#endif
     int                  floorZOffset     = pPlayer->floorzoffset;
+#ifdef AMC_BUILD
+    int const            playerSlide      = (pSprite->yrepeat == 35); // regular player yrepeat is 36
+#endif
     vec3_t const         backupPos        = pPlayer->opos;
 
     if (pPlayer->on_crane >= 0)
@@ -6368,8 +6441,11 @@ void P_ProcessInput(int playerNum)
                     pPlayer->walking_snd_toggle--;
             }
 
+// Disable the Steroids speed increase for AMC.
+#ifndef AMC_BUILD
             if (pPlayer->jetpack_on == 0 && pPlayer->inv_amount[GET_STEROIDS] > 0 && pPlayer->inv_amount[GET_STEROIDS] < 400)
                 velocityModifier <<= 1;
+#endif
         }
 #endif
 
@@ -6381,7 +6457,11 @@ void P_ProcessInput(int playerNum)
         if (sectorLotag == ST_2_UNDERWATER)
             playerSpeedReduction = pPlayer->swimspeedmodifier;
         else if (((pPlayer->on_ground && TEST_SYNC_KEY(playerBits, SK_CROUCH))
-                  || (*weaponFrame > 10 && PWEAPON(playerNum, pPlayer->curr_weapon, WorksLike) == KNEE_WEAPON)))
+// Disable the speed reduction while using the kick.
+#ifndef AMC_BUILD
+                  || (*weaponFrame > 10 && PWEAPON(playerNum, pPlayer->curr_weapon, WorksLike) == KNEE_WEAPON)
+#endif
+                 ))
             playerSpeedReduction = pPlayer->crouchspeedmodifier;
         else if (pPlayer->on_ground && !pPlayer->jumping_toggle && !TEST_SYNC_KEY(playerBits, SK_CROUCH)
                  && !playerShrunk && (klabs(pPlayer->truefz - pPlayer->truecz) - (PMINHEIGHT << 1)) < stepHeight)
@@ -6411,6 +6491,13 @@ void P_ProcessInput(int playerNum)
     if (!FURY && playerShrunk && pPlayer->jetpack_on == 0 && sectorLotag != ST_2_UNDERWATER && sectorLotag != ST_1_ABOVE_WATER)
         pPlayer->pos.z += ZOFFSET5 - (sprite[pPlayer->i].yrepeat<<8);
 #endif
+
+#ifdef AMC_BUILD
+    // Update pos.z before clipmove() during sliding to enable old sliding behavior in AMC TC
+    if (playerSlide && !pPlayer->jetpack_on && sectorLotag != ST_2_UNDERWATER)
+        pPlayer->pos.z += pPlayer->vel.z;
+#endif
+
 HORIZONLY:;
     if (ud.noclip)
     {
@@ -6443,10 +6530,19 @@ HORIZONLY:;
 
         P_ClampZ(pPlayer, sectorLotag, ceilZ, floorZ);
 
+#ifdef AMC_BUILD
+        int const touchObject = playerSlide ? clipmove(&pPlayer->pos, &pPlayer->cursectnum, pPlayer->vel.x, pPlayer->vel.y, pPlayer->clipdist,
+                                                   (4L << 8), getZRangeOffset, CLIPMASK0)
+                                             : FURY ? clipmove(&pPlayer->pos, &pPlayer->cursectnum, pPlayer->vel.x + (pPlayer->fric.x << 9),
+                                                   pPlayer->vel.y + (pPlayer->fric.y << 9), pPlayer->clipdist, (4L << 8), stepHeight, CLIPMASK0)
+                                             : clipmove(&pPlayer->pos, &pPlayer->cursectnum, pPlayer->vel.x, pPlayer->vel.y, pPlayer->clipdist,
+                                                    (4L << 8), stepHeight, CLIPMASK0);
+#else
         int const touchObject = FURY ? clipmove(&pPlayer->pos, &pPlayer->cursectnum, pPlayer->vel.x + (pPlayer->fric.x << 9),
                                                    pPlayer->vel.y + (pPlayer->fric.y << 9), pPlayer->clipdist, (4L << 8), stepHeight, CLIPMASK0)
                                         : clipmove(&pPlayer->pos, &pPlayer->cursectnum, pPlayer->vel.x, pPlayer->vel.y, pPlayer->clipdist,
                                                    (4L << 8), stepHeight, CLIPMASK0);
+#endif
 
         if (touchObject)
             P_CheckTouchDamage(pPlayer, touchObject);
@@ -6469,8 +6565,13 @@ HORIZONLY:;
         else if (sectorLotag != ST_2_UNDERWATER && sectorLotag != ST_1_ABOVE_WATER)
             pPlayer->pyoff = 0;
 
+#ifdef AMC_BUILD
+        if (!playerSlide && sectorLotag != ST_2_UNDERWATER)
+            pPlayer->pos.z += pPlayer->vel.z;
+#else
         if (sectorLotag != ST_2_UNDERWATER)
             pPlayer->pos.z += pPlayer->vel.z;
+#endif
     }
 
     P_ClampZ(pPlayer, sectorLotag, ceilZ, floorZ);

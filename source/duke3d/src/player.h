@@ -160,7 +160,12 @@ typedef struct {
 
 typedef struct {
     int16_t got_access, last_extra, inv_amount[GET_MAX], curr_weapon, holoduke_on;
+#ifdef AMC_BUILD
+    int16_t last_weapon, weapon_pos;
+    uint16_t kickback_pic;
+#else
     int16_t last_weapon, weapon_pos, kickback_pic;
+#endif
     int16_t ammo_amount[MAX_WEAPONS];
     uint16_t frag[MAXPLAYERS];
     uint16_t gotweapon;
@@ -415,8 +420,8 @@ extern uint64_t         g_lastInputTicks;
 
 #define SHOOT_HARDCODED_ZVEL INT32_MIN
 
-int A_ShootWithZvel(int spriteNum, int projecTile, int forceZvel);
-static inline int A_Shoot(int spriteNum, int projecTile)
+int A_ShootWithZvel(int spriteNum, picnum32_t projecTile, int forceZvel);
+static inline int A_Shoot(int spriteNum, picnum32_t projecTile)
 {
     return A_ShootWithZvel(spriteNum, projecTile, SHOOT_HARDCODED_ZVEL);
 }

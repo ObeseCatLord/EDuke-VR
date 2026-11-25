@@ -43,6 +43,9 @@ extern "C" {
 #define LOUDESTVOLUME       111
 #define MUSIC_ID            -65536
 #define MAXVOICES           128
+#ifdef AMC_BUILD
+#define CON_MAXSOUNDVOLUME  16384
+#endif
 
 typedef struct
 {
@@ -75,10 +78,22 @@ extern int32_t g_numEnvSoundsPlaying, g_highestSoundIdx;
 
 extern int32_t MusicIsWaveform, MusicVoice;
 
+static FORCE_INLINE bool S_SoundIsDefined(int soundNum)
+{
+    return (unsigned)soundNum <= (unsigned)g_highestSoundIdx && g_sounds[soundNum] && g_sounds[soundNum] != &nullsound;
+}
+
 static FORCE_INLINE bool S_SoundIsValid(int soundNum)
 {
     return (unsigned)soundNum <= (unsigned)g_highestSoundIdx && g_sounds[soundNum] && g_sounds[soundNum] != &nullsound && g_sounds[soundNum]->ptr;
 }
+
+// AMC lets sounds that are defined but not loaded yet pass these checks (they are cached on demand)
+#ifdef AMC_BUILD
+# define S_SoundIsDefinedAMC(x) S_SoundIsDefined(x)
+#else
+# define S_SoundIsDefinedAMC(x) S_SoundIsValid(x)
+#endif
 
 static FORCE_INLINE bool S_IsAmbientSFX(int const spriteNum) { return (sprite[spriteNum].picnum == MUSICANDSFX && sprite[spriteNum].lotag < 999); }
 

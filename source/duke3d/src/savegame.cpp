@@ -30,6 +30,36 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 static OutputFileCounter savecounter;
 
+#ifdef AMC_BUILD
+char savegame_dir[BMAX_PATH] = "savegames";
+
+static char* createInitialSavegamePath()
+{
+    static char const SaveName[] = "save0000.esv";
+    if (!savegame_dir[0])
+        return Xstrdup(SaveName);
+
+    char dirPath[BMAX_PATH];
+    int const len = G_ModDirSnprintfLite(dirPath, BMAX_PATH, savegame_dir);
+    if (len >= BMAX_PATH - 1)
+    {
+        LOG_F(ERROR, "Savegame directory path is too long, using base directory.");
+        return Xstrdup(SaveName);
+    }
+
+    struct Bstat st;
+    if ((!Bstat(dirPath, &st) && ((st.st_mode & S_IFMT) == S_IFDIR)) || (buildvfs_mkdir(dirPath, S_IRWXU) == 0))
+    {
+        char filePath[BMAX_PATH];
+        Bsnprintf(filePath, BMAX_PATH, "%s/%s", savegame_dir, SaveName);
+        return Xstrdup(filePath);
+    }
+
+    LOG_F(ERROR, "Failed to create savegame directory \"%s\", instead using game root directory.", dirPath);
+    return Xstrdup(SaveName);
+}
+#endif
+
 // For storing pointers in files.
 //  back_p==0: ptr -> "small int"
 //  back_p==1: "small int" -> ptr
@@ -144,13 +174,32 @@ uint16_t g_nummenusaves;
 static menusave_t * g_internalsaves;
 static uint16_t g_numinternalsaves;
 
-static void ReadSaveGameHeaders_CACHE1D(BUILDVFS_FIND_REC *f)
+static void ReadSaveGameHeaders_CACHE1D(BUILDVFS_FIND_REC *f
+#ifdef AMC_BUILD
+                                        , bool isSavegameDir
+#endif
+                                        )
 {
     savehead_t h;
+#ifdef AMC_BUILD
+    char savefn[BMAX_PATH] = {0};
+
+    // don't read the base dir twice
+    if (isSavegameDir && !savegame_dir[0])
+        return;
+#endif
 
     for (; f != nullptr; f = f->next)
     {
+#ifdef AMC_BUILD
+        if (isSavegameDir)
+            Bsnprintf(savefn, BMAX_PATH, "%s/%s", savegame_dir, f->name);
+        else
+            Bstrncpy(savefn, f->name, BMAX_PATH);
+        char const * fn = savefn;
+#else
         char const * fn = f->name;
+#endif
         buildvfs_kfd fil = kopen4loadfrommod(fn, 0);
         if (fil == buildvfs_kfd_invalid)
             continue;
@@ -214,8 +263,18 @@ static void ReadSaveGameHeaders_Internal(void)
 
     BUILDVFS_FIND_REC *findfiles_default = klistpath(DefaultPath, SavePattern, BUILDVFS_FIND_FILE);
 
+#ifdef AMC_BUILD
+    char localSaveDir[BMAX_PATH];
+    Bsnprintf(localSaveDir, BMAX_PATH, "/%s", savegame_dir);
+    BUILDVFS_FIND_REC *findfiles_savegame_dir = klistpath(localSaveDir, SavePattern, BUILDVFS_FIND_FILE);
+#endif
+
     // potentially overallocating but programmatically simple
+#ifdef AMC_BUILD
+    int const numfiles = countcache1dfind(findfiles_default) + countcache1dfind(findfiles_savegame_dir);
+#else
     int const numfiles = countcache1dfind(findfiles_default);
+#endif
     size_t const internalsavesize = sizeof(menusave_t) * numfiles;
 
     g_internalsaves = (menusave_t *)Xrealloc(g_internalsaves, internalsavesize);
@@ -224,8 +283,16 @@ static void ReadSaveGameHeaders_Internal(void)
         g_internalsaves[x].clear();
 
     g_numinternalsaves = 0;
+#ifdef AMC_BUILD
+    // look for savegames both in the savegame directory, and the base directory for backwards-compatibility
+    ReadSaveGameHeaders_CACHE1D(findfiles_default, false);
+    ReadSaveGameHeaders_CACHE1D(findfiles_savegame_dir, true);
+    klistfree(findfiles_default);
+    klistfree(findfiles_savegame_dir);
+#else
     ReadSaveGameHeaders_CACHE1D(findfiles_default);
     klistfree(findfiles_default);
+#endif
 
     g_nummenusaves = 0;
     for (int x = g_numinternalsaves-1; x >= 0; --x)
@@ -868,6 +935,22 @@ int32_t G_SavePlayer(savebrief_t & sv, bool isAutoSave)
     }
     else
     {
+#ifdef AMC_BUILD
+        char* savegamePath = createInitialSavegamePath();
+        int const len = G_ModDirSnprintfLite(fn, BMAX_PATH, savegamePath);
+        if (len >= BMAX_PATH - 1)
+        {
+            LOG_F(ERROR, "Resulting save filename is too long.");
+            Xfree(savegamePath);
+            goto saveproblem;
+        }
+        char * zeros = fn + (len-8);
+        fil = savecounter.opennextfile(fn, zeros);
+        savecounter.count++;
+        // don't copy the mod dir into sv.path
+        Bstrncpy(sv.path, fn + (len - Bstrlen(savegamePath)), BMAX_PATH);
+        Xfree(savegamePath);
+#else
         static char const SaveName[] = "save0000.esv";
         int const len = G_ModDirSnprintfLite(fn, ARRAY_SIZE(fn), SaveName);
         if (len >= ARRAY_SSIZE(fn)-1)
@@ -880,6 +963,7 @@ int32_t G_SavePlayer(savebrief_t & sv, bool isAutoSave)
         savecounter.count++;
         // don't copy the mod dir into sv.path
         Bstrcpy(sv.path, fn + (len-(ARRAY_SIZE(SaveName)-1)));
+#endif
     }
 
     if (!fil)
@@ -911,8 +995,10 @@ int32_t G_SavePlayer(savebrief_t & sv, bool isAutoSave)
     if (!g_netServer && ud.multimode < 2)
     {
         OSD_Printf("Saved: %s\n", fn);
+#ifndef AMC_BUILD
         Bstrcpy(apStrings[QUOTE_RESERVED4], "Game Saved");
         P_DoQuote(QUOTE_RESERVED4, g_player[myconnectindex].ps);
+#endif
     }
 
     ready2send = 1;
@@ -2471,7 +2557,7 @@ static void postloadplayer(int32_t savegamep)
     if (savegamep)
     {
         for (SPRITES_OF(STAT_FX, i))
-            if (sprite[i].picnum == MUSICANDSFX && T1(i) && SLT(i) < 999 && S_SoundIsValid(SLT(i)) && g_sounds[SLT(i)]->flags & (SF_MSFX|SF_LOOP))
+            if (sprite[i].picnum == MUSICANDSFX && T1(i) && SLT(i) < 999 && S_SoundIsDefinedAMC(SLT(i)) && g_sounds[SLT(i)]->flags & (SF_MSFX|SF_LOOP))
             {
                 T2(i) = 0;
 

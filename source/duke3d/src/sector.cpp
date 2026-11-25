@@ -37,7 +37,7 @@ int S_FindMusicSFX(int sectNum, int *sndptr)
         const int32_t snd = sprite[spriteNum].lotag;
         EDUKE32_STATIC_ASSERT(MAXSOUNDS >= 1000);
 
-        if (PN(spriteNum) == MUSICANDSFX && snd && (unsigned)snd < 1000 && S_SoundIsValid(snd))  // XXX: in other places, 999
+        if (PN(spriteNum) == MUSICANDSFX && snd && (unsigned)snd < 1000 && S_SoundIsDefinedAMC(snd))  // XXX: in other places, 999
         {
             *sndptr = snd;
             return spriteNum;
@@ -146,7 +146,7 @@ int G_CheckActivatorMotion(int lotag)
     return 0;
 }
 
-int CheckDoorTile(int tileNum)
+int CheckDoorTile(picnum32_t tileNum)
 {
 #ifndef EDUKE32_STANDALONE
     switch (tileGetMapping(tileNum))
@@ -425,7 +425,7 @@ int SetAnimation(int sectNum, int32_t *animPtr, int goalVal, int animVel)
     return animNum;
 }
 
-static void G_SetupCamTile(int spriteNum, int tileNum, int smoothRatio)
+static void G_SetupCamTile(int spriteNum, picnum32_t tileNum, int smoothRatio)
 {
     int const playerNum = screenpeek;
 
@@ -1580,7 +1580,7 @@ int P_ActivateSwitch(int playerNum, int wallOrSprite, int switchType)
 
             if (!hitag && CheckDoorTile(nSwitchPicnum) == 0)
                 S_PlaySound3D(SWITCH_ON, (switchType == SWITCH_SPRITE) ? wallOrSprite : g_player[playerNum].ps->i, davector);
-            else if (hitag && S_SoundIsValid(hitag))
+            else if (hitag && S_SoundIsDefinedAMC(hitag))
             {
                 if (switchType == SWITCH_SPRITE && (g_sounds[hitag]->flags & SF_TALK) == 0)
                     S_PlaySound3D(hitag, wallOrSprite, davector);
@@ -1610,7 +1610,7 @@ void G_ActivateBySector(int sectNum, int spriteNum)
         G_OperateSectors(sectNum, spriteNum);
 }
 
-static void G_BreakWall(int tileNum, int spriteNum, int wallNum)
+static void G_BreakWall(picnum32_t tileNum, int spriteNum, int wallNum)
 {
     wall[wallNum].picnum = tileNum;
 #ifndef EDUKE32_STANDALONE
@@ -2042,9 +2042,15 @@ void A_DamageObject_Duke3D(int spriteNum, int const dmgSrc)
 
     int radiusDamage = 0;
 
+#ifdef AMC_BUILD
+    if (A_CheckSpriteFlags(dmgSrc,SFLAG_PROJECTILE) &&
+            (SpriteProjectile[dmgSrc].workslike & PROJECTILE_RPG) && (SpriteProjectile[dmgSrc].workslike & PROJECTILE_RADIUS_PICNUM_EX))
+        radiusDamage = 1;
+#else
     if (A_CheckSpriteFlags(dmgSrc,SFLAG_PROJECTILE))
         if (SpriteProjectile[dmgSrc].workslike & PROJECTILE_RPG)
             radiusDamage = 1;
+#endif
 
     switch (tileGetMapping(PN(spriteNum)))
     {
@@ -2461,7 +2467,11 @@ void A_DamageObject_Duke3D(int spriteNum, int const dmgSrc)
             if ((PN(spriteNum) != DRONE) && (PN(spriteNum) != ROTATEGUN) && (PN(spriteNum) != COMMANDER)
                 && (PN(spriteNum) < GREENSLIME || PN(spriteNum) > GREENSLIME + 7))
                 if (sprite[dmgSrc].picnum != FREEZEBLAST)
+#ifdef AMC_BUILD
+                    if (A_CheckSpriteFlags(spriteNum, SFLAG_HURTSPAWNBLOOD)) // Don't spawn hardcoded blood with SFLAG_BADGUY enemies
+#else
                     if (!A_CheckSpriteFlags(spriteNum, SFLAG_BADGUY) || A_CheckSpriteFlags(spriteNum, SFLAG_HURTSPAWNBLOOD))
+#endif
                     {
                         int const newSprite = A_Spawn(dmgSrc, JIBS6);
                         sprite[newSprite].z += ZOFFSET6;
@@ -2476,7 +2486,11 @@ void A_DamageObject_Duke3D(int spriteNum, int const dmgSrc)
 
             if (damageOwner >= 0 && sprite[damageOwner].picnum == APLAYER && PN(spriteNum) != ROTATEGUN && PN(spriteNum) != DRONE)
                 if (g_player[P_Get(damageOwner)].ps->curr_weapon == SHOTGUN_WEAPON)
+#ifdef AMC_BUILD
+                    if (A_CheckSpriteFlags(spriteNum, SFLAG_HURTSPAWNBLOOD)) // Don't spawn hardcoded blood with SFLAG_BADGUY enemies
+#else
                     if (!A_CheckSpriteFlags(spriteNum, SFLAG_BADGUY) || A_CheckSpriteFlags(spriteNum, SFLAG_HURTSPAWNBLOOD))
+#endif
                     {
                         A_Shoot(spriteNum, BLOODSPLAT3);
                         A_Shoot(spriteNum, BLOODSPLAT1);
@@ -2488,8 +2502,10 @@ void A_DamageObject_Duke3D(int spriteNum, int const dmgSrc)
             {
                 if (sprite[spriteNum].extra > 0)
                 {
+#ifndef AMC_BUILD
                     if ((sprite[spriteNum].cstat & CSTAT_SPRITE_ALIGNMENT) == CSTAT_SPRITE_ALIGNMENT_FACING)
                         SA(spriteNum)          = (sprite[dmgSrc].ang + 1024) & 2047;
+#endif
                     sprite[spriteNum].xvel  = -(sprite[dmgSrc].extra << 2);
 
                     int16_t sectNum = SECT(spriteNum);
@@ -2587,8 +2603,10 @@ void A_DamageObject_Generic(int spriteNum, int const dmgSrc)
                 {
                     if (sprite[spriteNum].extra > 0)
                     {
+#ifndef AMC_BUILD
                         if ((sprite[spriteNum].cstat & CSTAT_SPRITE_ALIGNMENT) == CSTAT_SPRITE_ALIGNMENT_FACING)
                             SA(spriteNum) = (sprite[dmgSrc].ang + 1024) & 2047;
+#endif
                         sprite[spriteNum].xvel  = -(sprite[dmgSrc].extra << 2);
                         int16_t sectNum = SECT(spriteNum);
                         pushmove(&sprite[spriteNum].xyz, &sectNum, 128L, (4L << 8), (4L << 8), CLIPMASK0);

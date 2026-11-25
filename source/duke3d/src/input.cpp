@@ -81,6 +81,9 @@ void I_AdvanceTriggerClear(void)
 
 int32_t I_GeneralTrigger(void)
 {
+#ifdef AMC_BUILD
+    return I_EscapeTrigger() || BUTTON(gamefunc_Open);
+#else
     return I_AdvanceTrigger() || I_ReturnTrigger() || I_EscapeTrigger()
 #if !defined GEKKO
         || BUTTON(gamefunc_Open)
@@ -91,6 +94,7 @@ int32_t I_GeneralTrigger(void)
 # endif
 #endif
         ;
+#endif
 }
 
 void I_GeneralTriggerClear(void)
