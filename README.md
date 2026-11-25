@@ -65,7 +65,8 @@ AMC Squad (the folder with `AMCSQUAD.GRP` and `AMCART.GRP`, version 5.2.2) works
 
 It runs on its own engine build (`eduke32-vr-amc`, `eduke32-vr-amc.exe`), which the script picks
 automatically; the other games use the normal one. AMC Squad keeps its saves and progress in its own folder, so that folder must be writable,
-as AMC Squad itself requires. Its weapon wheel follows the character and the loadout you bought.
+as AMC Squad itself requires. Its weapon wheel follows the character and the loadout you bought. AMC's own screens (character select,
+terminals, shops) float in front of you: point at them with the controller's laser and pull the trigger to click.
 
 Use `desktop` instead of `vr` to play on a normal screen.
 
