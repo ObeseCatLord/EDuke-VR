@@ -5,8 +5,8 @@
 
 <h1 align="center">EDuke VR</h1>
 
-Duke Nukem 3D in VR, built on [EDuke32](https://www.eduke32.com/). Play the whole game in a VR
-headset or on a normal screen, alone or with friends in co-op and DukeMatch.
+Duke Nukem 3D in VR, built on [EDuke32](https://www.eduke32.com/). This port focuses on multiplayer
+and mod comaptibility.
 
 You need your own copy of Duke Nukem 3D (for example the 20th Anniversary World Tour on Steam). No
 game data is included.
@@ -22,7 +22,7 @@ game data is included.
 - Weapon and gadget wheels, and a wrist HUD.
 - Duke's full 3D body, hands and weapons, made from Voxel Duke (see below).
 - Snap or smooth turning and room-scale movement.
-- Supports most EDuke32 mods, including Alien Armageddon and Voxel Duke, and the games Ion Fury,
+- Supports most EDuke32 mods, including Alien Armageddon, Ion Fury,
   Demon Throne, AMC Squad and A.W.O.L.
 - Windows, Linux and Steam Frame.
 
