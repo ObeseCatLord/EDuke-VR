@@ -219,6 +219,18 @@ static void LoadList(const char * filename)
     scriptfile_clearsymbols();
 }
 
+// Whether an awol.grp is on the search path (the built-in A.W.O.L. entry would otherwise raise the
+// scan's size limit for every game and make it checksum unrelated large files).
+static bool awolGrpPresent(void)
+{
+    bool found = false;
+    BUILDVFS_FIND_REC * const srch = klistpath("/", "*.grp", BUILDVFS_FIND_FILE);
+    for (BUILDVFS_FIND_REC *sidx = srch; sidx && !found; sidx = sidx->next)
+        found = !Bstrcasecmp(sidx->name, "awol.grp");
+    klistfree(srch);
+    return found;
+}
+
 static void LoadGameList(void)
 {
 #ifndef EDUKE32_STANDALONE
@@ -271,7 +283,7 @@ static void LoadGameList(void)
         }
     }
     // No grpinfo supplied v1.3 (awol.grpinfo missing): the game still starts.
-    if (!haveAwol)
+    if (!haveAwol && awolGrpPresent())
     {
         grpinfo_t * const fg = (grpinfo_t *)Xcalloc(1, sizeof(grpinfo_t));
         fg->name = Xstrdup("A.W.O.L. v1.3");

@@ -1607,7 +1607,7 @@ static void publishInput()
     // fire, movement and turning, so a player standing still and aiming by hand went "idle" after ~26 s:
     // Duke cracked his knuckles and Alien Armageddon played its idle animation and hid its crosshair.
     // Single player only (in multiplayer the player state belongs to the simulation everyone shares).
-    if (inputValid && !g_netServer && !g_netClient)
+    if (inputValid() && !g_netServer && !g_netClient)
     {
         static XrPosef lastActive[3];
         static bool lastValid[3];
@@ -1627,7 +1627,8 @@ static void publishInput()
             if (d<.99966f || dist>.03f) { lastActive[i]=poses[i]; moved=true; }   // > ~3 degrees or 3 cm
         }
         auto const p=g_player[myconnectindex].ps;
-        if (moved && p && p->crack_time>0) p->crack_time=PCRACKTIME;
+        if (moved && p && (p->gm & MODE_GAME) && !ud.recstat && p->crack_time>0)
+            p->crack_time=max<int>(p->crack_time,PCRACKTIME);   // keep a longer timer a mod set
     }
 
     if (auto trace=sdlayer_getenv_cached("EDUKE32_XR_TEST_INPUT"))
@@ -2069,7 +2070,7 @@ bool weaponVisualOwned()
 {
     auto const &visual=crosshairViews.weapon;
     return crosshairViews.valid && visual.valid && visual.player==myconnectindex && visual.hand==aimHand()
-        && visual.family==P_XRWeaponFamily() && visual.model==md_tilehasmodel(weaponModelTile(visual.family),0)
+        && visual.family==effectiveWeaponFamily() && visual.model==md_tilehasmodel(weaponModelTile(visual.family),0)
         && inputRuntime==menuRuntime && inputGeneration==menuGeneration && inputValid()
         && aimPoseUsable() && rawInput.hands[visual.hand].gripValid
         && G_VRShotValid(myconnectindex);
@@ -5244,7 +5245,7 @@ void G_XRCrosshairFrame()
 {
     profileCrosshairPending.clear();
     profileCrosshairArmed=false;
-    if (gameProfile().crosshairTiles.empty() || !crosshairViews.valid || !menuRuntime
+    if (!crosshairViews.valid || gameProfile().crosshairTiles.empty() || !menuRuntime
         || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()
         || screenpeek!=myconnectindex || !ud.crosshair || ud.camerasprite!=-1 || ud.overhead_on
         || g_player[myconnectindex].ps->newowner>=0)
