@@ -26,8 +26,8 @@ game.mkdir(parents=True)
 for entry in sorted(args.game_link.resolve().iterdir()):
     if entry.is_file() and entry.suffix.lower() in ('.cfg', '.ini'):
         (game / entry.name).write_bytes(entry.read_bytes())
-    elif entry.is_dir() and not entry.is_symlink() and entry.name in ('DATA', 'savegames'):
-        shutil.copytree(entry, game / entry.name)   # folders the game writes into
+    elif entry.is_dir() and entry.name in ('DATA', 'savegames'):
+        shutil.copytree(entry.resolve(), game / entry.name)   # folders the game writes into
     else:
         (game / entry.name).symlink_to(entry)
 (game / args.config_name).write_text(CONFIG)  # no config: the binary would open its setup window

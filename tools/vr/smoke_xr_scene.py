@@ -81,8 +81,8 @@ def main():
         for entry in sorted(args.game_link.resolve().iterdir()):
             if entry.is_file() and entry.suffix.lower() in ('.cfg', '.ini'):
                 (args.game / entry.name).write_bytes(entry.read_bytes())
-            elif entry.is_dir() and not entry.is_symlink() and entry.name in ('DATA', 'savegames'):
-                shutil.copytree(entry, args.game / entry.name)   # folders the game writes into
+            elif entry.is_dir() and entry.name in ('DATA', 'savegames'):
+                shutil.copytree(entry.resolve(), args.game / entry.name)   # folders the game writes into
             else:
                 (args.game / entry.name).symlink_to(entry)
     for source in args.copy:

@@ -1,0 +1,12 @@
+// A.W.O.L. v1.3 as a standalone game (its own grpinfo leaves out flags and dependency, which makes the
+// engine look for Duke 3D's GRP as a base). Same name, CRC and size as the game's own awol.grpinfo.
+grpinfo
+{
+    name "A.W.O.L. v1.3"
+    scriptname "awol.con"
+    defname "awol.def"
+    size 244458025
+    crc 0xDA99945F
+    flags 0
+    dependency 0
+}
