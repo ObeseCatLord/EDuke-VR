@@ -23,7 +23,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #ifndef quotes_h_
 #define quotes_h_
 
+#ifdef AMC_BUILD
+#define MAXQUOTES                   32768 // AMC Squad quotes reach id ~20101
+#else
 #define MAXQUOTES                   16384
+#endif
 #define MAXQUOTELEN                 128
 #define OBITQUOTEINDEX              (MAXQUOTES-128)
 #define SUICIDEQUOTEINDEX           (MAXQUOTES-32)

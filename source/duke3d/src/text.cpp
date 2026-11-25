@@ -158,7 +158,7 @@ static int32_t G_GetStringTileLegacy(int32_t font, char c, int32_t f)
         return c - '!' + font; // uses ASCII order
 }
 
-int32_t G_GetStringTileASCII(TileFontPtr_t tilefontPtr, int32_t font, char c, int32_t f)
+picnum32_t G_GetStringTileASCII(TileFontPtr_t tilefontPtr, int32_t font, char c, int32_t f)
 {
     if (tilefontPtr.opaque != nullptr)
         return tilefontLookup(tilefontPtr, tilefontGetChr32FromASCII(c));
@@ -264,7 +264,7 @@ uint32_t G_ScreenTextFromString(ScreenTextGlyph_t * const textbuf, char const * 
     return text - textbuf;
 }
 
-void G_SetScreenTextEmpty(vec2_t & empty, int32_t font, int32_t f)
+void G_SetScreenTextEmpty(vec2_t & empty, picnum32_t font, int32_t f)
 {
     TileFontPtr_t tilefontPtr = tilefontFind(font);
 
@@ -291,7 +291,7 @@ void G_SetScreenTextEmpty(vec2_t & empty, int32_t font, int32_t f)
     }
 }
 
-void G_PrintGameText(int32_t tile, int32_t x, int32_t y, const char *t,
+void G_PrintGameText(picnum32_t tile, int32_t x, int32_t y, const char *t,
                      int32_t s, int32_t p, int32_t o,
                      int32_t x1, int32_t y1, int32_t x2, int32_t y2,
                      int32_t z, int32_t a)
@@ -530,7 +530,11 @@ void G_PrintGameQuotes(int32_t snum)
         // int32_t const sh = hud_glowingquotes ? sintable[((totalclock+(i<<2))<<5)&2047]>>11 : 0;
 
         // could use some kind of word wrap here
+#ifdef AMC_BUILD
+        height = mpgametext(mpgametext_x + (ud.userquote_xoffset << 16), y + (ud.userquote_yoffset << 16), user_quote[i], textsh(k), texto(k), texta(k), 0).y + textsc(1<<16);
+#else
         height = mpgametext(mpgametext_x, y, user_quote[i], textsh(k), texto(k), texta(k), 0).y + textsc(1<<16);
+#endif
         y += k <= 4 ? (height * (k-1))>>2 : height;
     }
 }

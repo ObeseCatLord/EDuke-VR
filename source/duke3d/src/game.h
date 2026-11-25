@@ -144,6 +144,12 @@ static inline int32_t G_GetLogoFlags(void)
 #define MAXPWLOCKOUT 128
 #define MAXRTSNAME 128
 
+#ifdef AMC_BUILD
+#ifndef MAXCUSTOMSETTINGSENTRIES
+#define MAXCUSTOMSETTINGSENTRIES 64
+#endif
+#endif
+
 #define MAX_RETURN_VALUES 6
 
 #define MAX_ARRAYRANGE_VALUES 32
@@ -168,7 +174,12 @@ typedef struct {
     int32_t runkey_mode,kick_mode,statusbarscale,mouseaiming,weaponswitch,drawweapon;   // JBF 20031125
     int32_t democams,color,msgdisptime,statusbarmode;
     int32_t m_noexits,noexits,autovote,automsg,idplayers;
+#ifdef AMC_BUILD
+    int32_t team, viewbob, weaponsway, althud, weaponscale;
+    int32_t userquote_xoffset, userquote_yoffset, textscale;
+#else
     int32_t team, viewbob, weaponsway, althud, weaponscale, textscale;
+#endif
     int32_t statusbarflags, statusbarrange, statusbarcustom;
     int32_t hudontop;
     int32_t menu_slidebarz, menu_slidebarmargin, menu_slidecursorz;
@@ -185,6 +196,10 @@ typedef struct {
     int32_t player_skill,level_number,volume_number,m_marker,marker,mouseflip;
     int32_t music_episode, music_level, skill_voice;
     int32_t m_newgamecustom, m_newgamecustomsub, m_newgamecustoml3;
+#ifdef AMC_BUILD
+    int32_t m_customsettings;
+    int32_t customsettings[MAXCUSTOMSETTINGSENTRIES];
+#endif
 
     int32_t playerbest;
 
@@ -260,7 +275,12 @@ typedef struct {
 
         int32_t CheckForUpdates;
         int32_t LastUpdateCheck;
+#ifdef AMC_BUILD
+        union { int32_t useprecache, UsePrecache; };  // map asset precache (art + sounds, AMC name: UsePrecache)
+        int32_t UseSoundPrecache;                     // precache every sound on startup (snd_precache)
+#else
         int32_t useprecache;
+#endif
     } config;
 
     ud_setup_t setup;
@@ -381,9 +401,9 @@ extern palette_t CrosshairColors;
 extern palette_t DefaultCrosshairColors;
 
 int32_t A_CheckInventorySprite(spritetype *s);
-int32_t A_InsertSprite(int16_t whatsect, int32_t s_x, int32_t s_y, int32_t s_z, int16_t s_pn, int8_t s_s, uint8_t s_xr,
+int32_t A_InsertSprite(int16_t whatsect, int32_t s_x, int32_t s_y, int32_t s_z, picnum16_t s_pn, int8_t s_s, uint8_t s_xr,
                        uint8_t s_yr, int16_t s_a, int16_t s_ve, int16_t s_zv, int16_t s_ow, int16_t s_ss);
-int A_Spawn(int spriteNum,int tileNum);
+int A_Spawn(int spriteNum,picnum32_t tileNum);
 int G_DoMoveThings(void);
 //int32_t G_EndOfLevel(void);
 

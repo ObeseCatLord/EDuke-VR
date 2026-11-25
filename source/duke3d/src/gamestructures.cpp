@@ -746,7 +746,7 @@ memberlabel_t const ProjectileLabels[]=
     { "userdata",   PROJ_USERDATA,    0, 0, -1 },
 };
 
-int32_t __fastcall VM_GetProjectile(int const tileNum, int32_t labelNum)
+int32_t __fastcall VM_GetProjectile(gs_tile_t const tileNum, int32_t labelNum)
 {
     if (EDUKE32_PREDICT_FALSE((unsigned)tileNum >= MAXTILES || g_tile[tileNum].proj == NULL))
     {
@@ -795,7 +795,7 @@ int32_t __fastcall VM_GetProjectile(int const tileNum, int32_t labelNum)
     return labelNum;
 }
 
-void __fastcall VM_SetProjectile(int const tileNum, int const labelNum, int32_t const newValue)
+void __fastcall VM_SetProjectile(gs_tile_t const tileNum, int const labelNum, int32_t const newValue)
 {
     if (EDUKE32_PREDICT_FALSE((unsigned) tileNum >= MAXTILES || g_tile[tileNum].proj == NULL))
     {
@@ -1123,6 +1123,13 @@ memberlabel_t const UserdefsLabels[]=
     { "m_newgamecustomsub",     USERDEFS_M_NEWGAMECUSTOMSUB,     0, 0, -1 },
     { "m_newgamecustoml3",      USERDEFS_M_NEWGAMECUSTOML3,      0, 0, -1 },
     { "kick_mode",              USERDEFS_KICK_MODE,              0, 0, -1 },
+#ifdef AMC_BUILD
+    { "voicetoggle",            USERDEFS_VOICETOGGLE,            0, 0, -1 },
+    { "userquote_xoffset",      USERDEFS_USERQUOTE_XOFFSET,      0, 0, -1 },
+    { "userquote_yoffset",      USERDEFS_USERQUOTE_YOFFSET,      0, 0, -1 },
+    { "m_customsettings",       USERDEFS_M_CUSTOMSETTINGS,       0, 0, -1 },
+    { "csarray",                USERDEFS_CSARRAY,                LABEL_HASPARM2, MAXCUSTOMSETTINGSENTRIES, -1 },
+#endif
 };
 
 int32_t __fastcall VM_GetUserdef(int32_t labelNum, int const lParm2)
@@ -1319,6 +1326,13 @@ int32_t __fastcall VM_GetUserdef(int32_t labelNum, int const lParm2)
         case USERDEFS_M_NEWGAMECUSTOMSUB:     labelNum = ud.m_newgamecustomsub;           break;
         case USERDEFS_M_NEWGAMECUSTOML3:      labelNum = ud.m_newgamecustoml3;           break;
         case USERDEFS_KICK_MODE:              labelNum = ud.kick_mode;                    break;
+#ifdef AMC_BUILD
+        case USERDEFS_VOICETOGGLE:            labelNum = ud.config.VoiceToggle;           break;
+        case USERDEFS_USERQUOTE_XOFFSET:      labelNum = ud.userquote_xoffset;            break;
+        case USERDEFS_USERQUOTE_YOFFSET:      labelNum = ud.userquote_yoffset;            break;
+        case USERDEFS_M_CUSTOMSETTINGS:       labelNum = ud.m_customsettings;             break;
+        case USERDEFS_CSARRAY:                labelNum = ud.customsettings[lParm2];       break;
+#endif
 
         default: EDUKE32_UNREACHABLE_SECTION(labelNum = -1; break);
     }
@@ -1533,6 +1547,11 @@ void __fastcall VM_SetUserdef(int const labelNum, int const lParm2, int32_t cons
                     ME_NEWGAMECUSTOMSUBENTRIES[lParm2][b].flags = 0;
             break;
         case USERDEFS_KICK_MODE:                    ud.kick_mode                     = iSet; break;
+#ifdef AMC_BUILD
+        case USERDEFS_USERQUOTE_XOFFSET:            ud.userquote_xoffset             = iSet; break;
+        case USERDEFS_USERQUOTE_YOFFSET:            ud.userquote_yoffset             = iSet; break;
+        case USERDEFS_CSARRAY:                      ud.customsettings[lParm2]        = iSet; break;
+#endif
     }
 }
 
@@ -1615,7 +1634,7 @@ memberlabel_t const TileDataLabels[]=
     { "gameflags",  TILEDATA_GAMEFLAGS,  0, 0, -1 },
 };
 
-int32_t __fastcall VM_GetTileData(int const tileNum, int32_t labelNum)
+int32_t __fastcall VM_GetTileData(gs_tile_t const tileNum, int32_t labelNum)
 {
     if (EDUKE32_PREDICT_FALSE((unsigned)tileNum >= MAXTILES))
     {
@@ -1645,7 +1664,7 @@ int32_t __fastcall VM_GetTileData(int const tileNum, int32_t labelNum)
     return labelNum;
 }
 
-void __fastcall VM_SetTileData(int const tileNum, int const labelNum, int32_t newValue)
+void __fastcall VM_SetTileData(gs_tile_t const tileNum, int const labelNum, int32_t newValue)
 {
     if (EDUKE32_PREDICT_FALSE((unsigned)tileNum >= MAXTILES))
     {

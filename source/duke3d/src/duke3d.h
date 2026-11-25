@@ -69,7 +69,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #define RECSYNCBUFSIZ       2520   //2520 is the (LCM of 1-8)*3
 #define MOVEFIFOSIZ         2
 
+#ifdef AMC_BUILD
+#define MAXVOLUMES          8
+#else
 #define MAXVOLUMES          7
+#endif
 #define MAXLEVELS           64
 #define MAXGAMETYPES        16
 #define MAX_ACTIVE_VIEWSCREENS 64
@@ -155,12 +159,12 @@ enum loguru_verbosities_game
 #include "sounds.h"
 #include "text.h"
 
-static inline int32_t G_TileHasActor(int const tileNum)
+static inline int32_t G_TileHasActor(picnum32_t const tileNum)
 {
     return g_tile[tileNum].execPtr!=NULL;
 }
 
-static inline int32_t G_DefaultActorHealthForTile(int const tileNum)
+static inline int32_t G_DefaultActorHealthForTile(picnum32_t const tileNum)
 {
     return G_TileHasActor(tileNum) ? g_tile[tileNum].execPtr[0] : 0;
 }

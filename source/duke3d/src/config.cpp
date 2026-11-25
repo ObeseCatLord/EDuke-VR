@@ -262,8 +262,13 @@ void CONFIG_SetDefaults(void)
     ud.cashman                = 0;
     ud.color                  = 0;
     ud.config.AmbienceToggle  = 1;
+#ifdef AMC_BUILD
+    ud.config.AutoAim         = 0;
+    ud.config.CheckForUpdates = 0;
+#else
     ud.config.AutoAim         = 1;
     ud.config.CheckForUpdates = 1;
+#endif
     ud.config.MasterVolume    = 255;
     ud.config.FXVolume        = 255;
     ud.config.VoiceVolume     = 255;
@@ -283,9 +288,16 @@ void CONFIG_SetDefaults(void)
     ud.config.SoundToggle     = 1;
     ud.config.VoiceToggle     = 5;  // bitfield, 1 = local, 2 = dummy, 4 = other players in DM
     ud.config.useprecache     = 1;
+#ifdef AMC_BUILD
+    ud.config.UseSoundPrecache = 0;
+#endif
     ud.configversion          = 0;
     ud.crosshair              = 1;
+#ifdef AMC_BUILD
+    ud.crosshairscale         = 25;
+#else
     ud.crosshairscale         = 50;
+#endif
     ud.default_skill          = 1;
     ud.democams               = 1;
     ud.detail                 = 0;
@@ -713,6 +725,17 @@ int CONFIG_ReadSetup(void)
                                    g_setupFileName, SETUPFILENAME);
             if (i)
                 ud.config.scripthandle = SCRIPT_Load(SETUPFILENAME);
+        }
+#endif
+#ifdef BACKUP_SETUPFILENAME
+        else if (buildvfs_exists(BACKUP_SETUPFILENAME))
+        {
+            int const i = wm_ynbox("Import Configuration Settings",
+                                   "Configuration file %s not found. "
+                                   "Import configuration data from %s?",
+                                   g_setupFileName, BACKUP_SETUPFILENAME);
+            if (i)
+                ud.config.scripthandle = SCRIPT_Load(BACKUP_SETUPFILENAME);
         }
 #endif
     }

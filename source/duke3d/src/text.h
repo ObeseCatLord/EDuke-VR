@@ -80,13 +80,13 @@ extern int32_t textsc(int32_t sc);
 #define gametext_center_shade(y, t, s) gametext_(160<<16, (y)<<16, (t), (s), MF_Bluefont.pal, 0, 0, TEXT_XCENTER)
 #define gametext_center_shade_pal(y, t, s, p) gametext_(160<<16, (y)<<16, (t), (s), (p), 0, 0, TEXT_XCENTER)
 
-extern void G_PrintGameText(int32_t tile, int32_t x, int32_t y, const char *t,
+extern void G_PrintGameText(picnum32_t tile, int32_t x, int32_t y, const char *t,
                             int32_t s, int32_t p, int32_t o,
                             int32_t x1, int32_t y1, int32_t x2, int32_t y2,
                             int32_t z, int32_t a);
 
-extern int32_t G_GetStringTileASCII(TileFontPtr_t tilefontPtr, int32_t font, char c, int32_t f);
-extern void G_SetScreenTextEmpty(vec2_t & empty, int32_t font, int32_t f);
+extern picnum32_t G_GetStringTileASCII(TileFontPtr_t tilefontPtr, int32_t font, char c, int32_t f);
+extern void G_SetScreenTextEmpty(vec2_t & empty, picnum32_t font, int32_t f);
 
 uint32_t G_ScreenTextFromString(ScreenTextGlyph_t * text, char const * str, char const * const end, TileFontPtr_t tilefontPtr, int32_t font, int32_t flags);
 
