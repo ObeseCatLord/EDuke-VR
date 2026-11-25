@@ -109,6 +109,7 @@ extern char *g_rtsNamePtr;
 
 extern const char *G_DefaultGrpFile(void);
 extern const char *G_GrpFile(void);
+extern int G_IsAwol(void);  // A.W.O.L. is the running game (grpinfo CRC, or its script name)
 
 extern const char *G_DefaultConFile(void);
 extern const char *G_ConFile(void);

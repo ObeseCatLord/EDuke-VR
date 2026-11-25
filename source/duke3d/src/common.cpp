@@ -142,6 +142,20 @@ const char *G_GrpFile(void)
     return (g_grpNamePtr == NULL) ? G_DefaultGrpFile() : g_grpNamePtr;
 }
 
+int G_IsAwol(void)
+{
+    if (g_selectedGrp && g_selectedGrp->type && (uint32_t)g_selectedGrp->type->crcval == 0xDA99945Fu)
+        return 1;
+    char const *con = G_ConFile();
+    if (!con)
+        return 0;
+    char const *base = con;
+    for (char const *p = con; *p; ++p)
+        if (*p == '/' || *p == '\\')
+            base = p+1;
+    return !Bstrcasecmp(base, "awol.con");
+}
+
 const char *G_DefFile(void)
 {
     return (g_defNamePtr == NULL) ? G_DefaultDefFile() : g_defNamePtr;

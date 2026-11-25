@@ -35,6 +35,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 static void process_vaca13(int32_t crcval);
 static void process_vacapp15(int32_t crcval);
 
+#define AWOL_CRC  0xDA99945Fu
+#define AWOL_SIZE 244458025
+
 // custom GRP support for the startup window, file format reflects the structure below
 #define GAMELISTFILE "games.list"
 //    name                                     crc          size      flags                         dependency  scriptname     postprocessing
@@ -250,6 +253,21 @@ static void LoadGameList(void)
         LoadList(sidx->name);
 
     klistfree(srch);
+
+    // A.W.O.L. v1.3 ships a grpinfo without flags/dependency, which would make it a Duke add-on needing
+    // DUKE3D.GRP. It is a standalone total conversion: correct the entry whatever file supplied it.
+    for (grpinfo_t *fg = listgrps; fg; fg = fg->next)
+    {
+        if ((uint32_t)fg->crcval == AWOL_CRC && fg->size == AWOL_SIZE)
+        {
+            fg->game = 0;
+            fg->dependency = 0;
+            if (!fg->scriptname)
+                fg->scriptname = dup_filename("awol.con");
+            if (!fg->defname)
+                fg->defname = dup_filename("awol.def");
+        }
+    }
 }
 
 static void FreeGameList(void)

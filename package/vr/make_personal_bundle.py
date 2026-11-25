@@ -143,23 +143,24 @@ mode=${1:-vr}; [[ $# -gt 0 ]] && shift
 run "$mode" "${grp[@]}" "$@"
 ''')
 SH_GAME = sh_script(r'''# ./play-game.sh GAME_FOLDER [vr|desktop]   another EDuke32 game you own, from its install folder:
-#   Ion Fury (fury.grp), Demon Throne (WGR2.grp) or AMC Squad (AMCSQUAD.GRP). Its own HUD, menus and
+#   Ion Fury (fury.grp), Demon Throne (WGR2.grp), AMC Squad (AMCSQUAD.GRP) or A.W.O.L. (awol.grp). Its own HUD, menus and
 #   art; VR weapon and gadget wheels from data/games/. AMC Squad runs on its own engine build
 #   (linux/eduke32-vr-amc) from its folder, where it keeps savegames and progress: use a writable copy.
 dir=${1:?usage: play-game.sh GAME_FOLDER [vr|desktop]}; mode=${2:-vr}; shift $(( $# >= 2 ? 2 : 1 ))
 dir=$(cd "$dir" && pwd)
 found=""
-for name in fury.grp WGR2.grp AMCSQUAD.GRP; do
+for name in fury.grp WGR2.grp AMCSQUAD.GRP awol.grp; do
     found=$(find "$dir" -maxdepth 1 -iname "$name" -print -quit)
     [[ -n $found ]] && break
 done
 case "$(basename "${found:-none}" | tr '[:upper:]' '[:lower:]')" in
     fury.grp) game=(-j "$dir" -j "$data/games/fury") ;;
     wgr2.grp) game=(-j "$dir" -j "$dir/WGR2" -j "$data/games/demonthrone") ;;   # its scripts include from WGR2/
+    awol.grp) game=(-j "$dir" -j "$data/games/awol") ;;
     amcsquad.grp)
         [[ -x $bin/eduke32-vr-amc ]] || { echo "play-game: this bundle has no AMC Squad engine build ($bin/eduke32-vr-amc)" >&2; exit 1; }
         exe=eduke32-vr-amc; game=(-j "$dir" -j "$data/games/amc" -mx amc_vr_fixes.con); cd "$dir" ;;
-    *) echo "play-game: no supported game in $dir (Ion Fury: fury.grp, Demon Throne: WGR2.grp, AMC Squad: AMCSQUAD.GRP)" >&2; exit 2 ;;
+    *) echo "play-game: no supported game in $dir (Ion Fury: fury.grp, Demon Throne: WGR2.grp, AMC Squad: AMCSQUAD.GRP, A.W.O.L.: awol.grp)" >&2; exit 2 ;;
 esac
 other_game=1
 run "$mode" "${game[@]}" -gamegrp "$(basename "$found")" "$@"
@@ -388,7 +389,7 @@ set "XARGS=!GRP!"
 call :run %M% !REST!
 ''')
 BAT_GAME = bat(r'''rem play-game.bat GAME_FOLDER [vr|desktop]   another EDuke32 game you own, from its install folder:
-rem   Ion Fury (fury.grp), Demon Throne (WGR2.grp) or AMC Squad (AMCSQUAD.GRP). Its own HUD, menus and art;
+rem   Ion Fury (fury.grp), Demon Throne (WGR2.grp), AMC Squad (AMCSQUAD.GRP) or A.W.O.L. (awol.grp). Its own HUD, menus and art;
 rem   VR weapon and gadget wheels from data\games\. AMC Squad runs on its own engine build
 rem   (windows\eduke32-vr-amc.exe) from its folder, where it keeps savegames and progress: use a writable copy.
 set "G=%~1"
@@ -399,13 +400,14 @@ for %%i in ("!G!") do set "G=%%~fi"
 set "XARGS="
 if exist "!G!\fury.grp" set XARGS=-j "!G!" -j "!DATA!\games\fury" -gamegrp fury.grp
 if exist "!G!\WGR2.grp" set XARGS=-j "!G!" -j "!G!\WGR2" -j "!DATA!\games\demonthrone" -gamegrp WGR2.grp
+if exist "!G!\awol.grp" set XARGS=-j "!G!" -j "!DATA!\games\awol" -gamegrp awol.grp
 if exist "!G!\AMCSQUAD.GRP" (
     if not exist "!HERE!windows\eduke32-vr-amc.exe" (echo play-game: this bundle has no AMC Squad engine build ^(windows\eduke32-vr-amc.exe^) & exit /b 1)
     set XARGS=-j "!G!" -j "!DATA!\games\amc" -mx amc_vr_fixes.con -gamegrp AMCSQUAD.GRP
     set "EXE=!HERE!windows\eduke32-vr-amc.exe"
     cd /d "!G!"
 )
-if not defined XARGS (echo play-game: no supported game in !G! ^(Ion Fury: fury.grp, Demon Throne: WGR2.grp, AMC Squad: AMCSQUAD.GRP^) & exit /b 2)
+if not defined XARGS (echo play-game: no supported game in !G! ^(Ion Fury: fury.grp, Demon Throne: WGR2.grp, AMC Squad: AMCSQUAD.GRP, A.W.O.L.: awol.grp^) & exit /b 2)
 set "OTHERGAME=1"
 call :run %M%
 ''')

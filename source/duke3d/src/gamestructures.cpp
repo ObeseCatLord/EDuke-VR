@@ -1130,6 +1130,12 @@ memberlabel_t const UserdefsLabels[]=
     { "m_customsettings",       USERDEFS_M_CUSTOMSETTINGS,       0, 0, -1 },
     { "csarray",                USERDEFS_CSARRAY,                LABEL_HASPARM2, MAXCUSTOMSETTINGSENTRIES, -1 },
 #endif
+    { "adsmode",                  USERDEFS_ADSMODE, 0, 0, -1 },
+    { "subtitles",                USERDEFS_SUBTITLES, 0, 0, -1 },
+    { "weather",                  USERDEFS_WEATHER, 0, 0, -1 },
+    { "particles",                USERDEFS_PARTICLES, 0, 0, -1 },
+    { "text_speed",               USERDEFS_TEXT_SPEED, 0, 0, -1 },
+    { "perf_mdl",                 USERDEFS_PERF_MDL, 0, 0, -1 },
 };
 
 int32_t __fastcall VM_GetUserdef(int32_t labelNum, int const lParm2)
@@ -1333,6 +1339,12 @@ int32_t __fastcall VM_GetUserdef(int32_t labelNum, int const lParm2)
         case USERDEFS_M_CUSTOMSETTINGS:       labelNum = ud.m_customsettings;             break;
         case USERDEFS_CSARRAY:                labelNum = ud.customsettings[lParm2];       break;
 #endif
+        case USERDEFS_ADSMODE: labelNum = ud.adsmode; break;
+        case USERDEFS_SUBTITLES: labelNum = ud.subtitles; break;
+        case USERDEFS_WEATHER: labelNum = ud.weather; break;
+        case USERDEFS_PARTICLES: labelNum = ud.particles; break;
+        case USERDEFS_TEXT_SPEED: labelNum = ud.text_speed; break;
+        case USERDEFS_PERF_MDL: labelNum = ud.perf_mdl; break;
 
         default: EDUKE32_UNREACHABLE_SECTION(labelNum = -1; break);
     }
@@ -1552,6 +1564,12 @@ void __fastcall VM_SetUserdef(int const labelNum, int const lParm2, int32_t cons
         case USERDEFS_USERQUOTE_YOFFSET:            ud.userquote_yoffset             = iSet; break;
         case USERDEFS_CSARRAY:                      ud.customsettings[lParm2]        = iSet; break;
 #endif
+        case USERDEFS_ADSMODE: ud.adsmode = iSet; break;
+        case USERDEFS_SUBTITLES: ud.subtitles = iSet; break;
+        case USERDEFS_WEATHER: ud.weather = iSet; break;
+        case USERDEFS_PARTICLES: ud.particles = iSet; break;
+        case USERDEFS_TEXT_SPEED: ud.text_speed = iSet; break;
+        case USERDEFS_PERF_MDL: ud.perf_mdl = iSet; break;
     }
 }
 

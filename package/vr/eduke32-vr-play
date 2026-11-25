@@ -9,7 +9,7 @@
 # Stock Duke: pass --grp (or run where DUKE3D.GRP is found natively).
 # Alien Armageddon 5.66: pass --aa with the install directory; the shipped
 # eduke32_vr_aa566.con compatibility entry is selected automatically.
-# Other games built on EDuke32 (Ion Fury, Demon Throne, AMC Squad): pass --game with the install directory.
+# Other games built on EDuke32 (Ion Fury, Demon Throne, AMC Squad, A.W.O.L.): pass --game with the install directory.
 # AMC Squad (a folder holding AMCSQUAD.GRP) needs its own engine build, eduke32-xr-amc, found next to
 # eduke32-xr (--binary-amc or EDUKE32_VR_BINARY_AMC name another); the game runs from its folder, as it
 # keeps savegames and progress there, so use a writable copy.
@@ -72,7 +72,7 @@ done
 # Duke model pack is loaded (the VR hands and weapon cards are drawn from the game's own HUD art).
 game_grp="" game_dirs=()
 if [[ -n $game ]]; then
-    for candidate in fury.grp WGR2.grp AMCSQUAD.GRP; do
+    for candidate in fury.grp WGR2.grp AMCSQUAD.GRP awol.grp; do
         found=$(find "$game" -maxdepth 1 -iname "$candidate" -print -quit)
         [[ -n $found ]] && { game_grp=$(basename "$found"); break; }
     done
@@ -80,7 +80,8 @@ if [[ -n $game ]]; then
         fury.grp) game_id=fury ;;
         wgr2.grp) game_id=demonthrone; game_dirs=("$game/WGR2") ;;   # its scripts include files from WGR2/
         amcsquad.grp) game_id=amc ;;
-        *) echo "eduke32-vr-play: no supported game found in $game (Ion Fury, Demon Throne, AMC Squad)" >&2; exit 1 ;;
+        awol.grp) game_id=awol ;;   # the engine treats it as a standalone game (its CRC), with awol.con / awol.def
+        *) echo "eduke32-vr-play: no supported game found in $game (Ion Fury, Demon Throne, AMC Squad, A.W.O.L.)" >&2; exit 1 ;;
     esac
     models=0
 fi

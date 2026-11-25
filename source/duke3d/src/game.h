@@ -196,6 +196,8 @@ typedef struct {
     int32_t player_skill,level_number,volume_number,m_marker,marker,mouseflip;
     int32_t music_episode, music_level, skill_voice;
     int32_t m_newgamecustom, m_newgamecustomsub, m_newgamecustoml3;
+    // A.W.O.L. options (read by its CON; inert in every other game)
+    int32_t adsmode, subtitles, weather, particles, text_speed, perf_mdl;
 #ifdef AMC_BUILD
     int32_t m_customsettings;
     int32_t customsettings[MAXCUSTOMSETTINGSENTRIES];

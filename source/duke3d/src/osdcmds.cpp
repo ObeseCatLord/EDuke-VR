@@ -1735,6 +1735,12 @@ int32_t registerosdcommands(void)
 
         { "cl_cheatmask", "bitmask controlling cheats unlocked in menu", (void *)&cl_cheatmask, CVAR_UINT, 0, ~0 },
         { "cl_democams", "third-person cameras in demos" CVAR_BOOL_OPTSTR, (void *)&ud.democams, CVAR_BOOL, 0, 1 },
+        { "cl_awol_adsmode", "A.W.O.L.: aim down sights input:\n 0: toggle\n 1: hold", (void *)&ud.adsmode, CVAR_BOOL, 0, 1 },
+        { "cl_awol_subtitles", "A.W.O.L.: show subtitles" CVAR_BOOL_OPTSTR, (void *)&ud.subtitles, CVAR_BOOL, 0, 1 },
+        { "cl_awol_weather", "A.W.O.L.: weather effects:\n 0: low\n 1: normal", (void *)&ud.weather, CVAR_BOOL, 0, 1 },
+        { "cl_awol_particles", "A.W.O.L.: particle effects:\n 0: low\n 1: normal", (void *)&ud.particles, CVAR_BOOL, 0, 1 },
+        { "cl_awol_textspeed", "A.W.O.L.: dialogue text speed:\n 0: off\n 1: fast\n 2: normal\n 3: slow", (void *)&ud.text_speed, CVAR_INT, 0, 3 },
+        { "cl_awol_models", "A.W.O.L.: 3D models:\n 0: hide distant models\n 1: full models", (void *)&ud.perf_mdl, CVAR_BOOL, 0, 1 },
         { "cl_kickmode", "quick kick behavior:\n 0: automatic based on script version\n 1: 1.3D\n 2: 1.4+", (void*)&ud.kick_mode, CVAR_INT, 0, 2 },
         { "cl_runmode", "run key behavior with cl_autorun enabled:\n 0: walk\n 1: do nothing", (void *)&ud.runkey_mode, CVAR_BOOL, 0, 1 },
 

@@ -309,6 +309,12 @@ void CONFIG_SetDefaults(void)
     ud.hudontop               = 0;
     ud.idplayers              = 1;
     ud.kick_mode              = 0;
+    ud.adsmode                = 0;
+    ud.subtitles              = 1;
+    ud.weather                = 1;
+    ud.particles              = 1;
+    ud.text_speed             = 2;
+    ud.perf_mdl               = 1;
     ud.levelstats             = 0;
     ud.lockout                = 0;
     ud.m_marker               = 1;

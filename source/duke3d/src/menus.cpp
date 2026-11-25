@@ -600,6 +600,31 @@ static MenuEntry_t ME_GAMESETUP_QUICKSWITCH = MAKE_MENUENTRY("Quick weapon switc
 static MenuLink_t MEO_GAMESETUP_CHEATS = { MENU_CHEATS, MA_Advance, };
 static MenuEntry_t ME_GAMESETUP_CHEATS = MAKE_MENUENTRY( "Cheats", &MF_Redfont, &MEF_BigOptionsRt, &MEO_GAMESETUP_CHEATS, Link );
 
+static char const *MEOSN_AWOL_ADS[] = { "Toggle", "Hold" };
+static MenuOptionSet_t MEOS_AWOL_ADS = MAKE_MENUOPTIONSET( MEOSN_AWOL_ADS, NULL, 0x3 );
+static MenuOption_t MEO_AWOL_ADS = MAKE_MENUOPTION( &MF_Redfont, &MEOS_AWOL_ADS, &ud.adsmode );
+static MenuEntry_t ME_AWOL_ADS = MAKE_MENUENTRY( "ADS mode:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_AWOL_ADS, Option );
+
+static MenuOption_t MEO_AWOL_SUBTITLES = MAKE_MENUOPTION( &MF_Redfont, &MEOS_OffOn, &ud.subtitles );
+static MenuEntry_t ME_AWOL_SUBTITLES = MAKE_MENUENTRY( "Subtitles:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_AWOL_SUBTITLES, Option );
+
+static char const *MEOSN_AWOL_TEXTSPEED[] = { "Off", "Fast", "Normal", "Slow" };
+static MenuOptionSet_t MEOS_AWOL_TEXTSPEED = MAKE_MENUOPTIONSET( MEOSN_AWOL_TEXTSPEED, NULL, 0x3 );
+static MenuOption_t MEO_AWOL_TEXTSPEED = MAKE_MENUOPTION( &MF_Redfont, &MEOS_AWOL_TEXTSPEED, &ud.text_speed );
+static MenuEntry_t ME_AWOL_TEXTSPEED = MAKE_MENUENTRY( "Text speed:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_AWOL_TEXTSPEED, Option );
+
+static char const *MEOSN_AWOL_LOWNORMAL[] = { "Low", "Normal" };
+static MenuOptionSet_t MEOS_AWOL_LOWNORMAL = MAKE_MENUOPTIONSET( MEOSN_AWOL_LOWNORMAL, NULL, 0x3 );
+static MenuOption_t MEO_AWOL_PARTICLES = MAKE_MENUOPTION( &MF_Redfont, &MEOS_AWOL_LOWNORMAL, &ud.particles );
+static MenuEntry_t ME_AWOL_PARTICLES = MAKE_MENUENTRY( "Particle effects:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_AWOL_PARTICLES, Option );
+static MenuOption_t MEO_AWOL_WEATHER = MAKE_MENUOPTION( &MF_Redfont, &MEOS_AWOL_LOWNORMAL, &ud.weather );
+static MenuEntry_t ME_AWOL_WEATHER = MAKE_MENUENTRY( "Weather:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_AWOL_WEATHER, Option );
+
+static char const *MEOSN_AWOL_MODELS[] = { "Distance LOD", "Full" };
+static MenuOptionSet_t MEOS_AWOL_MODELS = MAKE_MENUOPTIONSET( MEOSN_AWOL_MODELS, NULL, 0x3 );
+static MenuOption_t MEO_AWOL_MODELS = MAKE_MENUOPTION( &MF_Redfont, &MEOS_AWOL_MODELS, &ud.perf_mdl );
+static MenuEntry_t ME_AWOL_MODELS = MAKE_MENUENTRY( "3D models:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_AWOL_MODELS, Option );
+
 static MenuEntry_t *MEL_GAMESETUP[] = {
     &ME_ADULTMODE,
 #if defined STARTUP_SETUP_WINDOW && !defined EDUKE32_RETAIL_MENU
@@ -612,6 +637,12 @@ static MenuEntry_t *MEL_GAMESETUP[] = {
 #endif
 #endif
     &ME_GAMESETUP_CHEATS,
+    &ME_AWOL_ADS,
+    &ME_AWOL_SUBTITLES,
+    &ME_AWOL_TEXTSPEED,
+    &ME_AWOL_PARTICLES,
+    &ME_AWOL_WEATHER,
+    &ME_AWOL_MODELS,
 };
 #endif
 
@@ -3084,6 +3115,15 @@ static void Menu_Pre(MenuID_t cm)
     case MENU_GAMESETUP:
         MEO_GAMESETUP_DEMOREC.options = (ps->gm&MODE_GAME) ? &MEOS_DemoRec : &MEOS_OffOn;
         MenuEntry_DisableOnCondition(&ME_GAMESETUP_DEMOREC, (ps->gm&MODE_GAME) && ud.m_recstat != 1);
+        {
+            int const notAwol = !G_IsAwol();
+            MenuEntry_HideOnCondition(&ME_AWOL_ADS, notAwol);
+            MenuEntry_HideOnCondition(&ME_AWOL_SUBTITLES, notAwol);
+            MenuEntry_HideOnCondition(&ME_AWOL_TEXTSPEED, notAwol);
+            MenuEntry_HideOnCondition(&ME_AWOL_PARTICLES, notAwol);
+            MenuEntry_HideOnCondition(&ME_AWOL_WEATHER, notAwol);
+            MenuEntry_HideOnCondition(&ME_AWOL_MODELS, notAwol);
+        }
         break;
 
     case MENU_DISPLAYSETUP:
