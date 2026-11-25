@@ -2139,7 +2139,8 @@ static int check_file_exists(const char *fn)
         static char buf[BMAX_PATH];
 
         // .zip isn't case sensitive, and calling kopen4load on files in .zips is slow
-        Bstrcpy(buf, fn);
+        Bstrncpy(buf, fn, sizeof(buf)-1);
+        buf[sizeof(buf)-1] = '\0';
         kzfindfilestart(buf);
 
         if (!kzfindfile(buf))

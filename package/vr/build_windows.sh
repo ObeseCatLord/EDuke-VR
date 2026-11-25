@@ -19,8 +19,13 @@ build() {   # build OBJDIR GAME [extra make arguments]: eduke32-vr and the AMC S
         "$@" obj="$obj" duke3d_game="$game" "$game.exe"
 }
 build obj-winxr-nolto eduke32-xr-win
-build obj-winxr-amc-nolto eduke32-xr-amc-win AMCSQUAD=1
 mkdir -p "$D/out"
 cp eduke32-xr-win.exe "$D/out/eduke32-vr.exe"
-cp eduke32-xr-amc-win.exe "$D/out/eduke32-vr-amc.exe"
 cp "$D/bin/openxr_loader.dll" "$D/bin/libopus-0.dll" "$D/out/"
+# The AMC build is optional: a failure there must not stop the normal release.
+rm -f "$D/out/eduke32-vr-amc.exe"
+if build obj-winxr-amc-nolto eduke32-xr-amc-win AMCSQUAD=1 && [[ -f eduke32-xr-amc-win.exe ]]; then
+    cp eduke32-xr-amc-win.exe "$D/out/eduke32-vr-amc.exe"
+else
+    echo "build_windows: WARNING: the AMC Squad build FAILED; $D/out has no eduke32-vr-amc.exe" >&2
+fi

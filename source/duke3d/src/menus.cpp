@@ -2794,7 +2794,12 @@ void Menu_Init(void)
                         moptset.optionValues = ms_entry.values;
                         moptset.numOptions = ms_entry.optionCount;
                     }
-                    if (ms_entry.storeidx >= 0)
+                    if (ms_entry.storeidx >= MAXCUSTOMSETTINGSENTRIES)
+                    {
+                        LOG_F(WARNING, "customsettings: entry \"%s\": store index %d is out of range (0 .. %d), using entry slot %d", ms_entry.name, (int)ms_entry.storeidx, MAXCUSTOMSETTINGSENTRIES-1, i);
+                        cs_meo.data = &ud.customsettings[i];
+                    }
+                    else if (ms_entry.storeidx >= 0)
                         cs_meo.data = &ud.customsettings[ms_entry.storeidx];
                     else
                         cs_meo.data = &ud.customsettings[i];
@@ -4666,7 +4671,7 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
         g_oldSaveCnt = G_CountOldSaves();
         Menu_Change(MENU_SAVECLEANVERIFY);
     }
-#ifdef EDUKE32_STANDALONE
+#if defined(EDUKE32_STANDALONE) || defined(AMC_BUILD)
     else if (entry == &ME_SAVESETUP_RESETSTATS)
         Menu_Change(MENU_RESETSTATSVERIFY);
 #endif

@@ -1855,7 +1855,7 @@ int gripModelTile(unsigned hand)
         if (tile>(MAXTILES-1-digit)/10u) return -1;
         tile=tile*10+digit;
     }
-    return int(tile);
+    return XRTileFromFile(int(tile));   // logical 30000.. numbers follow the (AMC) VR tile block
 }
 
 bool prepareGripModel(GripModelSample &sample, unsigned hand, Camera const &body, eduke_xr::Runtime *runtime)
@@ -1944,7 +1944,7 @@ bool prepareGripModel(GripModelSample &sample, unsigned hand, Camera const &body
 static int bodyModelTile()
 {
     auto value=sdlayer_xr_option("EDUKE32_XR_BODY_TILE");
-    int const tile=value ? std::atoi(value) : -1;
+    int const tile=value ? XRTileFromFile(std::atoi(value)) : -1;
     if (tile<=0 || tile>=MAXTILES) return -1;
     // The dedicated torso/legs shell (no head or arms to hide) when the asset pack has it.
     constexpr int BodyShellTile=XRTile(30066);

@@ -32,7 +32,13 @@ extern "C" {
 #endif
 
 #define SV_MAJOR_VER 1
+#ifdef AMC_BUILD
+// This build's savegame layout differs from stock amcduke32's (e.g. animwalltype.tag is 32-bit) while
+// stock saves carry the same numbers as ours (1.7): a distinct minor lists them as incompatible.
+#define SV_MINOR_VER 107
+#else
 #define SV_MINOR_VER 7
+#endif
 
 #define MAXSAVEGAMENAMESTRUCT 32
 #define MAXSAVEGAMENAME (MAXSAVEGAMENAMESTRUCT-1)

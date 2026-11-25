@@ -887,7 +887,9 @@ void yax_tweakpicnums(int32_t bunchnum, int32_t cf, int32_t restore)
                 else
                 {
                     SECTORFLD(i,stat, cf) &= ~128;
+#ifndef AMC_BUILD   // AMC: picnums use all 16 bits and the tweak marker is bit 16, dropped by the store above
                     SECTORFLD(i,picnum, cf) &= 0x7fff;
+#endif
                     opicnum[cf][i] = 0;
                 }
             }
@@ -1807,7 +1809,7 @@ static int get_screen_coords(const vec2_t &p1, const vec2_t &p2,
 
 static inline picnum32_t findUnusedTile(void)
 {
-    static int lastUnusedTile = MAXUSERTILES-1;
+    static int lastUnusedTile = ENGINE_RESERVED_TILE_FIRST-1;
 
     for (; lastUnusedTile >= 0; --lastUnusedTile)
         if ((tilesiz[lastUnusedTile].x|tilesiz[lastUnusedTile].y) == 0 && !waloff[lastUnusedTile])

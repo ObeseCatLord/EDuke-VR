@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #pragma once
 #include <cstdint>
+#ifdef AMC_BUILD
+# include "build.h"
+#endif
 
 // Tiles reserved for the VR layer (held weapon models, hands, body, laser, wheel, rings, tips,
 // name tags). They are "logical" tile numbers 30000..30540 in the VR model packs and rig files.
@@ -24,4 +27,7 @@ constexpr int32_t XRTileFromFile(int32_t tile)
 {
     return tile >= XRTileLogicalFirst && tile <= XRTileLogicalLast ? tile + XR_TILE_OFFSET : tile;
 }
+#ifdef AMC_BUILD
+static_assert(XRTileFirst == ENGINE_RESERVED_TILE_FIRST, "build.h ENGINE_RESERVED_TILE_FIRST must match the VR tile block");
+#endif
 constexpr bool XRIsReservedTile(int32_t tile) { return tile >= XRTileFirst && tile <= XRTileLast; }

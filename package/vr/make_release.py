@@ -43,7 +43,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('out', type=Path)
     parser.add_argument('--binary', type=Path, default=REPO / 'eduke32-xr')
-    parser.add_argument('--binary-amc', type=Path, default=REPO / 'eduke32-xr-amc', help='AMC Squad engine build (optional)')
+    parser.add_argument('--binary-amc', type=Path, default=None,
+                        help='AMC Squad engine build (optional; without it, REPO/eduke32-xr-amc is used only when --binary is also the default)')
     parser.add_argument('--assets', type=Path, default=REPO.parent / 'duke-vr-assets')
     parser.add_argument('--no-source', action='store_true', help='skip the git source archive')
     args = parser.parse_args()
@@ -74,8 +75,17 @@ def main():
     shutil.copy2(REPO / 'package/common/gpl-2.0.txt', game / 'gpl-2.0.txt')
     if args.binary.is_file():
         shutil.copy2(args.binary, game / 'eduke32-xr')
-    if args.binary_amc.is_file():
-        shutil.copy2(args.binary_amc, game / 'eduke32-xr-amc')   # found by eduke32-vr-play next to eduke32-xr
+    amc = args.binary_amc
+    if amc is None and args.binary == REPO / 'eduke32-xr' and (REPO / 'eduke32-xr-amc').is_file():
+        amc = REPO / 'eduke32-xr-amc'   # resolved the same way as the normal binary
+        if args.binary.is_file() and amc.stat().st_mtime < args.binary.stat().st_mtime - 86400:
+            print(f'make_release: WARNING: {amc} is more than a day older than {args.binary}; pass --binary-amc to ship a fresh one', file=sys.stderr)
+    if amc is not None and not amc.is_file():
+        sys.exit(f'make_release: --binary-amc {amc} is not a file')
+    if amc is not None:
+        shutil.copy2(amc, game / 'eduke32-xr-amc')   # found by eduke32-vr-play next to eduke32-xr
+    print(f'make_release: engine binaries: eduke32-xr {"yes" if args.binary.is_file() else "NO"}, '
+          f'eduke32-xr-amc {"yes (" + str(amc) + ")" if amc is not None else "no"}')
     if not args.no_source:
         subprocess.run(['git', '-C', str(REPO), 'archive', '--format=tar.gz', '--prefix=eduke32-vr-source/',
                         '-o', str(game / 'eduke32-vr-source.tar.gz'), 'HEAD'], check=True)

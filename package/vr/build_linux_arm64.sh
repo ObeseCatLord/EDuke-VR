@@ -29,19 +29,30 @@ fi
 cd "$src"
 PKG_CONFIG_PATH="$work/prefix/lib/pkgconfig" make -j"$(nproc)" NETCODE=1 USE_OPENXR=1 obj=obj-xr duke3d_game=eduke32-xr eduke32-xr
 # AMC Squad's engine build (USE_LIBVPX defaults to 1: its 67 IVF cutscenes need libvpx, checked below).
-PKG_CONFIG_PATH="$work/prefix/lib/pkgconfig" make -j"$(nproc)" NETCODE=1 USE_OPENXR=1 AMCSQUAD=1 obj=obj-xr-amc duke3d_game=eduke32-xr-amc eduke32-xr-amc
+# Optional: a failure here must not stop the normal release.
+have_amc=1
+PKG_CONFIG_PATH="$work/prefix/lib/pkgconfig" make -j"$(nproc)" NETCODE=1 USE_OPENXR=1 AMCSQUAD=1 obj=obj-xr-amc duke3d_game=eduke32-xr-amc eduke32-xr-amc && [[ -f eduke32-xr-amc ]] || {
+    have_amc=0; echo "build_linux_arm64: WARNING: the AMC Squad build FAILED; $out gets no eduke32-vr-amc" >&2; }
 
 rm -rf "$out"; mkdir -p "$out/lib"
 cp eduke32-xr "$out/eduke32-vr"
-cp eduke32-xr-amc "$out/eduke32-vr-amc"
+(( have_amc )) && cp eduke32-xr-amc "$out/eduke32-vr-amc"
 cp -L "$work/prefix/lib/libopenxr_loader.so.1" "$out/lib/"
 # Codec libraries whose sonames SteamOS and newer distributions do not have (or may not install).
 for lib in libopus.so.0 libvpx.so.6 libFLAC.so.8 libogg.so.0; do
     path=$(LD_LIBRARY_PATH="$out/lib" ldd "$out/eduke32-vr" | awk -v l="$lib" '$1==l {print $3}')
     [[ -n $path ]] && cp -L "$path" "$out/lib/$lib"
 done
-for exe in eduke32-vr eduke32-vr-amc; do
-    LD_LIBRARY_PATH="$out/lib" ldd "$out/$exe" | grep -q "not found" && { echo "build_linux_arm64: missing libraries for $exe" >&2; exit 1; }
-    LD_LIBRARY_PATH="$out/lib" ldd "$out/$exe" | grep -q "libvpx" || { echo "build_linux_arm64: $exe does not link libvpx (AMC Squad cutscenes)" >&2; exit 1; }
+exes=(eduke32-vr); (( have_amc )) && exes+=(eduke32-vr-amc)
+for exe in "${exes[@]}"; do
+    deps=$(LD_LIBRARY_PATH="$out/lib" ldd "$out/$exe")
+    grep -q "not found" <<<"$deps" && { echo "build_linux_arm64: missing libraries for $exe" >&2; exit 1; }
+    if ! grep -q "libvpx" <<<"$deps"; then
+        if [[ $exe == eduke32-vr-amc ]]; then
+            echo "build_linux_arm64: WARNING: $exe does not link libvpx (AMC Squad cutscenes); dropping it" >&2; rm -f "$out/$exe"
+        else
+            echo "build_linux_arm64: $exe does not link libvpx" >&2; exit 1
+        fi
+    fi
 done
 echo "built $out: $(ls "$out/lib" | tr '\n' ' ')"

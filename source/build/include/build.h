@@ -124,6 +124,13 @@ typedef int32_t picnum32_t;
 #define MAXTILES 30720
 #endif
 #define MAXUSERTILES (MAXTILES-256)  // reserve 256 tiles at the end
+#ifdef AMC_BUILD
+// First tile of the block the VR layer owns (duke3d/vrtiles.h: XRTileFirst..XRTileLast); the engine's
+// scratch-tile search (findUnusedTile) stays below it. vrtiles.h static_asserts that it matches.
+# define ENGINE_RESERVED_TILE_FIRST 50400
+#else
+# define ENGINE_RESERVED_TILE_FIRST MAXUSERTILES
+#endif
 
 #define MAXVOXELS 2048
 #define MAXSTATUS 1024

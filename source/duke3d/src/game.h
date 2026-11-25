@@ -594,8 +594,14 @@ enum
     (((g_modDir[0] != '/') ? Bsnprintf(buf, size, "%s/" basename, g_modDir, ##__VA_ARGS__) : Bsnprintf(buf, size, basename, ##__VA_ARGS__)) \
      >= ((int32_t)size) - 1)
 
-#define G_ModDirSnprintfLite(buf, size, basename) \
+#ifdef AMC_BUILD
+// (basename is data, e.g. savegame_dir: never a format string)
+# define G_ModDirSnprintfLite(buf, size, basename) \
+    ((g_modDir[0] != '/') ? Bsnprintf(buf, size, "%s/%s", g_modDir, basename) : Bsnprintf(buf, size, "%s", basename))
+#else
+# define G_ModDirSnprintfLite(buf, size, basename) \
     ((g_modDir[0] != '/') ? Bsnprintf(buf, size, "%s/%s", g_modDir, basename) : Bsnprintf(buf, size, basename))
+#endif
 
 static inline void G_NewGame_EnterLevel(void)
 {

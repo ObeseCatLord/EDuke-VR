@@ -160,8 +160,16 @@ void artMapPathKey(const char *path, char *out)
 
     out[0] = '\0';
 #ifndef _WIN32
-    if (!Brealpath(path, out))
-        out[0] = '\0';
+    {
+        // realpath() may write up to PATH_MAX bytes: not into a BMAX_PATH (256) buffer
+        char *resolved = Brealpath(path, nullptr);
+        if (resolved)
+        {
+            Bstrncpy(out, resolved, BMAX_PATH-1);
+            out[BMAX_PATH-1] = '\0';
+            Xfree(resolved);
+        }
+    }
 #endif
     if (!out[0])
     {

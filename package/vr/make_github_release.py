@@ -136,8 +136,9 @@ linux-arm64/lib/libogg.so.0             libogg, BSD 3-clause (libogg-COPYING.txt
 WINDOWS_ITEMS = '''windows/openxr_loader.dll         Khronos OpenXR loader, Apache License 2.0 (OpenXR-loader-Apache-2.0.txt)
 windows/libopus-0.dll             Opus, BSD 3-clause (opus-COPYING.txt)
 windows/eduke32-vr.exe            statically links SDL2 (zlib license, SDL2-zlib-LICENSE.txt) and
-                                  libvpx (BSD 3-clause, libvpx-LICENSE.txt)
-windows/eduke32-vr-amc.exe        the same, built for AMC Squad'''
+                                  libvpx (BSD 3-clause, libvpx-LICENSE.txt)'''
+WINDOWS_AMC_ITEM = '''
+windows/eduke32-vr-amc.exe        the same, built for AMC Squad'''   # listed only when shipped
 
 
 def licenses(dest, table, items, version):
@@ -189,7 +190,8 @@ def tree(root, version, platform, binary, windir, release, arm64dir=None, amc_bi
         mpb.write(out / 'join.bat', mpb.BAT_JOIN_ANY, crlf=True)
         mpb.write(out / 'install.ps1', mpb.PS_INSTALL, crlf=True)
         mpb.write(out / 'update.ps1', mpb.PS_UPDATE, crlf=True)
-        licenses(out / 'licenses', WINDOWS_LICENSES, WINDOWS_ITEMS, version)
+        licenses(out / 'licenses', WINDOWS_LICENSES,
+                 WINDOWS_ITEMS + (WINDOWS_AMC_ITEM if (out / 'windows/eduke32-vr-amc.exe').is_file() else ''), version)
         text, update = WINDOWS_TEXT, 'powershell -ExecutionPolicy Bypass -File update.ps1'
     mpb.write(out / 'README.txt', README.format(version=version, platform=text, update=update),
               crlf=platform == 'windows')

@@ -55,6 +55,7 @@ SH_COMMON = r'''#!/usr/bin/env bash
 set -euo pipefail
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 data="$here/data"
+exe=eduke32-vr   # play-game.sh may switch to eduke32-vr-amc; an exported "exe" must not leak in
 # x86_64 PCs use linux/, 64-bit ARM (Steam Frame, other arm64 Linux) linux-arm64/.
 case $(uname -m) in aarch64|arm64) bin="$here/linux-arm64" ;; *) bin="$here/linux" ;; esac
 [[ -x $bin/eduke32-vr ]] || { echo "EDuke VR: no build for $(uname -m) here ($bin)" >&2; exit 1; }
@@ -113,7 +114,7 @@ run() {   # run MODE(vr|desktop) [game arguments...]
     [[ -n ${other_game:-} ]] && { mods=(); local_data=(); pack=(-vrpack none); }
     while :; do
         : > "$restart"; status=0
-        "$bin/${exe:-eduke32-vr}" -j "$data" "${local_data[@]}" "${mods[@]}" "${pack[@]}" -nosetup "$@" || status=$?
+        "$bin/$exe" -j "$data" "${local_data[@]}" "${mods[@]}" "${pack[@]}" -nosetup "$@" || status=$?
         [[ -s $restart ]] || return "$status"
         pack=(-vrpack "$(head -n1 "$restart")")   # the VR Setup menu switched model sets
     done
@@ -394,6 +395,7 @@ set "G=%~1"
 set "M=%~2"
 if "%M%"=="" set "M=vr"
 if "!G!"=="" (echo usage: play-game.bat GAME_FOLDER [vr^|desktop] & exit /b 2)
+for %%i in ("!G!") do set "G=%%~fi"
 set "XARGS="
 if exist "!G!\fury.grp" set XARGS=-j "!G!" -j "!DATA!\games\fury" -gamegrp fury.grp
 if exist "!G!\WGR2.grp" set XARGS=-j "!G!" -j "!G!\WGR2" -j "!DATA!\games\demonthrone" -gamegrp WGR2.grp
