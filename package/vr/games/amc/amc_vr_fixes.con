@@ -1,52 +1,66 @@
 // EDuke-VR compatibility fixes for AMC Squad 5.2.2, loaded after AMC's own scripts (-mx amc_vr_fixes.con).
 // They change no AMC file, only AMC's state when it is clearly wrong.
 
-// A briefing map stored as the "AMC base" (GitHub issue #4).
-// Starting the training from a briefing (ALLY/CIVILIANS.CON, PCINTER 11) stores the current level, the
-// briefing, as amcbase_volume/amcbase_level so the training can return there. It is never cleared again, so
-// every later mission exit (GAME/LEVELS.CON, ACTIVATELEVEL with xvel 1) "returns to base" = the briefing,
-// which launches the same mission again: the story never moves on. A briefing is never a real base: once
-// the player is anywhere but the training map, forget it, so missions return where they do in a normal
-// playthrough (the mission's own next level, AMC Base for the first missions).
+// The "AMC base" (amcbase_volume/amcbase_level) pointing at a level that is not a base (GitHub issue #4).
+// Mission exits (GAME/LEVELS.CON ACTIVATELEVEL, xvel 1) and "abort mission" go to the stored base. AMC
+// stores the current level there just before it launches a mission (GUI/COMMAND_INT.CON) or the training
+// (ALLY/CIVILIANS.CON); startlevel changes LEVEL at once, so if the old level kept running for a moment
+// (frames or ticks after the launch, which slow VR frames make likely) the stored "base" became the
+// launched level itself, e.g. the Megabase briefing: every exit then went back to the briefing, which
+// launched the same mission again and the story never moved on. The engine no longer runs the old level
+// after a launch; this repairs saves made before that: a stored base that is not one of AMC's base levels
+// (the ones its own EVENT_ENTERLEVEL records, LEVELS.CON) is replaced by AMC's own choice of base for the
+// player's progress (state get_furthest_amcbase_position, as its "Return to AMC Base" does).
 
-var vrfix_brief 0 0
+var vrfix_base_ok 0 0
 
-defstate vrfix_forget_briefing_base
-	set vrfix_brief 0
+defstate vrfix_check_amc_base
+	ife amcbase_volume -1 break   // no base stored: AMC's own fallbacks apply
+	ife VOLUME 0 ife LEVEL 26 break   // the training map returns to the base it was started from
+
+	set vrfix_base_ok 0
 	switch amcbase_volume
 	case 0
-		ife amcbase_level 2 set vrfix_brief 1   // BRIEFING FILE 1
-		ife amcbase_level 6 set vrfix_brief 1   // BRIEFING FILE 2
+		ife amcbase_level 1 set vrfix_base_ok 1
+		ife amcbase_level 8 set vrfix_base_ok 1
 		break
 	case 1
-		ife amcbase_level 2 set vrfix_brief 1   // BRIEFING FILE 3
-		ife amcbase_level 5 set vrfix_brief 1   // BRIEFING FILE 4
-		ife amcbase_level 21 set vrfix_brief 1  // BRIEFING FILE 5
+		ife amcbase_level 1 set vrfix_base_ok 1
+		ife amcbase_level 4 set vrfix_base_ok 1
+		ife amcbase_level 50 set vrfix_base_ok 1
 		break
 	case 2
-		ife amcbase_level 2 set vrfix_brief 1   // BRIEFING FILE 6
-		ife amcbase_level 53 set vrfix_brief 1  // BRIEFING FILE 7
+		ife amcbase_level 1 set vrfix_base_ok 1
+		ife amcbase_level 4 set vrfix_base_ok 1
+		ife amcbase_level 14 set vrfix_base_ok 1
+		ife amcbase_level 26 set vrfix_base_ok 1
+		break
+	case 3
+		ife amcbase_level 1 set vrfix_base_ok 1
+		ife amcbase_level 3 set vrfix_base_ok 1
+		ife amcbase_level 4 set vrfix_base_ok 1
 		break
 	case 4
-		ife amcbase_level 2 set vrfix_brief 1   // BRIEFING FILE 8
-		ife amcbase_level 17 set vrfix_brief 1  // BRIEFING FILE 9
+		ife amcbase_level 1 set vrfix_base_ok 1
+		ife amcbase_level 31 set vrfix_base_ok 1
+		break
+	case 6
+		ife amcbase_level 0 set vrfix_base_ok 1
 		break
 	endswitch
 
-	// The training map (EP1 L26) still returns to the briefing it was started from.
-	ife VOLUME 0 ife LEVEL 26 set vrfix_brief 0
-
-	ife vrfix_brief 1
+	ife vrfix_base_ok 0
 	{
-		set amcbase_volume -1
-		set amcbase_level -1
+		state get_furthest_amcbase_position
+		set amcbase_volume returnvar_amcb_volume
+		set amcbase_level returnvar_amcb_level
 	}
 ends
 
 appendevent EVENT_ENTERLEVEL
-	state vrfix_forget_briefing_base
+	state vrfix_check_amc_base
 endevent
 
 appendevent EVENT_LOADGAME
-	state vrfix_forget_briefing_base
+	state vrfix_check_amc_base
 endevent
