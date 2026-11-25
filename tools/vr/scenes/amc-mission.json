@@ -1,0 +1,257 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 6
+},
+{
+"capture": "start"
+},
+{
+"console": "xr_var CHAR cur_weap cameraskipping"
+},
+{
+"console": "xr_setvar cameraskipping 1"
+},
+{
+"wait": 3
+},
+{
+"console": "xr_setvar CHAR 0"
+},
+{
+"wait": 3
+},
+{
+"console": "xr_var CHAR cur_weap"
+},
+{
+"capture": "char"
+},
+{
+"wait": 6
+},
+{
+"capture": "game"
+},
+{
+"console": "xr_weapons"
+},
+{
+"console": "xr_items"
+},
+{
+"wait": 3
+},
+{
+"capture": "weapons"
+},
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+-30,
+0
+],
+"left": [
+-0.02,
+1.38,
+-0.28,
+-70,
+0,
+0
+],
+"right": [
+0.25,
+1.1,
+-0.2,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 2
+},
+{
+"capture": "wrist-left"
+},
+{
+"pose": {
+"left": [
+-0.25,
+1.1,
+-0.2,
+0,
+0,
+0
+],
+"right": [
+0.02,
+1.38,
+-0.28,
+70,
+0,
+0
+]
+}
+},
+{
+"wait": 2
+},
+{
+"capture": "wrist-right"
+},
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 1
+},
+{
+"buttons": {
+"right": {
+"trackpad_touch": 1
+}
+}
+},
+{
+"until": "weapon wheel: open",
+"timeout": 15
+},
+{
+"wait": 1.5
+},
+{
+"capture": "wheel"
+},
+{
+"buttons": {
+"right": {
+"trackpad_touch": 0
+}
+}
+},
+{
+"wait": 2
+},
+{
+"buttons": {
+"left": {
+"trackpad_touch": 1
+}
+}
+},
+{
+"until": "gadget wheel: open",
+"timeout": 10
+},
+{
+"wait": 1.5
+},
+{
+"capture": "gadgets"
+},
+{
+"buttons": {
+"left": {
+"trackpad_touch": 0
+}
+}
+},
+{
+"wait": 2
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 1.0
+}
+}
+},
+{
+"wait": 0.4
+},
+{
+"capture": "fire"
+},
+{
+"buttons": {
+"right": {
+"trigger_value": 0.0
+}
+}
+},
+{
+"wait": 1
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 3
+},
+{
+"capture": "menu"
+},
+{
+"console": "xr_var CHAR cur_weap"
+}
+]

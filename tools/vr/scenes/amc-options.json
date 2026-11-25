@@ -1,0 +1,185 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 6
+},
+{
+"console": "xr_setvar cameraskipping 1"
+},
+{
+"wait": 3
+},
+{
+"console": "xr_setvar CHAR 0"
+},
+{
+"wait": 2
+},
+{
+"keys": [
+"F2"
+]
+},
+{
+"wait": 3
+},
+{
+"keys": [
+"Return"
+]
+},
+{
+"wait": 2
+},
+{
+"keys": [
+"Return"
+]
+},
+{
+"wait": 4
+},
+{
+"console": "xr_var CHAR"
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 3
+},
+{
+"capture": "m0"
+},
+{
+"keys": [
+"Down",
+"Down",
+"Down"
+]
+},
+{
+"wait": 1
+},
+{
+"capture": "m1"
+},
+{
+"keys": [
+"Return"
+]
+},
+{
+"wait": 3
+},
+{
+"capture": "opt"
+},
+{
+"keys": [
+"Return"
+]
+},
+{
+"wait": 3
+},
+{
+"capture": "opt1"
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 2
+},
+{
+"keys": [
+"Down"
+]
+},
+{
+"wait": 1
+},
+{
+"keys": [
+"Return"
+]
+},
+{
+"wait": 3
+},
+{
+"capture": "opt2"
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 2
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 2
+},
+{
+"console": "xr_load savegames/save0001.esv"
+},
+{
+"until": "VR load:",
+"timeout": 120
+},
+{
+"wait": 5
+},
+{
+"capture": "loaded"
+},
+{
+"console": "xr_var CHAR cur_weap"
+}
+]

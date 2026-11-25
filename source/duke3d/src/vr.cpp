@@ -8,6 +8,7 @@
 #include "vrshoot.h"
 #include "network.h"
 #include "menus.h"
+#include "anim.h"
 #include "savegame.h"
 #include "mdsprite.h"
 #include "colmatch.h"
@@ -5448,6 +5449,20 @@ static void runConsoleRequest()
                 }
                 LOG_F(INFO,"VR goto: %d,%d sector=%d.",x,y,sect);
             }
+            continue;
+        }
+        if (!command.compare(0,8,"xr_menu "))
+        {
+            // Test hook: open the menu with this MenuID_t (scripted menu checks without key timing).
+            int const id=std::atoi(command.c_str()+8);
+            Menu_Open(myconnectindex);
+            LOG_F(INFO,"VR menu: %d -> %d.",id,Menu_Change(MenuID_t(id)));
+            continue;
+        }
+        if (!command.compare(0,8,"xr_anim "))
+        {
+            // Test hook: play a cutscene file (ANM/IVF) the way CON startcutscene does.
+            LOG_F(INFO,"VR anim: %s -> %d.",command.c_str()+8,int(Anim_Play(command.c_str()+8)));
             continue;
         }
         if (!command.compare(0,8,"xr_load "))

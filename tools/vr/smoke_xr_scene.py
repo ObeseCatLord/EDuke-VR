@@ -65,6 +65,8 @@ def main():
     parser.add_argument('--assets', type=Path, help='duke-vr-assets folder for the launcher (e.g. a scratch one with a test pack)')
     parser.add_argument('--cvar', action='append', default=[], help='NAME=VALUE written to the lab settings.cfg (e.g. r_precache=0)')
     parser.add_argument('--game', type=Path, help='a total conversion install folder (launcher --game; --grp is then ignored)')
+    parser.add_argument('--game-link', type=Path, help='like --game, but plays from a writable folder inside the lab: '
+                        'symlinks to every entry of this install, real copies of its .cfg files (the install stays untouched)')
     parser.add_argument('--copy', action='append', default=[], type=Path, help='file copied into the lab directory (e.g. a save game)')
     args = parser.parse_args()
     steps = json.loads(args.script.read_text())
@@ -73,6 +75,14 @@ def main():
     (lab / 'eduke32.cfg').write_text(CONFIG)
     if args.cvar:
         (lab / 'settings.cfg').write_text(''.join(f'{kv.split("=", 1)[0]} "{kv.split("=", 1)[1]}"\n' for kv in args.cvar))
+    if args.game_link:
+        # Games that write next to their data (saves, cfg, DATA/) get a private writable folder.
+        args.game = lab / 'game'; args.game.mkdir()
+        for entry in sorted(args.game_link.resolve().iterdir()):
+            if entry.is_file() and entry.suffix.lower() in ('.cfg', '.ini'):
+                (args.game / entry.name).write_bytes(entry.read_bytes())
+            else:
+                (args.game / entry.name).symlink_to(entry)
     for source in args.copy:
         (lab / source.name).write_bytes(source.read_bytes())
     if not args.game:

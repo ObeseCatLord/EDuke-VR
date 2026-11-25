@@ -1,0 +1,119 @@
+[
+{
+"pose": {
+"head": [
+0,
+1.6,
+0,
+0,
+0,
+0
+],
+"left": [
+-0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+],
+"right": [
+0.2,
+1.3,
+-0.35,
+0,
+0,
+0
+]
+}
+},
+{
+"wait": 6
+},
+{
+"console": "xr_setvar cameraskipping 1"
+},
+{
+"wait": 4
+},
+{
+"console": "xr_menu 250"
+},
+{
+"wait": 3
+},
+{
+"capture": "gs"
+},
+{
+"keys": [
+"Down"
+]
+},
+{
+"wait": 1
+},
+{
+"keys": [
+"Return"
+]
+},
+{
+"wait": 3
+},
+{
+"capture": "gs1"
+},
+{
+"console": "xr_menu 705"
+},
+{
+"wait": 3
+},
+{
+"capture": "vrsetup"
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 1
+},
+{
+"keys": [
+"Escape"
+]
+},
+{
+"wait": 2
+},
+{
+"console": "xr_anim CUTSC/CUTSCENE-AXON.IVF"
+},
+{
+"wait": 5
+},
+{
+"capture": "ivf"
+},
+{
+"until": "VR anim:",
+"timeout": 120
+},
+{
+"wait": 2
+},
+{
+"capture": "after"
+}
+]
