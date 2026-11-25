@@ -70,6 +70,7 @@ terminals, shops) float in front of you: point at them with the controller's las
 
 A.W.O.L. v1.3 (the folder with `awol.grp`) also runs this way, on the normal engine build. Its extra options
 (ADS mode, subtitles, text speed, particles, weather, 3D models) are in Options > Game Setup.
+In VR its right stick click reloads, the left trigger aims down sights and the right grip sprints.
 
 Use `desktop` instead of `vr` to play on a normal screen.
 

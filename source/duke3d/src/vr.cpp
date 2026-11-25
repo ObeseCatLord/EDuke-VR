@@ -172,7 +172,17 @@ static bool profileWheel();
 //                                    [fallback ICON] is used, else the slot shows its key number.
 //                                    Up to 256 weapon lines are read (all characters), 24 per wheel.
 //   gadget ITEM ICON FUNCTION FULL   inventory slot ITEM (GET_*), its icon, the game function that
-//                                    uses it (e.g. MedKit) and the amount shown as a full ring
+//                                    uses it (e.g. MedKit) and the amount shown as a full ring.
+//                                    ITEM may also be var:NAME, a gamevar holding the carried amount
+//                                    (per player) for a game that keeps its items in CON variables:
+//                                    carried while it is above 0, the ring is NAME / FULL.
+//   bind CONTROL GAMEFUNC            a controller control presses the stock game function GAMEFUNC
+//                                    (its stock name, e.g. Look_Up, whatever the game renamed it to)
+//                                    while held, instead of its default function (nothing else is
+//                                    pressed for it). CONTROL: right_grip (also replaces run / always
+//                                    run: Run is never pressed), left_trigger, right_stickclick,
+//                                    left_grip, right_primary (A), right_secondary (B), left_primary (X),
+//                                    left_secondary (Y). The menu cursor and push-to-talk keep priority.
 //   wristhud rest Y                  the game draws its HUD in EVENT_DISPLAYREST: what it draws below
 //                                    Y (a screen fraction) goes onto the wrists, the rest stays in front
 //                                    [unless VAR [is V | not V]]...: while the gamevar VAR is non-zero
@@ -194,7 +204,10 @@ struct VRGameProfile
                     int tileArray, tileIndex, fallbackTile; };   // icon from gamearray tileArray[tileIndex] (-1: static tile)
     struct RestGate { int var, value; int mode; };   // mode 0: var != 0, 1: var == value, 2: var != value
 
-    struct Gadget { int item, tile, function, full; };
+    struct Gadget { int item, tile, function, full; int var=-1; };   // var >= 0: the carried amount is that gamevar
+    enum { BindRightGrip, BindLeftTrigger, BindRightStickClick, BindLeftGrip, BindRightPrimary, BindRightSecondary,
+           BindLeftPrimary, BindLeftSecondary, BindCount };
+    int binds[BindCount]={-1,-1,-1,-1,-1,-1,-1,-1};   // bind CONTROL GAMEFUNC: -1 keeps the control's default function
     std::vector<Weapon> weapons;
     std::vector<Gadget> gadgets;
     std::vector<RestGate> restGates;   // wristhud rest ... unless: any one true skips the capture
@@ -218,6 +231,17 @@ static int profileValue(char const *token)
     if (end && end!=token && !*end) return int(number);
     int const label=hash_find(&h_labels,token);
     return label>=0 && (labeltype[label] & LABEL_DEFINE) ? labelcode[label] : -1;
+}
+
+// A game function by its stock name (Look_Up ...), also after the game renamed it with definegamefuncname
+// or removed it: the name table the engine was built with, not the live (renamed) one.
+static int stockGameFunction(char const *name)
+{
+    if (!name) return -1;
+    size_t const prefix=std::strlen("gamefunc_");
+    for (int i=0;i<NUMGAMEFUNCTIONS;++i)
+        if (!Bstrcasecmp(gamefunc_symbol_names[i]+prefix,name)) return i;
+    return -1;
 }
 
 static VRGameProfile const &gameProfile()
@@ -346,7 +370,11 @@ static VRGameProfile const &gameProfile()
         }
         else if (!Bstrcasecmp(word,"gadget"))
         {
-            int const item=profileValue(next()), tile=profileValue(next());
+            char const *itemName=next();
+            int item=-1, gadgetVar=-1;
+            if (itemName && !Bstrncasecmp(itemName,"var:",4)) gadgetVar=hash_find(&h_gamevars,itemName+4);
+            else item=profileValue(itemName);
+            int const tile=profileValue(next());
             char const *function=next();
             int const full=profileValue(next());
             // A game may rename its functions (definegamefuncname): the built-in names still work.
@@ -356,10 +384,23 @@ static VRGameProfile const &gameProfile()
             int functionNum=function ? CONFIG_FunctionNameToNum(function) : -1;
             for (auto const &entry:builtIn)
                 if (functionNum<0 && function && !Bstrcasecmp(function,entry.name)) functionNum=entry.function;
-            VRGameProfile::Gadget gadget{item,tile,functionNum,full>0 ? full : 100};
-            if ((unsigned)gadget.item<GET_MAX && gadget.function>=0 && profile.gadgets.size()<8)
+            if (functionNum<0) functionNum=stockGameFunction(function);
+            VRGameProfile::Gadget gadget{item,tile,functionNum,full>0 ? full : 100,gadgetVar};
+            if (((unsigned)gadget.item<GET_MAX || gadget.var>=0) && gadget.function>=0 && profile.gadgets.size()<8)
                 profile.gadgets.push_back(gadget);
-            else LOG_F(WARNING,"vrgame.txt: gadget line ignored (item %d).",item);
+            else LOG_F(WARNING,"vrgame.txt: gadget line ignored (item %s).",itemName ? itemName : "");
+        }
+        else if (!Bstrcasecmp(word,"bind"))
+        {
+            static char const *const controls[VRGameProfile::BindCount]={
+                "right_grip","left_trigger","right_stickclick","left_grip","right_primary","right_secondary","left_primary","left_secondary"};
+            char const *control=next(), *function=next();
+            int index=-1;
+            for (int i=0;i<VRGameProfile::BindCount && control;++i)
+                if (!Bstrcasecmp(control,controls[i])) index=i;
+            int const functionNum=stockGameFunction(function);
+            if (index>=0 && functionNum>=0) profile.binds[index]=functionNum;
+            else LOG_F(WARNING,"vrgame.txt: bind %s %s ignored (unknown control or game function).",control ? control : "",function ? function : "");
         }
     }
     std::fclose(file);
@@ -986,7 +1027,14 @@ static int gadgetFull(int gadget)
     static int const full[DukeGadgetCount]={100,400,2400,1600,1200};
     return full[gadget];
 }
-static bool gadgetSelectable(DukePlayer_t const *p, int gadget) { return p->inv_amount[gadgetItem(gadget)]>0; }
+// What is carried: the player's inventory slot, or the gamevar of a `gadget var:NAME` line.
+static int gadgetAmount(DukePlayer_t const *p, int gadget)
+{
+    if ((totalConversion() || !gameProfile().gadgets.empty()) && gameProfile().gadgets[gadget].var>=0)
+        return p && (unsigned)p->i<MAXSPRITES ? Gv_GetVar(gameProfile().gadgets[gadget].var,p->i,myconnectindex) : 0;
+    return p->inv_amount[gadgetItem(gadget)];
+}
+static bool gadgetSelectable(DukePlayer_t const *p, int gadget) { return gadgetAmount(p,gadget)>0; }
 
 static bool slotSelectable(Wheel const &w, DukePlayer_t const *p, int slot)
 {
@@ -1434,11 +1482,15 @@ static void publishInput()
     // mighty foot and the right stick click alt fire (vr_lefttrigger 1 swaps them; mods such as
     // Alien Armageddon use alt fire), left grip is use/interact, right grip runs.
     // The game's own cursor: the pointing hand's trigger (either hand) is the click, i.e. Fire, and kicks nothing.
+    // A profile's `bind CONTROL GAMEFUNC` (-1: none) replaces that control's function below.
+    auto const &binds=gameProfile().binds;
     button(cursorOn ? (down[menuPointerHand]&ButtonSelect) : (down[1]&ButtonSelect),gamefunc_Fire);
-    button(!cursorOn && (down[0]&ButtonSelect),vr_lefttrigger ? gamefunc_Alt_Fire : gamefunc_Quick_Kick);
-    button(!cursorOn && (down[1]&ButtonStickClick),vr_lefttrigger ? gamefunc_Quick_Kick : gamefunc_Alt_Fire);
-    button(down[0]&ButtonGrip,gamefunc_Open);
-    button(down[1]&ButtonPrimary,gamefunc_Jump);
+    if (binds[VRGameProfile::BindLeftTrigger]>=0) button(!cursorOn && (down[0]&ButtonSelect),binds[VRGameProfile::BindLeftTrigger]);
+    else button(!cursorOn && (down[0]&ButtonSelect),vr_lefttrigger ? gamefunc_Alt_Fire : gamefunc_Quick_Kick);
+    if (binds[VRGameProfile::BindRightStickClick]>=0) button(!cursorOn && (down[1]&ButtonStickClick),binds[VRGameProfile::BindRightStickClick]);
+    else button(!cursorOn && (down[1]&ButtonStickClick),vr_lefttrigger ? gamefunc_Quick_Kick : gamefunc_Alt_Fire);
+    button(down[0]&ButtonGrip,binds[VRGameProfile::BindLeftGrip]>=0 ? binds[VRGameProfile::BindLeftGrip] : gamefunc_Open);
+    button(down[1]&ButtonPrimary,binds[VRGameProfile::BindRightPrimary]>=0 ? binds[VRGameProfile::BindRightPrimary] : gamefunc_Jump);
     // Quick kick also on a right-stick-down flick.
     bool const kickFlick=!cursorOn && !stickPitchAllowed() && !wheelOwnsStick && rawInput.hands[1].stickActive
         && rawInput.hands[1].stick.y<-.7f && std::fabs(rawInput.hands[1].stick.x)<.6f;
@@ -1449,9 +1501,10 @@ static void publishInput()
     unsigned const talkHand=vr_ptt_button==2 ? 1 : 0;
     uint32_t const talkBit=vr_ptt_button==1 ? ButtonPrimary : ButtonSecondary;
     auto const talkFree=[&](unsigned hand, uint32_t bit) { return !(talkMode && hand==talkHand && bit==talkBit); };
-    button(talkFree(0,ButtonPrimary) && (down[0]&ButtonPrimary),gamefunc_Previous_Weapon);
-    button(talkFree(0,ButtonSecondary) && (down[0]&ButtonSecondary),gamefunc_Next_Weapon);
-    {
+    button(talkFree(0,ButtonPrimary) && (down[0]&ButtonPrimary),binds[VRGameProfile::BindLeftPrimary]>=0 ? binds[VRGameProfile::BindLeftPrimary] : gamefunc_Previous_Weapon);
+    button(talkFree(0,ButtonSecondary) && (down[0]&ButtonSecondary),binds[VRGameProfile::BindLeftSecondary]>=0 ? binds[VRGameProfile::BindLeftSecondary] : gamefunc_Next_Weapon);
+    if (binds[VRGameProfile::BindRightGrip]>=0) button(down[1]&ButtonGrip,binds[VRGameProfile::BindRightGrip]);   // bound: held, no run logic
+    else {
         // Always run (EDUKE32_XR_ALWAYS_RUN, on in the preset): the right grip walks instead.
         // The native rule combines the Run key with the user's auto-run setting.
         auto const always=sdlayer_xr_option("EDUKE32_XR_ALWAYS_RUN");
@@ -1461,7 +1514,12 @@ static void publishInput()
     }
     {
         bool const ducking=physicallyDucking();
-        button((talkFree(1,ButtonSecondary) && (down[1]&ButtonSecondary)) || ducking,gamefunc_Crouch);
+        if (binds[VRGameProfile::BindRightSecondary]>=0)
+        {
+            button(talkFree(1,ButtonSecondary) && (down[1]&ButtonSecondary),binds[VRGameProfile::BindRightSecondary]);
+            button(ducking,gamefunc_Crouch);   // physical ducking still crouches
+        }
+        else button((talkFree(1,ButtonSecondary) && (down[1]&ButtonSecondary)) || ducking,gamefunc_Crouch);
     }
     bool const radio=radioGesture(talkMode);
     Voice_SetPushToTalk(talkMode && ((down[talkHand]&talkBit) || radio));
@@ -3854,7 +3912,7 @@ static float slotFraction(Wheel const &w, DukePlayer_t const *p, int item, int &
 {
     if (w.gadgets)
     {
-        amount=p->inv_amount[gadgetItem(item)];
+        amount=gadgetAmount(p,item);
         return float(amount)/std::max(1,gadgetFull(item));
     }
     if (auto const entry=itemEntry(item))

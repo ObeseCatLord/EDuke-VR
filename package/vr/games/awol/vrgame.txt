@@ -1,0 +1,66 @@
+# A.W.O.L. v1.3 in VR: weapon wheel and wrist HUD (package/vr/games/awol/vrgame.txt once installed).
+# Findings and file:line citations: work/awol-profile/NOTES.md (CON paths are inside awol.grp: data/*.con).
+#
+# A.W.O.L. does NOT use Duke's weapon slots. The engine only ever sees curr_weapon 0 (knife) or 1 (any
+# gun); the real weapon is the gamevar cur_w (0 knife, 1 Beretta, 2 MP5, 3 SPAS-12, 4 M4, 5 AK-47,
+# 6 RPG-7; data/awol_tokens.con:312). Three carried slots (wepslot_1..3, tokens:333-335) are selected by
+# the keys Weapon_1..4 (EVENT_WEAPKEY1..4, data/awol_weapons.con:1858-1888; renamed WEAPON_KNIFE and
+# WEAPON_SLOT_1..3, tokens:428-431):
+#   key 1 knife, key 2 = wepslot_1 (Beretta or MP5), key 3 = wepslot_2, key 4 = wepslot_3 (SPAS-12, M4,
+#   AK-47 or RPG-7, whichever the player picked up first / last; both slots can hold any of them).
+# So every gun is native weapon 1, told apart by "is cur_w N", and the key it needs depends on the slot
+# it sits in, so each heavy weapon is listed twice, once per slot, shown only while that slot holds it
+# ("when wepslotN CODE"): the wheel never shows a duplicate.
+#
+# Icons are the HUD loadout tiles A.W.O.L. draws itself (ui_getweapon, data/awol_ui.con:670-700;
+# defines data/awol_names.con:235-241). noammo: a gun with an empty reserve is still selectable (it can
+# hold rounds in its magazine, mag_*); the ring fraction is the reserve (ammo_* / MAXAMMO_*, awol_customize.con:205-209).
+
+weapon 0 WEPSPRITE_KNIFE noammo                                                                              # key 1: knife (curr_weapon 0)
+
+weapon 1 WEPSPRITE_BERETTA key 2 noammo ammo ammo_9mm MAXAMMO_9MM when wepslot_1 1 is cur_w 1                 # slot 1 holds the Beretta
+weapon 1 WEPSPRITE_MP5     key 2 noammo ammo ammo_9mm MAXAMMO_9MM when wepslot_1 2 is cur_w 2                 # slot 1 holds the MP5
+
+weapon 1 WEPSPRITE_SPAS12  key 3 noammo ammo ammo_shells MAXAMMO_SHELLS when wepslot_2 3 is cur_w 3          # SPAS-12 in slot 2
+weapon 1 WEPSPRITE_SPAS12  key 4 noammo ammo ammo_shells MAXAMMO_SHELLS when wepslot_3 3 is cur_w 3          # SPAS-12 in slot 3
+weapon 1 WEPSPRITE_M4      key 3 noammo ammo ammo_556 MAXAMMO_556 when wepslot_2 4 is cur_w 4                # M4 in slot 2
+weapon 1 WEPSPRITE_M4      key 4 noammo ammo ammo_556 MAXAMMO_556 when wepslot_3 4 is cur_w 4                # M4 in slot 3
+weapon 1 WEPSPRITE_AK47    key 3 noammo ammo ammo_ak MAXAMMO_AK when wepslot_2 5 is cur_w 5                  # AK-47 in slot 2
+weapon 1 WEPSPRITE_AK47    key 4 noammo ammo ammo_ak MAXAMMO_AK when wepslot_3 5 is cur_w 5                  # AK-47 in slot 3
+weapon 1 WEPSPRITE_RPG7    key 3 noammo ammo ammo_rockets MAXAMMO_RPG7 when wepslot_2 6 is cur_w 6           # RPG-7 in slot 2
+weapon 1 WEPSPRITE_RPG7    key 4 noammo ammo ammo_rockets MAXAMMO_RPG7 when wepslot_3 6 is cur_w 6           # RPG-7 in slot 3
+
+# VR controls (bind CONTROL GAMEFUNC: while the control is held, that game function is pressed instead of its
+# usual one; A.W.O.L. renamed these stock functions, data/awol_tokens.con):
+#   right stick click  Look_Up  = Reload_Weapon  (press the right stick in)
+#   left trigger       Look_Down = Aim_Down_Sights (hold; with ADS mode "toggle" in Game Setup, a pull toggles it)
+#   right grip         Aim_Up   = Sprint (hold; replaces run / always run, A.W.O.L. has no Run key)
+# Everything else keeps the default VR mapping: right trigger Fire, left grip Open (use), A Jump,
+# B Crouch, X / Y Previous / Next_Weapon, stick-down flick Quick_Kick (A.W.O.L. does not use it).
+bind right_stickclick Look_Up
+bind left_trigger Look_Down
+bind right_grip Aim_Up
+
+# Gadgets (left stick click: gadget wheel): the usable items are CON gamevars holding the carried amount
+# (data/awol_tokens.con:362-370), so `var:NAME`; FUNCTION is the stock name of the renamed key: Use_Bandages
+# is MedKit, Throw_Grenade is Steroids, Throw_Knife is NightVision (tokens:433-436). The ring is full at
+# MAXITEM_* (awol_customize.con:227-229), 3 of each.
+gadget var:bandage_amount HUD_BANDAGEICON MedKit 3
+gadget var:grenade_amount HUD_GRENADEICON Steroids 3
+gadget var:thrknife_amount HUD_KNIFEICON NightVision 3
+
+# The HUD is drawn in EVENT_DISPLAYREST (data/awol_ui.con:951-1042) in a 320x240 virtual screen (the game sets
+# draw_yxaspect 54613 = 5/6, awol_common.con:51). Health/armor/sprint/ammo/loadout sit at y 148-232 (0.62-0.97 of
+# the screen height); the right-hand item stack (bandages, grenades, knives, keycards) climbs to about y 78-100
+# (0.33-0.42) when everything is carried. 0.3 puts the whole thing on the wrists; the compass (y -8), HIDDEN banner
+# (y 40), exit timer (y 70) and bot portraits (y <= 50) stay in front. UNCONFIRMED in game: values computed from the CON.
+# The tutorial key prompt (y 135, awol_ui.con:1620) and subtitles (y 200-210, awol_subtitles.con:79) also fall in the
+# band: use 0.6 to keep the prompt in front at the cost of leaving the item stack and keycards on the screen.
+# unless: PRISONBREAK_STATUS (intro fade overlay, tokens:137), CHOREO_SPEAKER not CHOREO_AVAILABLE (a dialogue scene is up:
+# its centred panel would be split between the wrists, awol_choreo.con:27,689), CHOREO_BLACKOUT (full-screen black in the dialogue
+# scene, awol_choreo.con:58,697), LOADSCREENBLANK (blank load frame, awol_common.con:23), PLAYCREDITS (end credits, awol_ui.con:1963).
+wristhud rest 0.3 unless PRISONBREAK_STATUS unless CHOREO_SPEAKER not CHOREO_AVAILABLE unless CHOREO_BLACKOUT unless LOADSCREENBLANK unless PLAYCREDITS
+
+# No cursor line: A.W.O.L. has no CON-driven mouse UI. Its only cursor is the engine menu cursor, which the
+# game merely redraws (EVENT_DISPLAYCURSOR, awol_ui.con:86-99) from the native menu pointer; the in-game
+# screens (comic cutscenes, dialogue, credits) never read the mouse.

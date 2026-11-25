@@ -277,7 +277,11 @@ Duke model sets and the Hit Feedback mod are left out. In VR:
   `vrgame.txt` (in `data/games/NAME/`): weapon slots with their icons and keys, per-character
   arsenals, several weapons sharing one slot (up to 24 on the wheel), usable items and where the HUD
   is drawn. The format is described at the top of `gameProfile()` in `source/duke3d/src/vr.cpp`;
-  a mod or game can ship its own `vrgame.txt` the same way. Besides a tile number or define, a
+  a mod or game can ship its own `vrgame.txt` the same way. `gadget var:NAME ICON FUNCTION FULL` lists an item a game keeps in a CON variable (carried while it is above 0,
+  the ring is NAME / FULL), and `bind CONTROL GAMEFUNC` makes a controller control press a stock game
+  function (by its stock name, such as `Look_Up`) while held instead of its default one. CONTROL is
+  `right_grip` (also replaces run), `left_trigger`, `right_stickclick`, `left_grip`, `right_primary` (A),
+  `right_secondary` (B), `left_primary` (X) or `left_secondary` (Y). Besides a tile number or define, a
   weapon's icon can be `array:NAME` or `array:NAME[INDEX]`, read at draw time from that CON gamearray
   (element INDEX, default the weapon slot), with `fallback ICON` as the static tile when it holds nothing
   valid; `wristhud rest Y unless VAR [is V | not V]` leaves the HUD whole in front while a game
@@ -296,6 +300,12 @@ game runs from its own folder, where it keeps savegames and progress (the script
 that folder must be writable, as AMC Squad itself requires. Its profile (`data/games/amc/vrgame.txt`) has one weapon wheel per character, with each
 slot's icon read from the loadout the player bought, and keeps the game's full-screen terminals, menus
 and character select whole in front instead of splitting them onto the wrists.
+
+**A.W.O.L.**'s profile (`data/games/awol/vrgame.txt`) gives it a weapon wheel (the knife and the guns you
+carry), a gadget wheel (bandages, grenades and throwing knives, with their counts) and its own controls:
+**right stick click reloads, the left trigger aims down sights** (hold, or toggle, as its ADS mode option
+says) and **the right grip sprints** (hold; A.W.O.L. has no run key). Fire, jump, crouch, use and the
+wheels keep the usual VR controls.
 
 ## Menus
 
