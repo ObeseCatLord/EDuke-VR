@@ -130,11 +130,6 @@ int32_t MAXCACHE1DSIZE = (8*1024*1024);
 
 int32_t tempwallptr;
 
-#ifdef AMC_BUILD
-// Subdirectory of the game content directory that holds savegames (cvar savegame_dir).
-// Weak so that savegame.cpp can define it for real.
-__attribute__((weak)) char savegame_dir[BMAX_PATH] = "savegames";
-#endif
 
 static int32_t nonsharedtimer;
 
