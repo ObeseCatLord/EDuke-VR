@@ -11743,6 +11743,8 @@ void polymost_dorotatespritemodel(int32_t sx, int32_t sy, int32_t z, int16_t a, 
 bool (*polymost_xrWeaponTileConsumer)(int32_t,int32_t,int32_t,int32_t,int32_t,int32_t,int32_t,int32_t)=nullptr;
 polymost_xrbillboard_t polymost_xrBillboard;
 void (*polymost_xrSpriteBounds)(float,float,float,float)=nullptr;
+bool (*polymost_xrRotateSpriteFilter)(int32_t,int32_t,int32_t,int16_t,int32_t,int8_t,char,int32_t,uint8_t,uint8_t,
+                                      int32_t,int32_t,int32_t,int32_t,int32_t)=nullptr;
 #endif
 
 void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum,
@@ -11753,6 +11755,9 @@ void polymost_dorotatesprite(int32_t sx, int32_t sy, int32_t z, int16_t a, picnu
     ++polymost_xr2DDraws;
 #endif
 #ifdef USE_OPENXR
+    // A game profile's `crosshair` tiles are held back here and replayed in the VR crosshair segment.
+    if (polymost_xrRotateSpriteFilter
+        && polymost_xrRotateSpriteFilter(sx,sy,z,a,picnum,dashade,dapalnum,dastat,daalpha,dablend,cx1,cy1,cx2,cy2,uniqid)) return;
     if (polymost_xrWeaponTileConsumer
         && polymost_xrWeaponTileConsumer(picnum,uniqid,dashade,uint8_t(dapalnum),dastat,a,daalpha,dablend)) return;
 #endif

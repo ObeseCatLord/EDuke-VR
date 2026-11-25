@@ -608,7 +608,7 @@ static MenuEntry_t ME_AWOL_ADS = MAKE_MENUENTRY( "ADS mode:", &MF_Redfont, &MEF_
 static MenuOption_t MEO_AWOL_SUBTITLES = MAKE_MENUOPTION( &MF_Redfont, &MEOS_OffOn, &ud.subtitles );
 static MenuEntry_t ME_AWOL_SUBTITLES = MAKE_MENUENTRY( "Subtitles:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_AWOL_SUBTITLES, Option );
 
-static char const *MEOSN_AWOL_TEXTSPEED[] = { "Off", "Fast", "Normal", "Slow" };
+static char const *MEOSN_AWOL_TEXTSPEED[] = { "Off", "Slow", "Normal", "Fast" };
 static MenuOptionSet_t MEOS_AWOL_TEXTSPEED = MAKE_MENUOPTIONSET( MEOSN_AWOL_TEXTSPEED, NULL, 0x3 );
 static MenuOption_t MEO_AWOL_TEXTSPEED = MAKE_MENUOPTION( &MF_Redfont, &MEOS_AWOL_TEXTSPEED, &ud.text_speed );
 static MenuEntry_t ME_AWOL_TEXTSPEED = MAKE_MENUENTRY( "Text speed:", &MF_Redfont, &MEF_BigOptionsRt, &MEO_AWOL_TEXTSPEED, Option );
@@ -8723,7 +8723,7 @@ static void Menu_RunInput(Menu_t *cm)
                     {
                         seeker = menu->entrylist[(index + menu->currentEntry) % menu->numEntries];
 
-                        if (!seeker || !seeker->name)
+                        if (!seeker || !seeker->name || (seeker->flags & MEF_Hidden))
                             continue;
 
                         ch2 = seeker->name[0];

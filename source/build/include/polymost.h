@@ -50,6 +50,10 @@ extern void (*polymost_xrSpriteBounds)(float x0, float y0, float x1, float y1);
 typedef struct { int32_t x, y; bool active; } polymost_xrbillboard_t;
 extern polymost_xrbillboard_t polymost_xrBillboard;
 
+// Called with the arguments of every polymost 2D sprite draw; true means the draw was taken over
+// (recorded for later) and must not be drawn now. Null unless a VR game profile lists crosshair tiles.
+extern bool (*polymost_xrRotateSpriteFilter)(int32_t sx, int32_t sy, int32_t z, int16_t a, int32_t picnum, int8_t shade,
+    char pal, int32_t stat, uint8_t alpha, uint8_t blend, int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2, int32_t uniqid);
 extern bool (*polymost_xrWeaponTileConsumer)(int32_t tile, int32_t uniqueID, int32_t shade,
     int32_t palette, int32_t flags, int32_t angle, int32_t alpha, int32_t blend);
 bool polymost_xrBeginTint(uint8_t r, uint8_t g, uint8_t b, uint8_t f);

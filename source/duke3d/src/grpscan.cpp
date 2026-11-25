@@ -256,10 +256,12 @@ static void LoadGameList(void)
 
     // A.W.O.L. v1.3 ships a grpinfo without flags/dependency, which would make it a Duke add-on needing
     // DUKE3D.GRP. It is a standalone total conversion: correct the entry whatever file supplied it.
+    bool haveAwol = false;
     for (grpinfo_t *fg = listgrps; fg; fg = fg->next)
     {
         if ((uint32_t)fg->crcval == AWOL_CRC && fg->size == AWOL_SIZE)
         {
+            haveAwol = true;
             fg->game = 0;
             fg->dependency = 0;
             if (!fg->scriptname)
@@ -267,6 +269,18 @@ static void LoadGameList(void)
             if (!fg->defname)
                 fg->defname = dup_filename("awol.def");
         }
+    }
+    // No grpinfo supplied v1.3 (awol.grpinfo missing): the game still starts.
+    if (!haveAwol)
+    {
+        grpinfo_t * const fg = (grpinfo_t *)Xcalloc(1, sizeof(grpinfo_t));
+        fg->name = Xstrdup("A.W.O.L. v1.3");
+        fg->crcval = (int32_t)AWOL_CRC;
+        fg->size = AWOL_SIZE;
+        fg->scriptname = dup_filename("awol.con");
+        fg->defname = dup_filename("awol.def");
+        fg->next = listgrps;
+        listgrps = fg;
     }
 }
 
@@ -375,6 +389,21 @@ grpfile_t * FindGroup(int32_t crcval)
 }
 
 #ifndef USE_PHYSFS
+// A file named awol.grp that is not the supported A.W.O.L. v1.3 build: say so, instead of silently ignoring it.
+static void WarnUnsupportedAwol(char const *filename, int64_t size, int32_t crcval, bool crcKnown)
+{
+    char const *base = Bstrrchr(filename, '/');
+    base = base ? base + 1 : filename;
+    if (Bstrcasecmp(base, "awol.grp"))
+        return;
+    if (crcKnown)
+        LOG_F(WARNING, "%s is not the supported A.W.O.L. v1.3 (expected size %d, CRC 0x%08x; found size %lld, CRC 0x%08x): it is ignored.",
+              filename, AWOL_SIZE, AWOL_CRC, (long long)size, (uint32_t)crcval);
+    else
+        LOG_F(WARNING, "%s is not the supported A.W.O.L. v1.3 (expected size %d, CRC 0x%08x; found size %lld, larger than any known game): it is ignored.",
+              filename, AWOL_SIZE, AWOL_CRC, (long long)size);
+}
+
 static grpinfo_t const * FindGrpInfo(int32_t crcval, int32_t size)
 {
     grpinfo_t *grpinfo;
@@ -427,6 +456,8 @@ static void ProcessGroups(BUILDVFS_FIND_REC *srch, native_t maxsize)
                     grp->next = foundgrps;
                     foundgrps = grp;
                 }
+                else
+                    WarnUnsupportedAwol(sidx->name, fg->size, fg->crcval, true);
 
                 fgg = (struct grpcache *)Xcalloc(1, sizeof(struct grpcache));
                 strcpy(fgg->name, fg->name);
@@ -446,7 +477,13 @@ static void ProcessGroups(BUILDVFS_FIND_REC *srch, native_t maxsize)
             fh = openfrompath(sidx->name, BO_RDONLY|BO_BINARY, BS_IREAD);
             if (fh < 0) continue;
             if (Bfstat(fh, &st)) continue;
-            if (!st.st_size || st.st_size > maxsize) continue;
+            if (!st.st_size) continue;
+            if (st.st_size > maxsize)
+            {
+                WarnUnsupportedAwol(sidx->name, st.st_size, 0, false);
+                close(fh);
+                continue;
+            }
 
             DLOG_F(INFO, " Checksumming %s...", sidx->name);
             do
@@ -469,6 +506,8 @@ static void ProcessGroups(BUILDVFS_FIND_REC *srch, native_t maxsize)
                 grp->next = foundgrps;
                 foundgrps = grp;
             }
+            else
+                WarnUnsupportedAwol(sidx->name, st.st_size, crcval, true);
 
             fgg = (struct grpcache *)Xcalloc(1, sizeof(struct grpcache));
             Bstrncpyz(fgg->name, sidx->name, BMAX_PATH);

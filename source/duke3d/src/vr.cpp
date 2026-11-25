@@ -183,6 +183,16 @@ static bool profileWheel();
 //                                    run: Run is never pressed), left_trigger, right_stickclick,
 //                                    left_grip, right_primary (A), right_secondary (B), left_primary (X),
 //                                    left_secondary (Y). The menu cursor and push-to-talk keep priority.
+//   crosshair TILE [TILE...]         the game draws its own reticle with rotatesprite (A.W.O.L.: two marks
+//                                    of tile 5627 that spread apart, in EVENT_DISPLAYWEAPON). TILE is a
+//                                    number or a CON define. In the headset every rotatesprite of these
+//                                    tiles drawn while the frame's 2D HUD is built (EVENT_DISPLAYWEAPON,
+//                                    EVENT_DISPLAYREST, ...) is held back and drawn instead in the VR
+//                                    crosshair segment, on the surface the aiming hand points at, keeping
+//                                    its offset from the logical screen centre (so marks that spread
+//                                    still spread around the aim point). The segment is anchored at that
+//                                    centre, not at the centre of what was drawn. Without the line the
+//                                    game's own reticle draws exactly as before.
 //   wristhud rest Y                  the game draws its HUD in EVENT_DISPLAYREST: what it draws below
 //                                    Y (a screen fraction) goes onto the wrists, the rest stays in front
 //                                    [unless VAR [is V | not V]]...: while the gamevar VAR is non-zero
@@ -214,6 +224,7 @@ struct VRGameProfile
     int cursorX=-1, cursorY=-1;        // cursor XVAR YVAR when ...: the game's own UI cursor gamevars
     std::vector<RestGate> cursorGates; // any one true: the cursor UI is up
     float restWristBand=0.f;   // wristhud rest Y: EVENT_DISPLAYREST sprites below Y (screen fraction) go to the wrists
+    std::vector<int> crosshairTiles;   // crosshair TILE...: reticle ART the game draws itself, replayed at the aim point
     bool present=false;
 };
 
@@ -338,6 +349,15 @@ static VRGameProfile const &gameProfile()
                 else LOG_F(WARNING,"vrgame.txt: wristhud unless %s ignored (unknown gamevar).",var ? var : "");
             }
         }
+        else if (!Bstrcasecmp(word,"crosshair"))
+        {
+            while (char const *token=next())
+            {
+                int const tile=profileValue(token);
+                if ((unsigned)tile<MAXTILES && profile.crosshairTiles.size()<16) profile.crosshairTiles.push_back(tile);
+                else LOG_F(WARNING,"vrgame.txt: crosshair %s ignored (unknown tile).",token);
+            }
+        }
         else if (!Bstrcasecmp(word,"cursor"))
         {
             // cursor XVAR YVAR when VAR [is V | not V] [when VAR ...]
@@ -405,6 +425,11 @@ static VRGameProfile const &gameProfile()
     }
     std::fclose(file);
     LOG_F(INFO,"VR game profile: %d weapons, %d gadgets.",int(profile.weapons.size()),int(profile.gadgets.size()));
+    if (!profile.crosshairTiles.empty())
+    {
+        LOG_F(INFO,"VR game profile: %d crosshair tile(s) drawn at the aim point.",int(profile.crosshairTiles.size()));
+        polymost_xrRotateSpriteFilter=G_XRProfileCrosshairFilter;
+    }
     return profile;
 }
 
@@ -5146,8 +5171,106 @@ static char const *crosshairCapturePrefix()
 static SpriteBounds crosshairBounds;
 static void crosshairSprite(float x0,float y0,float x1,float y1) { crosshairBounds.add(x0,y0,x1,y1); }
 
+// Profile `crosshair TILE...`: the game's own reticle ART (A.W.O.L. draws it in EVENT_DISPLAYWEAPON). While the
+// frame's HUD is built, each rotatesprite of a listed tile is recorded with the aspect state it was issued
+// under (and not drawn), then replayed inside the crosshair segment, which G_XREndCrosshair places at the
+// aim point anchored at the logical screen centre. A frame that never opens the segment drops the records.
+struct ProfileCrosshairSprite
+{
+    int32_t sx,sy,z; int16_t a; int32_t picnum; int8_t shade; char pal; int32_t stat; uint8_t alpha,blend;
+    int32_t cx1,cy1,cx2,cy2,uniqid;
+    int32_t viewingRange,yxAspect,rsYxAspect,rsYOffset,rsLetterbox,noWidescreen;
+};
+static std::vector<ProfileCrosshairSprite> profileCrosshairPending;
+static bool profileCrosshairArmed, profileCrosshairReplaying;
+static bool profileCrosshairAnchorValid;
+static vec2f_t profileCrosshairAnchor;
+static uint64_t profileCrosshairRecorded, profileCrosshairReplayed, profileCrosshairLost;
+
+bool G_XRProfileCrosshairFilter(int32_t sx,int32_t sy,int32_t z,int16_t a,int32_t picnum,int8_t shade,char pal,int32_t stat,
+                                   uint8_t alpha,uint8_t blend,int32_t cx1,int32_t cy1,int32_t cx2,int32_t cy2,int32_t uniqid)
+{
+    if (!profileCrosshairArmed || profileCrosshairReplaying || profileCrosshairPending.size()>=64) return false;
+    bool listed=false;
+    for (int const tile:gameProfile().crosshairTiles) listed|=tile==picnum;
+    if (!listed) return false;
+    profileCrosshairPending.push_back({sx,sy,z,a,picnum,shade,pal,stat,alpha,blend,cx1,cy1,cx2,cy2,uniqid,
+                                       viewingrange,yxaspect,rotatesprite_yxaspect,rotatesprite_y_offset,rotatesprite_letterbox,
+                                       g_rotatespriteNoWidescreen});
+    ++profileCrosshairRecorded;
+    return true;
+}
+
+// Start of the frame's 2D drawing (G_DisplayRest): decide whether this frame's reticle sprites can be replayed.
+void G_XRCrosshairFrame()
+{
+    profileCrosshairPending.clear();
+    profileCrosshairArmed=false;
+    if (gameProfile().crosshairTiles.empty() || !crosshairViews.valid || !menuRuntime
+        || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()
+        || screenpeek!=myconnectindex || !ud.crosshair || ud.camerasprite!=-1 || ud.overhead_on
+        || g_player[myconnectindex].ps->newowner>=0)
+        return;
+    profileCrosshairArmed=true;
+}
+
+// Inside the open crosshair segment: draw what was held back. Offsets from (160,100) are kept because the
+// sprites are issued again with the arguments they had; only the segment's placement moves them.
+void G_XRCrosshairReplay()
+{
+    if (profileCrosshairPending.empty()) return;
+    int const vr=viewingrange, asp=yxaspect, rsAsp=rotatesprite_yxaspect, rsOff=rotatesprite_y_offset,
+              rsLetter=rotatesprite_letterbox, noWide=g_rotatespriteNoWidescreen;
+    profileCrosshairReplaying=true;
+    for (auto const &s:profileCrosshairPending)
+    {
+        renderSetAspect(s.viewingRange,s.yxAspect);
+        rotatesprite_yxaspect=s.rsYxAspect; rotatesprite_y_offset=s.rsYOffset; rotatesprite_letterbox=s.rsLetterbox;
+        g_rotatespriteNoWidescreen=s.noWidescreen;
+        if (!profileCrosshairAnchorValid)
+        {
+            profileCrosshairAnchor=polymost_xrRotateSpriteAnchor({160<<16,100<<16},s.z,s.stat,{s.cx1+s.cx2,s.cy1+s.cy2});
+            profileCrosshairAnchorValid=true;
+        }
+        polymost_dorotatesprite(s.sx,s.sy,s.z,s.a,s.picnum,s.shade,s.pal,s.stat,s.alpha,s.blend,s.cx1,s.cy1,s.cx2,s.cy2,s.uniqid);
+        ++profileCrosshairReplayed;
+    }
+    profileCrosshairReplaying=false;
+    renderSetAspect(vr,asp);
+    rotatesprite_yxaspect=rsAsp; rotatesprite_y_offset=rsOff; rotatesprite_letterbox=rsLetter; g_rotatespriteNoWidescreen=noWide;
+    profileCrosshairPending.clear();
+}
+
+// After the rest of the HUD (EVENT_DISPLAYREST): reticle sprites it drew get a segment of their own.
+void G_XRCrosshairLate()
+{
+    bool const armed=profileCrosshairArmed;
+    profileCrosshairArmed=false;
+    if (!armed) { profileCrosshairPending.clear(); return; }
+    if (!profileCrosshairPending.empty())
+    {
+        bool const captured=G_XRBeginCrosshair();
+        if (captured) G_XRCrosshairReplay();
+        else { profileCrosshairLost+=profileCrosshairPending.size(); profileCrosshairPending.clear(); }
+        G_XREndCrosshair(captured,{160<<16,100<<16},65536,RS_AUTO,true);
+    }
+    if (sdlayer_getenv_cached("EDUKE32_XR_TEST_CROSSHAIR"))
+    {
+        static uint64_t frames, lastReplayed;
+        if (frames++%120==0)
+        {
+            LOG_F(INFO,"OpenXR profile crosshair: recorded=%llu replayed=%llu (+%llu since last) lost=%llu anchor=%.1f,%.1f.",
+                  (unsigned long long)profileCrosshairRecorded,(unsigned long long)profileCrosshairReplayed,
+                  (unsigned long long)(profileCrosshairReplayed-lastReplayed),(unsigned long long)profileCrosshairLost,
+                  profileCrosshairAnchorValid ? profileCrosshairAnchor.x : -1.f,profileCrosshairAnchorValid ? profileCrosshairAnchor.y : -1.f);
+            lastReplayed=profileCrosshairReplayed;
+        }
+    }
+}
+
 bool G_XRBeginCrosshair()
 {
+    profileCrosshairAnchorValid=false;
     if (!crosshairViews.valid || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return false;
     // Flush the preceding HUD at its original depth/order. Only the native
     // crosshair event and its optional returned tile enter this spatial segment.
@@ -5274,7 +5397,9 @@ void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t fla
         auto anchor=eventOnly
             ? polymost_xrRotateSpriteAnchor({160<<16,100<<16},65536,RS_AUTO,{xdim,ydim})
             : polymost_xrRotateSpriteAnchor(position,scale,flags,{windowxy1.x+windowxy2.x,windowxy1.y+windowxy2.y});
-        if (eventOnly && !crosshairBounds.empty())
+        if (profileCrosshairAnchorValid)
+            anchor=profileCrosshairAnchor;   // the game's own reticle sprites: their logical centre, whatever else was drawn
+        else if (eventOnly && !crosshairBounds.empty())
         {
             anchor.x=(crosshairBounds.x0+crosshairBounds.x1)*.5f;
             anchor.y=(crosshairBounds.y0+crosshairBounds.y1)*.5f;

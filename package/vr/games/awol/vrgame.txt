@@ -64,3 +64,11 @@ wristhud rest 0.3 unless PRISONBREAK_STATUS unless CHOREO_SPEAKER not CHOREO_AVA
 # No cursor line: A.W.O.L. has no CON-driven mouse UI. Its only cursor is the engine menu cursor, which the
 # game merely redraws (EVENT_DISPLAYCURSOR, awol_ui.con:86-99) from the native menu pointer; the in-game
 # screens (comic cutscenes, dialogue, credits) never read the mouse.
+
+# Reticle: A.W.O.L. draws its real crosshair itself, two marks of tile 5627 that spread apart with the weapon's
+# spread (EVENT_DISPLAYWEAPON, data/awol_weapons.con:2031-2052, orientation 2081, only with userdef.crosshair 1 and
+# skill < 4). It has no define name. The stock CROSSHAIR tile (2523) is a 0x0 tile in its art (tiles000.art), and
+# EVENT_DISPLAYCROSSHAIR only returns -1 (awol_weapons.con:1806), so nothing else marks the aim point. In the headset
+# these sprites are drawn on the surface the aiming hand points at, around the logical screen centre, instead of on
+# the weapon hand's card.
+crosshair 5627

@@ -1057,6 +1057,9 @@ void G_DisplayRest(int32_t smoothratio)
         return;
     }
 
+#ifdef USE_OPENXR
+    G_XRCrosshairFrame();
+#endif
     i = pp->cursectnum;
     if (i > -1)
     {
@@ -1292,6 +1295,7 @@ void G_DisplayRest(int32_t smoothratio)
                 rotatesprite_win(crosshairpos.x, crosshairpos.y, crosshair_scale, 0, a, 0, crosshair_pal, crosshair_o);
         }
 #ifdef USE_OPENXR
+        if (xrCrosshair) G_XRCrosshairReplay();
         G_XREndCrosshair(xrCrosshair,crosshairpos,crosshair_scale,crosshair_o,(unsigned) a >= MAXTILES);
 #endif
         if (FURY && (unsigned) a < MAXTILES)
@@ -1356,6 +1360,9 @@ void G_DisplayRest(int32_t smoothratio)
 #endif
         renderSetAspect(vr, asp);
     }
+#ifdef USE_OPENXR
+    G_XRCrosshairLate();
+#endif
 
     if (ud.pause_on==1 && (g_player[myconnectindex].ps->gm&MODE_MENU) == 0)
         menutext_center(100, "Game Paused");

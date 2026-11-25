@@ -72,6 +72,14 @@ fix16_t G_XRMovementAngle(fix16_t nativeAngle);
 bool G_XRCrosshairPosition(vec2_t &position);
 bool G_XRBeginCrosshair();
 void G_XREndCrosshair(bool captured, vec2_t position, int32_t scale, int32_t flags, bool eventOnly);
+// Profile `crosshair TILE...`: the game's own reticle sprites are held back during the frame's HUD and
+// drawn in the crosshair segment (G_XRCrosshairReplay, inside it) or, if they came after it, in a later
+// segment of their own (G_XRCrosshairLate). G_XRCrosshairFrame opens the frame (start of G_DisplayRest).
+bool G_XRProfileCrosshairFilter(int32_t sx, int32_t sy, int32_t z, int16_t a, int32_t picnum, int8_t shade, char pal, int32_t stat,
+                                uint8_t alpha, uint8_t blend, int32_t cx1, int32_t cy1, int32_t cx2, int32_t cy2, int32_t uniqid);
+void G_XRCrosshairFrame();
+void G_XRCrosshairReplay();
+void G_XRCrosshairLate();
 void G_XRArmWorldDraw();
 bool G_XRConsumeWorldDraw();
 void G_XRBeginMenuPresentation();

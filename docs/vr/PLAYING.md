@@ -289,7 +289,11 @@ Duke model sets and the Hit Feedback mod are left out. In VR:
   names the two gamevars (16.16 fixed, 320x200 screen space) of a game's own mouse cursor: while a `when`
   condition holds the menu laser shows from the pointing hand, the point it meets on the UI panel is
   written to the gamevars, turning and look input are zeroed and the trigger is Fire (the click), never a
-  shot. Up to 256 weapon lines are read.
+  shot; `crosshair TILE [TILE...]` (numbers or CON defines) names the tiles of a reticle the game
+  draws itself with `rotatesprite` (marks that spread apart with the weapon's spread): in the headset those
+  sprites are not drawn on the weapon hand's card or the HUD but at the point your aiming hand points at,
+  around the screen centre, so the marks keep their spacing. Without the line the game's reticle is
+  unchanged. Up to 256 weapon lines are read.
 - Its own crosshair is placed where your hand points.
 
 **AMC Squad** needs engine changes of its own (a larger tile range, new script commands, 67 video
@@ -305,7 +309,8 @@ and character select whole in front instead of splitting them onto the wrists.
 carry), a gadget wheel (bandages, grenades and throwing knives, with their counts) and its own controls:
 **right stick click reloads, the left trigger aims down sights** (hold, or toggle, as its ADS mode option
 says) and **the right grip sprints** (hold; A.W.O.L. has no run key). Fire, jump, crouch, use and the
-wheels keep the usual VR controls.
+wheels keep the usual VR controls. Its reticle (two marks that spread with the weapon) is drawn where your
+hand points, on the surface it meets.
 
 ## Menus
 
