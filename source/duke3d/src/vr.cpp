@@ -1231,11 +1231,12 @@ static bool menuPointerPressed;
 // with no native menu. Gamevars read from the local player's sprite.
 static bool cursorUiUp()
 {
-    auto const &profile=gameProfile();
+    if (!vr_menupointer || !totalConversion()) return false;
     auto const p=g_player[myconnectindex].ps;
-    if (profile.cursorGates.empty() || !vr_menupointer || !totalConversion() || !p || (unsigned)p->i>=MAXSPRITES
-        || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || screenpeek!=myconnectindex)
+    if (!p || (unsigned)p->i>=MAXSPRITES || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || screenpeek!=myconnectindex)
         return false;
+    auto const &profile=gameProfile();
+    if (profile.cursorGates.empty()) return false;
     for (auto const &gate:profile.cursorGates)
         if (gateHolds(gate,p->i,myconnectindex)) return true;
     return false;
@@ -1248,6 +1249,8 @@ static bool updateMenuPointer(uint32_t const down[2])
     bool const menuOpen=vr_menupointer && runtime && (g_player[myconnectindex].ps->gm & MODE_MENU);
     bool const cursor=!menuOpen && runtime && cursorUiUp();
     bool const open=menuOpen || cursor;
+    // The cursor mode follows the gate, not the pose: a tracking blip must not drop it (turn/look, Fire mapping).
+    G_VRSetCursorActive(cursor);
     for (int hand=0;hand<2;++hand)
     {
         bool const pressed=(down[hand] & ~previous[hand]) & ButtonSelect;
@@ -1261,7 +1264,6 @@ static bool updateMenuPointer(uint32_t const down[2])
         if (runtime) runtime->setMenuPointer(false,{});
         if (menuPointerPressed) { g_mouseClickState=MOUSE_RELEASED; menuPointerPressed=false; }
         g_mouseExternal=false;
-        G_VRSetCursorActive(false);
         return false;
     }
     runtime->setMenuPointer(true,h.aimPose);
@@ -1272,7 +1274,6 @@ static bool updateMenuPointer(uint32_t const down[2])
         // The game's cursor: the trigger is Fire (set with the other buttons), the position goes to its gamevars.
         if (menuPointerPressed) { g_mouseClickState=MOUSE_RELEASED; menuPointerPressed=false; }
         g_mouseExternal=false;
-        G_VRSetCursorActive(true);
         bool const hit=runtime->menuPointerHit(u,v);
         vec2_t position={0,0};
         if (hit)
@@ -1300,7 +1301,6 @@ static bool updateMenuPointer(uint32_t const down[2])
         }
         return false;
     }
-    G_VRSetCursorActive(false);
     if (runtime->menuPointerHit(u,v))
     {
         g_mouseExternal=true;
@@ -1394,6 +1394,17 @@ static void publishInput()
     // The menu laser (and the game's cursor laser) first: the cursor turns the right trigger into the click.
     bool const menuPointing=updateMenuPointer(down);
     bool const cursorOn=G_VRCursorActive();
+    {
+        // The cursor closed with a trigger still held: that press is not Fire (or a pipebomb throw on release).
+        static bool cursorWas=false;
+        if (cursorWas && !cursorOn)
+            for (unsigned hand=0;hand<2;++hand)
+            {
+                blockedInputButtons[hand] |= rawInput.hands[hand].buttons & ButtonSelect;
+                down[hand] &= ~ButtonSelect;
+            }
+        cursorWas=cursorOn;
+    }
     auto const move=inputStick(rawInput.hands[0]), turn=inputStick(rawInput.hands[1]);
     ControlInfo analog{};
     analog.dx=std::lround(move.x*32767.f); analog.dz=std::lround(-move.y*32767.f);
@@ -1403,8 +1414,8 @@ static void publishInput()
     uint64_t wheelButtons=0;
     bool const wheelOwnsStick=updateWheel(wheel,wheelButtons,down[1]);
     updateWheel(gadgetWheel,wheelButtons,down[0]);
-    if (wheelOwnsStick) analog.dyaw=analog.dpitch=0;
-    if (float const snap=wheelOwnsStick ? 0.f : snapTurnDegrees())
+    if (wheelOwnsStick || cursorOn) analog.dyaw=analog.dpitch=0;
+    if (float const snap=wheelOwnsStick || cursorOn ? 0.f : snapTurnDegrees())
     {
         // One discrete body rotation per stick flick; re-arm near centre.
         static bool armed=true;
@@ -1425,11 +1436,11 @@ static void publishInput()
     // The game's own cursor: the pointing hand's trigger (either hand) is the click, i.e. Fire, and kicks nothing.
     button(cursorOn ? (down[menuPointerHand]&ButtonSelect) : (down[1]&ButtonSelect),gamefunc_Fire);
     button(!cursorOn && (down[0]&ButtonSelect),vr_lefttrigger ? gamefunc_Alt_Fire : gamefunc_Quick_Kick);
-    button(down[1]&ButtonStickClick,vr_lefttrigger ? gamefunc_Quick_Kick : gamefunc_Alt_Fire);
+    button(!cursorOn && (down[1]&ButtonStickClick),vr_lefttrigger ? gamefunc_Quick_Kick : gamefunc_Alt_Fire);
     button(down[0]&ButtonGrip,gamefunc_Open);
     button(down[1]&ButtonPrimary,gamefunc_Jump);
     // Quick kick also on a right-stick-down flick.
-    bool const kickFlick=!stickPitchAllowed() && !wheelOwnsStick && rawInput.hands[1].stickActive
+    bool const kickFlick=!cursorOn && !stickPitchAllowed() && !wheelOwnsStick && rawInput.hands[1].stickActive
         && rawInput.hands[1].stick.y<-.7f && std::fabs(rawInput.hands[1].stick.x)<.6f;
     button(kickFlick,gamefunc_Quick_Kick);
     // In push-to-talk mode the vr_ptt_button button talks instead of its usual function: left Y
@@ -5880,6 +5891,7 @@ void G_XRBeginFrame()
     auto const neutral=[] {
         rawInput={}; inputRuntime=nullptr;
         activeInputButtons={}; blockedInputButtons={};
+        G_VRSetCursorActive(false);
         CONTROL_SetExternalInput(nullptr,0,nullptr);
     };
     if (g_networkMode == NET_DEDICATED_SERVER || videoGetRenderMode() != REND_POLYMOST)
