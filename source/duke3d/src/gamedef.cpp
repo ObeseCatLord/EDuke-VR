@@ -214,6 +214,9 @@ static tokenmap_t const vm_keywords[] =
     { "definequote",            CON_DEFINEQUOTE },
     { "defineskillname",        CON_DEFINESKILLNAME },
     { "definesound",            CON_DEFINESOUND },
+#ifdef AMC_BUILD
+    { "definesoundv",           CON_DEFINESOUNDV },
+#endif
     { "definevolumeflags",      CON_DEFINEVOLUMEFLAGS },
     { "definevolumename",       CON_DEFINEVOLUMENAME },
     { "defstate",               CON_DEFSTATE },
@@ -322,6 +325,9 @@ static tokenmap_t const vm_keywords[] =
     { "ifcanseetarget",         CON_IFCANSEETARGET },
     { "ifcanshoottarget",       CON_IFCANSHOOTTARGET },
     { "ifceilingdistl",         CON_IFCEILINGDISTL },
+#ifdef AMC_BUILD
+    { "ifcfgvar",               CON_IFCFGVAR },
+#endif
     { "ifclient",               CON_IFCLIENT },
     { "ifcount",                CON_IFCOUNT },
     { "ifcutscene",             CON_IFCUTSCENE },
@@ -343,6 +349,10 @@ static tokenmap_t const vm_keywords[] =
     { "ifp",                    CON_IFP },
     { "ifpdistg",               CON_IFPDISTG },
     { "ifpdistl",               CON_IFPDISTL },
+#ifdef AMC_BUILD
+    { "ifpdistgvar",            CON_IFPDISTGVAR },
+    { "ifpdistlvar",            CON_IFPDISTLVAR },
+#endif
     { "ifphealthl",             CON_IFPHEALTHL },
     { "ifpinventory",           CON_IFPINVENTORY },
     { "ifplaybackon",           CON_IFPLAYBACKON },
@@ -403,6 +413,9 @@ static tokenmap_t const vm_keywords[] =
     { "mail",                   CON_MAIL },
     { "mikesnd",                CON_MIKESND },
     { "minitext",               CON_MINITEXT },
+#ifdef AMC_BUILD
+    { "mkdir",                  CON_MKDIR },
+#endif
     { "modvar",                 CON_MODVAR },
     { "modvarvar",              CON_MODVARVAR },
     { "money",                  CON_MONEY },
@@ -438,6 +451,12 @@ static tokenmap_t const vm_keywords[] =
     { "prevspritesect",         CON_PREVSPRITESECT },
     { "prevspritestat",         CON_PREVSPRITESTAT },
     { "preloadtrackslotforswap", CON_PRELOADTRACKSLOTFORSWAP },
+#ifdef AMC_BUILD
+    { "profilenanoend",         CON_PROFILENANOEND },
+    { "profilenanolog",         CON_PROFILENANOLOG },
+    { "profilenanoreset",       CON_PROFILENANORESET },
+    { "profilenanostart",       CON_PROFILENANOSTART },
+#endif
     { "pstomp",                 CON_PSTOMP },
     { "qgetsysstr",             CON_QGETSYSSTR },
     { "qspawnvar",              CON_QSPAWN },
@@ -495,6 +514,9 @@ static tokenmap_t const vm_keywords[] =
     { "setgamepalette",         CON_SETGAMEPALETTE },
     { "setinput",               CON_SETINPUT },
     { "setmusicposition",       CON_SETMUSICPOSITION },
+#ifdef AMC_BUILD
+    { "setmusicvolume",         CON_SETMUSICVOLUME },
+#endif
     { "setngcflags",            CON_SETNGCFLAGS },
     { "setplayer",              CON_SETPLAYER },
     { "setplayerangle",         CON_SETPLAYERANGLE },
@@ -1060,7 +1082,18 @@ const char *EventNames[MAXEVENTS] =
     "EVENT_PREWEAPONSHOOT",
     "EVENT_POSTWEAPONSHOOT",
     "EVENT_OPERATEACTIVATORS",
+#ifdef AMC_BUILD
+    "EVENT_POSTACTORDAMAGE",
+    "EVENT_CSACTIVATELINK",
+    "EVENT_CSPREMODIFYOPTION",
+    "EVENT_CSPOSTMODIFYOPTION",
+    "EVENT_CSPOPULATEMENU",
+#endif
 };
+
+#if defined AMC_BUILD && !defined CON_MAXSOUNDVOLUME
+#define CON_MAXSOUNDVOLUME 16384 // definesoundv upper limit; 1024 is a volume of 1.0
+#endif
 
 uint8_t *bitptr; // pointer to bitmap of which bytecode positions contain pointers
 uint8_t *bitstate; // pointer to bitmap of which bytecode positions contain the label index of a state
@@ -1968,6 +2001,9 @@ static bool C_CheckEmptyBranch(int tw, intptr_t lastScriptPtr)
     // ifrnd and the others actually do something when the condition is executed
     if ((Bstrncmp(VM_GetKeywordForID(tw), "if", 2) && tw != CON_ELSE) ||
             tw == CON_IFRND || tw == CON_IFHITWEAPON || tw == CON_IFCANSEE || tw == CON_IFCANSEETARGET ||
+#ifdef AMC_BUILD
+            tw == CON_IFPDISTLVAR || tw == CON_IFPDISTGVAR ||
+#endif
             tw == CON_IFPDISTL || tw == CON_IFPDISTG || tw == CON_IFGOTWEAPONCE)
     {
         g_skipBranch = false;
@@ -2050,7 +2086,11 @@ static void C_Include(const char *confile, int optional)
     int32_t const len = kfilelength(fp);
     char *mptr = (char *)Xmalloc(len+1);
 
+#ifdef AMC_BUILD
+    DVLOG_F(LOG_CON, "Including: %s (%d bytes)",confile, len);
+#else
     VLOG_F(LOG_CON, "Including: %s (%d bytes)",confile, len);
+#endif
 
     C_AddFileOffset((g_scriptPtr - apScript), confile);
 
@@ -2092,7 +2132,28 @@ static void C_Include(const char *confile, int optional)
     Xfree(mptr);
 }
 
-#ifdef _WIN32
+#ifdef AMC_BUILD
+// returns 0 if the file exists (in a mod dir, group, zip or on disk), -1 otherwise
+static int check_file_exists(const char *fn)
+{
+        static char buf[BMAX_PATH];
+
+        // .zip isn't case sensitive, and calling kopen4load on files in .zips is slow
+        Bstrcpy(buf, fn);
+        kzfindfilestart(buf);
+
+        if (!kzfindfile(buf))
+        {
+            buildvfs_kfd fp;
+            if ((fp = kopen4loadfrommod(fn, g_loadFromGroupOnly)) != buildvfs_kfd_invalid)
+                kclose(fp);
+            else
+                return -1;
+        }
+
+        return 0;
+}
+#elif defined _WIN32
 static void check_filename_case(const char *fn)
 {
         static char buf[BMAX_PATH];
@@ -2188,7 +2249,12 @@ void C_DefineMusic(int volumeNum, int levelNum, const char *fileName)
 
     Xfree(pMapInfo->musicfn);
     pMapInfo->musicfn = dup_filename(fileName);
+#ifdef AMC_BUILD
+    if (check_file_exists(pMapInfo->musicfn))
+        LOG_F(WARNING, "%s:%d: unable to find music file: \"%s\"", g_scriptFileName, g_lineNumber, pMapInfo->musicfn);
+#else
     check_filename_case(pMapInfo->musicfn);
+#endif
 }
 
 void C_DefineVolumeFlags(int32_t vol, int32_t flags)
@@ -3442,6 +3508,12 @@ DO_DEFSTATE:
         case CON_MAIL:
         case CON_MONEY:
         case CON_PAPER:
+#ifdef AMC_BUILD
+        case CON_PROFILENANOEND:
+        case CON_PROFILENANOLOG:
+        case CON_PROFILENANORESET:
+        case CON_PROFILENANOSTART:
+#endif
         case CON_SAVE:
         case CON_SAVENN:
         case CON_SLEEPTIME:
@@ -3451,6 +3523,9 @@ DO_DEFSTATE:
             C_GetNextValue(LABEL_DEFINE);
             continue;
 
+#ifdef AMC_BUILD
+        case CON_MKDIR:
+#endif
         case CON_QUOTE:
             C_GetNextValue(LABEL_DEFINE);
             if (EDUKE32_PREDICT_FALSE(((unsigned)g_scriptPtr[-1] >= MAXQUOTES) || apStrings[g_scriptPtr[-1]] == NULL))
@@ -3867,6 +3942,9 @@ DO_DEFSTATE:
         case CON_SETACTORANGLE:
         case CON_SETGAMEPALETTE:
         case CON_SETMUSICPOSITION:
+#ifdef AMC_BUILD
+        case CON_SETMUSICVOLUME:
+#endif
         case CON_SETPLAYERANGLE:
         case CON_SHOOT:
         case CON_SOUNDONCE:
@@ -5192,6 +5270,9 @@ repeatcase:
         case CON_IFAI:
         case CON_IFANGDIFFL:
         case CON_IFCEILINGDISTL:
+#ifdef AMC_BUILD
+        case CON_IFCFGVAR:
+#endif
         case CON_IFCOUNT:
         case CON_IFCUTSCENE:
         case CON_IFFLOORDISTL:
@@ -5201,6 +5282,10 @@ repeatcase:
         case CON_IFP:
         case CON_IFPDISTG:
         case CON_IFPDISTL:
+#ifdef AMC_BUILD
+        case CON_IFPDISTGVAR:
+        case CON_IFPDISTLVAR:
+#endif
         case CON_IFPHEALTHL:
         case CON_IFPINVENTORY:
         case CON_IFPLAYERSL:
@@ -5217,6 +5302,13 @@ repeatcase:
 
                 switch (tw)
                 {
+#ifdef AMC_BUILD
+                case CON_IFCFGVAR:
+                    C_GetNextVarType(GAMEVAR_READONLY);
+                    break;
+                case CON_IFPDISTGVAR:
+                case CON_IFPDISTLVAR:
+#endif
                 case CON_IFCUTSCENE:
                     C_GetNextVar();
                     break;
@@ -6017,6 +6109,9 @@ repeatcase:
             continue;
 
         case CON_DEFINESOUND:
+#ifdef AMC_BUILD
+        case CON_DEFINESOUNDV:
+#endif
         {
             g_scriptPtr--;
             C_GetNextValue(LABEL_DEFINE);
@@ -6078,7 +6173,12 @@ repeatcase:
             }
             filename[i] = '\0';
 
+#ifdef AMC_BUILD
+            if (check_file_exists(filename))
+                LOG_F(WARNING, "%s:%d: unable to find sound file: \"%s\"", g_scriptFileName, g_lineNumber, filename);
+#else
             check_filename_case(filename);
+#endif
 
             C_GetNextValue(LABEL_DEFINE);
             int minpitch = g_scriptPtr[-1];
@@ -6097,6 +6197,24 @@ repeatcase:
 
             float volume = 1.0;
 
+#ifdef AMC_BUILD
+            // definesoundv: the volume is mandatory and ranges from 0 to CON_MAXSOUNDVOLUME, where 1024 is 1.0.
+            if (tw == CON_DEFINESOUNDV)
+            {
+                C_GetNextValue(LABEL_DEFINE);
+                i = g_scriptPtr[-1];
+
+                if (EDUKE32_PREDICT_FALSE((unsigned) i > CON_MAXSOUNDVOLUME))
+                {
+                    LOG_F(ERROR, "%s:%d: provided sound volume exceeds limit of %d.", g_scriptFileName, g_lineNumber, CON_MAXSOUNDVOLUME);
+                    g_errorCnt++;
+                    i = 1024;
+                }
+                volume = (float) (i << 6) / ((float) fix16_one);
+                g_scriptPtr--;
+            }
+            else
+#endif
             if (C_GetKeyword() == -1)
             {
                 C_GetNextValue(LABEL_DEFINE);
@@ -6685,7 +6803,11 @@ void C_Compile(const char *fileName)
     {
         if (g_loadFromGroupOnly || (numgroupfiles == 0 && !kzfs.leng))
         {
-#ifndef EDUKE32_STANDALONE
+#if defined(AMC_BUILD)
+            Bsprintf(tempbuf,"Required game data was not found.  This binary is only intended to be run in a valid AMC Squad install folder!\n\n"
+                     "You must copy this binary to your AMC Squad directory before continuing!");
+            G_GameExit(tempbuf);
+#elif !defined(EDUKE32_STANDALONE)
             char const *gf = G_GrpFile();
             Bsprintf(tempbuf,"Required game data was not found.  A valid copy of '%s' or other compatible data is needed to run EDuke32.\n\n"
                      "You must copy '%s' to your game directory before continuing!", gf, gf);
@@ -6757,7 +6879,9 @@ void C_Compile(const char *fileName)
 
         if (g_errorCnt)
         {
+#ifndef AMC_BUILD
             if (g_loadFromGroupOnly || (numgroupfiles == 0 && !kzfs.leng))
+#endif
             {
 #ifndef EDUKE32_STANDALONE
 err:

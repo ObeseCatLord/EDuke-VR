@@ -38,6 +38,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "vfs.h"
 
+#ifdef AMC_BUILD
+extern char savegame_dir[BMAX_PATH];  // savegame.cpp (defined weakly in game.cpp until the savegame code provides it)
+#endif
+
 struct osdcmd_cheatsinfo osdcmd_cheatsinfo_stat;
 float r_ambientlight = 1.0, r_ambientlightrecip = 1.0;
 int32_t r_pr_defaultlights = 1;
@@ -489,7 +493,7 @@ static int osdcmd_vidmode(osdcmdptr_t parm)
 
 static int osdcmd_spawn(osdcmdptr_t parm)
 {
-    int32_t picnum = 0;
+    picnum32_t picnum = 0;
     uint16_t cstat=0;
     char pal=0;
     int16_t ang=0;
@@ -1075,7 +1079,9 @@ static int osdcmd_quickload(osdcmdptr_t UNUSED(parm))
 static int osdcmd_screenshot(osdcmdptr_t parm)
 {
 //    KB_ClearKeysDown();
-#ifndef EDUKE32_STANDALONE
+#ifdef AMC_BUILD
+    static const char *fn = "amc0000.png";
+#elif !defined(EDUKE32_STANDALONE)
     static const char *fn = "duke0000.png";
 #else
     static const char *fn = "capt0000.png";
@@ -1839,14 +1845,25 @@ int32_t registerosdcommands(void)
         { "r_stacksize", "change frame drawing routine stack size", (void *)&g_frameStackSize, CVAR_INT|CVAR_FUNCPTR, DRAWFRAME_MIN_STACK_SIZE, DRAWFRAME_MAX_STACK_SIZE },
         { "r_rotatespritenowidescreen", "pass bit 1024 to all CON rotatesprite calls", (void *)&g_rotatespriteNoWidescreen, CVAR_BOOL|CVAR_FUNCPTR, 0, 1 },
         { "r_upscalefactor", "increase performance by rendering at upscalefactor less than the screen resolution and upscale to the full resolution in the software renderer", (void *)&ud.detail, CVAR_INT|CVAR_FUNCPTR, 1, 16 },
+#ifdef AMC_BUILD
+        { "r_precache", "precache map assets during level load, including art and sounds" CVAR_BOOL_OPTSTR, (void *)&ud.config.UsePrecache, CVAR_BOOL, 0, 1 },
+#else
         { "r_precache", "precache art assets during level load" CVAR_BOOL_OPTSTR, (void *)&ud.config.useprecache, CVAR_BOOL, 0, 1 },
+#endif
 
         { "r_ambientlight", "sets the global map light level",(void *)&r_ambientlight, CVAR_FLOAT|CVAR_FUNCPTR, 0, 10 },
 
         { "r_pr_defaultlights", "default polymer lights:\n 0: off\n 1: on",(void *)&r_pr_defaultlights, CVAR_BOOL, 0, 1 },
 
+#ifdef AMC_BUILD
+        { "savegame_dir", "Path where savegames are stored (relative to the game content directory)",  (void*)savegame_dir, CVAR_STRING, 0, sizeof(savegame_dir) - 1 },
+#endif
+
         { "skill","changes the game skill setting", (void *)&ud.m_player_skill, CVAR_INT|CVAR_FUNCPTR|CVAR_NOSAVE/*|CVAR_NOMULTI*/, 0, 5 },
 
+#ifdef AMC_BUILD
+        { "snd_precache", "precache all sounds on game startup and level load. May result in longer startup time if enabled, but potentially less stutter during gameplay" CVAR_BOOL_OPTSTR, (void *)&ud.config.UseSoundPrecache, CVAR_BOOL, 0, 1 },
+#endif
         { "snd_ambience", "ambient sounds" CVAR_BOOL_OPTSTR, (void *)&ud.config.AmbienceToggle, CVAR_BOOL, 0, 1 },
         { "snd_enabled", "sound effects" CVAR_BOOL_OPTSTR, (void *)&ud.config.SoundToggle, CVAR_BOOL|CVAR_FUNCPTR, 0, 1 },
         { "snd_volume", "master volume control", (void *)&ud.config.MasterVolume, CVAR_INT, 0, 255 },

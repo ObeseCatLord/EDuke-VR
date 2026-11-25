@@ -1587,7 +1587,7 @@ static weapondata_t weapondefaults[MAX_WEAPONS] = {
 
 // KEEPINSYNC with what is contained above
 // XXX: ugly
-static int32_t G_StaticToDynamicTile(int32_t const tile)
+static int32_t G_StaticToDynamicTile(picnum32_t const tile)
 {
     switch (tile)
     {

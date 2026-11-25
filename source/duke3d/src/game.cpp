@@ -130,6 +130,12 @@ int32_t MAXCACHE1DSIZE = (8*1024*1024);
 
 int32_t tempwallptr;
 
+#ifdef AMC_BUILD
+// Subdirectory of the game content directory that holds savegames (cvar savegame_dir).
+// Weak so that savegame.cpp can define it for real.
+__attribute__((weak)) char savegame_dir[BMAX_PATH] = "savegames";
+#endif
+
 static int32_t nonsharedtimer;
 
 int32_t ticrandomseed;
@@ -208,6 +214,14 @@ enum gametokens
     T_USERCONTENT,
     T_LOCALIZATION,
     T_KEYCONFIG,
+#ifdef AMC_BUILD
+    T_CUSTOMSETTINGS,
+    T_INDEX,
+    T_LINK,
+    T_FONT,
+    T_VSTRINGS,
+    T_VALUES,
+#endif
 };
 
 static void gameTimerHandler(void)
@@ -242,7 +256,9 @@ void G_HandleSpecialKeys(void)
     {
         KB_ClearKeyDown(sc_F12);
         videoCaptureScreen(
-#ifndef EDUKE32_STANDALONE
+#ifdef AMC_BUILD
+        "amc0000.tga"
+#elif !defined(EDUKE32_STANDALONE)
         "duke0000.tga"
 #else
         "capt0000.tga"
@@ -1396,7 +1412,7 @@ void G_DumpDebugInfo(void)
 
 // if <set_movflag_uncond> is true, set the moveflag unconditionally,
 // else only if it equals 0.
-static int32_t G_InitActor(int32_t i, int32_t tilenum, int32_t set_movflag_uncond)
+static int32_t G_InitActor(int32_t i, picnum32_t tilenum, int32_t set_movflag_uncond)
 {
     if (g_tile[tilenum].execPtr)
     {
@@ -1413,7 +1429,7 @@ static int32_t G_InitActor(int32_t i, int32_t tilenum, int32_t set_movflag_uncon
     return 0;
 }
 
-int32_t A_InsertSprite(int16_t whatsect,int32_t s_x,int32_t s_y,int32_t s_z,int16_t s_pn,int8_t s_s,
+int32_t A_InsertSprite(int16_t whatsect,int32_t s_x,int32_t s_y,int32_t s_z,picnum16_t s_pn,int8_t s_s,
                        uint8_t s_xr,uint8_t s_yr,int16_t s_a,int16_t s_ve,int16_t s_zv,int16_t s_ow,int16_t s_ss)
 {
 
@@ -1514,7 +1530,7 @@ static void Yax_SetBunchInterpolation(int32_t sectnum, int32_t cf)
 //
 // 1. spriteNum>=0: Spawn from parent sprite <spriteNum> with picnum <tileNum>
 // 2. spriteNum<0: Spawn from already *existing* sprite <tileNum>
-int A_Spawn(int spriteNum, int tileNum)
+int A_Spawn(int spriteNum, picnum32_t tileNum)
 {
     int         newSprite;
     spritetype *pSprite;
@@ -3689,7 +3705,7 @@ static int getofs_viewtype_mirrored(uint16_t & cstat, int angDiff)
 
 // XXX: this fucking sucks and needs to be replaced with a SFLAG
 #ifndef EDUKE32_STANDALONE
-static int G_CheckAdultTile(int tileNum)
+static int G_CheckAdultTile(picnum32_t tileNum)
 {
     switch (tileGetMapping(tileNum))
     {
@@ -4227,7 +4243,7 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
             if (T2(i) < 0 || T2(i) >= MAX_ACTIVE_VIEWSCREENS)
                 break;
 
-            int const viewscrTile = g_activeVscrTile[T2(i)];
+            picnum32_t const viewscrTile = g_activeVscrTile[T2(i)];
             int const viewscrShift = G_GetViewscreenSizeShift(t);
 
             if (actor[OW(i)].t_data[0] == 1)
@@ -4237,7 +4253,11 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                 t->xrepeat += 10;
                 t->yrepeat += 9;
             }
+#ifdef AMC_BUILD
+            else if (viewscrTile < MAXTILES && display_mirror != 3 && waloff[viewscrTile])
+#else
             else if (viewscrTile > 0 && display_mirror != 3 && waloff[viewscrTile])
+#endif
             {
                 // this exposes a sprite sorting issue which needs to be debugged further...
 #if 0
@@ -4686,7 +4706,11 @@ PALONLY:
             Bassert((unsigned)t->picnum < MAXTILES);
 
             if (viewtype > 0)
+#ifdef AMC_BUILD
+                while (tilesiz[t->picnum].x == 0 && t->picnum > 0 && t->picnum < MAXTILES)
+#else
                 while (tilesiz[t->picnum].x == 0 && t->picnum > 0)
+#endif
                     t->picnum -= l;       //Hack, for actors
 
             if (PICNUM_USABLE(actor[i].dispicnum))
@@ -5818,6 +5842,9 @@ static int parsedefinitions_game(scriptfile *pScript, int firstPass)
         { "newgamechoices",  T_NEWGAMECHOICES   },
         { "localization"  ,  T_LOCALIZATION     },
         { "keyconfig"  ,     T_KEYCONFIG        },
+#ifdef AMC_BUILD
+        { "customsettings",  T_CUSTOMSETTINGS   },
+#endif
     };
 
     static const tokenlist soundTokens[] =
@@ -5842,6 +5869,25 @@ static int parsedefinitions_game(scriptfile *pScript, int firstPass)
         { "texturefilter", T_TEXTUREFILTER },
     };
 
+
+#ifdef AMC_BUILD
+    static const tokenlist settingsListTokens [] =
+    {
+        { "title",           T_NAME },
+        { "entry",           T_CHOICE },
+        { "link",            T_LINK},
+    };
+
+    static const tokenlist settingsEntryTokens [] =
+    {
+        { "name",          T_NAME },
+        { "index",         T_INDEX },
+        { "font",          T_FONT },
+        { "type",          T_TYPE },
+        { "vstrings",      T_VSTRINGS },
+        { "values",        T_VALUES },
+    };
+#endif
 
     for (int f = 0; f < NUMGAMEFUNCTIONS; f++)
        scriptfile_addsymbolvalue(gamefunc_symbol_names[f], f);
@@ -6288,6 +6334,191 @@ static int parsedefinitions_game(scriptfile *pScript, int firstPass)
             break;
         }
 
+#ifdef AMC_BUILD
+        case T_CUSTOMSETTINGS:
+        {
+            char * customSettingsEnd;
+            if (scriptfile_getbraces(pScript,&customSettingsEnd))
+                break;
+            if (firstPass)
+            {
+                pScript->textptr = customSettingsEnd+1;
+                break;
+            }
+
+            int32_t entryCount = 0;
+            while (pScript->textptr < customSettingsEnd)
+            {
+                switch (getatoken(pScript, settingsListTokens, ARRAY_SIZE(settingsListTokens)))
+                {
+                    case T_NAME:
+                    {
+                        char *name = NULL;
+                        if (scriptfile_getstring(pScript, &name))
+                            break;
+                        memset(s_CustomSettings, 0, ARRAY_SIZE(s_CustomSettings));
+                        strncpy(s_CustomSettings, name, ARRAY_SIZE(s_CustomSettings)-1);
+                        break;
+                    }
+                    case T_CHOICE:
+                    {
+                        char * entryPtr = pScript->ltextptr;
+                        char * entryEnd;
+                        if (scriptfile_getbraces(pScript,&entryEnd))
+                            break;
+
+                        if ((unsigned)entryCount >= MAXCUSTOMSETTINGSENTRIES)
+                        {
+                            initprintf("Error: Maximum entries exceeded near line %s:%d\n",
+                                pScript->filename, scriptfile_getlinum(pScript, entryPtr));
+                            pScript->textptr = entryEnd+1;
+                            break;
+                        }
+
+                        MenuSettingsEntry & entry = g_MenuSettingsEntries[entryCount];
+                        entry = MenuSettingsEntry{};
+
+                        // Default Settings
+                        entry.font = &MF_Redfont;
+                        entry.type = EmptyAction;
+                        int32_t multiCheckVal = -1;
+
+                        while (pScript->textptr < entryEnd)
+                        {
+                            switch (getatoken(pScript, settingsEntryTokens, ARRAY_SIZE(settingsEntryTokens)))
+                            {
+                                case T_NAME:
+                                {
+                                    char *name = NULL;
+                                    if (scriptfile_getstring(pScript, &name))
+                                        break;
+                                    memset(entry.name, 0, ARRAY_SIZE(entry.name));
+                                    strncpy(entry.name, name, ARRAY_SIZE(entry.name)-1);
+                                    break;
+                                }
+                                case T_INDEX:
+                                    scriptfile_getnumber(pScript, &entry.storeidx);
+                                    break;
+                                case T_FONT:
+                                {
+                                    char *fontstr = NULL;
+                                    if (scriptfile_getstring(pScript, &fontstr))
+                                        break;
+
+                                    if (!Bstrcasecmp(fontstr, "big") || !Bstrcasecmp(fontstr, "bigfont") || !Bstrcasecmp(fontstr, "redfont"))
+                                        entry.font = &MF_Redfont;
+                                    else if (!Bstrcasecmp(fontstr, "small") || !Bstrcasecmp(fontstr, "smallfont") || !Bstrcasecmp(fontstr, "bluefont"))
+                                        entry.font = &MF_Bluefont;
+                                    else if (!Bstrcasecmp(fontstr, "mini") || !Bstrcasecmp(fontstr, "minifont"))
+                                        entry.font = &MF_Minifont;
+                                    else
+                                        initprintf("Error: invalid font '%s' specified near line %s:%d\n",
+                                                    fontstr, pScript->filename, scriptfile_getlinum(pScript, entryPtr));
+                                    break;
+                                }
+                                case T_TYPE:
+                                {
+                                    char *typestr = NULL;
+                                    if (scriptfile_getstring(pScript, &typestr))
+                                        break;
+
+                                    if (!Bstrcasecmp(typestr, "button"))
+                                        entry.type = ButtonAction;
+                                    else if (!Bstrcasecmp(typestr, "yes/no") || !Bstrcasecmp(typestr, "no/yes"))
+                                        entry.type = YesNoAction;
+                                    else if (!Bstrcasecmp(typestr, "on/off") || !Bstrcasecmp(typestr, "off/on") || !Bstrcasecmp(typestr, "toggle"))
+                                        entry.type = OnOffAction;
+                                    else if (!Bstrcasecmp(typestr, "multi") || !Bstrcasecmp(typestr, "choices"))
+                                        entry.type = MultiChoiceAction;
+                                    else if (!Bstrcasecmp(typestr, "range") || !Bstrcasecmp(typestr, "slider"))
+                                        entry.type = SliderAction;
+                                    else if (!Bstrcasecmp(typestr, "spacer2"))
+                                        entry.type = Spacer2Action;
+                                    else if (!Bstrcasecmp(typestr, "spacer4"))
+                                        entry.type = Spacer4Action;
+                                    else if (!Bstrcasecmp(typestr, "spacer6"))
+                                        entry.type = Spacer6Action;
+                                    else if (!Bstrcasecmp(typestr, "spacer8"))
+                                        entry.type = Spacer8Action;
+                                    break;
+                                }
+                                case T_VSTRINGS:
+                                {
+                                    char * vstringPtr = pScript->ltextptr;
+                                    char * vstringListEnd;
+                                    int32_t vindex = 0;
+                                    if (scriptfile_getbraces(pScript,&vstringListEnd))
+                                        break;
+                                    while (pScript->textptr < vstringListEnd - 1)
+                                    {
+                                        char* valueName = NULL;
+                                        if (vindex >= MAXVALUECHOICES)
+                                        {
+                                            initprintf("Error: Maximum value name entries exceeded near line %s:%d\n",
+                                            pScript->filename, scriptfile_getlinum(pScript, vstringPtr));
+                                            pScript->textptr = vstringListEnd+1;
+                                            break;
+                                        }
+
+                                        if (scriptfile_getstring(pScript, &valueName))
+                                        {
+                                            pScript->textptr = vstringListEnd+1;
+                                            break;
+                                        }
+                                        memset(entry.valueNames[vindex], 0, ARRAY_SIZE(entry.valueNames[vindex]));
+                                        strncpy(entry.valueNames[vindex], valueName, ARRAY_SIZE(entry.valueNames[vindex])-1);
+                                        vindex += 1;
+                                    }
+                                    multiCheckVal = (multiCheckVal == -1) ? vindex : min(multiCheckVal, vindex);
+                                    break;
+                                }
+                                case T_VALUES:
+                                {
+                                    char * valuePtr = pScript->ltextptr;
+                                    char * valueListEnd;
+                                    entry.values = (int32_t *) Xcalloc(MAXVALUECHOICES, sizeof(int32_t));
+                                    int32_t vindex = 0;
+                                    if (scriptfile_getbraces(pScript,&valueListEnd))
+                                        break;
+                                    while (pScript->textptr < valueListEnd - 1)
+                                    {
+                                        int32_t valueChoice;
+                                        if (vindex >= MAXVALUECHOICES)
+                                        {
+                                            initprintf("Error: Maximum value entries exceeded near line %s:%d\n",
+                                            pScript->filename, scriptfile_getlinum(pScript, valuePtr));
+                                            pScript->textptr = valueListEnd+1;
+                                            break;
+                                        }
+
+                                        if (scriptfile_getnumber(pScript,&valueChoice))
+                                        {
+                                            pScript->textptr = valueListEnd+1;
+                                            break;
+                                        }
+                                        //snprintf(entry.valueNames[vindex], ARRAY_SIZE(entry.valueNames[vindex]), "%d", valueChoice);
+                                        entry.values[vindex] = valueChoice;
+                                        vindex += 1;
+                                    }
+                                    multiCheckVal = (multiCheckVal == -1) ? vindex : min(multiCheckVal, vindex);
+                                    break;
+                                }
+                            }
+                        }
+                        entry.optionCount = (multiCheckVal <= -1) ? 0 : multiCheckVal;
+                        entryCount++;
+                        break;
+                    }
+                    case T_LINK:
+                        //TODO: Single sublayer of pages
+                        initprintf("Error: Link token not yet implemented, line %s:%d\n",
+                                    pScript->filename, scriptfile_getlinum(pScript, pScript->ltextptr));
+                        break;
+                }
+            }
+            break;
+        }
+#endif
         case T_EOF: return 0;
         default: break;
         }
@@ -6707,6 +6938,9 @@ static void G_Startup(void)
     if (numplayers > 1)
         VLOG_F(LOG_NET, "Multiplayer initialized.");
 
+#ifdef AMC_BUILD
+    LOG_F(INFO, "Initializing ART files...");
+#endif
     if (artLoadFiles("tiles000.art",MAXCACHE1DSIZE) < 0)
         G_GameExit("Failed loading art.");
 
@@ -7068,6 +7302,29 @@ int app_main(int argc, char const* const* argv)
 
     G_ExtPreInit(argc, argv);
 
+#ifdef AMC_BUILD
+    // timestamped logs in g_logfile_dir; old ones are pruned by OSD_CleanLogDir() once the settings are loaded
+    char logPath[BMAX_PATH];
+    OSD_NewLogFilePath(logPath, BMAX_PATH, APPBASENAME, g_logfile_dir);
+    engineSetLogFile(logPath, LOG_GAME_MAX);
+    engineSetLogVerbosityCallback(dukeVerbosityCallback);
+
+    char logDir[BMAX_PATH];
+    Bstrncpy(logDir, g_logfile_dir, BMAX_PATH);
+#ifdef __APPLE__
+    if (!g_useCwd)
+    {
+        char *homedir = Bgethomedir();
+        if (homedir)
+        {
+            Bsnprintf(logDir, BMAX_PATH, "%s/Library/Logs/", homedir);
+            OSD_NewLogFilePath(logPath, BMAX_PATH, APPBASENAME, logDir);
+        }
+        OSD_SetLogFile(logPath);
+        Xfree(homedir);
+    }
+#endif
+#else
     engineSetLogFile(APPBASENAME ".log", LOG_GAME_MAX);
     engineSetLogVerbosityCallback(dukeVerbosityCallback);
 
@@ -7083,6 +7340,7 @@ int app_main(int argc, char const* const* argv)
         OSD_SetLogFile(cwd);
         Xfree(homedir);
     }
+#endif
 #endif
 
 #ifndef NETCODE_DISABLE
@@ -7144,7 +7402,7 @@ int app_main(int argc, char const* const* argv)
 #endif
     CONFIG_ReadSetup();
 
-#if defined(_WIN32) && !defined (EDUKE32_STANDALONE)
+#if defined(_WIN32) && !defined (EDUKE32_STANDALONE) && !defined(AMC_BUILD)
     if (ud.config.CheckForUpdates == 1)
     {
         if (time(NULL) - ud.config.LastUpdateCheck > UPDATEINTERVAL)
@@ -7315,7 +7573,9 @@ int app_main(int argc, char const* const* argv)
         Xfree(m);
     g_defModules.clear();
 
+#ifndef AMC_BUILD
     cacheAllSounds();
+#endif
 
     if (enginePostInit())
         G_FatalEngineInitError();
@@ -7400,6 +7660,11 @@ int app_main(int argc, char const* const* argv)
 
     system_getcvars();
 
+#ifdef AMC_BUILD
+    // must be called only after settings are loaded
+    OSD_CleanLogDir(APPBASENAME, logDir);
+#endif
+
     if (quitevent) app_exit(4);
 
     if (g_networkMode != NET_DEDICATED_SERVER && validmodecnt > 0)
@@ -7472,6 +7737,14 @@ int app_main(int argc, char const* const* argv)
 
         if (G_LoadPlayer(/* savefile */))
             /* havesavename = false; */
+    }
+#endif
+
+#ifdef AMC_BUILD
+    if (ud.config.UseSoundPrecache)
+    {
+        LOG_F(INFO, "Precaching sound files...");
+        cacheAllSounds();
     }
 #endif
 

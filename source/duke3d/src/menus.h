@@ -78,6 +78,9 @@ enum MenuIndex_t {
     MENU_SCREENSETUP    = 233,
     MENU_DISPLAYSETUP   = 234,
     MENU_POLYMER        = 240,
+#ifdef AMC_BUILD
+    MENU_CUSTOMSETTINGS = 250,
+#endif
     MENU_LOAD           = 300,
     MENU_SAVE           = 350,
     MENU_STORY          = 400,
@@ -498,6 +501,9 @@ void Menu_Close(uint8_t playerID);
 void M_DisplayMenus(void);
 
 extern MenuFont_t MF_Redfont, MF_Bluefont, MF_Minifont;
+#ifdef AMC_BUILD
+extern MenuFont_t MF_Minifont_Yellow;
+#endif
 
 #define M_MOUSETIMEOUT 210
 extern int32_t m_mouselastactivity;
@@ -522,6 +528,12 @@ extern int32_t m_mousewake_watchpoint, m_menuchange_watchpoint;
 
 #define MAXMENUGAMEPLAYLAYERS 3
 #define MAXMENUGAMEPLAYENTRIES 7
+#ifdef AMC_BUILD
+#ifndef MAXCUSTOMSETTINGSENTRIES
+#define MAXCUSTOMSETTINGSENTRIES 64
+#endif
+#define MAXVALUECHOICES 32
+#endif
 
 enum MenuGameplayEntryFlags
 {
@@ -544,6 +556,40 @@ extern MenuGameplayEntry g_MenuGameplayEntries[MAXMENUGAMEPLAYENTRIES];
 extern MenuEntry_t ME_NEWGAMECUSTOMENTRIES[MAXMENUGAMEPLAYENTRIES];
 extern MenuEntry_t ME_NEWGAMECUSTOMSUBENTRIES[MAXMENUGAMEPLAYENTRIES][MAXMENUGAMEPLAYENTRIES];
 extern MenuEntry_t ME_NEWGAMECUSTOML3ENTRIES[MAXMENUGAMEPLAYENTRIES][MAXMENUGAMEPLAYENTRIES][MAXMENUGAMEPLAYENTRIES];
+
+#ifdef AMC_BUILD
+// Entries of the "customsettings" DEF block (the AMC "Game Settings" menu)
+enum MenuSettingsType
+{
+    EmptyAction = 0,
+    ButtonAction = 1,
+    YesNoAction = 2,
+    OnOffAction = 3,
+    MultiChoiceAction = 4,
+    SliderAction = 5,
+    Spacer2Action = 6,
+    Spacer4Action = 7,
+    Spacer6Action = 8,
+    Spacer8Action = 9,
+};
+
+typedef struct MenuSettingsEntry
+{
+    char name[64];
+    int32_t storeidx = -1;
+    MenuSettingsType type = EmptyAction;
+    MenuFont_t *font;
+
+    char valueNames[MAXVALUECHOICES][64];
+    int32_t* values = NULL;
+    int32_t optionCount;
+
+    bool isValid() const { return (name[0] != '\0' || (type >= Spacer2Action && type <= Spacer8Action)); }
+} MenuSettingsEntry;
+
+extern MenuSettingsEntry g_MenuSettingsEntries[MAXCUSTOMSETTINGSENTRIES];
+extern char s_CustomSettings[64];
+#endif
 
 #ifdef __cplusplus
 }

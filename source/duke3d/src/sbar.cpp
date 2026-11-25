@@ -343,7 +343,8 @@ void G_DrawTXDigiNumZ(int32_t starttile, int32_t x, int32_t y, int32_t n, int32_
 
 static void G_DrawAltDigiNum(int32_t x, int32_t y, int32_t n, char s, int32_t cs)
 {
-    int32_t i, j = 0, k, p, c;
+    int32_t i, j = 0, k, c;
+    picnum32_t p;
     char b[12];
     int32_t rev = (x < 0);
     int32_t shd = (y < 0);
@@ -540,14 +541,14 @@ static int32_t G_GetMorale(int32_t p_i, int32_t snum)
     return Gv_GetVarByLabel("PLR_MORALE", -1, p_i, snum);
 }
 
-static inline void rotatesprite_althud(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum, int8_t dashade, char dapalnum, int32_t dastat)
+static inline void rotatesprite_althud(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum, int8_t dashade, char dapalnum, int32_t dastat)
 {
     if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
         rotatesprite_(sbarx(sx+1), sbary(sy+1), z, a, picnum, 127, 4, dastat + POLYMOSTTRANS2, 0, 0, 0, 0, xdim - 1, ydim - 1);
     rotatesprite_(sbarx(sx), sbary(sy), z, a, picnum, dashade, dapalnum, dastat, 0, 0, 0, 0, xdim - 1, ydim - 1);
 }
 
-static inline void rotatesprite_althudr(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum, int8_t dashade, char dapalnum, int32_t dastat)
+static inline void rotatesprite_althudr(int32_t sx, int32_t sy, int32_t z, int16_t a, picnum16_t picnum, int8_t dashade, char dapalnum, int32_t dastat)
 {
     if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
         rotatesprite_(sbarxr(sx - 1), sbary(sy + 1), z, a, picnum, 127, 4, dastat + POLYMOSTTRANS2, 0, 0, 0, 0, xdim - 1, ydim - 1);
@@ -656,7 +657,11 @@ void G_DrawStatusBar(int32_t snum)
                 G_DrawAltDigiNum(105, -(hudoffset-22), lAmount, -16, 10+16+256);
             }
 
+#ifdef AMC_BUILD
+            if (ammo_sprites[p->curr_weapon] >= 0 && ammo_sprites[p->curr_weapon] < MAXTILES)
+#else
             if (ammo_sprites[p->curr_weapon] >= 0)
+#endif
             {
                 i = (tilesiz[ammo_sprites[p->curr_weapon]].y >= 50) ? 16384 : 32768;
                 rotatesprite_althudr(57, hudoffset-15, sbarsc(i), 0, ammo_sprites[p->curr_weapon], 0, 0, 10+512);
@@ -678,7 +683,11 @@ void G_DrawStatusBar(int32_t snum)
 
                 i = ((unsigned) p->inven_icon < ICON_MAX) ? item_icons[p->inven_icon] : -1;
 
+#ifdef AMC_BUILD
+                if (i >= 0 && i < MAXTILES)
+#else
                 if (i >= 0)
+#endif
                     rotatesprite_althud(231-o, hudoffset-21-2, sb16, 0, i, 0, 0, orient);
 
                 if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
@@ -767,7 +776,11 @@ void G_DrawStatusBar(int32_t snum)
                 //                orient |= permbit;
 
                 i = ((unsigned) p->inven_icon < ICON_MAX) ? item_icons[p->inven_icon] : -1;
+#ifdef AMC_BUILD
+                if (i >= 0 && i < MAXTILES)
+#else
                 if (i >= 0)
+#endif
                     rotatesprite_fs(sbarx(231-o), yofssh+sbary(200-21), sb16, 0, i, 0, 0, orient);
 
                 // scale by status bar size
@@ -1066,13 +1079,23 @@ void G_DrawBackground(void)
         return;
     }
 
+#ifdef AMC_BUILD
+    picnum16_t const dapicnum = VM_OnEventWithReturn(EVENT_DISPLAYBORDER, g_player[screenpeek].ps->i, screenpeek, BIGHOLE);
+#else
     int32_t const dapicnum = VM_OnEventWithReturn(EVENT_DISPLAYBORDER, g_player[screenpeek].ps->i, screenpeek, BIGHOLE);
+#endif
 
     // XXX: if dapicnum is not available, this might leave the menu background
     // not drawn, leading to "HOM".
+#ifdef AMC_BUILD
+    if ((dapicnum < MAXTILES && tilesiz[dapicnum].x == 0) || (dapicnum < MAXTILES && tilesiz[dapicnum].y == 0) ||
+        (windowxy1.x-1 <= 0 && windowxy2.x >= xdim-1 && windowxy1.y-1 <= 0 && windowxy2.y >= ydim-1) ||
+        dapicnum >= MAXTILES)
+#else
     if ((dapicnum >= 0 && tilesiz[dapicnum].x == 0) || (dapicnum >= 0 && tilesiz[dapicnum].y == 0) ||
         (windowxy1.x-1 <= 0 && windowxy2.x >= xdim-1 && windowxy1.y-1 <= 0 && windowxy2.y >= ydim-1) ||
         dapicnum < 0)
+#endif
     {
         pus = pub = NUMPAGES;
         return;

@@ -20,6 +20,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 //-------------------------------------------------------------------------
 
+#ifdef AMC_BUILD
+#include "demo.h"
+#endif
+
 #include "anim.h"
 #include "cmdline.h"
 #include "colmatch.h"
@@ -74,6 +78,16 @@ int32_t g_hitagVarID     = -1;  // var ID of "HITAG"
 int32_t g_textureVarID   = -1;  // var ID of "TEXTURE"
 int32_t g_thisActorVarID = -1;  // var ID of "THISACTOR"
 int32_t g_structVarIDs   = -1;
+
+#ifdef AMC_BUILD
+// CON profilenano* timing slots
+#define MAXPROFILEINDEX 32
+static uint64_t last_profile_timings[MAXPROFILEINDEX];
+static uint64_t profile_sums[MAXPROFILEINDEX];
+static uint64_t profile_squaresums[MAXPROFILEINDEX];
+static uint64_t profile_measurecount[MAXPROFILEINDEX];
+static uint64_t profile_lastelapsed[MAXPROFILEINDEX];
+#endif
 
 GAMEEXEC_STATIC void VM_Execute(int loop = false);
 
@@ -271,8 +285,10 @@ static int VM_CheckSquished(void)
     if (vm.pSprite->pal == 1 ? ((floorZ - ceilZ >= ZOFFSET5) | (pSector->lotag & 32768u)) : (floorZ - ceilZ >= ZOFFSET4))
         return 0;
 
+#ifndef AMC_BUILD
     if (vm.pPlayer->ftq != QUOTE_DEAD)
         P_DoQuote(QUOTE_SQUISHED, vm.pPlayer);
+#endif
 
     if (vm.spriteNum == vm.pPlayer->i && vm.pPlayer->dead_flag)
         return 0;
@@ -1200,7 +1216,14 @@ static int32_t VM_ResetPlayer(int const playerNum, int32_t vmFlags, int32_t cons
         else
         {
             QuickLoadFailure:
+#ifdef AMC_BUILD
+            g_player[playerNum].ps->gm = MODE_DEMO;
+            if (ud.recstat == 1)
+                G_CloseDemoWrite();
+            artClearMapArt();
+#else
             g_player[playerNum].ps->gm = MODE_RESTART;
+#endif
         }
         vmFlags |= VM_RETURN;
     }
@@ -3425,6 +3448,24 @@ breakfor:
                     vm.pActor->timetosleep = SLEEPTIME;
                 dispatch();
 
+#ifdef AMC_BUILD
+            vInstruction(CON_IFPDISTLVAR):
+            {
+                int const dist = Gv_GetVar(*(++insptr));
+                branch(vm.playerDist < dist);
+                if (vm.playerDist > MAXSLEEPDIST && vm.pActor->timetosleep == 0)
+                    vm.pActor->timetosleep = SLEEPTIME;
+                dispatch();
+            }
+            vInstruction(CON_IFPDISTGVAR):
+            {
+                int const dist = Gv_GetVar(*(++insptr));
+                branch(vm.playerDist > dist);
+                if (vm.playerDist > MAXSLEEPDIST && vm.pActor->timetosleep == 0)
+                    vm.pActor->timetosleep = SLEEPTIME;
+                dispatch();
+            }
+#endif
             vInstruction(CON_IFRESPAWN):
                 if (A_CheckEnemySprite(vm.pSprite))
                     branch(ud.respawn_monsters);
@@ -4681,12 +4722,20 @@ breakfor:
 
             vInstruction(CON_SAVEGAMEVAR):
             vInstruction(CON_READGAMEVAR):
+#ifdef AMC_BUILD
+            vInstruction(CON_IFCFGVAR):
+#endif
             {
                 int32_t nValue = 0;
                 insptr++;
                 if (ud.config.scripthandle < 0)
                 {
-                    insptr++;
+#ifdef AMC_BUILD
+                    if (VM_DECODE_INST(tw) == CON_IFCFGVAR)
+                        branch(0);
+                    else
+#endif
+                        insptr++;
                     dispatch();
                 }
                 switch (VM_DECODE_INST(tw))
@@ -4699,6 +4748,11 @@ breakfor:
                         SCRIPT_GetNumber(ud.config.scripthandle, "Gamevars", aGameVars[*insptr].szLabel, &nValue);
                         Gv_SetVar(*insptr++, nValue);
                         break;
+#ifdef AMC_BUILD
+                    case CON_IFCFGVAR:
+                        branch(SCRIPT_GetNumber(ud.config.scripthandle, "Gamevars", aGameVars[*insptr].szLabel, &nValue) == 0);
+                        break;
+#endif
                 }
                 dispatch();
             }
@@ -6157,6 +6211,32 @@ breakfor:
                 insptr += 2;
                 dispatch();
 
+#ifdef AMC_BUILD
+            vInstruction(CON_MKDIR):
+                insptr++;
+                {
+                    int const quoteDirname = *insptr++;
+
+                    VM_ABORT_IF(bad_quote(quoteDirname), "invalid quote %d", quoteDirname);
+                    char temp[BMAX_PATH];
+
+                    if (EDUKE32_PREDICT_FALSE(G_ModDirSnprintf(temp, sizeof(temp), "%s", apStrings[quoteDirname])))
+                    {
+                        CON_ERRPRINTF("directory name in quote %d too long\n", quoteDirname);
+                        abort_after_error();
+                    }
+
+                    if (!buildvfs_isdir(temp))
+                    {
+                        if (buildvfs_mkdir(temp, S_IRWXU) != 0)
+                            CON_ERRPRINTF("Failed to create directory \"%s\"!\n", temp);
+                        else DLOG_F(INFO, "Script: %s - L=%d: Created directory '%s'.\n", VM_FILENAME(insptr), VM_DECODE_LINE_NUMBER(g_tw), temp);
+                    }
+                    else DLOG_F(INFO, "Script: %s  - L=%d: Directory '%s' already exists.\n", VM_FILENAME(insptr), VM_DECODE_LINE_NUMBER(g_tw), temp);
+                    dispatch();
+                }
+#endif
+
             vInstruction(CON_SETARRAY):
                 insptr++;
                 {
@@ -6717,6 +6797,17 @@ breakfor:
                 Gv_SetVar(*insptr++, S_GetMusicPosition());
                 dispatch();
 
+#ifdef AMC_BUILD
+            vInstruction(CON_SETMUSICVOLUME):
+                insptr++;
+                {
+                    int const perc = Gv_GetVar(*insptr++);
+                    VM_ABORT_IF(((unsigned) perc) > 100, "invalid percentage %d", perc);
+                    S_MusicVolume((ud.config.MusicVolume * perc) / 100);
+                    dispatch();
+                }
+#endif
+
             vInstruction(CON_ACTIVATECHEAT):
                 insptr++;
                 tw = Gv_GetVar(*(insptr++));
@@ -6908,6 +6999,81 @@ breakfor:
                 tw = *insptr++;
                 Gv_SetVar(tw, (intptr_t)(insptr - apScript));
                 dispatch();
+
+#ifdef AMC_BUILD
+            vInstruction(CON_PROFILENANOSTART):
+                {
+                    uint64_t startTime = timerGetNanoTicks();
+
+                    insptr++;
+                    int p_index = *insptr++;
+                    if (EDUKE32_PREDICT_FALSE(p_index < 0 || p_index >= MAXPROFILEINDEX))
+                    {
+                        CON_CRITICALERRPRINTF("Invalid profile index %d!\n", p_index);
+                        abort_after_error();
+                    }
+                    last_profile_timings[p_index] = startTime;
+                }
+                dispatch();
+
+            vInstruction(CON_PROFILENANOEND):
+                {
+                    uint64_t endTime = timerGetNanoTicks();
+
+                    insptr++;
+                    int p_index = *insptr++;
+                    if (EDUKE32_PREDICT_FALSE(p_index < 0 || p_index >= MAXPROFILEINDEX))
+                    {
+                        CON_CRITICALERRPRINTF("Invalid profile index %d!\n", p_index);
+                        abort_after_error();
+                    }
+                    uint64_t elapsed = endTime - last_profile_timings[p_index];
+                    profile_lastelapsed[p_index] = elapsed;
+                    profile_sums[p_index] += elapsed;
+                    profile_squaresums[p_index] += elapsed * elapsed;
+                    profile_measurecount[p_index]++;
+                }
+                dispatch();
+
+            vInstruction(CON_PROFILENANORESET):
+                {
+                    insptr++;
+                    int p_index = *insptr++;
+                    if (EDUKE32_PREDICT_FALSE(p_index < 0 || p_index >= MAXPROFILEINDEX))
+                    {
+                        CON_CRITICALERRPRINTF("Invalid profile index %d!\n", p_index);
+                        abort_after_error();
+                    }
+                    last_profile_timings[p_index] = 0ull;
+                    profile_lastelapsed[p_index] = 0ull;
+                    profile_sums[p_index] = 0ull;
+                    profile_squaresums[p_index] = 0ull;
+                    profile_measurecount[p_index] = 0;
+                }
+                dispatch();
+
+            vInstruction(CON_PROFILENANOLOG):
+                {
+                    insptr++;
+                    int p_index = *insptr++;
+                    if (EDUKE32_PREDICT_FALSE(p_index < 0 || p_index >= MAXPROFILEINDEX))
+                    {
+                        CON_CRITICALERRPRINTF("Invalid profile index %d!\n", p_index);
+                        abort_after_error();
+                    }
+                    if (profile_measurecount[p_index] == 0ull)
+                        initprintf(OSDTEXT_RED "CON PROFILE: L=%d, idx=%d, No timings recorded!\n", VM_DECODE_LINE_NUMBER(g_tw), p_index);
+                    else
+                    {
+                        uint64_t mean = profile_sums[p_index] / profile_measurecount[p_index];
+                        uint64_t stddev = (profile_measurecount[p_index] > 1) ? ksqrt((uint32_t)((profile_squaresums[p_index] / profile_measurecount[p_index]) - (mean * mean))) : 0;
+                        initprintf(OSDTEXT_GREEN "CON PROFILE: L=%d, idx=%d, N=%llu, elapsed= %llu ns (mean: %llu +/- %llu ns)\n",
+                                    VM_DECODE_LINE_NUMBER(g_tw), p_index, (unsigned long long)profile_measurecount[p_index],
+                                    (unsigned long long)profile_lastelapsed[p_index], (unsigned long long)mean, (unsigned long long)stddev);
+                    }
+                }
+                dispatch();
+#endif
 
             vmErrorCase: // you're not supposed to be here
                 VM_ScriptInfo(insptr, 64);
@@ -7391,7 +7557,7 @@ void G_RestoreMapState(void)
 }
 
 // MYOS* CON commands.
-void VM_DrawTileGeneric(int32_t x, int32_t y, int32_t zoom, int32_t tilenum, int32_t shade, int32_t orientation, int32_t p)
+void VM_DrawTileGeneric(int32_t x, int32_t y, int32_t zoom, picnum32_t tilenum, int32_t shade, int32_t orientation, int32_t p)
 {
     orientation &= (ROTATESPRITE_MAX-1);
 
@@ -7406,7 +7572,7 @@ void VM_DrawTileGeneric(int32_t x, int32_t y, int32_t zoom, int32_t tilenum, int
     rotatesprite_win(x, y, zoom, rotAngle, tilenum, shade, p, 2|orientation);
 }
 
-void VM_DrawTile(int32_t x, int32_t y, int32_t tilenum, int32_t shade, int32_t orientation)
+void VM_DrawTile(int32_t x, int32_t y, picnum32_t tilenum, int32_t shade, int32_t orientation)
 {
     auto const pPlayer = g_player[screenpeek].ps;
     int32_t    tilePal = pPlayer->cursectnum >= 0 ? sector[pPlayer->cursectnum].floorpal : 0;
@@ -7414,7 +7580,7 @@ void VM_DrawTile(int32_t x, int32_t y, int32_t tilenum, int32_t shade, int32_t o
     VM_DrawTileGeneric(x, y, 65536, tilenum, shade, orientation, tilePal);
 }
 
-void VM_DrawTileSmall(int32_t x, int32_t y, int32_t tilenum, int32_t shade, int32_t orientation)
+void VM_DrawTileSmall(int32_t x, int32_t y, picnum32_t tilenum, int32_t shade, int32_t orientation)
 {
     auto const pPlayer = g_player[screenpeek].ps;
     int32_t    tilePal = pPlayer->cursectnum >= 0 ? sector[pPlayer->cursectnum].floorpal : 0;

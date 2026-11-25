@@ -633,7 +633,11 @@ static void G_DrawOverheadMap(int32_t cposx, int32_t cposy, int32_t czoom, int16
 
             i = VM_OnEventWithReturn(EVENT_DISPLAYOVERHEADMAPPLAYER, pPlayer->i, p, i);
 
+#ifdef AMC_BUILD
+            if (i < 0 || i >= MAXTILES)
+#else
             if (i < 0)
+#endif
                 continue;
 
             j = max(0, pPlayer->truefz - pPlayer->pos.z) >> 8;

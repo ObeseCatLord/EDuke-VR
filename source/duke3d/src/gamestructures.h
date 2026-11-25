@@ -27,6 +27,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "compat.h"
 #include "hash.h"
 
+// tile number argument type of the tile-indexed accessors: unsigned 16 bit in the AMC build
+#ifdef AMC_BUILD
+typedef uint16_t gs_tile_t;
+#else
+typedef int gs_tile_t;
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,10 +52,10 @@ int32_t __fastcall VM_GetSector(int const sectNum, int32_t labelNum);
 void    __fastcall VM_SetSector(int const sectNum, int const labelNum, int32_t newValue);
 int32_t __fastcall VM_GetSprite(int const spriteNum, int32_t labelNum, int const lParm2);
 void    __fastcall VM_SetSprite(int const spriteNum, int const labelNum, int const lParm2, int32_t const newValue);
-int32_t __fastcall VM_GetProjectile(int const tileNum, int32_t labelNum);
-void    __fastcall VM_SetProjectile(int const tileNum, int const labelNum, int32_t const newValue);
-int32_t __fastcall VM_GetTileData(int const tileNum, int32_t labelNum);
-void    __fastcall VM_SetTileData(int const tileNum, int const labelNum, int32_t const newValue);
+int32_t __fastcall VM_GetProjectile(gs_tile_t const tileNum, int32_t labelNum);
+void    __fastcall VM_SetProjectile(gs_tile_t const tileNum, int const labelNum, int32_t const newValue);
+int32_t __fastcall VM_GetTileData(gs_tile_t const tileNum, int32_t labelNum);
+void    __fastcall VM_SetTileData(gs_tile_t const tileNum, int const labelNum, int32_t const newValue);
 int32_t __fastcall VM_GetPalData(int const palNum, int32_t labelNum);
 
  typedef struct
