@@ -499,6 +499,9 @@ static MenuEntry_t *MEL_MAIN_INGAME[] = {
 #else
     &ME_MAIN_NEWGAME_INGAME,
 #endif
+#ifndef NETCODE_DISABLE
+    &ME_MAIN_JOINSERVER,
+#endif
     &ME_MAIN_SAVEGAME,
     &ME_MAIN_LOADGAME,
     &ME_MAIN_OPTIONS,
@@ -1838,6 +1841,8 @@ static MenuEntry_t *MEL_NETOPTIONS[] = {
 
 static char MenuServer[BMAX_PATH] = "localhost";
 static char MenuJoinStatus[96];   // Join Server: the result of the last attempt
+static char MenuJoinAddress[BMAX_PATH + 8];
+static bool MenuJoinPending;      // a connect in progress (Net_PollConnect each frame)
 static MenuString_t MEO_NETJOIN_SERVER = MAKE_MENUSTRING( MenuServer, &MF_Bluefont, BMAX_PATH, 0 );
 static MenuEntry_t ME_NETJOIN_SERVER = MAKE_MENUENTRY( "Server", &MF_Redfont, &MEF_VideoSetup, &MEO_NETJOIN_SERVER, String );
 #define MAXPORTSTRINGLENGTH 6 // unsigned 16-bit integer
@@ -3110,6 +3115,15 @@ static void Menu_Pre(MenuID_t cm)
         MenuEntry_DisableOnCondition(&ME_MAIN_QUITTOTITLE, g_netServer || numplayers > 1);
         fallthrough__;
     case MENU_MAIN:
+#ifndef NETCODE_DISABLE
+        // Join Server: Duke 3D and its mods, outside multiplayer; total conversions (Ion Fury,
+        // A.W.O.L., AMC Squad) keep their own main menu.
+# ifdef AMC_BUILD
+        MenuEntry_HideOnCondition(&ME_MAIN_JOINSERVER, true);
+# else
+        MenuEntry_HideOnCondition(&ME_MAIN_JOINSERVER, !DUKE || g_netServer || g_netClient || ud.recstat == 2);
+# endif
+#endif
         if ((g_netServer || ud.multimode > 1) && ud.recstat != 2)
         {
             ME_MAIN_NEWGAME.entry = &MEO_MAIN_NEWGAME_NETWORK;
@@ -3548,6 +3562,20 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
     {
 #ifndef NETCODE_DISABLE
     case MENU_NETJOIN:
+        if (MenuJoinPending)
+        {
+            int const result = Net_PollConnect();
+            if (result != 0)
+                MenuJoinPending = false;
+            if (result > 0)
+            {
+                MenuJoinStatus[0] = 0;
+                G_BackToMenu();   // as the console's connect: the server's game starts
+                break;
+            }
+            if (result < 0)
+                Bsnprintf(MenuJoinStatus, sizeof(MenuJoinStatus), "Could not connect to %s", MenuJoinAddress);
+        }
         if (MenuJoinStatus[0])
             mgametextcenter(origin.x, origin.y + (150<<16), MenuJoinStatus);
         break;
@@ -4727,17 +4755,15 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
     {
         // Join Server: the console's connect (the game starts once the server sends it); a server
         // that does not answer leaves the player here with a message instead of the main menu.
-        char address[BMAX_PATH + MAXPORTSTRINGLENGTH + 2];
-        Bsnprintf(address, sizeof(address), "%s:%s", MenuServer, MenuPort[0] ? MenuPort : "23513");
-        Bsnprintf(MenuJoinStatus, sizeof(MenuJoinStatus), "Connecting to %s...", address);
-        Net_Connect(address);
-        if (g_netClient)
+        // Connecting does not block: the menu (and the headset) keeps drawing; Menu_PreDraw polls.
+        Bsnprintf(MenuJoinAddress, sizeof(MenuJoinAddress), "%s:%s", MenuServer, MenuPort[0] ? MenuPort : "23513");
+        if (Net_BeginConnect(MenuJoinAddress))
         {
-            MenuJoinStatus[0] = 0;
-            G_BackToMenu();
+            MenuJoinPending = true;
+            Bsnprintf(MenuJoinStatus, sizeof(MenuJoinStatus), "Connecting to %s...", MenuJoinAddress);
         }
         else
-            Bsnprintf(MenuJoinStatus, sizeof(MenuJoinStatus), "Could not connect to %s", address);
+            Bsnprintf(MenuJoinStatus, sizeof(MenuJoinStatus), "Server %s not found", MenuServer);
     }
 #endif
     else if (entry == &ME_SAVESETUP_CLEANUP)
@@ -6041,6 +6067,13 @@ static void Menu_AboutToStartDisplaying(Menu_t * m)
 
 static void Menu_ChangingTo(Menu_t * m)
 {
+#ifndef NETCODE_DISABLE
+    if (MenuJoinPending && m->menuID != MENU_NETJOIN)
+    {
+        MenuJoinPending = false;   // left Join Server while connecting: give up
+        Net_CancelConnect();
+    }
+#endif
     switch (m->menuID)
     {
     case MENU_USERMAP:
@@ -6061,7 +6094,7 @@ static void Menu_ChangingTo(Menu_t * m)
 #ifndef NETCODE_DISABLE
     case MENU_NETJOIN:
         // Back to the main menu, and the last server joined filled in (no typing needed in VR).
-        m->parentID = MENU_MAIN;
+        m->parentID = (g_player[myconnectindex].ps->gm & MODE_GAME) ? MENU_MAIN_INGAME : MENU_MAIN;
         MenuJoinStatus[0] = 0;
         if (cl_joinserver[0])
         {

@@ -248,6 +248,11 @@ extern newgame_t pendingnewgame;
 
 // Connect/Disconnect
 void    Net_Connect(const char *srvaddr);
+// Join Server: start connecting without blocking (false: the name was not found), then poll each
+// frame: 0 trying, 1 connected (g_netClient set), -1 failed. Cancel drops a pending attempt.
+bool    Net_BeginConnect(const char *srvaddr);
+int     Net_PollConnect(void);
+void    Net_CancelConnect(void);
 
 // Packet Handlers
 #endif
@@ -322,6 +327,9 @@ void Net_WaitForInitialSnapshot();
 // note: don't include faketimerhandler in this
 
 #define Net_Connect(...) ((void)0)
+#define Net_BeginConnect(...) (false)
+#define Net_PollConnect(...) (-1)
+#define Net_CancelConnect(...) ((void)0)
 
 #define Net_SendClientInfo(...) ((void)0)
 

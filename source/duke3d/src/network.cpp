@@ -5635,6 +5635,98 @@ void Net_Connect(const char *srvaddr)
     Net_Disconnect();
 }
 
+// Join Server's connect, without blocking: the menu (and the headset) keeps drawing while it
+// tries. The pending host only becomes g_netClient once the server answered, so Net_GetPackets
+// never takes the handshake. Same attempts as Net_Connect: 4 of 5 seconds.
+static ENetHost *s_pendingHost;
+static ENetPeer *s_pendingPeer;
+static ENetAddress s_pendingAddress;
+static uint32_t s_pendingDeadline;
+static int32_t s_pendingAttempt;
+static char s_pendingName[BMAX_PATH];
+
+void Net_CancelConnect(void)
+{
+    if (s_pendingPeer) enet_peer_reset(s_pendingPeer);
+    if (s_pendingHost) enet_host_destroy(s_pendingHost);
+    s_pendingHost = nullptr;
+    s_pendingPeer = nullptr;
+}
+
+bool Net_BeginConnect(const char *srvaddr)
+{
+    Net_CancelConnect();
+    Bstrncpyz(cl_joinserver, srvaddr, sizeof(cl_joinserver));
+    Bstrncpyz(s_pendingName, srvaddr, sizeof(s_pendingName));
+    char *const copy = Xstrdup(srvaddr);
+    char *rest = nullptr;
+    char *host = Bstrtoken(copy, ":", &rest, 1);
+    char *port = host ? Bstrtoken(nullptr, ":", &rest, 1) : nullptr;
+    s_pendingAddress = {};
+    bool const found = host && enet_address_set_host(&s_pendingAddress, host) == 0;
+    s_pendingAddress.port = port ? Batoi(port) : g_netPort;
+    if (!found)
+        LOG_F(ERROR, "Could not find the server \"%s\" (name lookup failed).", host ? host : "");
+    Xfree(copy);
+    if (!found)
+        return false;
+    Net_Disconnect();
+    s_pendingHost = enet_host_create(nullptr, 1, CHAN_MAX, 0, 0);
+    if (!s_pendingHost)
+    {
+        LOG_F(ERROR, "An error occurred while trying to create an ENet client host.");
+        return false;
+    }
+    s_pendingAttempt = 0;
+    s_pendingDeadline = 0;   // the first poll starts attempt 1
+    return true;
+}
+
+int Net_PollConnect(void)
+{
+    if (!s_pendingHost)
+        return -1;
+    ENetEvent event;
+    while (s_pendingPeer && enet_host_service(s_pendingHost, &event, 0) > 0)
+        if (event.type == ENET_EVENT_TYPE_CONNECT)
+        {
+            LOG_F(INFO, "Connection to %s succeeded.", s_pendingName);
+            g_netClient = s_pendingHost;
+            g_netClientPeer = s_pendingPeer;
+            s_pendingHost = nullptr;
+            s_pendingPeer = nullptr;
+            Net_AllocatePacketBuffer();
+            return 1;
+        }
+        else if (event.type == ENET_EVENT_TYPE_RECEIVE && event.packet)
+            enet_packet_destroy(event.packet);
+    if (s_pendingPeer && timerGetTicks() < s_pendingDeadline)
+        return 0;
+    if (s_pendingPeer)
+    {
+        enet_peer_reset(s_pendingPeer);
+        s_pendingPeer = nullptr;
+        LOG_F(ERROR, "Connection to %s failed.", s_pendingName);
+    }
+    if (++s_pendingAttempt > 4)
+    {
+        LOG_F(INFO, "Giving up connection attempt.");
+        Net_CancelConnect();
+        return -1;
+    }
+    if (s_pendingAttempt > 1)
+        LOG_F(INFO, "Retrying...");
+    s_pendingPeer = enet_host_connect(s_pendingHost, &s_pendingAddress, CHAN_MAX, 0);
+    if (!s_pendingPeer)
+    {
+        LOG_F(INFO, "No available peers for initiating an ENet connection.");
+        Net_CancelConnect();
+        return -1;
+    }
+    s_pendingDeadline = timerGetTicks() + 5000;
+    return 0;
+}
+
 ///< summary>
 /// Record the current state of the game arrays to the initial snapshot
 ///</summary>
