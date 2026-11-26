@@ -7882,15 +7882,21 @@ MAIN_LOOP_RESTART:
 
     do //main loop
     {
-        if (gameHandleEvents() && quitevent)
+        // quitevent is checked on its own: in VR the event pump also runs inside the frame wait,
+        // which can take the close event, and then this loop's own pump reports nothing.
+        gameHandleEvents();
+        if (quitevent)
         {
             // Closing the game window (or the system asking it to quit) quits. It used to press
             // Escape, which only opened the game menu: in VR that menu is in the headset, so on the
             // desktop nothing happened and players had to end the game in Task Manager. No end
             // screens (the multiplayer scoresheet waits for a key).
+            // As the menu's Quit: in multiplayer the server is told first (the exit follows once
+            // disconnected, so it does not wait for a timeout to drop the player).
             LOG_F(INFO, "The game window was closed: quitting.");
             g_quickExit = 1;
-            G_GameExit(nullptr);
+            quitevent = 0;
+            G_GameQuit();
         }
 
         {
@@ -7966,8 +7972,9 @@ MAIN_LOOP_RESTART:
                 // Single player: once a level end is pending, simulate no more ticks of the old level. A
                 // machine behind on ticks (VR frames drawn mid-tick slower than the tick rate) would otherwise
                 // keep running the old map's scripts and never reach the level change below.
+                // A pending window close leaves too, so the main loop gets to quitting.
                 while (((g_netClient || g_netServer) || (g_player[myconnectindex].ps->gm & (MODE_MENU | MODE_DEMO)) == 0) && (int32_t)(totalclock - ototalclock) >= TICSPERFRAME && !g_saveRequested
-                       && ((g_netClient || g_netServer) || !(g_player[myconnectindex].ps->gm & (MODE_EOL | MODE_RESTART))));
+                       && !quitevent && ((g_netClient || g_netServer) || !(g_player[myconnectindex].ps->gm & (MODE_EOL | MODE_RESTART))));
 
                 g_gameUpdateTime = timerGetFractionalTicks() - gameUpdateStartTime;
 

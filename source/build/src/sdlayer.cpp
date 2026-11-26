@@ -3377,6 +3377,17 @@ int32_t handleevents_pollsdl(void)
                     case SDL_WINDOWEVENT_LEAVE:
                         g_mouseInsideWindow = (ev.window.event == SDL_WINDOWEVENT_ENTER);
                         break;
+                    case SDL_WINDOWEVENT_CLOSE:
+                        // The game window's close button. SDL adds SDL_QUIT only when no other SDL
+                        // window remains, and in VR one does, so the game never quit (Windows players
+                        // ended it in Task Manager).
+                        if (sdl_window && ev.window.windowID == SDL_GetWindowID(sdl_window))
+                        {
+                            LOG_F(INFO, "Window close requested.");
+                            quitevent = 1;
+                            rv = -1;
+                        }
+                        break;
                 }
 
                 break;

@@ -232,6 +232,32 @@ def main():
                             # The window went away under the key (e.g. the game quit to relaunch).
                             break
                         time.sleep(.35)
+                if 'close' in step:
+                    # The window manager's close (the window's X button): WM_DELETE_WINDOW to the
+                    # game's window; the scene ends with how the game exited.
+                    from Xlib import X, display as xdisplay, protocol
+                    # Every top-level window that takes the close (the game's SDL window among them).
+                    d = xdisplay.Display(args.display)
+                    proto, delete = d.intern_atom('WM_PROTOCOLS'), d.intern_atom('WM_DELETE_WINDOW')
+                    sent = 0
+                    for target in d.screen().root.query_tree().children:
+                        try:
+                            if delete in (target.get_wm_protocols() or []):
+                                target.send_event(protocol.event.ClientMessage(window=target, client_type=proto,
+                                                                               data=(32, [delete, X.CurrentTime, 0, 0, 0])))
+                                sent += 1
+                        except Exception:
+                            pass
+                    d.flush(); d.close(); closed_at = time.monotonic()
+                    if not sent:
+                        raise RuntimeError('no window to close')
+                    try:
+                        process.wait(step.get('timeout', 20))
+                        result['closed'] = {'seconds': round(time.monotonic() - closed_at, 1), 'exit': process.returncode,
+                                            'crashed': 'Caught signal' in text()}
+                    except subprocess.TimeoutExpired:
+                        result['closed'] = {'seconds': None, 'exit': None}
+                    break
                 if 'console' in step:
                     # A following 'until' also sees what the command logged at once.
                     console_mark = len(text())
@@ -295,7 +321,7 @@ def main():
                             break
                         sizes = now; time.sleep(.2)
                     result['captures'].append(str(stem) + '-left.ppm')
-            result['alive'] = process.poll() is None and 'OpenXR world stopped' not in text()
+            result['alive'] = (process.poll() is None or result.get('closed', {}).get('exit') == 0) and 'OpenXR world stopped' not in text()
             result['passed'] = result['alive'] and all(v for u in result.get('until', []) for v in u.values())
         except RuntimeError as error:
             result['error'] = str(error)
