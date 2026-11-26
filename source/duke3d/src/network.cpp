@@ -5345,8 +5345,17 @@ void Net_SendEndLevel(void)
     // [4]: at the end of an episode, the episode the server goes on to (clients follow its choice).
     // [5]: mp_cutscenes (clients of older servers, which send 5 bytes, keep playing them; older
     //      clients ignore the byte).
-    uint8_t packet[6] = { PACKET_END_LEVEL, uint8_t(ud.volume_number), uint8_t(ud.level_number), uint8_t(ud.eog ? 1 : 0),
-                          uint8_t(ud.eog ? G_NextEpisode(ud.volume_number) : 0), uint8_t(mp_cutscenes ? 1 : 0) };
+    // [6..13]: the team's kills, level kills, secrets and level secrets (uint16 each), for the bonus screens.
+    G_LevelStats const stats = G_GetLevelStats();
+    uint8_t packet[14] = { PACKET_END_LEVEL, uint8_t(ud.volume_number), uint8_t(ud.level_number), uint8_t(ud.eog ? 1 : 0),
+                           uint8_t(ud.eog ? G_NextEpisode(ud.volume_number) : 0), uint8_t(mp_cutscenes ? 1 : 0) };
+    int32_t const values[4] = { stats.kills, stats.maxKills, stats.secrets, stats.maxSecrets };
+    for (int i = 0; i < 4; i++)
+    {
+        uint16_t const v = uint16_t(clamp(values[i], 0, 65535));
+        packet[6 + i * 2] = v & 255;
+        packet[7 + i * 2] = v >> 8;
+    }
     enet_host_broadcast(g_netServer, CHAN_GAMESTATE, enet_packet_create(packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE));
     LOG_F(INFO, "Level end sent: next E%dL%d%s.", ud.volume_number + 1, ud.level_number + 1, ud.eog ? " (end of episode)" : "");
 }
@@ -5366,6 +5375,15 @@ static void Net_ReceiveEndLevel(ENetEvent const *event)
     ud.level_number = ud.m_level_number = level;
     ud.from_bonus = 0;
     g_netCutscenes = event->packet->dataLength >= 6 ? event->packet->data[5] != 0 : 1;
+    g_netLevelStats.valid = event->packet->dataLength >= 14;
+    if (g_netLevelStats.valid)
+    {
+        auto const d = event->packet->data;
+        g_netLevelStats.kills = d[6] | d[7] << 8;
+        g_netLevelStats.maxKills = d[8] | d[9] << 8;
+        g_netLevelStats.secrets = d[10] | d[11] << 8;
+        g_netLevelStats.maxSecrets = d[12] | d[13] << 8;
+    }
     if (event->packet->dataLength >= 5 && event->packet->data[3])
     {
         ud.eog = 1;   // G_EndOfLevel moves on to the episode the server chose

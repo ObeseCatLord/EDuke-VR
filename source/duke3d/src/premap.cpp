@@ -1349,6 +1349,7 @@ static void G_DeleteTempEffectors()
 static void prelevel(int g)
 {
     Bmemset(g_weaponTakenBy, 0, sizeof(g_weaponTakenBy));   // a new level: no lying weapon taken yet
+    g_netLevelStats.valid = false;
     //Bmemset(zhit, 0, sizeof(zhit));
     Bmemset(show2dsector, 0, sizeof(show2dsector));
 #ifdef LEGACY_ROR

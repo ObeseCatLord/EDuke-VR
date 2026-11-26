@@ -55,6 +55,30 @@ int32_t g_noLogo = 0;
 ////////// OFTEN-USED FEW-LINERS //////////
 // For screens that wait without drawing: in VR, the headset keeps showing the screen and the
 // controllers keep being read.
+// Kills and secrets for the HUD and the bonus screen. Multiplayer: the team's (each machine credits
+// a kill to one player and a secret once, so the sums over all players are the team's; the level's
+// totals are the largest any player holds); a client shows the server's numbers once the level end
+// brought them.
+G_LevelStats G_GetLevelStats(void)
+{
+    auto const me = g_player[myconnectindex].ps;
+    G_LevelStats stats = { me->actors_killed, me->max_actors_killed, me->secret_rooms, me->max_secret_rooms };
+    if (!g_netServer && !g_netClient && ud.multimode < 2)
+        return stats;
+    if (g_netClient && g_netLevelStats.valid)
+        return { g_netLevelStats.kills, g_netLevelStats.maxKills, g_netLevelStats.secrets, g_netLevelStats.maxSecrets };
+    stats = {};
+    for (int i = 0; i < MAXPLAYERS; i++)
+        if (auto const ps = g_player[i].ps)
+        {
+            stats.kills += ps->actors_killed;
+            stats.maxKills = max<int32_t>(stats.maxKills, ps->max_actors_killed);   // (the level's totals: each player
+            stats.secrets += ps->secret_rooms;                              //  may hold a copy of them)
+            stats.maxSecrets = max<int32_t>(stats.maxSecrets, ps->max_secret_rooms);
+        }
+    return stats;
+}
+
 static void G_HandleWaitEvents(void)
 {
     gameHandleEvents();
@@ -1428,21 +1452,22 @@ void G_DisplayRest(int32_t smoothratio)
             );
         G_ScreenText(MF_Bluefont.tilenum, 2<<16, i-gtextsc(21<<16), gtextsc(MF_Bluefont.zoom), 0, 0, tempbuf, 0, 10, g_textstat|256, 0, MF_Bluefont.emptychar.x, MF_Bluefont.emptychar.y, xbetween, MF_Bluefont.between.y, MF_Bluefont.textflags|TEXT_XOFFSETZERO|TEXT_CONSTWIDTHNUMS, 0, 0, xdim-1, ydim-1);
 
+        G_LevelStats const stats = G_GetLevelStats();
         if (ud.player_skill > 3 || ((g_netServer || ud.multimode > 1) && !GTFLAGS(GAMETYPE_PLAYERSFRIENDLY)))
             Bsprintf(tempbuf, "K:^15%d", (ud.multimode>1 &&!GTFLAGS(GAMETYPE_PLAYERSFRIENDLY)) ?
-                myps->frag-myps->fraggedself : myps->actors_killed);
+                myps->frag-myps->fraggedself : stats.kills);
         else
         {
-            if (myps->actors_killed >= myps->max_actors_killed)
-                Bsprintf(tempbuf, "K:%d/%d", myps->actors_killed, myps->actors_killed);
+            if (stats.kills >= stats.maxKills)
+                Bsprintf(tempbuf, "K:%d/%d", stats.kills, stats.kills);
             else
-                Bsprintf(tempbuf, "K:^15%d/%d", myps->actors_killed, myps->max_actors_killed);
+                Bsprintf(tempbuf, "K:^15%d/%d", stats.kills, stats.maxKills);
         }
         G_ScreenText(MF_Bluefont.tilenum, 2<<16, i-gtextsc(14<<16), gtextsc(MF_Bluefont.zoom), 0, 0, tempbuf, 0, 10, g_textstat|256, 0, MF_Bluefont.emptychar.x, MF_Bluefont.emptychar.y, xbetween, MF_Bluefont.between.y, MF_Bluefont.textflags|TEXT_XOFFSETZERO|TEXT_CONSTWIDTHNUMS, 0, 0, xdim-1, ydim-1);
 
-        if (myps->secret_rooms == myps->max_secret_rooms)
-            Bsprintf(tempbuf, "S:%d/%d", myps->secret_rooms, myps->max_secret_rooms);
-        else Bsprintf(tempbuf, "S:^15%d/%d", myps->secret_rooms, myps->max_secret_rooms);
+        if (stats.secrets == stats.maxSecrets)
+            Bsprintf(tempbuf, "S:%d/%d", stats.secrets, stats.maxSecrets);
+        else Bsprintf(tempbuf, "S:^15%d/%d", stats.secrets, stats.maxSecrets);
         G_ScreenText(MF_Bluefont.tilenum, 2<<16, i-gtextsc(7<<16), gtextsc(MF_Bluefont.zoom), 0, 0, tempbuf, 0, 10, g_textstat|256, 0, MF_Bluefont.emptychar.x, MF_Bluefont.emptychar.y, xbetween, MF_Bluefont.between.y, MF_Bluefont.textflags|TEXT_XOFFSETZERO|TEXT_CONSTWIDTHNUMS, 0, 0, xdim-1, ydim-1);
     }
 
@@ -2389,6 +2414,10 @@ const char* G_PrintBestTime(void)
 
 void G_BonusScreen(int32_t bonusonly)
 {
+    G_LevelStats const stats = G_GetLevelStats();
+    if (g_netServer || g_netClient)
+        LOG_F(INFO, "Level stats: kills %d/%d secrets %d/%d%s.", stats.kills, stats.maxKills, stats.secrets, stats.maxSecrets,
+              g_netClient && g_netLevelStats.valid ? " (from the server)" : "");
     int32_t bonusscreen_tiles[5];
     int32_t k, bonuscnt;
     int32_t clockpad = 2;
@@ -2672,7 +2701,7 @@ void G_BonusScreen(int32_t bonusonly)
                             bonuscnt++;
                             S_PlaySound(PIPEBOMB_EXPLODE);
                         }
-                        Bsprintf(tempbuf, "%-3d", g_player[myconnectindex].ps->actors_killed);
+                        Bsprintf(tempbuf, "%-3d", stats.kills);
                         gametext_number((320>>2)+70, yy+9, tempbuf);
                         yy += 10;
                         if (ud.player_skill > 3)
@@ -2682,9 +2711,7 @@ void G_BonusScreen(int32_t bonusonly)
                         }
                         else
                         {
-                            if ((g_player[myconnectindex].ps->max_actors_killed-g_player[myconnectindex].ps->actors_killed) < 0)
-                                Bsprintf(tempbuf, "%-3d", 0);
-                            else Bsprintf(tempbuf, "%-3d", g_player[myconnectindex].ps->max_actors_killed-g_player[myconnectindex].ps->actors_killed);
+                            Bsprintf(tempbuf, "%-3d", max(0, stats.maxKills - stats.kills));
                             gametext_number((320>>2)+70, yy+9, tempbuf);
                             yy += 10;
                         }
@@ -2708,7 +2735,7 @@ void G_BonusScreen(int32_t bonusonly)
                             bonuscnt++;
                             S_PlaySound(PIPEBOMB_EXPLODE);
                         }
-                        Bsprintf(tempbuf, "%-3d", g_player[myconnectindex].ps->secret_rooms);
+                        Bsprintf(tempbuf, "%-3d", stats.secrets);
                         gametext_number((320>>2)+70, yy+9, tempbuf);
                         yy += 10;
 #if 0
@@ -2716,7 +2743,7 @@ void G_BonusScreen(int32_t bonusonly)
                         if (g_player[myconnectindex].ps->secret_rooms > 0)
                             Bsprintf(tempbuf, "%-3d%%", (100*g_player[myconnectindex].ps->secret_rooms/g_player[myconnectindex].ps->max_secret_rooms));
 #endif
-                        Bsprintf(tempbuf, "%-3d", g_player[myconnectindex].ps->max_secret_rooms-g_player[myconnectindex].ps->secret_rooms);
+                        Bsprintf(tempbuf, "%-3d", max(0, stats.maxSecrets - stats.secrets));
                         gametext_number((320>>2)+70, yy+9, tempbuf);
                         yy += 10;
                         }

@@ -375,6 +375,11 @@ extern int32_t g_Debug;
 extern int32_t g_Shareware;
 extern int32_t mp_sharekeys, cl_nametags, mp_cutscenes, g_netCutscenes;
 bool G_PlayEpisodeCutscenes(void);
+struct G_LevelStats { int32_t kills, maxKills, secrets, maxSecrets; };
+G_LevelStats G_GetLevelStats(void);
+// Client: the team's level stats the server sent with the level end (valid until the next level).
+struct G_NetLevelStats { bool valid; int32_t kills, maxKills, secrets, maxSecrets; };
+extern G_NetLevelStats g_netLevelStats;
 extern char cl_joinserver[BMAX_PATH], g_cmdlineConnect[BMAX_PATH];
 // Name tag tiles (cl_nametags): two per player, plain and talking.
 enum { NAMETAG_TILE_BASE = XRTile(30400) };

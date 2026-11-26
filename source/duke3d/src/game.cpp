@@ -111,7 +111,8 @@ static const char *defaultrtsfilename[GAMECOUNT] = { "DUKE.RTS", "NAM.RTS", "NAP
 
 int32_t g_Shareware = 0;
 int32_t mp_cutscenes = 1;   // multiplayer: episode cutscenes for everyone (the server decides; sent with each level end)
-int32_t g_netCutscenes = 1; // client: the server's mp_cutscenes (servers before it always had them)
+int32_t g_netCutscenes = 1;
+G_NetLevelStats g_netLevelStats; // client: the server's mp_cutscenes (servers before it always had them)
 // Whether this machine plays an episode's cutscenes: single player; a co-op client unless the server
 // turned them off (each player can still skip one); never a server that is also a player (the game
 // would stop for everyone).
