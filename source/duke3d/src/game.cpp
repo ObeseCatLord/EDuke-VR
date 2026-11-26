@@ -118,7 +118,8 @@ int32_t g_netCutscenes = 1; // client: the server's mp_cutscenes (servers before
 bool G_PlayEpisodeCutscenes(void) { return numplayers < 2 || (g_netClient && g_netCutscenes); }
 int32_t mp_sharekeys = 1;   // co-op: a keycard one player picks up is everyone's (the server decides)
 int32_t cl_nametags = 1;
-char cl_joinserver[BMAX_PATH];   // the last server joined (HOST:PORT), offered by Join Server    // multiplayer: other players' names over their heads
+char cl_joinserver[BMAX_PATH];
+char g_cmdlineConnect[BMAX_PATH];   // -connect HOST[:PORT], connected once the game has loaded   // the last server joined (HOST:PORT), offered by Join Server    // multiplayer: other players' names over their heads
 uint8_t g_sharedAccess;     // keycards found on this level, while mp_sharekeys
 
 bool G_SharingKeys(void)
@@ -7812,6 +7813,14 @@ int app_main(int argc, char const* const* argv)
 
     VM_OnEvent(EVENT_INITCOMPLETE);
     Net_CompleteStartup();
+
+#ifndef NETCODE_DISABLE
+    if (g_cmdlineConnect[0])   // -connect: now that the game has loaded
+    {
+        Net_Connect(g_cmdlineConnect);
+        g_cmdlineConnect[0] = 0;
+    }
+#endif
 
 MAIN_LOOP_RESTART:
     totalclock = 0;

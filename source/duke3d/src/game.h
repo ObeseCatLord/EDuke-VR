@@ -375,7 +375,7 @@ extern int32_t g_Debug;
 extern int32_t g_Shareware;
 extern int32_t mp_sharekeys, cl_nametags, mp_cutscenes, g_netCutscenes;
 bool G_PlayEpisodeCutscenes(void);
-extern char cl_joinserver[BMAX_PATH];
+extern char cl_joinserver[BMAX_PATH], g_cmdlineConnect[BMAX_PATH];
 // Name tag tiles (cl_nametags): two per player, plain and talking.
 enum { NAMETAG_TILE_BASE = XRTile(30400) };
 static inline bool G_IsNametagTile(int picnum) { return picnum >= NAMETAG_TILE_BASE && picnum < NAMETAG_TILE_BASE + MAXPLAYERS * 2; }

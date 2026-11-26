@@ -391,7 +391,10 @@ void G_CheckCommandLine(int32_t argc, char const * const * argv)
                 {
                     if (argc > i+1)
                     {
-                        Net_Connect(argv[i+1]);
+                        // Connected once the game has loaded (app_main): connecting here left the
+                        // server with a silent peer for the whole load (~25 s, more on a slow PC),
+                        // close to ENet's 30 s timeout, and inflated its loss figures.
+                        Bstrncpyz(g_cmdlineConnect, argv[i+1], sizeof(g_cmdlineConnect));
                         g_noSetup = g_noLogo = TRUE;
                         i++;
                     }
