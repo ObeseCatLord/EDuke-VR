@@ -706,9 +706,16 @@ static void Net_DeleteAllScratchPadSprites()
     Net_InitScratchPadSpriteList();
 }
 
+// Errors in network data. The original only asserted (nothing in release builds) and carried on,
+// writing past arrays with the bad value; now they are logged and counted, and a world update that
+// had one is dropped (Net_ReadWorldUpdate) instead of applied.
+static int32_t g_netDataErrors;
 static void Net_Error_Disconnect(const char* message)
 {
-    OSD_Printf("Net_Error_Disconnect: %s\n", message);
+    ++g_netDataErrors;
+    static int32_t logged;
+    if (logged++ < 50)
+        LOG_F(ERROR, "Network data error: %s", message);
     // Here I could longjmp to the game main loop and unload the map somehow
     //
     // If we go to C++ it may be a good idea to throw an exception
@@ -3590,6 +3597,14 @@ static void NetBuffer_WriteDeltaFloat(NetBuffer_t *netBuffer, NetChunk32 rawFloa
 
 static int32_t NetBuffer_ReadBits(NetBuffer_t *netBuffer, int32_t numberOfBits)
 {
+    // Never past the end of the received data (a truncated or malformed update).
+    if (netBuffer->CurSize > 0 && netBuffer->Bit + numberOfBits > netBuffer->CurSize * 8)
+    {
+        Net_Error_Disconnect("NetBuffer_ReadBits: read past the end of the buffer.");
+        netBuffer->Bit = netBuffer->CurSize * 8 + 8;
+        netBuffer->ReadCurByte = netBuffer->CurSize + 1;
+        return 0;
+    }
     int32_t    value = GetBits(netBuffer->Data, &netBuffer->Bit, numberOfBits);
 
     netBuffer->ReadCurByte = (netBuffer->Bit + 7) >> 3;   // bytes read (a value ending on the last byte is in bounds)
@@ -4433,7 +4448,7 @@ static void Net_ParseWalls(NetBuffer_t *netBuffer, netmapstate_t *oldSnapshot, n
         // read the netIndex of this struct
         newSnapshotNetIndex = NetBuffer_ReadBits(netBuffer, NETINDEX_BITS);
 
-        if (newSnapshotNetIndex < 0)
+        if (newSnapshotNetIndex < 0 || (newSnapshotNetIndex != cSTOP_PARSING_CODE && newSnapshotNetIndex >= MAXWALLS))
         {
             Net_Error_Disconnect("Net_ParseWalls: Invalid netIndex from client.");
             return;
@@ -4473,6 +4488,7 @@ static void Net_ParseWalls(NetBuffer_t *netBuffer, netmapstate_t *oldSnapshot, n
         if (netBuffer->ReadCurByte > netBuffer->CurSize)
         {
             Net_Error_Disconnect("Net_ParseWalls: Reached end of buffer without finding a stop code.");
+            return;
             return;
         }
 
@@ -4574,7 +4590,7 @@ static void Net_ParseSectors(NetBuffer_t *netBuffer, netmapstate_t *oldSnapshot,
 
         DEBUG_PrevNewIndex = newSnapshotNetIndex;
 
-        if (newSnapshotNetIndex < 0)
+        if (newSnapshotNetIndex < 0 || (newSnapshotNetIndex != cSTOP_PARSING_CODE && newSnapshotNetIndex >= MAXSECTORS))
         {
             Net_Error_Disconnect("Net_ParseSectors: Invalid netIndex from client.");
             return;
@@ -4601,6 +4617,7 @@ static void Net_ParseSectors(NetBuffer_t *netBuffer, netmapstate_t *oldSnapshot,
         if (netBuffer->ReadCurByte > netBuffer->CurSize)
         {
             Net_Error_Disconnect("Net_ParseSectors: Reached end of buffer without finding a stop code.");
+            return;
             return;
         }
 
@@ -4712,11 +4729,13 @@ static void Net_ParseActors(NetBuffer_t *netBuffer, const netmapstate_t* oldSnap
         if (netBuffer->ReadCurByte > netBuffer->CurSize)
         {
             Net_Error_Disconnect("Net_ParseActors: Reached end of buffer without finding a stop code.");
+            return;
         }
 
-        if ((newActorIndex < 0) || (newActorIndex > MAXSPRITES))
+        if ((newActorIndex < 0) || (newActorIndex >= MAXSPRITES))
         {
             Net_Error_Disconnect("Net_ParseActors: Invalid netIndex from client.");
+            return;
         }
 
         // loop up to the point where the structs changed between the old frame and the new frame start
@@ -5115,6 +5134,15 @@ static void Net_CopySnapshotToGameArrays(netmapstate_t* srv_snapshot, netmapstat
 // clients only
 static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
 {
+    if (char const *const cut = sdlayer_getenv_cached("EDUKE32_TEST_TRUNCATE_UPDATE"))   // test hook: halve update N
+    {
+        static int32_t updates;
+        if (++updates == Batoi(cut))
+        {
+            LOG_F(INFO, "Test: world update %d cut from %d to %d bytes.", updates, packetSize, packetSize / 2);
+            packetSize /= 2;
+        }
+    }
     if (!g_netClient)
     {
         return;
@@ -5207,7 +5235,16 @@ static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
     NET_DEBUG_VAR uint32_t DEBUG_OldClientRevision = g_netMapRevisionNumber;
 
     Bassert(fromMapState);
+    int32_t const errorsBefore = g_netDataErrors;
     NetBuffer_ReadWorldSnapshotFromBuffer(bufferPtr, fromMapState, toMapState);
+    if (g_netDataErrors != errorsBefore)
+    {
+        // Malformed: keep the current world, and never use this half-read state as a delta base
+        // (a delta against it is refused; the server falls back to a full update).
+        toMapState->revisionNumber = cInitialMapStateRevisionNumber - 1;
+        LOG_F(ERROR, "World update %u dropped: malformed.", packetToRevisionNumber);
+        return;
+    }
 
     g_netMapRevisionNumber = packetToRevisionNumber;
     ++g_netStatUpdates;
