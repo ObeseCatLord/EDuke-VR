@@ -83,6 +83,9 @@ int Net_PeerSend(ENetPeer *peer, enet_uint8 channel, ENetPacket *packet)
 
 static void Net_Disconnect(void);
 // Packets a client may send to the other clients through the server.
+// A player number from a packet: a real slot with a player.
+static inline bool Net_ValidPlayer(int playerNum) { return (unsigned)playerNum < MAXPLAYERS && g_player[playerNum].ps; }
+
 static bool Net_ClientMayRelay(uint8_t type)
 {
     return type == PACKET_RTS || type == PACKET_CLIENT_INFO || type == PACKET_MESSAGE || type == PACKET_USER_MAP
@@ -2294,8 +2297,11 @@ static void Net_ReceiveChallenge(uint8_t *pbuf, int32_t packbufleng, ENetEvent *
 
 static void Net_ReceiveMessage(uint8_t *pbuf, int32_t packbufleng)
 {
-    Bstrncpy(recbuf, (char *)pbuf + 2, packbufleng - 2);
-    recbuf[packbufleng - 2] = 0;
+    if (packbufleng < 2)
+        return;
+    int32_t const length = min<int32_t>(packbufleng - 2, sizeof(recbuf) - 1);
+    Bmemcpy(recbuf, pbuf + 2, length);
+    recbuf[length] = 0;
 
     G_AddUserQuote(recbuf);
     S_PlaySound(EXITMENUSOUND);
@@ -2363,8 +2369,10 @@ static void Net_CheckForEnoughVotes()
 }
 
 
-static void Net_ReceiveMapVote(uint8_t *pbuf)
+static void Net_ReceiveMapVote(uint8_t *pbuf, int32_t packbufleng)
 {
+    if (packbufleng < 3 || !Net_ValidPlayer(pbuf[1]))
+        return;
     if (voting == myconnectindex && g_player[(uint8_t)pbuf[1]].gotvote == 0)
     {
         Bsprintf(tempbuf, "Confirmed vote from %s", g_player[(uint8_t)pbuf[1]].user_name);
@@ -2382,8 +2390,10 @@ static void Net_ReceiveMapVote(uint8_t *pbuf)
 }
 
 
-static void Net_ReceiveMapVoteCancel(uint8_t *pbuf)
+static void Net_ReceiveMapVoteCancel(uint8_t *pbuf, int32_t packbufleng)
 {
+    if (packbufleng < 2)
+        return;
     // Ignore if we're not voting
     if (voting == -1)
     {
@@ -2418,15 +2428,18 @@ static void Net_ReceiveMapVoteCancel(uint8_t *pbuf)
 static void Net_ReceiveClientInfo(uint8_t *pbuf, int32_t packbufleng, int32_t fromserver)
 {
     uint32_t byteIndex, j;
-    int32_t  other = pbuf[packbufleng];
+    int32_t  other = pbuf[packbufleng];   // (the server puts the sending peer's player number here)
+    if (!Net_ValidPlayer(other))
+        return;
 
-    for (byteIndex = 1; pbuf[byteIndex]; byteIndex++)
-    {
-        g_player[other].user_name[byteIndex - 1] = pbuf[byteIndex];
-    }
-
-    g_player[other].user_name[byteIndex - 1] = 0;
+    // Name (bounded), then 5 settings bytes and 10 weapon choices.
+    for (byteIndex = 1; (int32_t)byteIndex < packbufleng && pbuf[byteIndex]; byteIndex++)
+        if (byteIndex - 1 < sizeof(g_player[other].user_name) - 1)
+            g_player[other].user_name[byteIndex - 1] = pbuf[byteIndex];
+    g_player[other].user_name[min<uint32_t>(byteIndex - 1, sizeof(g_player[other].user_name) - 1)] = 0;
     byteIndex++;
+    if ((int32_t)byteIndex + 15 > packbufleng)
+        return;
 
     g_player[other].ps->aim_mode     = pbuf[byteIndex++];
     g_player[other].ps->auto_aim     = pbuf[byteIndex++];
@@ -2450,8 +2463,11 @@ static void Net_ReceiveUserMapName(uint8_t *pbuf, int32_t packbufleng)
     NET_75_CHECK++;  // possible buffer bug here with a malicious client? if the file name didn't end in '\0', a hacker could "forget" to put '\0'
                      // at the end.
 
-    Bstrcpy(boardfilename, (char *)pbuf + 1);
-    boardfilename[packbufleng - 1] = 0;
+    if (packbufleng < 1)
+        return;
+    int32_t const length = min<int32_t>(packbufleng - 1, sizeof(boardfilename) - 1);
+    Bmemcpy(boardfilename, pbuf + 1, length);
+    boardfilename[length] = 0;
     Bcorrectfilename(boardfilename, 0);
     if (boardfilename[0] != 0)
     {
@@ -2499,10 +2515,13 @@ static void Net_ExtractNewGame(newgame_t *newgame, int32_t menuonly)
     }
 }
 
-static void Net_ReceiveMapVoteInitiate(uint8_t *pbuf)
+static void Net_ReceiveMapVoteInitiate(uint8_t *pbuf, int32_t packbufleng)
 {
     int32_t playerIndex;
 
+    if (packbufleng < (int32_t)sizeof(newgame_t) || !Net_ValidPlayer(((newgame_t const *)pbuf)->connection)
+        || (uint8_t)((newgame_t const *)pbuf)->volume_number >= MAXVOLUMES || (uint8_t)((newgame_t const *)pbuf)->level_number >= MAXLEVELS)
+        return;
     Bmemcpy(&pendingnewgame, pbuf, sizeof(newgame_t));
     Net_ExtractNewGame(&pendingnewgame, 1);
 
@@ -2540,7 +2559,8 @@ static void Net_ParsePacketCommon(uint8_t *pbuf, int32_t packbufleng, int32_t se
         break;
 
     case PACKET_RTS:
-        G_StartRTS(pbuf[1], 0);
+        if (packbufleng >= 2)
+            G_StartRTS(pbuf[1], 0);
         break;
 
     case PACKET_USER_MAP:
@@ -2548,15 +2568,15 @@ static void Net_ParsePacketCommon(uint8_t *pbuf, int32_t packbufleng, int32_t se
         break;
 
     case PACKET_MAP_VOTE:
-        Net_ReceiveMapVote(pbuf);
+        Net_ReceiveMapVote(pbuf, packbufleng);
         break;
 
     case PACKET_MAP_VOTE_INITIATE: // call map vote
-        Net_ReceiveMapVoteInitiate(pbuf);
+        Net_ReceiveMapVoteInitiate(pbuf, packbufleng);
         break;
 
     case PACKET_MAP_VOTE_CANCEL: // cancel map vote
-        Net_ReceiveMapVoteCancel(pbuf);
+        Net_ReceiveMapVoteCancel(pbuf, packbufleng);
         break;
     }
 }
@@ -2573,6 +2593,14 @@ static void Net_ParseClientPacket(ENetEvent *event)
     // The sender is the player its peer was admitted as, never what the packet says (a client could
     // otherwise respawn another player, or index past g_player with a ping).
     int32_t const other = event->peer->data ? int32_t(intptr_t(event->peer->data)) : -1;
+    // Handlers and the clients this is relayed to read the sender from that last byte (and, for map
+    // votes, byte 1): make them the peer's own number, so a client cannot speak for another player.
+    if (pbuf[0] != PACKET_AUTH && (unsigned)other < MAXPLAYERS)
+    {
+        pbuf[packbufleng] = uint8_t(other);
+        if ((pbuf[0] == PACKET_MAP_VOTE || pbuf[0] == PACKET_MAP_VOTE_CANCEL) && packbufleng >= 2)
+            pbuf[1] = uint8_t(other);
+    }
 
     NET_DEBUG_VAR enum DukePacket_t packetType = (enum DukePacket_t)pbuf[0];
 
@@ -2688,8 +2716,10 @@ static void Net_HandleClientPackets(void)
             // doesn't send the player back his own packets
             // Only what clients may send to each other (never NEW_GAME or END_LEVEL: a client could
             // end the level for the others while the server played on).
+            // On the chat channel only chat and RTS (all our clients send there): anything else would
+            // reach the other clients as if the server had sent it (level end, frags, spawns).
             if ((event.channelID == CHAN_GAMESTATE && event.packet->dataLength > 0 && Net_ClientMayRelay(event.packet->data[0]))
-                || event.channelID == CHAN_CHAT)
+                || (event.channelID == CHAN_CHAT && (event.packet->data[0] == PACKET_MESSAGE || event.packet->data[0] == PACKET_RTS)))
             {
                 const ENetPacket *pak = event.packet;
 
@@ -2909,7 +2939,8 @@ static void Net_ReceiveNewPlayer(uint8_t *pbuf, int32_t packbufleng)
 {
     int32_t i;
 
-    UNREFERENCED_PARAMETER(packbufleng);  // remove when this variable is used
+    if (packbufleng < 5 || pbuf[4] >= MAXPLAYERS)
+        return;
 
     numplayers              = pbuf[1];
     g_mostConcurrentPlayers = pbuf[2];
@@ -2965,6 +2996,10 @@ static void Net_ParseServerPacket(ENetEvent *event)
 
     --packbufleng;
 
+    // The chat channel carries only chat and RTS (relayed from other clients).
+    if (event->channelID == CHAN_CHAT && pbuf[0] != PACKET_MESSAGE && pbuf[0] != PACKET_RTS)
+        return;
+
 #ifdef PACKET_RECV_PRINT
     LOG_F(INFO, "Received Packet: type: %d : len %d", pbuf[0], packbufleng);
 #endif
@@ -3009,7 +3044,9 @@ static void Net_ParseServerPacket(ENetEvent *event)
         break;
 
     case PACKET_PLAYER_DISCONNECTED:
-        if (pbuf[1] < MAXPLAYERS) Voice_ResetPlayer(pbuf[1]);
+        if (packbufleng < 4 || !Net_ValidPlayer(pbuf[1]))
+            break;
+        Voice_ResetPlayer(pbuf[1]);
         if ((g_player[myconnectindex].ps->gm & MODE_GAME))
         {
             P_RemovePlayer(pbuf[1]);
@@ -3027,6 +3064,8 @@ static void Net_ParseServerPacket(ENetEvent *event)
             break;
         }
 
+        if (packbufleng < 26 || !Net_ValidPlayer(pbuf[1]) || (unsigned)g_player[pbuf[1]].ps->i >= MAXSPRITES)
+            break;
         P_ResetPlayer(pbuf[1]);
         Bmemcpy(&g_player[pbuf[1]].ps->pos, &pbuf[2], sizeof(vec3_t));
         Bmemcpy(&sprite[g_player[pbuf[1]].ps->i], &pbuf[2], sizeof(vec3_t));
@@ -3043,6 +3082,8 @@ static void Net_ParseServerPacket(ENetEvent *event)
             break;
         }
 
+        if (packbufleng < 8 || !Net_ValidPlayer(pbuf[1]) || !Net_ValidPlayer(pbuf[2]) || (unsigned)g_player[pbuf[1]].ps->i >= MAXSPRITES)
+            break;
         g_player[pbuf[1]].ps->frag_ps = pbuf[2];
         actor[g_player[pbuf[1]].ps->i].htpicnum = pbuf[3];
         ticrandomseed = B_UNBUF32(&pbuf[4]);
@@ -6020,6 +6061,36 @@ void Net_SendClientUpdate(void)
     Dbg_PacketSent(PACKET_SLAVE_TO_MASTER);
 }
 
+
+// Test hook (EDUKE32_TEST_BAD_PACKETS): from a client, a valid chat line, then malformed packets a
+// buggy or hostile client could send. The server must stay up and other clients in the level.
+void Net_SendTestPackets(void)
+{
+    if (!g_netClient || !g_netClientPeer || !sdlayer_getenv_cached("EDUKE32_TEST_BAD_PACKETS"))
+        return;
+    auto send = [](uint8_t const *bytes, size_t length, int channel) {
+        Net_PeerSend(g_netClientPeer, channel, enet_packet_create((void *)bytes, length, ENET_PACKET_FLAG_RELIABLE));
+    };
+    uint8_t buf[512];
+    char const chat[] = "TESTCHAT ok";
+    buf[0] = PACKET_MESSAGE; buf[1] = 255; Bmemcpy(buf + 2, chat, sizeof(chat) - 1); buf[2 + sizeof(chat) - 1] = myconnectindex;
+    send(buf, 2 + sizeof(chat), CHAN_CHAT);
+    buf[0] = PACKET_MESSAGE; buf[1] = myconnectindex; send(buf, 2, CHAN_CHAT);                    // too short
+    buf[0] = PACKET_MESSAGE; buf[1] = 255; Bmemset(buf + 2, 'A', 400); buf[402] = myconnectindex;
+    send(buf, 403, CHAN_CHAT);                                                                 // overruns recbuf
+    int n = 0; buf[n++] = PACKET_CLIENT_INFO; Bmemcpy(buf + n, "Forged", 7); n += 7;
+    Bmemset(buf + n, 0, 15); n += 15; buf[n++] = 2;                                            // claims to be player 2
+    send(buf, n, CHAN_GAMESTATE);
+    buf[0] = PACKET_CLIENT_INFO; Bmemset(buf + 1, 'B', 300); buf[301] = myconnectindex;
+    send(buf, 302, CHAN_GAMESTATE);                                                            // name with no end
+    buf[0] = PACKET_END_LEVEL; buf[1] = 0; buf[2] = 5; buf[3] = 0; buf[4] = 0; buf[5] = myconnectindex;
+    send(buf, 6, CHAN_CHAT);                                                                   // server-only, on chat
+    buf[0] = PACKET_MAP_VOTE_INITIATE; buf[1] = myconnectindex; send(buf, 2, CHAN_GAMESTATE);  // short
+    buf[0] = PACKET_MAP_VOTE; buf[1] = 250; buf[2] = 1; buf[3] = myconnectindex; send(buf, 4, CHAN_GAMESTATE);
+    buf[0] = PACKET_USER_MAP; Bmemset(buf + 1, 'C', 400); buf[401] = myconnectindex; send(buf, 402, CHAN_GAMESTATE);
+    buf[0] = PACKET_RTS; send(buf, 1, CHAN_CHAT);                                              // no index
+    LOG_F(INFO, "Test packets sent.");
+}
 
 void Net_SendMessage(void)
 {

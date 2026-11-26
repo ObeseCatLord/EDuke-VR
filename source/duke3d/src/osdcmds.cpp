@@ -1357,6 +1357,14 @@ static int osdcmd_net_endlevel(osdcmdptr_t parm)
     return OSDCMD_OK;
 }
 
+static int osdcmd_net_testpackets(osdcmdptr_t)
+{
+#ifndef NETCODE_DISABLE
+    Net_SendTestPackets();
+#endif
+    return OSDCMD_OK;
+}
+
 static int osdcmd_net_kill(osdcmdptr_t parm)
 {
     if (!parm || parm->numparms != 1)
@@ -1928,6 +1936,7 @@ int32_t registerosdcommands(void)
 #endif
     OSD_RegisterFunction("listplayers","listplayers: lists currently connected multiplayer clients", osdcmd_listplayers);
     OSD_RegisterFunction("net_endlevel","net_endlevel [episode]: (test) ends the level here as the exit button does (or the episode, as its boss does)", osdcmd_net_endlevel);
+    OSD_RegisterFunction("net_testpackets","net_testpackets: (test hook, EDUKE32_TEST_BAD_PACKETS) a client sends a chat line and malformed packets", osdcmd_net_testpackets);
     OSD_RegisterFunction("net_kill","net_kill <player>: (server) kills that player, as from damage", osdcmd_net_kill);
     OSD_RegisterFunction("test_use","test_use: (test hook) presses Use for a moment", osdcmd_test_use);
     OSD_RegisterFunction("net_state","net_state FILE: (test hook) writes players, sectors, switch walls and lasting sprites to FILE", osdcmd_net_state);

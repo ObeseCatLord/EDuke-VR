@@ -251,6 +251,7 @@ void    Net_Connect(const char *srvaddr);
 // Join Server: start connecting without blocking (false: the name was not found), then poll each
 // frame: 0 trying, 1 connected (g_netClient set), -1 failed. Cancel drops a pending attempt.
 bool    Net_BeginConnect(const char *srvaddr);
+void    Net_SendTestPackets(void);   // test hook (EDUKE32_TEST_BAD_PACKETS)
 int     Net_PollConnect(void);
 void    Net_CancelConnect(void);
 
