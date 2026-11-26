@@ -769,7 +769,9 @@ int CONFIG_ReadSetup(void)
         while (Bstrlen(OSD_StripColors(nameBuf, tempbuf)) > 10)
             tempbuf[Bstrlen(tempbuf) - 1] = '\0';
 
-        Bstrncpyz(szPlayerName, tempbuf, sizeof(szPlayerName));
+        // An empty saved name keeps the default ("Player"): other players saw a blank name.
+        if (tempbuf[0])
+            Bstrncpyz(szPlayerName, tempbuf, sizeof(szPlayerName));
     }
 
     SCRIPT_GetString(ud.config.scripthandle, "Comm Setup","RTSName",&ud.rtsname[0]);
