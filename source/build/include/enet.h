@@ -4977,6 +4977,7 @@ extern "C" {
                     ((uint32_t *)&address->host.s6_addr)[1] = 0;
                     ((uint32_t *)&address->host.s6_addr)[2] = htonl(0xffff);
                     ((uint32_t *)&address->host.s6_addr)[3] = sin->sin_addr.s_addr;
+                    address->sin6_scope_id = 0;
 
                     freeaddrinfo(resultList);
 
@@ -5430,6 +5431,7 @@ extern "C" {
         ((enet_uint32 *)&address->host.s6_addr)[1] = 0;
         ((enet_uint32 *)&address->host.s6_addr)[2] = htonl(0xffff);
         ((enet_uint32 *)&address->host.s6_addr)[3] = *(enet_uint32 *)hostEntry->h_addr_list[0];
+        address->sin6_scope_id = 0;   // EDuke-VR: a stale scope id made Windows reject every send
 
         return 0;
     }

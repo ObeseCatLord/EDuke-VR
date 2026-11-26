@@ -1871,7 +1871,8 @@ static void Net_Disconnect(void)
             }
         }
 
-        enet_peer_reset(g_netClientPeer);
+        if (g_netClientPeer)   // none after a connection attempt that failed
+            enet_peer_reset(g_netClientPeer);
         g_netClientPeer = NULL;
         enet_host_destroy(g_netClient);
         g_netClient = NULL;
@@ -5565,13 +5566,14 @@ void Net_ResetPrediction(void)
 
 void Net_Connect(const char *srvaddr)
 {
-    ENetAddress address;
+    // Zeroed: the address's IPv6 scope id is only set for IPv6 results, and an IPv4 server
+    // (sent to as ::ffff:a.b.c.d) with a stale scope id from the stack is rejected by Windows'
+    // sendto at once, so every connection from Windows failed (Linux ignores it).
+    ENetAddress address = {};
     ENetEvent   event;
     char *addrstr = NULL, *remainingAddrstr = NULL;
 
     const int32_t cNumberOfRetries = 4;
-
-    int32_t connectCount = cNumberOfRetries;
 
     char *oursrvaddr = Xstrdup(srvaddr);
 
@@ -5587,21 +5589,28 @@ void Net_Connect(const char *srvaddr)
     }
 
     addrstr = Bstrtoken(oursrvaddr, ":", &remainingAddrstr, 1);
-    enet_address_set_host(&address, addrstr);
+    char const *const hostName = addrstr ? addrstr : "";
+    if (!addrstr || enet_address_set_host(&address, addrstr) != 0)
+    {
+        LOG_F(ERROR, "Could not find the server \"%s\" (name lookup failed).", hostName);
+        Xfree(oursrvaddr);
+        Net_Disconnect();
+        return;
+    }
     addrstr = Bstrtoken(NULL, ":", &remainingAddrstr, 1);
     address.port = addrstr == NULL ? g_netPort : Batoi(addrstr);
 
-    g_netClientPeer = enet_host_connect(g_netClient, &address, CHAN_MAX, 0);
-
-    if (g_netClientPeer == NULL)
+    for (int32_t attempt = 1; attempt <= cNumberOfRetries; attempt++)
     {
-        LOG_F(INFO, "No available peers for initiating an ENet connection.");
-        Xfree(oursrvaddr);
-        return;
-    }
+        // Each attempt starts a fresh handshake: a reset peer sends nothing more.
+        g_netClientPeer = enet_host_connect(g_netClient, &address, CHAN_MAX, 0);
 
-    for (connectCount = cNumberOfRetries; connectCount > 0; connectCount--)
-    {
+        if (g_netClientPeer == NULL)
+        {
+            LOG_F(INFO, "No available peers for initiating an ENet connection.");
+            break;
+        }
+
         /* Wait up to 5 seconds for the connection attempt to succeed. */
         if (enet_host_service(g_netClient, &event, 5000) > 0 && event.type == ENET_EVENT_TYPE_CONNECT)
         {
@@ -5610,15 +5619,14 @@ void Net_Connect(const char *srvaddr)
             Xfree(oursrvaddr);
             return;
         }
-        else
-        {
-            /* Either the 5 seconds are up or a disconnect event was */
-            /* received. Reset the peer in the event the 5 seconds   */
-            /* had run out without any significant event.            */
-            enet_peer_reset(g_netClientPeer);
-            LOG_F(ERROR, "Connection to %s:%d failed.", oursrvaddr, address.port);
-        }
-        LOG_F(INFO, connectCount ? "Retrying..." : "Giving up connection attempt.");
+
+        /* Either the 5 seconds are up, sending failed or a disconnect event was received. */
+        enet_peer_reset(g_netClientPeer);
+        g_netClientPeer = NULL;
+        LOG_F(ERROR, "Connection to %s:%d failed.", oursrvaddr, address.port);
+        LOG_F(INFO, attempt < cNumberOfRetries ? "Retrying..." : "Giving up connection attempt.");
+        if (attempt < cNumberOfRetries)
+            enet_host_service(g_netClient, &event, 1000);   // no peer: just waits, so a send that fails at once is not retried in a tight loop
     }
 
     // [75] note: it only gets here if there was an error
