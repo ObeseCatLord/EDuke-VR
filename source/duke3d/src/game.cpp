@@ -4518,7 +4518,11 @@ void G_DoSpriteAnimations(int32_t ourx, int32_t oury, int32_t ourz, int32_t oura
                         eye = { t->x + pose.eye[0], t->y + pose.eye[1], viewZ + pose.eye[2] };
                     tag->x = eye.x;
                     tag->y = eye.y;
-                    tag->z = eye.z - (6 << 8);
+                    // Above the head as drawn, like Quakespasm VR's tags over the model's top: the body
+                    // sprite is always full height, so a VR player who is shorter, seated or ducking had
+                    // their eye (and the tag) inside the sprite's head. Above whichever is higher.
+                    int32_t const spriteTop = t->z - ((tilesiz[t->picnum].y * t->yrepeat) << 2);
+                    tag->z = min(eye.z - (6 << 8), spriteTop - (4 << 8));
 
 #ifdef USE_OPENXR
                     G_XRInheritSprite(spritesortcnt,j);
