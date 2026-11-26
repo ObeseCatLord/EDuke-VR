@@ -3495,6 +3495,53 @@ struct SpriteTracerData
 std::map<int, SpriteTracerData> tracerData;
 #endif
 
+// Pipebombs lying in a map. Co-op (weapon stay) used to record the pipebomb tile per player, so after
+// one map pipebomb no other would give a player anything until they died, and only the nearest player
+// was tried, so a teammate who had one blocked the others standing beside it: pickups seemed random.
+// Now each map pipebomb is recorded per player (each takes each once; it stays for the rest) and the
+// nearest player who can take it does.
+static uint16_t g_pipebombTakenBy[MAXSPRITES];
+
+static int A_PipebombTaker(int spriteNum, int nearest, int32_t nearestDist)
+{
+    auto const pSprite = &sprite[spriteNum];
+    bool const mapItem = (g_gametypeFlags[ud.coop] & GAMETYPE_WEAPSTAY) && pSprite->owner == spriteNum;
+    auto eligible = [&](int playerNum, int32_t dist)
+    {
+        auto const ps = g_player[playerNum].ps;
+        return dist < 788 && ps->ammo_amount[HANDBOMB_WEAPON] < ps->max_ammo_amount[HANDBOMB_WEAPON]
+            && !(mapItem && (g_pipebombTakenBy[spriteNum] & (1u << playerNum)))
+            && cansee(pSprite->x, pSprite->y, pSprite->z - ZOFFSET3, pSprite->sectnum, ps->pos.x, ps->pos.y, ps->pos.z, ps->cursectnum);
+    };
+    int taker = -1;
+    if (!g_netServer && ud.multimode < 2)
+        taker = eligible(nearest, nearestDist) ? nearest : -1;
+    else
+    {
+        int32_t takerDist = INT32_MAX;
+        for (bssize_t TRAVERSE_CONNECT(playerNum))
+        {
+            if (G_DedicatedHostPlayer(playerNum) || G_PlayerOutOfGame(playerNum))
+                continue;
+            auto const ps = g_player[playerNum].ps;
+            if (sprite[ps->i].extra <= 0)
+                continue;
+            int32_t const dist = klabs(ps->opos.x - pSprite->x) + klabs(ps->opos.y - pSprite->y)
+                               + ((klabs(ps->opos.z - pSprite->z + (28 << 8))) >> 4);
+            if (dist < takerDist && eligible(playerNum, dist))
+                taker = playerNum, takerDist = dist;
+        }
+    }
+    if (std::getenv("EDUKE32_TEST_PICKUP") && nearestDist < 788)
+    {
+        static int logged;
+        if (logged++ < 400)
+            LOG_F(INFO, "Pipebomb pickup: sprite=%d nearest=%d dist=%d mapItem=%d takenBy=0x%x taker=%d role=%s.", spriteNum, nearest,
+                  nearestDist, int(mapItem), unsigned(g_pipebombTakenBy[spriteNum]), taker, g_netServer ? "server" : g_netClient ? "client" : "local");
+    }
+    return taker;
+}
+
 ACTOR_STATIC void G_MoveWeapons(void)
 {
     int spriteNum = headspritestat[STAT_PROJECTILE];
@@ -5354,6 +5401,9 @@ ACTOR_STATIC void G_MoveActors(void)
             playerNum = A_FindPlayer(pSprite, &playerDist);
             pPlayer   = g_player[playerNum].ps;
 
+            if (pData[0] == 0)   // first tick of a new pipebomb in this slot
+                g_pipebombTakenBy[spriteNum] = 0;
+
             if (playerDist < 1220)
                 pSprite->cstat &= ~257;
             else
@@ -5515,24 +5565,15 @@ DETONATEB:
                     }
                 }
             }
-            else if (pSprite->picnum == HEAVYHBOMB && playerDist < 788 && pData[0] > 7 && pSprite->xvel == 0)
+            else if (pSprite->picnum == HEAVYHBOMB && pData[0] > 7 && pSprite->xvel == 0
+                     && (playerNum = A_PipebombTaker(spriteNum, playerNum, playerDist)) >= 0)
             {
-                if (cansee(pSprite->x, pSprite->y, pSprite->z - ZOFFSET3, pSprite->sectnum,
-                           pPlayer->pos.x, pPlayer->pos.y, pPlayer->pos.z, pPlayer->cursectnum))
+                pPlayer = g_player[playerNum].ps;
                 {
-                    if (pPlayer->ammo_amount[HANDBOMB_WEAPON] < pPlayer->max_ammo_amount[HANDBOMB_WEAPON])
                     {
+                        // A map pipebomb in co-op (weapon stay) is taken once by each player and stays.
                         if ((g_gametypeFlags[ud.coop] & GAMETYPE_WEAPSTAY) && pSprite->owner == spriteNum)
-                        {
-                            for (bssize_t j = 0; j < pPlayer->weapreccnt; j++)
-                            {
-                                if (pPlayer->weaprecs[j] == pSprite->picnum)
-                                    goto next_sprite;
-                            }
-
-                            if (pPlayer->weapreccnt < MAX_WEAPONS)
-                                pPlayer->weaprecs[pPlayer->weapreccnt++] = pSprite->picnum;
-                        }
+                            g_pipebombTakenBy[spriteNum] |= 1u << playerNum;
 
                         P_AddAmmo(pPlayer, HANDBOMB_WEAPON, 1);
                         A_PlaySound(DUKE_GET, pPlayer->i);
