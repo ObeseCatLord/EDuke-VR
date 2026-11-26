@@ -1028,7 +1028,11 @@ static void Net_CopySpriteFromNet(const netactor_t* netActor, spritetype* gameSp
 
 
 
-static void Net_CopyActorFromNet(const netactor_t* netActor, actor_t *gameActor)
+// newIdentity: the slot held another sprite on this client (another tile, or a deleted or
+// client-local sprite). Then every t_data field comes from the server: the smoothing below kept
+// the old occupant's action frame and timer, and a BLOOD that inherited a frame of 30857 crashed
+// every client drawing it.
+static void Net_CopyActorFromNet(const netactor_t* netActor, actor_t *gameActor, bool newIdentity)
 {
     // (convert data from 32 bit integers)
 
@@ -1036,7 +1040,7 @@ static void Net_CopyActorFromNet(const netactor_t* netActor, actor_t *gameActor)
     Bassert(gameActor);
 
     // This seemed to make enemy movements smoother.
-    bool aiIDChanged = (gameActor->t_data[5] != netActor->t_data_5);
+    bool aiIDChanged = newIdentity || (gameActor->t_data[5] != netActor->t_data_5);
 
     // If the sprite is a CON sprite, don't overwrite AC_Action_Count
     bool isActor = G_TileHasActor(netActor->spr_picnum);
@@ -1156,8 +1160,19 @@ static void Net_CopySpriteSmoothFromNet(const netactor_t* netActor, spritesmooth
 
 static void Net_CopyAllActorDataFromNet(const netactor_t* netActor, spritetype* gameSprite, actor_t* gameActor, spriteext_t* gameSprExt, spritesmooth_t* gameSprSmooth)
 {
+    bool const newIdentity = gameSprite->picnum != netActor->spr_picnum || gameSprite->statnum == STAT_NETALLOC
+                          || gameSprite->statnum == MAXSTATUS;
+    if (newIdentity && sdlayer_getenv_cached("EDUKE32_TEST_NET_IDENTITY")
+        && (gameActor->t_data[2] != netActor->t_data_2 || gameActor->t_data[3] != netActor->t_data_3))
+    {
+        static int logged;
+        if (logged++ < 200)
+            LOG_F(INFO, "Net identity: sprite %d tile %d -> %d stat %d: t_data[2,3] %d,%d -> %d,%d.", int(gameSprite - sprite),
+                  int(gameSprite->picnum), netActor->spr_picnum, int(gameSprite->statnum), gameActor->t_data[2], gameActor->t_data[3],
+                  netActor->t_data_2, netActor->t_data_3);
+    }
     Net_CopySpriteFromNet(netActor, gameSprite);
-    Net_CopyActorFromNet(netActor, gameActor);
+    Net_CopyActorFromNet(netActor, gameActor, newIdentity);
     Net_CopySpriteExtFromNet(netActor, gameSprExt);
     Net_CopySpriteSmoothFromNet(netActor, gameSprSmooth);
 
@@ -1204,7 +1219,7 @@ static void Net_CopyPlayerSpriteFromNet(const netactor_t* netActor, spritetype* 
 static void Net_CopyPlayerActorDataFromNet(const netactor_t* netActor, spritetype* gameSprite, actor_t* gameActor, spriteext_t* gameSprExt, spritesmooth_t* gameSprSmooth)
 {
     Net_CopyPlayerSpriteFromNet(netActor, gameSprite);
-    Net_CopyActorFromNet(netActor, gameActor);
+    Net_CopyActorFromNet(netActor, gameActor, false);
     Net_CopySpriteExtFromNet(netActor, gameSprExt);
     Net_CopySpriteSmoothFromNet(netActor, gameSprSmooth);
 
