@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "texcache.h"
 
 #include "anim.h"
+#include "voice.h"
 
 #ifdef USE_LIBVPX
 # include "animvpx.h"
@@ -393,6 +394,7 @@ int32_t Anim_Play(const char *fn)
             do
             {
                 gameHandleEvents();
+                Voice_Frame();   // voice chat goes on through cutscenes
 
                 if (VM_OnEventWithReturn(EVENT_SKIPCUTSCENE, g_player[screenpeek].ps->i, screenpeek, I_GeneralTrigger()))
                 {
@@ -528,6 +530,7 @@ int32_t Anim_Play(const char *fn)
         }
 
         gameHandleEvents();
+        Voice_Frame();   // voice chat goes on through cutscenes
 
         if (totalclock < ototalclock - 1)
             continue;

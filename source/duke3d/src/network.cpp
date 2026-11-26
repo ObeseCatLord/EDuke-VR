@@ -5285,8 +5285,10 @@ void Net_SendEndLevel(void)
         return;
     // [3]: the episode ended (ud.eog): every machine moves on to the next episode the same way.
     // [4]: at the end of an episode, the episode the server goes on to (clients follow its choice).
-    uint8_t packet[5] = { PACKET_END_LEVEL, uint8_t(ud.volume_number), uint8_t(ud.level_number), uint8_t(ud.eog ? 1 : 0),
-                          uint8_t(ud.eog ? G_NextEpisode(ud.volume_number) : 0) };
+    // [5]: mp_cutscenes (clients of older servers, which send 5 bytes, keep playing them; older
+    //      clients ignore the byte).
+    uint8_t packet[6] = { PACKET_END_LEVEL, uint8_t(ud.volume_number), uint8_t(ud.level_number), uint8_t(ud.eog ? 1 : 0),
+                          uint8_t(ud.eog ? G_NextEpisode(ud.volume_number) : 0), uint8_t(mp_cutscenes ? 1 : 0) };
     enet_host_broadcast(g_netServer, CHAN_GAMESTATE, enet_packet_create(packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE));
     LOG_F(INFO, "Level end sent: next E%dL%d%s.", ud.volume_number + 1, ud.level_number + 1, ud.eog ? " (end of episode)" : "");
 }
@@ -5305,6 +5307,7 @@ static void Net_ReceiveEndLevel(ENetEvent const *event)
     ud.volume_number = ud.m_volume_number = volume;
     ud.level_number = ud.m_level_number = level;
     ud.from_bonus = 0;
+    g_netCutscenes = event->packet->dataLength >= 6 ? event->packet->data[5] != 0 : 1;
     if (event->packet->dataLength >= 5 && event->packet->data[3])
     {
         ud.eog = 1;   // G_EndOfLevel moves on to the episode the server chose
@@ -5539,6 +5542,7 @@ void Net_WaitForServer(void)
 
 
         gameHandleEvents();
+        Voice_Frame();   // voice chat goes on while waiting
 
         if (trace && uint32_t(uint32_t(totalclock)-lastTrace)>=120)
         {

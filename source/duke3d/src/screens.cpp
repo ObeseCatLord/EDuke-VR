@@ -58,6 +58,7 @@ int32_t g_noLogo = 0;
 static void G_HandleWaitEvents(void)
 {
     gameHandleEvents();
+    Voice_Frame();   // voice chat goes on through cutscenes and waiting screens
 #ifdef USE_OPENXR
     G_XRHoldFlatFrame();
 #endif
@@ -68,7 +69,10 @@ static void G_HandleEventsWhileNoInput(void)
 {
     I_ClearAllInput();
 
-    while (!I_GeneralTrigger())
+    // In multiplayer a picture waiting for a key moves on by itself after a few seconds, so a player
+    // who is away does not stay behind on it (any key still moves on at once).
+    uint64_t const started = timerGetTicks();
+    while (!I_GeneralTrigger() && !(g_netClient && timerGetTicks() - started > 8000))
         G_HandleWaitEvents();
 
     I_ClearAllInput();
@@ -1900,7 +1904,7 @@ static void G_BonusCutscenes(void)
     // Co-op clients see the episode's ending too: the cutscene loop keeps polling the network
     // (gameHandleEvents), and the server waits for them as for a level load. A server that is
     // also a player never does (it would stop the game for everyone).
-    if (!((numplayers < 2 || g_netClient) && ud.eog && ud.from_bonus == 0))
+    if (!(G_PlayEpisodeCutscenes() && ud.eog && ud.from_bonus == 0))
         return;
     LOG_F(INFO, "Episode ending cutscene: E%d.", ud.volume_number + 1);
 
@@ -1932,9 +1936,13 @@ static void G_BonusCutscenes(void)
 
             I_ClearAllInput();
             totalclock = 0;
+            uint64_t const bossStarted = timerGetTicks();   // (totalclock is the scene's own clock here)
 
             do
             {
+                if (g_netClient && timerGetTicks() - bossStarted > 20000)
+                    break;   // multiplayer: the scene ends by itself (a key still ends it at once)
+                Voice_Frame();
                 if (engineFPSLimit(true))
                 {
                     videoClearScreen(0L);

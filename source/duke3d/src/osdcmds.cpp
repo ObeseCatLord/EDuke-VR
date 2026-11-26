@@ -1747,6 +1747,7 @@ int32_t registerosdcommands(void)
         { "cl_joinserver", "the last multiplayer server joined (HOST:PORT), filled in by Join Server", (void *)cl_joinserver, CVAR_STRING, 0, sizeof(cl_joinserver) - 1 },
         { "cl_nametags", "multiplayer: other players' names over their heads, ((in brackets)) while they talk", (void *)&cl_nametags, CVAR_BOOL, 0, 1 },
         { "mp_friendlyfire", "co-op and team games: players' shots hurt teammates (set on the server; clients follow from the next level)", (void *)&ud.ffire, CVAR_BOOL|CVAR_FUNCPTR|CVAR_NOSAVE, 0, 1 },
+        { "mp_cutscenes", "multiplayer: everyone sees the episode cutscenes (endings, episode 4's opening); 0 skips them (set on the server; each player can still skip one)", (void *)&mp_cutscenes, CVAR_BOOL, 0, 1 },
         { "mp_sharekeys", "co-op: a keycard one player picks up opens doors for everyone (set on the server)", (void *)&mp_sharekeys, CVAR_BOOL, 0, 1 },
         { "cl_showcoords", "DEBUG: coordinate display", (void *)&ud.coords, CVAR_INT, 0,
 #ifdef USE_OPENGL

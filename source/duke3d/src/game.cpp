@@ -110,6 +110,12 @@ static const char *defaultrtsfilename[GAMECOUNT] = { "DUKE.RTS", "NAM.RTS", "NAP
 #endif
 
 int32_t g_Shareware = 0;
+int32_t mp_cutscenes = 1;   // multiplayer: episode cutscenes for everyone (the server decides; sent with each level end)
+int32_t g_netCutscenes = 1; // client: the server's mp_cutscenes (servers before it always had them)
+// Whether this machine plays an episode's cutscenes: single player; a co-op client unless the server
+// turned them off (each player can still skip one); never a server that is also a player (the game
+// would stop for everyone).
+bool G_PlayEpisodeCutscenes(void) { return numplayers < 2 || (g_netClient && g_netCutscenes); }
 int32_t mp_sharekeys = 1;   // co-op: a keycard one player picks up is everyone's (the server decides)
 int32_t cl_nametags = 1;
 char cl_joinserver[BMAX_PATH];   // the last server joined (HOST:PORT), offered by Join Server    // multiplayer: other players' names over their heads
@@ -7114,6 +7120,16 @@ static int G_EndOfLevel(void)
                         g_player[playerNum].ps->last_extra = g_player[playerNum].ps->max_player_health;
                     }
                     LOG_F(INFO, "End of episode: next E%dL1.", next + 1);
+#ifndef EDUKE32_STANDALONE
+                    // Episode 4's opening plays as in single player. Like the episode endings, for
+                    // clients only (the server waits for them as for a level load); a server that
+                    // is also a player would stop the game for everyone.
+                    if (next == 3 && G_PlayEpisodeCutscenes() && !ud.lockout && !(G_GetLogoFlags() & LOGO_NOE4CUTSCENE))
+                    {
+                        LOG_F(INFO, "Episode opening cutscene: E4.");
+                        G_PlayE4Cutscene();
+                    }
+#endif
                 }
             }
         }

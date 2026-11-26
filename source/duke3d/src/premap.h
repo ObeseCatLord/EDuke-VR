@@ -36,6 +36,7 @@ int G_FindLevelByFile(const char *fileName);
 void G_CacheMapData(void);
 void G_FreeMapState(int levelNum);
 void G_NewGame(int volumeNum, int levelNum, int skillNum);
+void G_PlayE4Cutscene(void);   // episode 4's opening (also for co-op clients entering E4)
 void G_ResetTimers(bool saveMoveCnt);
 void G_ResetViewScreenData();
 void G_SetCrosshairColor(int32_t r,int32_t g,int32_t b);
