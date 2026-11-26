@@ -1257,7 +1257,8 @@ static bool updateWheel(Wheel &w, uint64_t &buttons, uint32_t handDown)
     // and within 30 degrees of the slot (half the spacing when slots are closer). Before, the
     // nearest slot in any direction stayed hovered, so with one gadget (a medkit) every direction
     // picked it and moving off it was impossible; releasing off every slot now selects nothing.
-    if (now-w.openedAt>.1 && length>.55f && length<1.6f && w.count)
+    // (Far past the ring counts as off only on the gadget wheel: a hard flick still picks a weapon.)
+    if (now-w.openedAt>.1 && length>.55f && (length<1.6f || !w.gadgets) && w.count)
     {
         float angle=std::atan2(x,y);
         if (angle<0) angle+=2*Pi;
