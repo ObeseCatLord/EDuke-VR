@@ -56,7 +56,7 @@ def main():
     parser.add_argument('--remote-port', type=int, default=49777)
     parser.add_argument('--timeout', default=560, type=int)
     parser.add_argument('--map', default='', help='user map instead of E1L1')
-    parser.add_argument('--level', default='1,1', help='episode,level when no --map is given (default E1L1)')
+    parser.add_argument('--level', default='1,1', help='episode,level when no --map is given (default E1L1); title: the title menu')
     parser.add_argument('--env', action='append', default=[], help='extra KEY=VALUE for the game')
     parser.add_argument('--args', default='', help='extra EDuke32 arguments (space separated)')
     parser.add_argument('--server', type=int, default=0, help='play on a dedicated co-op server on this port')
@@ -100,7 +100,8 @@ def main():
         # EDuke32 resolves user maps against its search path: copy into the lab directory.
         (lab / Path(args.map).name).write_bytes(Path(args.map).read_bytes())
         args.map = Path(args.map).name
-    level = ['-map', args.map] if args.map else ['-v' + args.level.split(',')[0], '-l' + args.level.split(',')[1]]
+    # --level title: start at the title menu (single player).
+    level = ['-map', args.map] if args.map else [] if args.level == 'title' else ['-v' + args.level.split(',')[0], '-l' + args.level.split(',')[1]]
     pack = [] if args.pack == 'default' else ['--pack', args.pack]
     server, bots, flat = None, [], None
     if args.server:
@@ -169,7 +170,8 @@ def main():
     with log_path.open('w') as log:
         process = subprocess.Popen(command, cwd=lab, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         try:
-            if not wait(lambda: 'OpenXR world oracle: 60 frames' in text(), 300):
+            started = 'OpenXR menu presentation: 60 frames' if args.level == 'title' and not args.map else 'OpenXR world oracle: 60 frames'
+            if not wait(lambda: started in text(), 300):
                 raise RuntimeError('world did not start')
             for n in range(args.bots if args.server else 0):
                 # Flat players: the plain binary in its own directory (no launcher, no input).

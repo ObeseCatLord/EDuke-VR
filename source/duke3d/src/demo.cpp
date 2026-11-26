@@ -980,6 +980,7 @@ nextdemo_nomenu:
         // updating totalclock when profiling (both via sampletimer()):
         if (!Demo_IsProfiling())
             gameHandleEvents();
+        G_HandleWindowClose();   // the title screen runs this loop
 
         if (g_player[myconnectindex].ps->gm == MODE_GAME)
         {

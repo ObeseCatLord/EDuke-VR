@@ -277,6 +277,21 @@ void G_HandleSpecialKeys(void)
 #endif
 }
 
+// Closing the game window (or the system asking it to quit) quits; called by the main loop and
+// the title screen's demo loop. It used to press Escape, which only opened the game menu: in VR
+// that menu is in the headset, so on the desktop nothing happened and players ended the game in
+// Task Manager. No end screens (the multiplayer scoresheet waits for a key). As the menu's Quit:
+// in multiplayer the server is told first (the exit follows once disconnected).
+void G_HandleWindowClose(void)
+{
+    if (!quitevent)
+        return;
+    LOG_F(INFO, "The game window was closed: quitting.");
+    g_quickExit = 1;
+    quitevent = 0;
+    G_GameQuit();
+}
+
 void G_GameQuit(void)
 {
     if (numplayers < 2)
@@ -7885,19 +7900,7 @@ MAIN_LOOP_RESTART:
         // quitevent is checked on its own: in VR the event pump also runs inside the frame wait,
         // which can take the close event, and then this loop's own pump reports nothing.
         gameHandleEvents();
-        if (quitevent)
-        {
-            // Closing the game window (or the system asking it to quit) quits. It used to press
-            // Escape, which only opened the game menu: in VR that menu is in the headset, so on the
-            // desktop nothing happened and players had to end the game in Task Manager. No end
-            // screens (the multiplayer scoresheet waits for a key).
-            // As the menu's Quit: in multiplayer the server is told first (the exit follows once
-            // disconnected, so it does not wait for a timeout to drop the player).
-            LOG_F(INFO, "The game window was closed: quitting.");
-            g_quickExit = 1;
-            quitevent = 0;
-            G_GameQuit();
-        }
+        G_HandleWindowClose();
 
         {
             // Test hook (EDUKE32_TEST_STALL): why a game stops drawing frames.
