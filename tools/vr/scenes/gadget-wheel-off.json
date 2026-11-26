@@ -1,0 +1,10 @@
+[{"pose": {"head": [0, 1.6, 0, 0, 0, 0], "left": [-0.2, 1.3, -0.35, 0, 0, 0], "right": [0.2, 1.3, -0.35, 0, 0, 0]}},
+ {"wait": 6}, {"console": "xr_items"}, {"wait": 2}, {"console": "echo CASE-OFF"},
+ {"buttons": {"left": {"trackpad_touch": 1}}}, {"wait": 1},
+ {"pose": {"left": [-0.2, 1.3, -0.35, 0, 20, 0]}}, {"wait": 1},
+ {"pose": {"left": [-0.2, 1.3, -0.35, 0, 55, 0]}}, {"wait": 1},
+ {"buttons": {"left": {"trackpad_touch": 0}}}, {"wait": 1},
+ {"pose": {"left": [-0.2, 1.3, -0.35, 0, 0, 0]}}, {"wait": 1}, {"console": "echo CASE-ON"},
+ {"buttons": {"left": {"trackpad_touch": 1}}}, {"wait": 1},
+ {"pose": {"left": [-0.2, 1.3, -0.35, 0, 20, 0]}}, {"wait": 1},
+ {"buttons": {"left": {"trackpad_touch": 0}}}, {"wait": 2}]

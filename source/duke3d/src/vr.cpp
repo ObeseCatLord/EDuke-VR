@@ -1245,12 +1245,19 @@ static bool updateWheel(Wheel &w, uint64_t &buttons, uint32_t handDown)
     if (length>1.15f) { x*=1.15f/length; y*=1.15f/length; }
     w.pointerX=x; w.pointerY=y;
     int hovered=-1;
-    if (now-w.openedAt>.1 && length>.55f && w.count)
+    // A slot is hovered only while the pointer is on it: past the centre, not far beyond the ring,
+    // and within 30 degrees of the slot (half the spacing when slots are closer). Before, the
+    // nearest slot in any direction stayed hovered, so with one gadget (a medkit) every direction
+    // picked it and moving off it was impossible; releasing off every slot now selects nothing.
+    if (now-w.openedAt>.1 && length>.55f && length<1.6f && w.count)
     {
         float angle=std::atan2(x,y);
         if (angle<0) angle+=2*Pi;
-        int const slot=int(std::lround(angle/(2*Pi/w.count)))%int(w.count);
-        if (slotSelectable(w,p,slot)) hovered=slot;
+        float const spacing=2*Pi/w.count;
+        int const slot=int(std::lround(angle/spacing))%int(w.count);
+        float off=std::fabs(angle-slot*spacing);
+        if (off>Pi) off=2*Pi-off;
+        if (off<=std::min(spacing*.5f,30.f*Pi/180.f) && slotSelectable(w,p,slot)) hovered=slot;
     }
     if (hovered!=w.hovered && hovered>=0)
     {
