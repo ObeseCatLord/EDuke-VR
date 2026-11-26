@@ -111,7 +111,8 @@ static const char *defaultrtsfilename[GAMECOUNT] = { "DUKE.RTS", "NAM.RTS", "NAP
 
 int32_t g_Shareware = 0;
 int32_t mp_sharekeys = 1;   // co-op: a keycard one player picks up is everyone's (the server decides)
-int32_t cl_nametags = 1;    // multiplayer: other players' names over their heads
+int32_t cl_nametags = 1;
+char cl_joinserver[BMAX_PATH];   // the last server joined (HOST:PORT), offered by Join Server    // multiplayer: other players' names over their heads
 uint8_t g_sharedAccess;     // keycards found on this level, while mp_sharekeys
 
 bool G_SharingKeys(void)

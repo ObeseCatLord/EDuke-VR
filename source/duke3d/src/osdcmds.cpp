@@ -1744,6 +1744,7 @@ int32_t registerosdcommands(void)
         { "cl_kickmode", "quick kick behavior:\n 0: automatic based on script version\n 1: 1.3D\n 2: 1.4+", (void*)&ud.kick_mode, CVAR_INT, 0, 2 },
         { "cl_runmode", "run key behavior with cl_autorun enabled:\n 0: walk\n 1: do nothing", (void *)&ud.runkey_mode, CVAR_BOOL, 0, 1 },
 
+        { "cl_joinserver", "the last multiplayer server joined (HOST:PORT), filled in by Join Server", (void *)cl_joinserver, CVAR_STRING, 0, sizeof(cl_joinserver) - 1 },
         { "cl_nametags", "multiplayer: other players' names over their heads, ((in brackets)) while they talk", (void *)&cl_nametags, CVAR_BOOL, 0, 1 },
         { "mp_friendlyfire", "co-op and team games: players' shots hurt teammates (set on the server; clients follow from the next level)", (void *)&ud.ffire, CVAR_BOOL|CVAR_FUNCPTR|CVAR_NOSAVE, 0, 1 },
         { "mp_sharekeys", "co-op: a keycard one player picks up opens doors for everyone (set on the server)", (void *)&mp_sharekeys, CVAR_BOOL, 0, 1 },

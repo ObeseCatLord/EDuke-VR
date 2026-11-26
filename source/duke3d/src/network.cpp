@@ -5576,6 +5576,7 @@ void Net_Connect(const char *srvaddr)
     const int32_t cNumberOfRetries = 4;
 
     char *oursrvaddr = Xstrdup(srvaddr);
+    Bstrncpyz(cl_joinserver, srvaddr, sizeof(cl_joinserver));   // offered next time by Join Server
 
     Net_Disconnect();
 

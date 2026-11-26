@@ -461,6 +461,9 @@ MAKE_MENU_TOP_ENTRYLINK( s_NewGame, MEF_MainMenu, MAIN_NEWGAME_INGAME, MENU_NEWV
 static MenuLink_t MEO_MAIN_NEWGAME_NETWORK = { MENU_NETWORK, MA_Advance, };
 MAKE_MENU_TOP_ENTRYLINK( s_SaveGame, MEF_MainMenu, MAIN_SAVEGAME, MENU_SAVE );
 MAKE_MENU_TOP_ENTRYLINK( s_LoadGame, MEF_MainMenu, MAIN_LOADGAME, MENU_LOAD );
+#ifndef NETCODE_DISABLE
+MAKE_MENU_TOP_ENTRYLINK( "Join Server", MEF_MainMenu, MAIN_JOINSERVER, MENU_NETJOIN );
+#endif
 MAKE_MENU_TOP_ENTRYLINK( s_Options, MEF_MainMenu, MAIN_OPTIONS, MENU_OPTIONS );
 #ifdef EDUKE32_STANDALONE
 MAKE_MENU_TOP_ENTRYLINK( "Read me!", MEF_MainMenu, MAIN_HELP, MENU_STORY );
@@ -478,6 +481,9 @@ MAKE_MENU_TOP_ENTRYLINK( "Quit Game", MEF_MainMenu, MAIN_QUITGAME, MENU_QUIT );
 
 static MenuEntry_t *MEL_MAIN[] = {
     &ME_MAIN_NEWGAME,
+#ifndef NETCODE_DISABLE
+    &ME_MAIN_JOINSERVER,
+#endif
     &ME_MAIN_LOADGAME,
     &ME_MAIN_OPTIONS,
     &ME_MAIN_HELP,
@@ -1831,10 +1837,11 @@ static MenuEntry_t *MEL_NETOPTIONS[] = {
 };
 
 static char MenuServer[BMAX_PATH] = "localhost";
+static char MenuJoinStatus[96];   // Join Server: the result of the last attempt
 static MenuString_t MEO_NETJOIN_SERVER = MAKE_MENUSTRING( MenuServer, &MF_Bluefont, BMAX_PATH, 0 );
 static MenuEntry_t ME_NETJOIN_SERVER = MAKE_MENUENTRY( "Server", &MF_Redfont, &MEF_VideoSetup, &MEO_NETJOIN_SERVER, String );
 #define MAXPORTSTRINGLENGTH 6 // unsigned 16-bit integer
-static char MenuPort[MAXPORTSTRINGLENGTH] = "19014";
+static char MenuPort[MAXPORTSTRINGLENGTH] = "23513";   // the game's default port
 static MenuString_t MEO_NETJOIN_PORT = MAKE_MENUSTRING( MenuPort, &MF_Bluefont, MAXPORTSTRINGLENGTH, INPUT_NUMERIC );
 static MenuEntry_t ME_NETJOIN_PORT = MAKE_MENUENTRY( "Port", &MF_Redfont, &MEF_VideoSetup, &MEO_NETJOIN_PORT, String );
 static MenuEntry_t ME_NETJOIN_CONNECT = MAKE_MENUENTRY( "Connect", &MF_Redfont, &MEF_VideoSetup_Apply, &MEO_NULL, Link );
@@ -3539,6 +3546,12 @@ static void Menu_PreDraw(MenuID_t cm, MenuEntry_t* entry, const vec2_t origin)
 
     switch (cm)
     {
+#ifndef NETCODE_DISABLE
+    case MENU_NETJOIN:
+        if (MenuJoinStatus[0])
+            mgametextcenter(origin.x, origin.y + (150<<16), MenuJoinStatus);
+        break;
+#endif
     case MENU_MAIN_INGAME:
         l += 4;
         fallthrough__;
@@ -4709,6 +4722,24 @@ static void Menu_EntryLinkActivate(MenuEntry_t *entry)
 
         Menu_RefreshSoundProperties();
     }
+#ifndef NETCODE_DISABLE
+    else if (entry == &ME_NETJOIN_CONNECT)
+    {
+        // Join Server: the console's connect (the game starts once the server sends it); a server
+        // that does not answer leaves the player here with a message instead of the main menu.
+        char address[BMAX_PATH + MAXPORTSTRINGLENGTH + 2];
+        Bsnprintf(address, sizeof(address), "%s:%s", MenuServer, MenuPort[0] ? MenuPort : "23513");
+        Bsnprintf(MenuJoinStatus, sizeof(MenuJoinStatus), "Connecting to %s...", address);
+        Net_Connect(address);
+        if (g_netClient)
+        {
+            MenuJoinStatus[0] = 0;
+            G_BackToMenu();
+        }
+        else
+            Bsnprintf(MenuJoinStatus, sizeof(MenuJoinStatus), "Could not connect to %s", address);
+    }
+#endif
     else if (entry == &ME_SAVESETUP_CLEANUP)
     {
         g_oldSaveCnt = G_CountOldSaves();
@@ -6027,6 +6058,22 @@ static void Menu_ChangingTo(Menu_t * m)
         if (g_previousMenu == MENU_VOICE || g_previousMenu == MENU_KEYBOARDSETUP)
             m->parentID = g_previousMenu;
         break;
+#ifndef NETCODE_DISABLE
+    case MENU_NETJOIN:
+        // Back to the main menu, and the last server joined filled in (no typing needed in VR).
+        m->parentID = MENU_MAIN;
+        MenuJoinStatus[0] = 0;
+        if (cl_joinserver[0])
+        {
+            char const *colon = Bstrrchr(cl_joinserver, ':');
+            size_t const hostLength = colon ? size_t(colon - cl_joinserver) : Bstrlen(cl_joinserver);
+            Bstrncpyz(MenuServer, cl_joinserver, min(sizeof(MenuServer), hostLength + 1));
+            if (colon && colon[1])
+                Bstrncpyz(MenuPort, colon + 1, sizeof(MenuPort));
+            M_NETJOIN.currentEntry = 2;   // on Connect: one trigger pull rejoins the last server
+        }
+        break;
+#endif
     }
 
 #ifdef __ANDROID__

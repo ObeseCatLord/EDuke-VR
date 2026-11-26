@@ -374,6 +374,7 @@ extern int32_t g_BenchmarkMode;
 extern int32_t g_Debug;
 extern int32_t g_Shareware;
 extern int32_t mp_sharekeys, cl_nametags;
+extern char cl_joinserver[BMAX_PATH];
 // Name tag tiles (cl_nametags): two per player, plain and talking.
 enum { NAMETAG_TILE_BASE = XRTile(30400) };
 static inline bool G_IsNametagTile(int picnum) { return picnum >= NAMETAG_TILE_BASE && picnum < NAMETAG_TILE_BASE + MAXPLAYERS * 2; }
