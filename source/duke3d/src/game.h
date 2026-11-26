@@ -377,6 +377,8 @@ extern int32_t mp_sharekeys, cl_nametags;
 // Name tag tiles (cl_nametags): two per player, plain and talking.
 enum { NAMETAG_TILE_BASE = XRTile(30400) };
 static inline bool G_IsNametagTile(int picnum) { return picnum >= NAMETAG_TILE_BASE && picnum < NAMETAG_TILE_BASE + MAXPLAYERS * 2; }
+// The player's name tag tile (made on demand; "Player N" when they have no name), or -1.
+int G_NametagTile(int playerNum, bool talking);
 extern uint8_t g_sharedAccess;
 // Co-op keycard sharing (mp_sharekeys): a key one player picks up goes to everyone.
 bool G_SharingKeys(void);

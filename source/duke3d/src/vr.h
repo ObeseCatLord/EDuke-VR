@@ -24,6 +24,10 @@ bool G_XRHideHudWeapon();
 // status bar uses the mini (alternative) layout so each wrist gets its own half.
 bool G_XRBeginWristHud();
 void G_XREndWristHud(bool captured);
+// Wrist map (vr_wristmap): Begin returns true when the automap should now be drawn into its own
+// segment (centred on the screen); End shows it on the left forearm.
+bool G_XRBeginWristMap();
+void G_XREndWristMap();
 bool G_XRBeginRestHud();
 void G_XREndRestHud(bool captured);
 bool G_XRWristHudActive();
@@ -55,7 +59,7 @@ bool G_XRModelsEnabled();
 void G_XRCheckReservedTiles(char const *stage, bool beforeVRPack);
 #endif
 // VR settings (cvars) and model sets for the settings menu.
-extern int32_t vr_hudmode, vr_models, vr_laser, vr_fullbody, vr_lefttrigger, vr_ptt_button, vr_twohand, vr_menupointer, vr_ptt_radio, vr_voxeldistance;
+extern int32_t vr_wristmap, vr_hudmode, vr_models, vr_laser, vr_fullbody, vr_lefttrigger, vr_ptt_button, vr_twohand, vr_menupointer, vr_ptt_radio, vr_voxeldistance;
 extern int32_t vr_foveation, vr_foveation_level;
 char const *G_XRFoveationAutoName();   // "Auto (eye-tracked)" on a Steam Frame, else "Auto (off)"
 int G_XRModelSetCount();

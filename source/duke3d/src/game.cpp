@@ -3883,7 +3883,7 @@ static void G_NametagColour(int pal, int rgb[3])
         rgb[c] = level > 0 ? min(255, palette[best*3+c] * 255 / level) : 235;
 }
 
-static int G_NametagTile(int playerNum, bool talking)
+int G_NametagTile(int playerNum, bool talking)
 {
     int const tile = NametagTileBase + playerNum * 2 + talking;
     char name[32], label[40];
@@ -3894,8 +3894,8 @@ static int G_NametagTile(int playerNum, bool talking)
         name[n++] = *s;
     }
     name[n] = 0;
-    if (!n)
-        return -1;
+    if (!n)   // no name set (the default config sends none): still tell players apart
+        n = Bsnprintf(name, sizeof(name), "Player %d", playerNum);
     Bsnprintf(label, sizeof(label), talking ? "((%s))" : "%s", name);
     int const pal = g_player[playerNum].ps->palookup;
 

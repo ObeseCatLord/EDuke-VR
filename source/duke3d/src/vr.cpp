@@ -37,7 +37,7 @@
 #endif
 
 // VR settings (cvars; vr.h).
-int32_t vr_hudmode=0, vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=24, vr_audiomix=0;
+int32_t vr_wristmap=0, vr_hudmode=0, vr_models=1, vr_laser=0, vr_fullbody=1, vr_lefttrigger=0, vr_ptt_button=0, vr_twohand=1, vr_physicalcrouch=1, vr_menupointer=1, vr_ptt_radio=1, vr_voxeldistance=24, vr_audiomix=0;
 int32_t vr_foveation=1, vr_foveation_level=1, vr_foveation_method=0;   // foveation off by default
 
 // Engine-private depth-clear latch for Polymost room passes.
@@ -543,6 +543,7 @@ void G_XRRegisterCvars()
         { "vr_menupointer", "VR: point at menu items with a laser from the controller; its trigger selects", (void *)&vr_menupointer, CVAR_BOOL, 0, 1 },
         { "vr_physicalcrouch", "VR: ducking for real (head ~40 cm below your standing height) crouches", (void *)&vr_physicalcrouch, CVAR_BOOL, 0, 1 },
         { "vr_hudmode", "VR HUD placement: 0 = status bar on the wrists (watches), 1 = the whole HUD on the panel in front of you", (void *)&vr_hudmode, CVAR_INT, 0, 1 },
+        { "vr_wristmap", "VR minimap on the left forearm (a quick tap of the gadget wheel button toggles it)", (void *)&vr_wristmap, CVAR_BOOL, 0, 1 },
         { "vr_twohand", "VR two-handed aiming: squeeze the off hand's grip at a weapon's foregrip/support to steady and aim it with both hands", (void *)&vr_twohand, CVAR_BOOL, 0, 1 },
         { "vr_lefttrigger", "VR left trigger: 0 = mighty foot (alt fire on the right stick click), 1 = alt fire (kick on the right stick click)", (void *)&vr_lefttrigger, CVAR_BOOL, 0, 1 },
         { "vr_foveation", "VR foveated rendering: 0 = auto (eye-tracked on a Steam Frame, else off), 1 = off (default), 2 = fixed, 3 = eye-tracked (fixed without an eye tracker)", (void *)&vr_foveation, CVAR_INT, 0, 3 },
@@ -1231,6 +1232,13 @@ static bool updateWheel(Wheel &w, uint64_t &buttons, uint32_t handDown)
                 w.target=item; w.deadline=now+(itemEntry(item) ? 4.0 : 1.5); w.pressUntil=w.waitUntil=0; w.lastCurrent=-2;
             }
             if (wheelLog()) LOG_F(INFO,"OpenXR %s wheel: commit %s=%d current=%d.",name,w.gadgets ? "gadget" : "weapon",item,p->curr_weapon);
+        }
+        else if (w.gadgets && now-w.openedAt<.3)
+        {
+            // A quick tap of the gadget wheel button (no gadget chosen) shows or hides the wrist map.
+            vr_wristmap=!vr_wristmap;
+            w.hapticPending=true;
+            LOG_F(INFO,"OpenXR wrist map: %s.",vr_wristmap ? "on" : "off");
         }
         else if (wheelLog()) LOG_F(INFO,"OpenXR %s wheel: close without selection.",name);
         w.hovered=-1;
@@ -5103,6 +5111,54 @@ void G_XREndWristHud(bool captured)
                   int(rawInput.hands[0].aimValid),int(rawInput.hands[1].aimValid));
     }
     flushWristWatches(metresPerPixel,false);
+}
+
+// Wrist map (vr_wristmap): the game's automap, centred on the player and drawn into its own UI
+// segment, cropped to a square and shown on the left forearm, nearer the elbow than the watch.
+static bool wristMapSegment;
+static constexpr int WristMapBackTile=XRTile(30450);
+bool G_XRBeginWristMap()
+{
+    auto const p=g_player[myconnectindex].ps;
+    auto const &hand=rawInput.hands[0];
+    if (!vr_wristmap || !menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()
+        || !inputValid() || !hand.aimValid || !validPose(hand.aimPose) || !rawInput.headValid || wheel.open || gadgetWheel.open
+        || screenpeek!=myconnectindex || ud.overhead_on || !(p->gm & MODE_GAME) || (p->gm & MODE_MENU) || ud.camerasprite>=0)
+        return false;
+    if (!flushHeadPanel()) return false;   // what was drawn so far stays on the head panel
+    // A dark translucent square behind the map (one black pixel, stretched).
+    if (!waloff[WristMapBackTile])
+    {
+        if (auto const pixel=(uint8_t *)tileCreate(WristMapBackTile,1,1))
+        {
+            *pixel=paletteGetClosestColorUpToIndex(0,0,0,254);
+            picanm[WristMapBackTile].xofs=picanm[WristMapBackTile].yofs=0;
+            tileInvalidate(WristMapBackTile,-1,-1);
+        }
+    }
+    if (waloff[WristMapBackTile])
+        rotatesprite_(xdim<<15,ydim<<15,divscale16(ydim,1),0,WristMapBackTile,0,0,RS_TRANS1|RS_NOCLIP,0,0,0,0,xdim-1,ydim-1);
+    wristMapSegment=true;
+    return true;
+}
+
+void G_XREndWristMap()
+{
+    if (!wristMapSegment) return;
+    wristMapSegment=false;
+    if (!menuRuntime || menuRuntime->generation()!=menuGeneration || !menuRuntime->menuOverlayTargetBound()) return;
+    // The square around the player (the map's centre), 60% of the screen height.
+    float const half=ydim*.3f;
+    float rect[4]={(xdim*.5f-half)/xdim,(ydim*.5f-half)/ydim,(xdim*.5f+half)/xdim,(ydim*.5f+half)/ydim};
+    XrPosef pose=rawInput.hands[0].aimPose;
+    // Like the left watch (see flushWristWatches), 8 cm further along the forearm, 8 cm square.
+    auto const offset=rotate(pose.orientation,{0.f,.035f,.19f});
+    pose.position.x+=offset.x; pose.position.y+=offset.y; pose.position.z+=offset.z;
+    float const tilt=Pi*35.f/360.f;
+    pose.orientation=multiply(multiply(pose.orientation,XrQuaternionf{-.5f,.5f,.5f,.5f}),XrQuaternionf{std::sin(tilt),0,0,std::cos(tilt)});
+    std::string error;
+    if (!menuRuntime->flushMenuOverlay(pose,.04f,.04f,true,error,nullptr,nullptr,rect,false))
+    { G_XRCancelMenuPresentation(); sdlayer_xr_disableWorld(error.c_str()); }
 }
 
 // Shows each wrist's crop of the bound UI segment as a watch on that wrist. keepAll leaves the

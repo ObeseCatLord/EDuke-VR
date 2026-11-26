@@ -608,6 +608,7 @@ static void G_DrawOverheadMap(int32_t cposx, int32_t cposy, int32_t czoom, int16
     for (TRAVERSE_CONNECT(p))
     {
         if (ud.scrollmode && p == screenpeek) continue;
+        if (p == 0 && g_networkMode == NET_DEDICATED_CLIENT) continue;   // the dedicated server's invisible slot
 
         auto const pPlayer = g_player[p].ps;
         auto const pSprite = (uspriteptr_t)&sprite[pPlayer->i];
@@ -648,6 +649,15 @@ static void G_DrawOverheadMap(int32_t cposx, int32_t cposy, int32_t czoom, int16
 
             rotatesprite_win((x1<<4)+(xdim<<15), (y1<<4)+(ydim<<15), j, daang, i, pSprite->shade,
                 P_GetOverheadPal(pPlayer), 0);
+
+            // Other players' names above their marker, as their name tags in the world.
+            if (p != screenpeek && cl_nametags && pSprite->extra > 0)
+            {
+                int const tag = G_NametagTile(p, Voice_IsTalking(p));
+                if (tag >= 0)
+                    rotatesprite_win((x1<<4)+(xdim<<15), (y1<<4)+(ydim<<15) - ((ydim/28)<<16), divscale16(ydim, 260), 0, tag,
+                                     0, 0, 0);
+            }
         }
     }
 }
@@ -1191,6 +1201,16 @@ void G_DisplayRest(int32_t smoothratio)
     // Headset: the mic state goes on the left wrist with health (drawn into the wrist segment).
     if (xrWrist) Voice_DrawStatus(true);
     G_XREndWristHud(xrWrist);
+    // Wrist map: the automap around the player, their view direction up (the full map's own
+    // drawing, so other players and their names show the same way).
+    if (G_XRBeginWristMap())
+    {
+        auto const mp = g_player[screenpeek].ps;
+        int32_t const sr = calc_smoothratio(totalclock, ototalclock);
+        G_DrawOverheadMap(mp->opos.x + mulscale16(mp->pos.x - mp->opos.x, sr), mp->opos.y + mulscale16(mp->pos.y - mp->opos.y, sr),
+                          1280, fix16_to_int(mp->q16ang) & 2047);
+        G_XREndWristMap();
+    }
 #endif
 
 #ifdef SPLITSCREEN_MOD_HACKS
