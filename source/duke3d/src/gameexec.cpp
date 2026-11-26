@@ -3573,19 +3573,28 @@ breakfor:
 
                 if ((g_gametypeFlags[ud.coop] & GAMETYPE_WEAPSTAY) && (g_netServer || ud.multimode > 1))
                 {
+                    // Recorded per weapon sprite and player (g_weaponTakenBy), not per weapon tile:
+                    // after one map tripmine (or pipebomb box, shotgun...) the others refused the
+                    // player until they died. Each player can take each lying weapon once.
+                    uint16_t const bit = (unsigned)vm.playerNum < MAXPLAYERS ? uint16_t(1u << vm.playerNum) : 0;
+                    if (std::getenv("EDUKE32_TEST_PICKUP"))
+                    {
+                        static int logged;
+                        if (logged++ < 300)
+                            LOG_F(INFO, "Weapon stay: sprite=%d tile=%d player=%d %s takenBy=0x%x role=%s.", vm.spriteNum, int(vm.pSprite->picnum),
+                                  vm.playerNum, *insptr ? "record" : "check", unsigned(g_weaponTakenBy[vm.spriteNum]),
+                                  g_netServer ? "server" : g_netClient ? "client" : "local");
+                    }
                     if (*insptr == 0)
                     {
-                        int j = 0;
-                        for (; j < vm.pPlayer->weapreccnt; ++j)
-                            if (vm.pPlayer->weaprecs[j] == vm.pSprite->picnum)
-                                break;
-
-                        branch(j < vm.pPlayer->weapreccnt && vm.pSprite->owner == vm.spriteNum);
+                        branch((g_weaponTakenBy[vm.spriteNum] & bit) && vm.pSprite->owner == vm.spriteNum);
                         dispatch();
                     }
-                    else if (vm.pPlayer->weapreccnt < MAX_WEAPONS)
+                    else
                     {
-                        vm.pPlayer->weaprecs[vm.pPlayer->weapreccnt++] = vm.pSprite->picnum;
+                        g_weaponTakenBy[vm.spriteNum] |= bit;
+                        if (vm.pPlayer->weapreccnt < MAX_WEAPONS)   // (kept for CON that reads weaprecs)
+                            vm.pPlayer->weaprecs[vm.pPlayer->weapreccnt++] = vm.pSprite->picnum;
                         branch(vm.pSprite->owner == vm.spriteNum);
                         dispatch();
                     }

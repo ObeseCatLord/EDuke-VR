@@ -1478,6 +1478,7 @@ int32_t A_InsertSprite(int16_t whatsect,int32_t s_x,int32_t s_y,int32_t s_z,picn
 
     auto &a = actor[newSprite];
     a = {};
+    g_weaponTakenBy[newSprite] = 0;
     a.bpos = { s_x, s_y, s_z };
 
     if ((unsigned)s_ow < MAXSPRITES)

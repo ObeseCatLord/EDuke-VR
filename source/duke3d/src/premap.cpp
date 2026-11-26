@@ -611,6 +611,15 @@ void G_UpdateScreenArea(void)
     pus = NUMPAGES;
 }
 
+void G_ClearWeaponsTakenBy(int playerNum)
+{
+    if ((unsigned)playerNum >= MAXPLAYERS)
+        return;
+    uint16_t const keep = ~uint16_t(1u << playerNum);
+    for (auto &taken : g_weaponTakenBy)
+        taken &= keep;
+}
+
 void P_MoveToRandomSpawnPoint(int playerNum)
 {
     G_VRResetShot(playerNum);
@@ -757,6 +766,7 @@ void P_ResetMultiPlayer(int playerNum)
     p.wackedbyactor   = -1;
     p.wantweaponfire  = -1;
     p.weapreccnt      = 0;
+    G_ClearWeaponsTakenBy(playerNum);
 
     P_ResetTintFade(&p);
 
@@ -977,6 +987,7 @@ static void P_PrepForNewLevel(int playerNum, int gameMode)
     p.visibility        = ud.const_visibility;
     p.weapon_pos        = WEAPON_POS_START;
     p.weapreccnt        = 0;
+    G_ClearWeaponsTakenBy(playerNum);
 
     p.kickback_pic = ((PWEAPON(playerNum, p.curr_weapon, WorksLike) == PISTOL_WEAPON)
                       && (PWEAPON(playerNum, p.curr_weapon, Reload) > PWEAPON(playerNum, p.curr_weapon, TotalTime)))
@@ -1337,6 +1348,7 @@ static void G_DeleteTempEffectors()
 
 static void prelevel(int g)
 {
+    Bmemset(g_weaponTakenBy, 0, sizeof(g_weaponTakenBy));   // a new level: no lying weapon taken yet
     //Bmemset(zhit, 0, sizeof(zhit));
     Bmemset(show2dsector, 0, sizeof(show2dsector));
 #ifdef LEGACY_ROR

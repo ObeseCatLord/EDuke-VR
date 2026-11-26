@@ -65,6 +65,10 @@ enum DUKE3D_GLOBALFLAGS {
 
 G_EXTERN DukeStatus_t sbar;
 G_EXTERN actor_t actor[MAXSPRITES];
+// Co-op weapon stay: which players took each lying weapon (bit per player). Cleared when the slot
+// gets a new sprite, at level start, and for a player when they respawn.
+G_EXTERN uint16_t g_weaponTakenBy[MAXSPRITES];
+void G_ClearWeaponsTakenBy(int playerNum);
 #ifdef POLYMER
 G_EXTERN practor_t practor[MAXSPRITES];
 #endif

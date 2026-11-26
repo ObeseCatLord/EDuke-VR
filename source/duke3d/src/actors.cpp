@@ -3500,7 +3500,6 @@ std::map<int, SpriteTracerData> tracerData;
 // was tried, so a teammate who had one blocked the others standing beside it: pickups seemed random.
 // Now each map pipebomb is recorded per player (each takes each once; it stays for the rest) and the
 // nearest player who can take it does.
-static uint16_t g_pipebombTakenBy[MAXSPRITES];
 
 static int A_PipebombTaker(int spriteNum, int nearest, int32_t nearestDist)
 {
@@ -3510,7 +3509,7 @@ static int A_PipebombTaker(int spriteNum, int nearest, int32_t nearestDist)
     {
         auto const ps = g_player[playerNum].ps;
         return dist < 788 && ps->ammo_amount[HANDBOMB_WEAPON] < ps->max_ammo_amount[HANDBOMB_WEAPON]
-            && !(mapItem && (g_pipebombTakenBy[spriteNum] & (1u << playerNum)))
+            && !(mapItem && (g_weaponTakenBy[spriteNum] & (1u << playerNum)))
             && cansee(pSprite->x, pSprite->y, pSprite->z - ZOFFSET3, pSprite->sectnum, ps->pos.x, ps->pos.y, ps->pos.z, ps->cursectnum);
     };
     int taker = -1;
@@ -3537,7 +3536,7 @@ static int A_PipebombTaker(int spriteNum, int nearest, int32_t nearestDist)
         static int logged;
         if (logged++ < 400)
             LOG_F(INFO, "Pipebomb pickup: sprite=%d nearest=%d dist=%d mapItem=%d takenBy=0x%x taker=%d role=%s.", spriteNum, nearest,
-                  nearestDist, int(mapItem), unsigned(g_pipebombTakenBy[spriteNum]), taker, g_netServer ? "server" : g_netClient ? "client" : "local");
+                  nearestDist, int(mapItem), unsigned(g_weaponTakenBy[spriteNum]), taker, g_netServer ? "server" : g_netClient ? "client" : "local");
     }
     return taker;
 }
@@ -5401,9 +5400,6 @@ ACTOR_STATIC void G_MoveActors(void)
             playerNum = A_FindPlayer(pSprite, &playerDist);
             pPlayer   = g_player[playerNum].ps;
 
-            if (pData[0] == 0)   // first tick of a new pipebomb in this slot
-                g_pipebombTakenBy[spriteNum] = 0;
-
             if (playerDist < 1220)
                 pSprite->cstat &= ~257;
             else
@@ -5573,7 +5569,7 @@ DETONATEB:
                     {
                         // A map pipebomb in co-op (weapon stay) is taken once by each player and stays.
                         if ((g_gametypeFlags[ud.coop] & GAMETYPE_WEAPSTAY) && pSprite->owner == spriteNum)
-                            g_pipebombTakenBy[spriteNum] |= 1u << playerNum;
+                            g_weaponTakenBy[spriteNum] |= 1u << playerNum;
 
                         P_AddAmmo(pPlayer, HANDBOMB_WEAPON, 1);
                         A_PlaySound(DUKE_GET, pPlayer->i);

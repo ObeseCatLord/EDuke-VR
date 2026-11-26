@@ -1171,6 +1171,8 @@ static void Net_CopyAllActorDataFromNet(const netactor_t* netActor, spritetype* 
                   int(gameSprite->picnum), netActor->spr_picnum, int(gameSprite->statnum), gameActor->t_data[2], gameActor->t_data[3],
                   netActor->t_data_2, netActor->t_data_3);
     }
+    if (newIdentity)
+        g_weaponTakenBy[gameSprite - sprite] = 0;
     Net_CopySpriteFromNet(netActor, gameSprite);
     Net_CopyActorFromNet(netActor, gameActor, newIdentity);
     Net_CopySpriteExtFromNet(netActor, gameSprExt);
