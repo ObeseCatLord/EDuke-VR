@@ -4814,7 +4814,8 @@ static void Net_SendWorldUpdate(uint32_t fromRevisionNumber, uint32_t toRevision
     Bassert(tempnetbuf != nullptr);
     Bassert(NET_REVISIONS == ARRAY_SIZE(g_mapStateHistory));
 
-    uint32_t        playerRevisionIsTooOld = (toRevisionNumber - fromRevisionNumber) > NET_REVISIONS;
+    // (>=: at exactly NET_REVISIONS behind, from and to share a history slot, which already holds the new state)
+    uint32_t        playerRevisionIsTooOld = (toRevisionNumber - fromRevisionNumber) >= NET_REVISIONS;
 
     // to avoid the client thinking that revision 2 is older than revision 0xFFFF_FFFF,
     // send packets to take the client from the map's initial state until the client reports back
@@ -5148,7 +5149,7 @@ static void Net_ReadWorldUpdate(uint8_t* packetData, int32_t packetSize)
 
     uint32_t from_IsInitialState = (packetFromRevisionNumber == cInitialMapStateRevisionNumber);
 
-    uint32_t clientRevisionIsTooOld = (packetToRevisionNumber - g_netMapRevisionNumber) > NET_REVISIONS;
+    uint32_t clientRevisionIsTooOld = (packetToRevisionNumber - g_netMapRevisionNumber) >= NET_REVISIONS;
 
     netmapstate_t* fromMapState = NULL;
 

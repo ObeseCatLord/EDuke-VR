@@ -797,8 +797,11 @@ void P_ResetPlayer(int playerNum)
     auto &thisPlayer = g_player[playerNum];
     auto &p          = *thisPlayer.ps;
 
-    ud.show_help  = 0;
-    ud.showallmap = 0;
+    if (playerNum == myconnectindex)   // (not when a teammate respawns)
+    {
+        ud.show_help  = 0;
+        ud.showallmap = 0;
+    }
 
     p.access_spritenum   = -1;
     p.actorsqu           = -1;
