@@ -7883,8 +7883,13 @@ MAIN_LOOP_RESTART:
     {
         if (gameHandleEvents() && quitevent)
         {
-            KB_KeyDown[sc_Escape] = 1;
-            quitevent = 0;
+            // Closing the game window (or the system asking it to quit) quits. It used to press
+            // Escape, which only opened the game menu: in VR that menu is in the headset, so on the
+            // desktop nothing happened and players had to end the game in Task Manager. No end
+            // screens (the multiplayer scoresheet waits for a key).
+            LOG_F(INFO, "The game window was closed: quitting.");
+            g_quickExit = 1;
+            G_GameExit(nullptr);
         }
 
         {
