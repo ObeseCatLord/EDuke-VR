@@ -213,6 +213,10 @@ def main():
                                 vector.x, vector.y, vector.z = value
                             else:
                                 setattr(hand, field, type(getattr(hand, field))(value))
+                        # The remote is a Valve Index: a real squeeze moves the grip's force sensor
+                        # with its curl, and grip follows the force (a resting hand is curl alone).
+                        if 'squeeze_value' in fields and 'squeeze_force' not in fields:
+                            hand.squeeze_force = float(fields['squeeze_value'])
                     remote.send()
                 if 'keys' in step:
                     # A following 'until' also sees what the keys logged at once.

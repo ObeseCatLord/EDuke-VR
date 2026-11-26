@@ -209,6 +209,7 @@ def drive_character_selection(observer, remote, stages=None, before_start=None):
 
     def select_press():
         remote.packet.left.squeeze_value = 1   # left grip: native Open (use/interact)
+        remote.packet.left.squeeze_force = 1   # a real Index squeeze (grip follows the force sensor)
         remote.send()
 
     def hold_until(label, activate, observed, released, timeout=8):

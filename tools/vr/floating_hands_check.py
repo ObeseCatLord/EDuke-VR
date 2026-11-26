@@ -185,7 +185,7 @@ def exercise(observer, remote, root, mount_motion=False, selected_hand='right'):
         return observer.wait(ready,timeout=12)
     state_after(5, require_capture=True)
     for side in (remote.packet.left,remote.packet.right):
-        side.trigger_value=0;side.trigger_click=False;side.squeeze_value=0;side.active=True
+        side.trigger_value=0;side.trigger_click=False;side.squeeze_value=0;side.squeeze_force=0;side.active=True
     remote.send();observer.pause(.3)
     transitions=[]
     def change(state, callback):
@@ -201,7 +201,7 @@ def exercise(observer, remote, root, mount_motion=False, selected_hand='right'):
             # is captured.  The mount oracle consumes the render-frame body
             # diagnostic, never a guessed tic count.
             movement.y=.65
-        setattr(remote.packet.left,'squeeze_value' if state==6 else 'trigger_value',1)
+        (setattr(remote.packet.left,'squeeze_force',1) if state==6 else None);setattr(remote.packet.left,'squeeze_value' if state==6 else 'trigger_value',1)
     try:
         change(6,lambda:pose_and_button(6))
         if mount_motion: observer.pause(.15)
@@ -212,12 +212,12 @@ def exercise(observer, remote, root, mount_motion=False, selected_hand='right'):
             # the fixture across the room and turn a loss test into occlusion.
             movement.y=0; remote.send(); observer.pause(.1)
         change(6,lambda:setattr(remote.packet.left,'trigger_value',0))
-        change(5,lambda:setattr(remote.packet.left,'squeeze_value',0))
-        change(9,lambda:setattr(remote.packet.right,'squeeze_value',1))
+        change(5,lambda:(setattr(remote.packet.left,'squeeze_value',0),setattr(remote.packet.left,'squeeze_force',0)))
+        change(9,lambda:(setattr(remote.packet.right,'squeeze_value',1),setattr(remote.packet.right,'squeeze_force',1)))
         if mount_motion:
             # Keep subsequent button/loss fixtures stationary.
             movement.y=0; remote.send()
-        change(5,lambda:setattr(remote.packet.right,'squeeze_value',0))
+        change(5,lambda:(setattr(remote.packet.right,'squeeze_value',0),setattr(remote.packet.right,'squeeze_force',0)))
         if mount_motion:
             # Actual remote poses at ~100 Hz, with no native-tick override.
             # Bounded transform records establish whether the renderer follows
@@ -238,7 +238,7 @@ def exercise(observer, remote, root, mount_motion=False, selected_hand='right'):
         # A timeout must never leave the disposable runtime walking or either
         # controller firing when the caller proceeds to another evidence step.
         for side in (remote.packet.left,remote.packet.right):
-            side.trigger_value=0;side.trigger_click=False;side.squeeze_value=0;side.active=True
+            side.trigger_value=0;side.trigger_click=False;side.squeeze_value=0;side.squeeze_force=0;side.active=True
         movement.y=0
         remote.send()
     result['checks']['both_hands_lose_and_recover_independently']=transitions[-6:]==[4,5,1,0,1,5]

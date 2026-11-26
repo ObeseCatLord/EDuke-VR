@@ -168,9 +168,9 @@ def main():
                     ra.packet.right.trigger_value = 1.0; ra.send(); obs['a'].pause(.25)
                     ra.packet.right.trigger_value = 0.0; ra.send(); obs['a'].pause(.6)
                 obs['a'].pause(2)
-                ra.packet.left.squeeze_value = 1.0; ra.send()
+                ra.packet.left.squeeze_value = ra.packet.left.squeeze_force = 1.0; ra.send()
                 obs['a'].pause(.6)
-                ra.packet.left.squeeze_value = 0.0; ra.send()
+                ra.packet.left.squeeze_value = ra.packet.left.squeeze_force = 0.0; ra.send()
                 checks['a_used_the_button'] = soft(obs['a'], lambda t: re.search(r'VR use: .*picnum=142', t[mark['a']:]) is not None, 30)
 
             if args.episode:

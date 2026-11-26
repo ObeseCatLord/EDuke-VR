@@ -143,12 +143,12 @@ def exercise(observer, remote, root, model, side):
     try:
         wait_state(5)
         start=len(observer.text());selected.pose.position.z=-1.35
-        remote.packet.left.squeeze_value=1;remote.send();wait_state(6,start)
+        remote.packet.left.squeeze_value=remote.packet.left.squeeze_force=1;remote.send();wait_state(6,start)
         start=len(observer.text());selected.pose.position.z=initial_z
-        remote.packet.right.squeeze_value=1;remote.send();wait_state(10,start)
+        remote.packet.right.squeeze_value=remote.packet.right.squeeze_force=1;remote.send();wait_state(10,start)
         return inspect(root,observer.text(),model,side)
     finally:
         selected.pose.position.z=initial_z
         for hand in (remote.packet.left,remote.packet.right):
-            hand.squeeze_value=0;hand.trigger_value=0;hand.trigger_click=False
+            hand.squeeze_value=hand.squeeze_force=0;hand.trigger_value=0;hand.trigger_click=False
         remote.send()
