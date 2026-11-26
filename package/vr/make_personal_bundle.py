@@ -18,8 +18,8 @@ OUT receives:
               same as the multiplayer server), worldtour/ (World Tour episode 5 maps, art, CON,
               music and sound), addons/ (Atomic 1.5 DUKE3D.GRP with Duke It Out in D.C.,
               Duke Caribbean and Nuclear Winter)
-  *.sh / *.bat  play (VR or desktop), join the marmot server (VR or desktop), the expansions,
-              install and update
+  *.sh / *.bat  play (VR or desktop), join the marmot server (VR or desktop), the expansions and
+              update (portable: nothing to install)
   README.txt
 
 Everything the scripts need is prebuilt here: the target machine needs no Python or compiler.
@@ -182,29 +182,6 @@ case $name in
     *) echo "play-expansion: unknown expansion $name" >&2; exit 2 ;;
 esac
 ''')
-SH_INSTALL = r'''#!/usr/bin/env bash
-# Install (or update to) this bundle: copies it to ~/.local/share/eduke32-vr-bundle and adds app-menu
-# entries. Settings and saved games live in ~/.config/eduke32 and are kept.
-set -euo pipefail
-here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
-dest="${1:-$HOME/.local/share/eduke32-vr-bundle}"
-if [[ $(readlink -f "$here") != $(readlink -f "$dest" 2>/dev/null || echo none) ]]; then
-    # Lay the files over any earlier install: nothing there is deleted (game data, model sets).
-    mkdir -p "$dest"
-    cp -a "$here/." "$dest/"
-fi
-apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"; mkdir -p "$apps"
-entry() {   # file name exec
-    printf '[Desktop Entry]\nType=Application\nName=%s\nExec=%s\nTerminal=false\nCategories=Game;\n' "$2" "$3" > "$apps/$1.desktop"
-}
-entry eduke32-vr "Duke Nukem 3D VR" "$dest/play.sh vr"
-entry eduke32-vr-desktop "Duke Nukem 3D (desktop)" "$dest/play.sh desktop"
-if [[ -x $dest/join-marmot-vr.sh ]]; then
-    entry eduke32-vr-marmot "Duke 3D VR - join marmot server" "$dest/join-marmot-vr.sh"
-    entry eduke32-vr-marmot-desktop "Duke 3D - join marmot server (desktop)" "$dest/join-marmot-desktop.sh"
-fi
-echo "Installed in $dest (app menu: Duke Nukem 3D VR)."
-'''
 SH_UPDATE = r'''#!/usr/bin/env bash
 # ./update.sh              update to the latest Linux release on GitHub (github.com/@REPO@):
 #                          a vX.Y.Z release for every platform, or (older) tags vX.Y.Z-linux on
@@ -263,6 +240,7 @@ while IFS= read -r -d '' f; do
     cp -a "$new/$f" "$here/$f.update-new" && mv -f "$here/$f.update-new" "$here/$f" \
         || { rm -f "$here/$f.update-new"; echo "update: could not replace $f" >&2; exit 1; }
 done < <(cd "$new" && find . \( -type f -o -type l \) -print0)
+rm -f "$here/install.sh" "$here/install.ps1"   # older versions had an installer; the game is portable
 cp -a "$new/VERSION" "$here/VERSION"
 echo "EDuke VR is now $(cat "$here/VERSION" 2>/dev/null || echo updated)."
 exit 0
@@ -436,30 +414,6 @@ if /i "%N%"=="nuclearwinter" set XARGS=-j "!DATA!\addons" -gamegrp DUKE3D.GRP -g
 if not defined XARGS (echo play-expansion: unknown expansion %N% & exit /b 2)
 call :run %M%
 ''')
-PS_INSTALL = r'''# Install (or update to) this bundle: copies it to %LOCALAPPDATA%\EDuke32-VR and adds Start menu
-# shortcuts. Run:  powershell -ExecutionPolicy Bypass -File install.ps1
-param([string]$Dest = "$env:LOCALAPPDATA\EDuke32-VR")
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
-if ((Resolve-Path $here).Path -ne $Dest) {
-    New-Item -ItemType Directory -Force $Dest | Out-Null
-    # Lay the files over any earlier install: nothing there is deleted (game data, model sets).
-    robocopy $here $Dest /E /IS /IT /NFL /NDL /NJH /NJS /NP | Out-Null
-}
-$menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'EDuke32 VR'
-New-Item -ItemType Directory -Force $menu | Out-Null
-$shell = New-Object -ComObject WScript.Shell
-$links = @(@('Duke Nukem 3D VR','play.bat','vr'), @('Duke Nukem 3D (desktop)','play.bat','desktop'))
-if (Test-Path (Join-Path $Dest 'join-marmot-vr.bat')) {
-    $links += ,@('Join marmot server (VR)','join-marmot-vr.bat','')
-    $links += ,@('Join marmot server (desktop)','join-marmot-desktop.bat','')
-}
-foreach ($s in $links) {
-    $l = $shell.CreateShortcut((Join-Path $menu ($s[0] + '.lnk')))
-    $l.TargetPath = Join-Path $Dest $s[1]; $l.Arguments = $s[2]; $l.WorkingDirectory = $Dest
-    $l.IconLocation = (Join-Path $Dest 'windows\eduke32-vr.exe'); $l.Save()
-}
-Write-Host "Installed in $Dest (Start menu: EDuke32 VR)."
-'''
 PS_UPDATE = r'''# update.ps1              update to the latest Windows release on GitHub (github.com/@REPO@,
 #                         a vX.Y.Z release for every platform, or (older) a vX.Y.Z-windows one)
 # update.ps1 FILE.zip     update from a downloaded release (or personal bundle) archive
@@ -501,6 +455,8 @@ try {
     # VERSION last, so an update that fails part way is retried in full next time.
     robocopy $new.DirectoryName $here /E /IS /IT /XF VERSION /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Copying the update failed (robocopy exit $LASTEXITCODE). Close EDuke VR and run the update again." }
+    # Older versions had an installer; the game is portable.
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $here 'install.ps1'), (Join-Path $here 'install.sh')
     Copy-Item -Force (Join-Path $new.DirectoryName 'VERSION') (Join-Path $here 'VERSION')
     Write-Host ('EDuke VR is now ' + (Get-Content "$here\VERSION" -Raw).Trim() + '.')
 } finally {
@@ -511,15 +467,14 @@ try {
 README = '''EDuke32 VR - personal test bundle ({stamp})
 PERSONAL USE ONLY: contains your own game data and the private Voxel Duke pack. Do not share.
 
-Linux:   ./install.sh  (optional; adds app-menu entries)   then ./play.sh vr | ./play.sh desktop
+Linux:   ./play.sh vr | ./play.sh desktop   (portable: run from this folder, nothing to install)
          ./join-marmot-vr.sh | ./join-marmot-desktop.sh            (server {server})
          ./play-expansion.sh worldtour|dc|caribbean|nuclearwinter [vr|desktop]
          Needs an OpenXR runtime for VR (Monado/Envision, WiVRn, SteamVR) and a recent glibc
          (2.38+: Ubuntu 24.04, Debian 13, Fedora 39, Arch...) and SDL2 (installed with Steam);
          the OpenXR loader, Opus etc. are in linux/lib. 64-bit ARM (Steam Frame on SteamOS):
          the same scripts use linux-arm64/ when it is in the bundle.
-Windows: install.ps1 (optional; Start menu shortcuts: right-click > Run with PowerShell)
-         play.bat vr | play.bat desktop, join-marmot-vr.bat, join-marmot-desktop.bat,
+Windows: play.bat vr | play.bat desktop, join-marmot-vr.bat, join-marmot-desktop.bat,
          play-expansion.bat worldtour|dc|caribbean|nuclearwinter [vr|desktop]
          VR needs an OpenXR runtime (SteamVR, Oculus, WMR, Virtual Desktop/VDXR...).
 Update:  ./update.sh  /  powershell -ExecutionPolicy Bypass -File update.ps1
@@ -663,11 +618,9 @@ def main():
     write(out / 'join.sh', SH_JOIN_ANY, True)
     write(out / 'join.bat', BAT_JOIN_ANY, crlf=True)
     write(out / 'VERSION', args.version + '\n')
-    write(out / 'install.sh', SH_INSTALL, True)
     write(out / 'update.sh', SH_UPDATE, True)
     write(out / 'play.bat', BAT_PLAY, crlf=True)
     write(out / 'play-expansion.bat', BAT_EXPANSION, crlf=True)
-    write(out / 'install.ps1', PS_INSTALL, crlf=True)
     write(out / 'update.ps1', PS_UPDATE, crlf=True)
     commit = subprocess.run(['git', '-C', str(REPO), 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip()
     stamp = subprocess.run(['date', '+%Y-%m-%d'], capture_output=True, text=True).stdout.strip()

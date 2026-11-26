@@ -101,16 +101,14 @@ tag {version} (GitHub's "Source code" downloads of this release).
 '''
 ARM64_TEXT = '''Linux on 64-bit ARM (Steam Frame running SteamOS, other arm64 Linux):
          ./play.sh vr | ./play.sh desktop        ./join.sh HOST[:PORT] [vr|desktop]
-         ./install.sh copies this folder to ~/.local/share/eduke32-vr-bundle and adds menu entries;
-         on SteamOS, add play.sh as a non-Steam game to start it from the Steam library.
+         Portable: run it from this folder. On SteamOS, add play.sh as a non-Steam game to start
+         it from the Steam library.
          Needs glibc 2.31+, SDL2 and, for VR, an OpenXR runtime with OpenGL support.'''
 LINUX_TEXT = '''Linux:   ./play.sh vr | ./play.sh desktop        ./join.sh HOST[:PORT] [vr|desktop]
-         ./install.sh copies this folder to ~/.local/share/eduke32-vr-bundle and adds menu entries.
-         Needs glibc 2.38+ (Ubuntu 24.04, Debian 13, Fedora 39, Arch...), SDL2 (installed with
+         Portable: run it from this folder, nothing to install. Needs glibc 2.38+ (Ubuntu 24.04, Debian 13, Fedora 39, Arch...), SDL2 (installed with
          Steam) and, for VR, an OpenXR runtime (SteamVR, Monado/Envision, WiVRn).'''
 WINDOWS_TEXT = '''Windows: play.bat vr | play.bat desktop          join.bat HOST[:PORT] [vr|desktop]
-         install.ps1 (right-click > Run with PowerShell) copies this folder to
-         %LOCALAPPDATA%\\EDuke32-VR and adds Start menu entries.
+         Portable: run it from this folder, nothing to install.
          VR needs an OpenXR runtime (SteamVR, Oculus/Meta, WMR, Virtual Desktop/VDXR).'''
 THIRD_PARTY = '''Third-party components bundled with EDuke VR {version}
 
@@ -174,7 +172,6 @@ def tree(root, version, platform, binary, windir, release, arm64dir=None, amc_bi
         mpb.write(out / 'play.sh', mpb.SH_PLAY, True)
         mpb.write(out / 'play-game.sh', mpb.SH_GAME, True)
         mpb.write(out / 'join.sh', mpb.SH_JOIN_ANY, True)
-        mpb.write(out / 'install.sh', mpb.SH_INSTALL, True)
         mpb.write(out / 'update.sh', mpb.SH_UPDATE, True)
         if platform == 'linux':
             licenses(out / 'licenses', LINUX_LICENSES, LINUX_ITEMS, version)
@@ -188,7 +185,6 @@ def tree(root, version, platform, binary, windir, release, arm64dir=None, amc_bi
         mpb.write(out / 'play.bat', mpb.BAT_PLAY, crlf=True)
         mpb.write(out / 'play-game.bat', mpb.BAT_GAME, crlf=True)
         mpb.write(out / 'join.bat', mpb.BAT_JOIN_ANY, crlf=True)
-        mpb.write(out / 'install.ps1', mpb.PS_INSTALL, crlf=True)
         mpb.write(out / 'update.ps1', mpb.PS_UPDATE, crlf=True)
         licenses(out / 'licenses', WINDOWS_LICENSES,
                  WINDOWS_ITEMS + (WINDOWS_AMC_ITEM if (out / 'windows/eduke32-vr-amc.exe').is_file() else ''), version)
