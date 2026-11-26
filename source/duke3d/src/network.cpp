@@ -2595,7 +2595,11 @@ static void Net_ParseClientPacket(ENetEvent *event)
     int32_t const other = event->peer->data ? int32_t(intptr_t(event->peer->data)) : -1;
     // Handlers and the clients this is relayed to read the sender from that last byte (and, for map
     // votes, byte 1): make them the peer's own number, so a client cannot speak for another player.
-    if (pbuf[0] != PACKET_AUTH && (unsigned)other < MAXPLAYERS)
+    // (Only the packets that end in a sender byte: others, such as the movement update ending in its map
+    // tag, are checked against the peer by their own handlers.)
+    if ((pbuf[0] == PACKET_MESSAGE || pbuf[0] == PACKET_RTS || pbuf[0] == PACKET_CLIENT_INFO || pbuf[0] == PACKET_USER_MAP
+         || pbuf[0] == PACKET_MAP_VOTE || pbuf[0] == PACKET_MAP_VOTE_INITIATE || pbuf[0] == PACKET_MAP_VOTE_CANCEL)
+        && (unsigned)other < MAXPLAYERS)
     {
         pbuf[packbufleng] = uint8_t(other);
         if ((pbuf[0] == PACKET_MAP_VOTE || pbuf[0] == PACKET_MAP_VOTE_CANCEL) && packbufleng >= 2)
