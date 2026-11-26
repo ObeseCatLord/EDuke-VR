@@ -8203,6 +8203,27 @@ int G_DoMoveThings(void)
         A_MoveDummyPlayers();//ST 13
     }
 
+    // The level-end countdown (a boss killed, an end sector entered) runs on one player and only while
+    // they are alive and in the game: if that player died or left, it stalled and the level never
+    // ended. Hand it to a living player still in the game.
+    if (g_netServer || ud.multimode > 1)
+        for (bssize_t TRAVERSE_CONNECT(i))
+        {
+            auto const owner = g_player[i].ps;
+            if (owner->timebeforeexit <= 1 || (!G_PlayerOutOfGame(i) && sprite[owner->i].extra > 0))
+                continue;
+            for (bssize_t TRAVERSE_CONNECT(k))
+                if (k != i && !G_PlayerOutOfGame(k) && !G_DedicatedHostPlayer(k) && sprite[g_player[k].ps->i].extra > 0
+                    && g_player[k].ps->timebeforeexit <= 1)
+                {
+                    g_player[k].ps->timebeforeexit  = owner->timebeforeexit;
+                    g_player[k].ps->customexitsound = owner->customexitsound;
+                    owner->timebeforeexit = 0;
+                    LOG_F(INFO, "Level-end countdown handed from player %d to %d.", int(i), int(k));
+                    break;
+                }
+        }
+
     for (bssize_t TRAVERSE_CONNECT(i))
     {
         if (g_player[i].ps->team != g_player[i].pteam && g_gametypeFlags[ud.coop] & GAMETYPE_TDM)
