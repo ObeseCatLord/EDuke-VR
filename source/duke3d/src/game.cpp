@@ -4696,9 +4696,18 @@ PALONLY:
             }
 
             t->picnum += frameOffset + apScript[scrofs_action + ACTION_STARTFRAME] + viewtype*curframe;
-            // XXX: t->picnum can be out-of-bounds by bad user code.
-
-            Bassert((unsigned)t->picnum < MAXTILES);
+            // t->picnum can be out of bounds through bad user code, or in multiplayer when an actor's
+            // frame counter (t_data) came from a different actor the server has in the same slot: a
+            // tripmine blast's blood got curframe 30857 and drawing tile 32477 crashed every client.
+            if ((unsigned)t->picnum >= MAXTILES)
+            {
+                static int warned;
+                if (warned++ < 8)
+                    LOG_F(WARNING, "Sprite %d tile %d: action frame %d gives tile %d, past the last tile; drawn unanimated.",
+                          i, pSprite->picnum, curframe, int(t->picnum));
+                t->picnum = pSprite->picnum;
+                viewtype = 0;   // no stepping back from an invalid tile
+            }
 
             if (viewtype > 0)
 #ifdef AMC_BUILD
@@ -4968,6 +4977,26 @@ skip:
 #ifdef USE_OPENGL
     G_PlaceHeldWeapons();
 #endif
+
+    // Last line of defence for the renderer, which indexes tile arrays by picnum unchecked: a
+    // drawn sprite whose tile is out of range (from any animation path or a mod's
+    // EVENT_ANIMATESPRITES) falls back to its sprite's own tile, or is not drawn.
+    for (j = 0; j < spritesortcnt; j++)
+    {
+        auto const t = &tsprite[j];
+        if ((unsigned)t->picnum < MAXTILES)
+            continue;
+        int const owner = t->owner;
+        if ((unsigned)owner < MAXSPRITES && (unsigned)sprite[owner].picnum < MAXTILES)
+            t->picnum = sprite[owner].picnum;
+        else
+        {
+            t->picnum = 0;
+            t->xrepeat = t->yrepeat = 0;
+            t->cstat |= CSTAT_SPRITE_INVISIBLE;
+        }
+    }
+
 #if 1//def DEBUGGINGAIDS
     g_spriteStat.numonscreen = spritesortcnt;
 #endif
