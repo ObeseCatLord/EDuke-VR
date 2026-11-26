@@ -33,8 +33,8 @@ game data is included.
 3. Start your VR runtime and run `play.bat vr` on Windows or `./play.sh vr` on Linux. Use
    `desktop` instead of `vr` to play without a headset.
 
-To join a server, choose **Join Server** in the main menu (it remembers the last server, so
-rejoining is one click), or run `join.bat HOST` or `./join.sh HOST`. To update, run `./update.sh`, or on
+To join a server, choose **Join Server** in the main menu, where you can also set your name (it
+remembers the last server, so rejoining is one click), or run `join.bat HOST` or `./join.sh HOST`. To update, run `./update.sh`, or on
 Windows right-click `update.ps1` > **Run with PowerShell**. Your settings, saves and model sets are
 kept.
 

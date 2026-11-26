@@ -1851,7 +1851,10 @@ static MenuString_t MEO_NETJOIN_PORT = MAKE_MENUSTRING( MenuPort, &MF_Bluefont, 
 static MenuEntry_t ME_NETJOIN_PORT = MAKE_MENUENTRY( "Port", &MF_Redfont, &MEF_VideoSetup, &MEO_NETJOIN_PORT, String );
 static MenuEntry_t ME_NETJOIN_CONNECT = MAKE_MENUENTRY( "Connect", &MF_Redfont, &MEF_VideoSetup_Apply, &MEO_NULL, Link );
 
+// Join Server: the player's name too (Player Setup's), sent to the server on connecting.
+static MenuEntry_t ME_NETJOIN_NAME = MAKE_MENUENTRY( "Name", &MF_Redfont, &MEF_VideoSetup, &MEO_PLAYER_NAME, String );
 static MenuEntry_t *MEL_NETJOIN[] = {
+    &ME_NETJOIN_NAME,
     &ME_NETJOIN_SERVER,
     &ME_NETJOIN_PORT,
     &ME_NETJOIN_CONNECT,
@@ -4987,10 +4990,17 @@ static void Menu_EntryOptionDidModify(MenuEntry_t *entry)
     if (entry == &ME_GAMESETUP_AIM_AUTO ||
         entry == &ME_GAMESETUP_WEAPSWITCH_PICKUP ||
         entry == &ME_PLAYER_NAME ||
+#ifndef NETCODE_DISABLE
+        entry == &ME_NETJOIN_NAME ||
+#endif
         entry == &ME_PLAYER_COLOR ||
         entry == &ME_PLAYER_TEAM)
     {
-        if (entry == &ME_PLAYER_NAME)
+        if (entry == &ME_PLAYER_NAME
+#ifndef NETCODE_DISABLE
+            || entry == &ME_NETJOIN_NAME
+#endif
+           )
             CommandName = nullptr;
 
         G_UpdatePlayerFromMenu();
@@ -6103,7 +6113,7 @@ static void Menu_ChangingTo(Menu_t * m)
             Bstrncpyz(MenuServer, cl_joinserver, min(sizeof(MenuServer), hostLength + 1));
             if (colon && colon[1])
                 Bstrncpyz(MenuPort, colon + 1, sizeof(MenuPort));
-            M_NETJOIN.currentEntry = 2;   // on Connect: one trigger pull rejoins the last server
+            M_NETJOIN.currentEntry = 3;   // on Connect: one trigger pull rejoins the last server
         }
         break;
 #endif
