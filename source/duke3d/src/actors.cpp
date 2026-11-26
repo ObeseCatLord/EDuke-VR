@@ -4350,6 +4350,41 @@ static int A_FindLocatorWithHiLoTags(int const hitag, int const tag, int const s
     return -1;
 }
 
+// Multiplayer: an item's script (medkit, armour, ammo...) only ever saw the nearest player, so when
+// that player could not take it (full health or ammo) a teammate beside them got nothing either.
+// With two or more living players in reach of a non-enemy actor, its script sees each in turn, one
+// per tick (an actor's tick count, as on every machine); otherwise the nearest as before.
+static int A_ItemPlayer(int spriteNum, int nearest, int32_t *dist)
+{
+    auto const pSprite = &sprite[spriteNum];
+    if ((!g_netServer && ud.multimode < 2) || *dist >= 1024 || pSprite->statnum != STAT_ACTOR || A_CheckEnemySprite(pSprite))
+        return nearest;
+    int inReach[MAXPLAYERS], reachDist[MAXPLAYERS], count = 0;
+    for (bssize_t TRAVERSE_CONNECT(playerNum))
+    {
+        if (G_DedicatedHostPlayer(playerNum) || G_PlayerOutOfGame(playerNum))
+            continue;
+        auto const ps = g_player[playerNum].ps;
+        if (sprite[ps->i].extra <= 0)
+            continue;
+        int32_t const d = klabs(ps->opos.x - pSprite->x) + klabs(ps->opos.y - pSprite->y)
+                        + ((klabs(ps->opos.z - pSprite->z + (28 << 8))) >> 4);
+        if (d < 1024)
+            inReach[count] = playerNum, reachDist[count++] = d;
+    }
+    if (count < 2)
+        return nearest;
+    int const pick = (unsigned)actor[spriteNum].t_data[0] % unsigned(count);
+    if (std::getenv("EDUKE32_TEST_PICKUP"))
+    {
+        static int logged;
+        if (logged++ < 300)
+            LOG_F(INFO, "Item players: sprite=%d tile=%d in reach=%d nearest=%d now=%d.", spriteNum, int(pSprite->picnum), count, nearest, inReach[pick]);
+    }
+    *dist = reachDist[pick];
+    return inReach[pick];
+}
+
 ACTOR_STATIC void G_MoveActors(void)
 {
     int spriteNum = headspritestat[STAT_ACTOR];
@@ -5746,7 +5781,8 @@ DETONATEB:
         if (G_TileHasActor(sprite[spriteNum].picnum))
         {
             int32_t playerDist;
-            int const playerNum = A_FindPlayer(pSprite, &playerDist);
+            int playerNum = A_FindPlayer(pSprite, &playerDist);
+            playerNum = A_ItemPlayer(spriteNum, playerNum, &playerDist);
             A_Execute(spriteNum, playerNum, playerDist);
         }
 next_sprite:
