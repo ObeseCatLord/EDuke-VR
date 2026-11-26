@@ -177,10 +177,10 @@ controller aim pose instead of being suppressed.
 | Left stick | move/strafe |
 | Right stick | turn (x; smooth or snap); flick down: quick kick |
 | Right stick click (Index: rest your thumb on the right trackpad) | hold: weapon wheel |
-| Left stick click (Index: rest your thumb on the left trackpad) | hold: gadget wheel |
+| Left stick click (Index: rest your thumb on the left trackpad) | hold: gadget wheel; quick tap: wrist map on/off |
 | Right trigger | fire |
 | Left trigger | mighty foot (quick kick); `vr_lefttrigger 1` makes it alt fire instead |
-| Left grip | use / interact (doors, switches) |
+| Left grip | use / interact (doors, switches); on Index, squeeze the grip (holding the controller doesn't count) |
 | Right A / B | jump / crouch |
 | Right stick click (Index: trackpad click) | alt fire (mods that have it, e.g. Alien Armageddon); quick kick with `vr_lefttrigger 1` |
 | Left X / Y (Index: left A / B) | previous / next weapon; Y is voice push-to-talk when `voice_mode 1` |
@@ -260,6 +260,12 @@ front of you.
 VR Setup **HUD** (`vr_hudmode`) switches between **On wrists** (default) and **In front**, which
 keeps the whole status bar on the panel in front of you, for players who prefer it and for mods
 whose HUD does not split well onto the wrists.
+
+**Wrist map.** A quick tap of the gadget wheel button (left stick click; Index: a quick touch of
+the left trackpad), without picking a gadget, shows the game's map on your left forearm, next to
+the health watch: the areas you have seen, you in the middle facing up, and in multiplayer the
+other players with their names. Tap again to hide it. VR Setup **Wrist map** (`vr_wristmap`)
+turns it on and off too.
 
 ## Other EDuke32 games (Ion Fury, Demon Throne, AMC Squad, A.W.O.L.)
 
@@ -344,8 +350,8 @@ ring of your weapons (their 3D models, each in its own bubble) opens in front of
 and above your weapon hand, facing you, and the held weapon hides. A blue beam
 runs from your hand to a pointer bead on the ring; turn your wrist about 20
 degrees toward a weapon to move the bead onto it: its bubble lights up yellow
-and grows, the weapon spins and the controller pulses. Let go to switch.
-Only weapons you have picked up are on the ring; one out of ammo sits in a
+and grows, the weapon spins and the controller pulses. Let go to switch; move the bead off every weapon (or back to the middle) and let go to keep
+what you have. Only weapons you have picked up are on the ring; one out of ammo sits in a
 dark bubble and can't be picked. Around every weapon an ammo ring (after the
 Serious Sam VR wheels) fills clockwise from 12 o'clock with its ammo: green, yellow
 below two thirds, red below one third (a sliver stays while any is left), with the

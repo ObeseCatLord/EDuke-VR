@@ -33,7 +33,8 @@ game data is included.
 3. Start your VR runtime and run `play.bat vr` on Windows or `./play.sh vr` on Linux. Use
    `desktop` instead of `vr` to play without a headset.
 
-To join a server, run `join.bat HOST` or `./join.sh HOST`. To update, run `./update.sh`, or on
+To join a server, choose **Join Server** in the main menu (it remembers the last server, so
+rejoining is one click), or run `join.bat HOST` or `./join.sh HOST`. To update, run `./update.sh`, or on
 Windows right-click `update.ps1` > **Run with PowerShell**. Your settings, saves and model sets are
 kept.
 
@@ -93,10 +94,12 @@ on with `mp_friendlyfire 1` on the server.
 | Left X / Y | Previous / next weapon |
 | Hold right stick click | Weapon wheel |
 | Hold left stick click | Gadget wheel |
+| Tap left stick click | Map on your left wrist |
 | Right grip | Walk |
 | Menu button | Menu |
 
-On Index controllers, rest your thumb on a trackpad for the wheels. VR options are under
+On Index controllers, rest your thumb on a trackpad for the wheels (a quick touch of the left
+one toggles the wrist map), and squeeze the grip to use things. VR options are under
 **Options > VR Setup**, including **HUD: On wrists / In front** to show the whole HUD in front of
 you instead of on your wrists. Everything else, including other controllers, multiplayer servers and model
 sets, is in [docs/vr/PLAYING.md](docs/vr/PLAYING.md).
