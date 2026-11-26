@@ -55,6 +55,7 @@ SH_COMMON = r'''#!/usr/bin/env bash
 set -euo pipefail
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 data="$here/data"
+# @JOIN_DEFAULT@
 exe=eduke32-vr   # play-game.sh may switch to eduke32-vr-amc; an exported "exe" must not leak in
 # x86_64 PCs use linux/, 64-bit ARM (Steam Frame, other arm64 Linux) linux-arm64/.
 case $(uname -m) in aarch64|arm64) bin="$here/linux-arm64" ;; *) bin="$here/linux" ;; esac
@@ -256,6 +257,7 @@ rem EDuke32 VR personal bundle. VR needs an OpenXR runtime (SteamVR, Oculus, WMR
 set "HERE=%~dp0"
 set "DATA=%~dp0data"
 set "EXE=%~dp0windows\eduke32-vr.exe"
+rem @JOIN_DEFAULT@
 rem One request file per game started (two games on one PC must not share it).
 set "EDUKE32_XR_RESTART_REQUEST=%TEMP%\eduke32-vr-restart-%RANDOM%%RANDOM%.txt"
 setlocal EnableDelayedExpansion
@@ -543,8 +545,17 @@ def copy_pack(src, dst):
         shutil.copy2(path.resolve(), target)
 
 
+# Personal bundles offer their server in Join Server (until the player has joined one); releases
+# leave the marker as a comment.
+JOIN_DEFAULT = {'sh': 'export EDUKE32_VR_JOIN_DEFAULT="${EDUKE32_VR_JOIN_DEFAULT:-' + SERVER + '}"   # Join Server\'s server until another is joined',
+                'bat': 'if not defined EDUKE32_VR_JOIN_DEFAULT set "EDUKE32_VR_JOIN_DEFAULT=' + SERVER + '"'}
+JOIN_DEFAULT_ON = False   # set by main() for a personal bundle
+
+
 def write(path, text, executable=False, crlf=False):
     text = text.replace('@REPO@', GITHUB_REPO)
+    if JOIN_DEFAULT_ON:
+        text = text.replace('# @JOIN_DEFAULT@', JOIN_DEFAULT['sh']).replace('rem @JOIN_DEFAULT@', JOIN_DEFAULT['bat'])
     path.write_text(text.replace('\n', '\r\n') if crlf else text, newline='')
     if executable:
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -563,6 +574,8 @@ def main():
     parser.add_argument('--linux-arm64-dir', type=Path, help='prebuilt 64-bit ARM build: eduke32-vr and lib/ (package/vr/build_linux_arm64.sh)')
     parser.add_argument('--version', required=True, help='the GitHub release this bundle matches (VERSION, for update.sh/ps1)')
     args = parser.parse_args()
+    global JOIN_DEFAULT_ON
+    JOIN_DEFAULT_ON = True
     out = args.out.resolve()
     if out.exists() and any(out.iterdir()):
         sys.exit(f'make_personal_bundle: {out} is not empty')

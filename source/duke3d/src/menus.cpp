@@ -6106,6 +6106,10 @@ static void Menu_ChangingTo(Menu_t * m)
         // Back to the main menu, and the last server joined filled in (no typing needed in VR).
         m->parentID = (g_player[myconnectindex].ps->gm & MODE_GAME) ? MENU_MAIN_INGAME : MENU_MAIN;
         MenuJoinStatus[0] = 0;
+        // A personal bundle's launcher names its server (EDUKE32_VR_JOIN_DEFAULT) until another is joined.
+        if (!cl_joinserver[0])
+            if (char const *const def = getenv("EDUKE32_VR_JOIN_DEFAULT"))
+                Bstrncpyz(cl_joinserver, def, sizeof(cl_joinserver));
         if (cl_joinserver[0])
         {
             char const *colon = Bstrrchr(cl_joinserver, ':');
