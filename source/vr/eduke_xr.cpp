@@ -450,11 +450,12 @@ struct Runtime::Impl
     std::array<XrAction, 8>                 buttonActions {};
     XrAction                                stickAction = XR_NULL_HANDLE, gripPoseAction = XR_NULL_HANDLE, aimPoseAction = XR_NULL_HANDLE;
     XrAction                                hapticAction = XR_NULL_HANDLE;
-    // Valve Index: the grip's force sensor (squeeze/force). Its squeeze/value follows how far the
-    // fingers close around the handle, so as a button it needed the hand fully closed; a light
-    // squeeze of the force sensor counts as grip too (on at 15%, off below 5%).
-    XrAction                                gripForceAction = XR_NULL_HANDLE;
-    bool                                    gripForceDown[2] {};
+    // Valve Index: grip is the force sensor (squeeze/force: on at 15%, off below 5%). squeeze/value
+    // follows how far the fingers curl round the handle, which is nearly 1 just holding the
+    // controller: as the grip button it stayed held, so Use (left grip) only fired again after the
+    // hand opened fully. It is read separately and used only when a runtime gives no force.
+    XrAction                                gripForceAction = XR_NULL_HANDLE, gripValueAction = XR_NULL_HANDLE;
+    bool                                    gripForceDown[2] {}, gripValueDown[2] {};
     // Optional XR_EXT_hand_tracking.
     std::array<XrHandTrackerEXT, 2>         handTrackers {};
     PFN_xrLocateHandJointsEXT               locateHandJoints = nullptr;
@@ -1227,6 +1228,7 @@ struct Runtime::Impl
             if (!create(buttonActions[i], XR_ACTION_TYPE_BOOLEAN_INPUT, names[i], labels[i])) return fail(result, "xrCreateAction button");
         if (!create(stickAction, XR_ACTION_TYPE_VECTOR2F_INPUT, "stick", "Stick")) return fail(result, "xrCreateAction stick");
         if (!create(gripForceAction, XR_ACTION_TYPE_FLOAT_INPUT, "grip_force", "Grip force")) return fail(result, "xrCreateAction grip force");
+        if (!create(gripValueAction, XR_ACTION_TYPE_FLOAT_INPUT, "grip_curl", "Grip curl (Index)")) return fail(result, "xrCreateAction grip curl");
         if (!create(gripPoseAction, XR_ACTION_TYPE_POSE_INPUT, "grip_pose", "Grip pose")) return fail(result, "xrCreateAction grip pose");
         if (!create(aimPoseAction, XR_ACTION_TYPE_POSE_INPUT, "aim_pose", "Aim pose")) return fail(result, "xrCreateAction aim pose");
         if (!create(hapticAction, XR_ACTION_TYPE_VIBRATION_OUTPUT, "haptic", "Haptic feedback")) return fail(result, "xrCreateAction haptic");
@@ -1273,7 +1275,7 @@ struct Runtime::Impl
                 { hapticAction, "/user/hand/left/output/haptic" }, { hapticAction, "/user/hand/right/output/haptic" }})) return fail(result, "xrSuggestInteractionProfileBindings touch");
         if (!suggest("/interaction_profiles/valve/index_controller", {
                 { select, "/user/hand/left/input/trigger/value" }, { select, "/user/hand/right/input/trigger/value" },
-                { grip, "/user/hand/left/input/squeeze/value" }, { grip, "/user/hand/right/input/squeeze/value" },
+                { gripValueAction, "/user/hand/left/input/squeeze/value" }, { gripValueAction, "/user/hand/right/input/squeeze/value" },
                 { primary, "/user/hand/left/input/a/click" }, { secondary, "/user/hand/left/input/b/click" },
                 { primary, "/user/hand/right/input/a/click" }, { secondary, "/user/hand/right/input/b/click" },
                 { gripForceAction, "/user/hand/left/input/squeeze/force" }, { gripForceAction, "/user/hand/right/input/squeeze/force" },
@@ -1403,6 +1405,7 @@ struct Runtime::Impl
         actionSet = XR_NULL_HANDLE;
         buttonActions = {};
         stickAction = gripPoseAction = aimPoseAction = hapticAction = XR_NULL_HANDLE;
+        gripForceAction = gripValueAction = XR_NULL_HANDLE;
         handPaths = {};
         gripSpaces = {};
         aimSpaces = {};
@@ -3149,15 +3152,32 @@ bool Runtime::readInput(ActionInput &out, XrTime const atTime, std::string &erro
             forceInfo.subactionPath = m_impl->handPaths[hand];
             XrActionStateFloat force { XR_TYPE_ACTION_STATE_FLOAT };
             bool &down = m_impl->gripForceDown[hand];
+            uint32_t const gripBit = 1u << 1;   // buttonActions[1] is grip
             if (XR_SUCCEEDED(xrGetActionStateFloat(m_impl->session, &forceInfo, &force)) && force.isActive)
             {
                 down = force.currentState >= (down ? .05f : .15f);
-                uint32_t const gripBit = 1u << 1;   // buttonActions[1] is grip
                 target.activeButtons |= gripBit;
                 if (down) target.buttons |= gripBit;
+                m_impl->gripValueDown[hand] = false;
             }
             else
+            {
                 down = false;
+                // No force from this runtime: the curl, but only a full close (on at 95%, off below 80%).
+                XrActionStateGetInfo curlInfo { XR_TYPE_ACTION_STATE_GET_INFO };
+                curlInfo.action = m_impl->gripValueAction;
+                curlInfo.subactionPath = m_impl->handPaths[hand];
+                XrActionStateFloat curl { XR_TYPE_ACTION_STATE_FLOAT };
+                bool &curlDown = m_impl->gripValueDown[hand];
+                if (m_impl->gripValueAction != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateFloat(m_impl->session, &curlInfo, &curl)) && curl.isActive)
+                {
+                    curlDown = curl.currentState >= (curlDown ? .8f : .95f);
+                    target.activeButtons |= gripBit;
+                    if (curlDown) target.buttons |= gripBit;
+                }
+                else
+                    curlDown = false;
+            }
         }
         XrActionStateGetInfo stickInfo { XR_TYPE_ACTION_STATE_GET_INFO };
         stickInfo.action = m_impl->stickAction;
